@@ -62,12 +62,12 @@ fn name_closest_pig() -> void
     debug("name closest pig: start")
     let player = single(selector("@p"))
     if exists(player):
-        debug_entity(player, "name demo player")
+        player.debug_entity("name demo player")
         let pig = single(at(player, selector("@e[type=pig,sort=nearest]")))
         if exists(pig):
-            debug_entity(pig, "nearest pig before naming")
+            pig.debug_entity("nearest pig before naming")
             pig.CustomName = "MCFC"
-            debug_entity(pig, "nearest pig after naming")
+            pig.debug_entity("nearest pig after naming")
         end
     end
 
@@ -79,14 +79,14 @@ fn style_closest_pig() -> void
     debug("style closest pig: start")
     let player = single(selector("@p"))
     if exists(player):
-        debug_entity(player, "style demo player")
+        player.debug_entity("style demo player")
         let pig = single(at(player, selector("@e[type=pig,sort=nearest]")))
         if exists(pig):
-            debug_entity(pig, "nearest pig before styling")
+            pig.debug_entity("nearest pig before styling")
             pig.CustomName = "MCFC Jr"
             pig.Variant = "minecraft:cold"
             pig.Age = 0 - 24000
-            debug_entity(pig, "nearest pig after styling")
+            pig.debug_entity("nearest pig after styling")
         end
     end
 
@@ -98,7 +98,7 @@ fn execution_context_demo() -> void
     debug("execution-context demo: start")
 
     let players = selector("@a[limit=1]")
-    debug_entity(players, "context demo selected player set")
+    # still uses raw mcf/mc for context behavior, but object-style debug helpers now
     as(players):
         mcf 'tellraw @s "as-block: welcome @s"'
         mc "say this raw command is executing as @s"
@@ -107,25 +107,25 @@ fn execution_context_demo() -> void
 
     at(players):
         mc "particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 8"
-        debug_marker(block("~ ~1 ~"), "at-block position marker")
+        block("~ ~1 ~").debug_marker("at-block position marker")
         mcf 'tellraw @a "at-block: sparkles at the player"'
     end
 
     at(players):
         as(selector("@e[type=pig,sort=nearest,limit=1]")):
             mc "say nested context: nearest pig speaks at the player"
-            debug_entity(single(selector("@s")), "nested as-at pig")
+            single(selector("@s")).debug_entity("nested as-at pig")
         end
     end
 
     let player = single(players)
     if exists(player):
-        debug_entity(player, "single context demo player")
+        player.debug_entity("single context demo player")
         let self_ref = single(as(player, selector("@s")))
         if exists(self_ref):
             self_ref.tags.mcfc_as_demo = true
             mcf 'tellraw @a "value-as: tagged the executing player via @s"'
-            debug_entity(self_ref, "value-as self ref")
+            self_ref.debug_entity("value-as self ref")
         end
     end
 
@@ -137,9 +137,9 @@ fn player_api_demo() -> void
     debug("player api demo: start")
     let player = single(selector("@p"))
     if exists(player):
-        debug_entity(player, "player api target")
+        player.debug_entity("player api target")
         at(player):
-            debug_marker(block("~ ~1 ~"), "player api marker above player")
+            block("~ ~1 ~").debug_marker("player api marker above player")
         end
         let air = int(player.nbt.Air)
         player.state.quest_stage = 3
@@ -162,7 +162,7 @@ fn gameplay_builtin_demo() -> void
     debug("gameplay builtins: start")
 
     let pig = summon("minecraft:pig")
-    debug_entity(pig, "summoned gameplay pig")
+    pig.debug_entity("summoned gameplay pig")
     pig.add_tag("mcfc_gameplay_demo")
     let tagged = pig.has_tag("mcfc_gameplay_demo")
     pig.team = "blue"
@@ -172,12 +172,22 @@ fn gameplay_builtin_demo() -> void
     pig.offhand.item = "minecraft:shield"
     pig.head.item = "minecraft:golden_helmet"
     pig.effect("speed", 15, 1)
-    teleport(pig, block("~ ~ ~"))
-    damage(pig, 2)
-    heal(pig, 1)
-    give(pig, "minecraft:apple", 2)
-    clear(pig, "minecraft:apple", 1)
-    loot_give(pig, "minecraft:chests/simple_dungeon")
+    pig.teleport(block("~ ~ ~"))
+    pig.damage(2)
+    pig.heal(1)
+    pig.give("minecraft:apple", 2)
+    pig.clear("minecraft:apple", 1)
+    pig.loot_give("minecraft:chests/simple_dungeon")
+    pig.position.particle("minecraft:happy_villager", 12)
+
+    async:
+        sleep(2)
+        at(pig):
+            block("~ ~-1 ~").setblock("minecraft:gold_block")
+        end
+        pig.debug_entity("gameplay pig after async marker")
+    end
+
     pig.remove_tag("mcfc_gameplay_demo")
 
     mcf 'tellraw @a "gameplay builtins tagged-before-remove=$(tagged)"'
@@ -190,34 +200,50 @@ fn ui_world_builtin_demo() -> void
 
     let player = single(selector("@p"))
     if exists(player):
-        debug_entity(player, "ui/world demo player")
-        tellraw(player, "tellraw builtin says hello to @p")
-        title(player, "MCFC Demo")
-        actionbar(player, "Watch the particles")
-        bossbar_add("mcfc:demo", "MCFC Bossbar")
-        bossbar_value("mcfc:demo", 5)
-        bossbar_max("mcfc:demo", 10)
-        bossbar_visible("mcfc:demo", true)
-        bossbar_players("mcfc:demo", player)
-        bossbar_name("mcfc:demo", "MCFC Bossbar Updated")
-        playsound("minecraft:entity.experience_orb.pickup", "master", player)
-        # stopsound(player, "master", "minecraft:entity.experience_orb.pickup")
+        player.debug_entity("ui/world demo player")
+        player.tellraw("tellraw method says hello to @p")
+        player.title("MCFC Demo $(random(100))")
+        player.actionbar("Watch the particles")
+
+        let bb = bossbar("mcfc:demo", "MCFC Bossbar")
+        bb.value = 5
+        bb.max = 10
+        bb.visible = true
+        bb.players = player
+        bb.name = "MCFC Bossbar Updated"
+        player.playsound("minecraft:entity.experience_orb.pickup", "master")
+
         at(player):
             let feet = block("~ ~-1 ~")
             let spark = block("~ ~1 ~")
             let corner = block("~1 ~-1 ~1")
-            debug_marker(spark, "particle beacon above player")
-            debug_marker(feet, "block marker below player", "minecraft:emerald_block")
-            fill(feet, corner, "minecraft:glass")
-            setblock(feet, "minecraft:gold_block")
-            particle("minecraft:happy_villager", spark)
-            particle("minecraft:flame", spark, 30)
-            particle("minecraft:end_rod", spark, 30, player)
-
-            loot_insert(feet, "minecraft:chests/simple_dungeon")
-            loot_spawn(spark, "minecraft:chests/simple_dungeon")
+            spark.debug_marker("particle beacon above player")
+            feet.debug_marker("block marker below player", "minecraft:emerald_block")
+            feet.fill(corner, "minecraft:glass")
+            spark.particle("minecraft:happy_villager")
+            spark.particle("minecraft:flame", 30)
+            spark.particle("minecraft:end_rod", 30, player)
+            feet.loot_insert("minecraft:chests/simple_dungeon")
+            spark.loot_spawn("minecraft:chests/simple_dungeon")
         end
-        # bossbar_remove("mcfc:demo")
+
+        async:
+            sleep(2)
+            player.stopsound("master", "minecraft:entity.experience_orb.pickup")
+            player.tellraw("placing gold block now...")
+            sleep(1)
+            player.position.particle("minecraft:happy_villager", 20, player)
+            at(player):
+                block("~ ~-1 ~").setblock("minecraft:gold_block")
+            end
+            bb.value = 10
+            bb.name = "MCFC Bossbar Complete"
+            sleep(3)
+            at(player):
+                player.teleport(single(selector("@e[type=pig,sort=nearest]")))
+            end
+            bb.remove()
+        end
     end
 
     debug("ui/world builtins: end")

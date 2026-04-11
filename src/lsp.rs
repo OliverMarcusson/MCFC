@@ -657,11 +657,7 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
         .iter()
         .find(|function| function.name == word)
     {
-        let mut hover = format!("```mcfc\n{}\n```", function.signature());
-        if function.book_exposed {
-            hover.push_str("\n@book command");
-        }
-        return Some(hover);
+        return Some(format!("```mcfc\n{}\n```", function.signature()));
     }
 
     if let Some(function) = function_at_offset(analysis, offset) {
@@ -688,6 +684,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nmatch value:\n    \"pattern\" =>\n        ...\n    else =>\n        ...\nend\n```",
         ),
         "mcf" => Some("```mcfc\nmcf \"say $(expr)\"\n```"),
+        "async" => Some("```mcfc\nasync:\n    ...\nend\n```"),
         "sleep" => Some("```mcfc\nsleep(seconds: int) -> void\n```"),
         "random" => Some(
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
@@ -709,68 +706,38 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "summon" => Some(
             "```mcfc\nsummon(entity_id: string) -> entity_ref\nsummon(entity_id: string, data: nbt) -> entity_ref\n```",
         ),
-        "teleport" => Some(
-            "```mcfc\nteleport(target: entity_ref|entity_set, destination: entity_ref|block_ref) -> void\n```",
-        ),
-        "damage" => {
-            Some("```mcfc\ndamage(target: entity_ref|entity_set, amount: int) -> void\n```")
-        }
-        "heal" => Some("```mcfc\nheal(target: entity_ref, amount: int) -> void\n```"),
-        "give" => Some(
-            "```mcfc\ngive(target: entity_ref|entity_set, item_id: string, count: int) -> void\n```",
-        ),
-        "clear" => Some(
-            "```mcfc\nclear(target: entity_ref|entity_set, item_id: string, count: int) -> void\n```",
-        ),
-        "loot_give" => {
-            Some("```mcfc\nloot_give(target: entity_ref|entity_set, table: string) -> void\n```")
-        }
-        "loot_insert" => {
-            Some("```mcfc\nloot_insert(container: block_ref, table: string) -> void\n```")
-        }
-        "loot_spawn" => {
-            Some("```mcfc\nloot_spawn(position: block_ref, table: string) -> void\n```")
-        }
-        "tellraw" => {
-            Some("```mcfc\ntellraw(target: entity_ref|entity_set, message: string) -> void\n```")
-        }
-        "title" => {
-            Some("```mcfc\ntitle(target: entity_ref|entity_set, message: string) -> void\n```")
-        }
-        "actionbar" => {
-            Some("```mcfc\nactionbar(target: entity_ref|entity_set, message: string) -> void\n```")
-        }
+        "bossbar" => Some("```mcfc\nbossbar(id: string, name: string) -> bossbar\n```"),
+        "teleport" => Some("```mcfc\nentity.teleport(destination: entity_ref|block_ref) -> void\n```"),
+        "damage" => Some("```mcfc\nentity.damage(amount: int) -> void\n```"),
+        "heal" => Some("```mcfc\nentity.heal(amount: int) -> void\n```"),
+        "give" => Some("```mcfc\nentity.give(item_id: string, count: int) -> void\n```"),
+        "clear" => Some("```mcfc\nentity.clear(item_id: string, count: int) -> void\n```"),
+        "loot_give" => Some("```mcfc\nentity.loot_give(table: string) -> void\n```"),
+        "loot_insert" => Some("```mcfc\nblock.loot_insert(table: string) -> void\n```"),
+        "loot_spawn" => Some("```mcfc\nblock.loot_spawn(table: string) -> void\n```"),
+        "tellraw" => Some("```mcfc\nentity.tellraw(message: string) -> void\n```"),
+        "title" => Some("```mcfc\nentity.title(message: string) -> void\n```"),
+        "actionbar" => Some("```mcfc\nentity.actionbar(message: string) -> void\n```"),
         "debug" => Some("```mcfc\ndebug(message: string) -> void\n```"),
         "debug_marker" => Some(
-            "```mcfc\ndebug_marker(position: block_ref, label: string) -> void\ndebug_marker(position: block_ref, label: string, marker_block: string) -> void\n```",
+            "```mcfc\nblock.debug_marker(label: string) -> void\nblock.debug_marker(label: string, marker_block: string) -> void\n```",
         ),
-        "debug_entity" => {
-            Some("```mcfc\ndebug_entity(target: entity_ref|entity_set, label: string) -> void\n```")
-        }
-        "bossbar_add" => Some("```mcfc\nbossbar_add(id: string, name: string) -> void\n```"),
-        "bossbar_remove" => Some("```mcfc\nbossbar_remove(id: string) -> void\n```"),
-        "bossbar_name" => Some("```mcfc\nbossbar_name(id: string, name: string) -> void\n```"),
-        "bossbar_value" => Some("```mcfc\nbossbar_value(id: string, value: int) -> void\n```"),
-        "bossbar_max" => Some("```mcfc\nbossbar_max(id: string, max: int) -> void\n```"),
-        "bossbar_visible" => {
-            Some("```mcfc\nbossbar_visible(id: string, visible: bool) -> void\n```")
-        }
-        "bossbar_players" => Some(
-            "```mcfc\nbossbar_players(id: string, targets: entity_ref|entity_set) -> void\n```",
-        ),
-        "playsound" => Some(
-            "```mcfc\nplaysound(sound: string, category: string, target: entity_ref|entity_set) -> void\n```",
-        ),
-        "stopsound" => Some(
-            "```mcfc\nstopsound(target: entity_ref|entity_set, category: string, sound: string) -> void\n```",
-        ),
+        "debug_entity" => Some("```mcfc\nentity.debug_entity(label: string) -> void\n```"),
+        "bossbar_add" => Some("```mcfc\nDeprecated. Use `let bb = bossbar(id, name)`.\n```"),
+        "bossbar_remove" => Some("```mcfc\nDeprecated. Use `bb.remove()`.\n```"),
+        "bossbar_name" => Some("```mcfc\nDeprecated. Use `bb.name = name`.\n```"),
+        "bossbar_value" => Some("```mcfc\nDeprecated. Use `bb.value = value`.\n```"),
+        "bossbar_max" => Some("```mcfc\nDeprecated. Use `bb.max = max`.\n```"),
+        "bossbar_visible" => Some("```mcfc\nDeprecated. Use `bb.visible = visible`.\n```"),
+        "bossbar_players" => Some("```mcfc\nDeprecated. Use `bb.players = targets`.\n```"),
+        "playsound" => Some("```mcfc\nentity.playsound(sound: string, category: string) -> void\n```"),
+        "stopsound" => Some("```mcfc\nentity.stopsound(category: string, sound: string) -> void\n```"),
         "particle" => Some(
-            "```mcfc\nparticle(name: string, position: block_ref) -> void\nparticle(name: string, position: block_ref, count: int) -> void\nparticle(name: string, position: block_ref, count: int, viewers: entity_ref|entity_set) -> void\n```",
+            "```mcfc\nblock.particle(name: string) -> void\nblock.particle(name: string, count: int) -> void\nblock.particle(name: string, count: int, viewers: entity_ref|entity_set) -> void\n```",
         ),
-        "setblock" => Some("```mcfc\nsetblock(position: block_ref, block_id: string) -> void\n```"),
-        "fill" => {
-            Some("```mcfc\nfill(from: block_ref, to: block_ref, block_id: string) -> void\n```")
-        }
+        "setblock" => Some("```mcfc\nblock.setblock(block_id: string) -> void\n```"),
+        "fill" => Some("```mcfc\nblock.fill(to: block_ref, block_id: string) -> void\n```"),
+        "position" => Some("```mcfc\nentity.position -> block_ref\n```"),
         "len" => Some("```mcfc\narray<T>.len() -> int\n```"),
         "push" => Some("```mcfc\narray<T>.push(value: T) -> void\n```"),
         "pop" => Some("```mcfc\narray<T>.pop() -> T\n```"),
@@ -883,6 +850,30 @@ fn static_completion_items(
                 "entity.has_tag(name: string) -> bool",
                 "has_tag(${1:name})",
             ),
+            ("teleport", "entity.teleport(destination) -> void", "teleport(${1:destination})"),
+            ("damage", "entity.damage(amount: int) -> void", "damage(${1:amount})"),
+            ("heal", "entity.heal(amount: int) -> void", "heal(${1:amount})"),
+            ("give", "entity.give(item_id: string, count: int) -> void", "give(${1:\"minecraft:stone\"}, ${2:1})"),
+            ("clear", "entity.clear(item_id: string, count: int) -> void", "clear(${1:\"minecraft:stone\"}, ${2:1})"),
+            ("loot_give", "entity.loot_give(table: string) -> void", "loot_give(${1:\"minecraft:chests/simple_dungeon\"})"),
+            ("tellraw", "entity.tellraw(message: string) -> void", "tellraw(${1:\"hello\"})"),
+            ("title", "entity.title(message: string) -> void", "title(${1:\"hello\"})"),
+            ("actionbar", "entity.actionbar(message: string) -> void", "actionbar(${1:\"hello\"})"),
+            ("playsound", "entity.playsound(sound: string, category: string) -> void", "playsound(${1:\"minecraft:entity.experience_orb.pickup\"}, ${2:\"master\"})"),
+            ("stopsound", "entity.stopsound(category: string, sound: string) -> void", "stopsound(${1:\"master\"}, ${2:\"minecraft:entity.experience_orb.pickup\"})"),
+            ("debug_entity", "entity.debug_entity(label: string) -> void", "debug_entity(${1:\"target\"})"),
+            ("loot_insert", "block.loot_insert(table: string) -> void", "loot_insert(${1:\"minecraft:chests/simple_dungeon\"})"),
+            ("loot_spawn", "block.loot_spawn(table: string) -> void", "loot_spawn(${1:\"minecraft:chests/simple_dungeon\"})"),
+            ("debug_marker", "block.debug_marker(label: string) -> void", "debug_marker(${1:\"checkpoint\"})"),
+            ("particle", "block.particle(name: string, count?: int, viewers?: entity_ref|entity_set) -> void", "particle(${1:\"minecraft:flame\"})"),
+            ("setblock", "block.setblock(block_id: string) -> void", "setblock(${1:\"minecraft:stone\"})"),
+            ("fill", "block.fill(to: block_ref, block_id: string) -> void", "fill(${1:block(\"~1 ~1 ~1\")}, ${2:\"minecraft:stone\"})"),
+            ("name", "bossbar.name writable string", "name"),
+            ("value", "bossbar.value writable int", "value"),
+            ("max", "bossbar.max writable int", "max"),
+            ("visible", "bossbar.visible writable bool", "visible"),
+            ("players", "bossbar.players writable entity target", "players"),
+            ("position", "entity.position -> block_ref", "position"),
             ("nbt", "player.nbt.* read namespace", "nbt"),
             ("state", "player.state.* read/write namespace", "state"),
             ("tags", "player.tags.* read/write namespace", "tags"),
@@ -908,7 +899,7 @@ fn static_completion_items(
     let mut items = Vec::new();
     for keyword in [
         "fn", "struct", "let", "return", "end", "if", "match", "else", "while", "for", "in",
-        "break", "continue", "mc", "mcf", "true", "false", "and", "or", "not", "@book",
+        "break", "continue", "async", "mc", "mcf", "true", "false", "and", "or", "not",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -926,6 +917,7 @@ fn static_completion_items(
         ("entity_set", "entity_set"),
         ("entity_ref", "entity_ref"),
         ("block_ref", "block_ref"),
+        ("bossbar", "bossbar"),
         ("nbt", "nbt"),
         ("void", "void"),
     ] {
@@ -1012,6 +1004,16 @@ fn static_completion_items(
             "summon",
             "summon(entity_id: string) -> entity_ref",
             "summon(${1:\"minecraft:pig\"})",
+        ),
+        (
+            "bossbar",
+            "bossbar(id: string, name: string) -> bossbar",
+            "bossbar(${1:\"mcfc:boss\"}, ${2:\"Boss\"})",
+        ),
+        (
+            "async: end",
+            "Spawn a non-blocking async block",
+            "async:\n\t$0\nend",
         ),
         (
             "teleport",
@@ -1144,6 +1146,9 @@ fn static_completion_items(
             "fill(${1:block(\"~ ~ ~\")}, ${2:block(\"~1 ~1 ~1\")}, ${3:\"minecraft:stone\"})",
         ),
     ] {
+        if is_removed_legacy_completion(label) {
+            continue;
+        }
         items.push(snippet_item(
             label,
             if label.contains("…") {
@@ -1157,6 +1162,37 @@ fn static_completion_items(
     }
 
     items
+}
+
+fn is_removed_legacy_completion(label: &str) -> bool {
+    matches!(
+        label,
+        "teleport"
+            | "damage"
+            | "heal"
+            | "give"
+            | "clear"
+            | "loot_give"
+            | "loot_insert"
+            | "loot_spawn"
+            | "tellraw"
+            | "title"
+            | "actionbar"
+            | "debug_marker"
+            | "debug_entity"
+            | "bossbar_add"
+            | "bossbar_remove"
+            | "bossbar_name"
+            | "bossbar_value"
+            | "bossbar_max"
+            | "bossbar_visible"
+            | "bossbar_players"
+            | "playsound"
+            | "stopsound"
+            | "particle"
+            | "setblock"
+            | "fill"
+    )
 }
 
 fn snippet_item(
@@ -1186,14 +1222,15 @@ fn member_completion_items(
         Some(CompletionReceiver::Dict) => dict_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
+        Some(CompletionReceiver::Bossbar) => bossbar_root_items(),
         Some(CompletionReceiver::EquipmentSlot) => equipment_slot_items(),
         Some(CompletionReceiver::Struct(name)) => struct_field_items(analysis, &name),
         Some(
             CompletionReceiver::PlayerDynamicNamespace
             | CompletionReceiver::EntityTeam
-            | CompletionReceiver::BlockRef
             | CompletionReceiver::Nbt,
         ) => Vec::new(),
+        Some(CompletionReceiver::BlockRef) => block_ref_items(),
         None => broad_member_items(),
     }
 }
@@ -1203,6 +1240,8 @@ fn broad_member_items() -> Vec<CompletionItem> {
         array_method_items(),
         dict_method_items(),
         player_entity_root_items(),
+        block_ref_items(),
+        bossbar_root_items(),
     ]
     .concat()
 }
@@ -1248,6 +1287,78 @@ fn dict_method_items() -> Vec<CompletionItem> {
 fn generic_entity_root_items() -> Vec<CompletionItem> {
     [
         (
+            "teleport",
+            "entity.teleport(destination: entity_ref|block_ref) -> void",
+            "teleport(${1:destination})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "damage",
+            "entity.damage(amount: int) -> void",
+            "damage(${1:amount})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "heal",
+            "entity.heal(amount: int) -> void",
+            "heal(${1:amount})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "give",
+            "entity.give(item_id: string, count: int) -> void",
+            "give(${1:\"minecraft:stone\"}, ${2:1})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "clear",
+            "entity.clear(item_id: string, count: int) -> void",
+            "clear(${1:\"minecraft:stone\"}, ${2:1})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "loot_give",
+            "entity.loot_give(table: string) -> void",
+            "loot_give(${1:\"minecraft:chests/simple_dungeon\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "tellraw",
+            "entity.tellraw(message: string) -> void",
+            "tellraw(${1:\"hello\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "title",
+            "entity.title(message: string) -> void",
+            "title(${1:\"hello\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "actionbar",
+            "entity.actionbar(message: string) -> void",
+            "actionbar(${1:\"hello\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "playsound",
+            "entity.playsound(sound: string, category: string) -> void",
+            "playsound(${1:\"minecraft:entity.experience_orb.pickup\"}, ${2:\"master\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "stopsound",
+            "entity.stopsound(category: string, sound: string) -> void",
+            "stopsound(${1:\"master\"}, ${2:\"minecraft:entity.experience_orb.pickup\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "debug_entity",
+            "entity.debug_entity(label: string) -> void",
+            "debug_entity(${1:\"target\"})",
+            CompletionItemKind::METHOD,
+        ),
+        (
             "effect",
             "entity.effect(name: string, duration: int, amplifier: int) -> void",
             "effect(${1:name}, ${2:duration}, ${3:amplifier})",
@@ -1275,6 +1386,12 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             "team",
             "entity.team writable string",
             "team",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "position",
+            "entity.position -> block_ref",
+            "position",
             CompletionItemKind::FIELD,
         ),
         (
@@ -1333,6 +1450,70 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
         }),
     );
     items
+}
+
+fn block_ref_items() -> Vec<CompletionItem> {
+    [
+        (
+            "loot_insert",
+            "block.loot_insert(table: string) -> void",
+            "loot_insert(${1:\"minecraft:chests/simple_dungeon\"})",
+        ),
+        (
+            "loot_spawn",
+            "block.loot_spawn(table: string) -> void",
+            "loot_spawn(${1:\"minecraft:chests/simple_dungeon\"})",
+        ),
+        (
+            "debug_marker",
+            "block.debug_marker(label: string) -> void",
+            "debug_marker(${1:\"checkpoint\"})",
+        ),
+        (
+            "particle",
+            "block.particle(name: string, count?: int, viewers?: entity_ref|entity_set) -> void",
+            "particle(${1:\"minecraft:flame\"})",
+        ),
+        (
+            "setblock",
+            "block.setblock(block_id: string) -> void",
+            "setblock(${1:\"minecraft:stone\"})",
+        ),
+        (
+            "fill",
+            "block.fill(to: block_ref, block_id: string) -> void",
+            "fill(${1:block(\"~1 ~1 ~1\")}, ${2:\"minecraft:stone\"})",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text)| {
+        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+    })
+    .collect()
+}
+
+fn bossbar_root_items() -> Vec<CompletionItem> {
+    [
+        ("remove", "bossbar.remove() -> void", "remove()", CompletionItemKind::METHOD),
+        ("name", "bossbar.name writable string", "name", CompletionItemKind::FIELD),
+        ("value", "bossbar.value writable int", "value", CompletionItemKind::FIELD),
+        ("max", "bossbar.max writable int", "max", CompletionItemKind::FIELD),
+        (
+            "visible",
+            "bossbar.visible writable bool",
+            "visible",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "players",
+            "bossbar.players writable entity target",
+            "players",
+            CompletionItemKind::FIELD,
+        ),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text, kind)| snippet_item(label, kind, detail, insert_text))
+    .collect()
 }
 
 fn equipment_slot_items() -> Vec<CompletionItem> {
@@ -1443,6 +1624,7 @@ enum CompletionReceiver {
     Struct(String),
     GenericEntityRef,
     PlayerEntityRef,
+    Bossbar,
     PlayerDynamicNamespace,
     EntityTeam,
     EquipmentSlot,
@@ -1506,7 +1688,18 @@ fn receiver_from_type(
                     None
                 };
             }
-            "effect" | "add_tag" | "remove_tag" | "has_tag" => return None,
+            "position" => Type::BlockRef,
+            "effect" | "add_tag" | "remove_tag" | "has_tag" | "teleport" | "damage"
+            | "heal" | "give" | "clear" | "loot_give" | "tellraw" | "title"
+            | "actionbar" | "playsound" | "stopsound" | "debug_entity" => return None,
+            _ => return None,
+        },
+        Type::Bossbar => match segment.as_str() {
+            "name" => Type::String,
+            "value" | "max" => Type::Int,
+            "visible" => Type::Bool,
+            "players" => Type::EntitySet,
+            "remove" => return None,
             _ => return None,
         },
         _ => return None,
@@ -1525,6 +1718,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
         } else {
             CompletionReceiver::GenericEntityRef
         }),
+        Type::Bossbar => Some(CompletionReceiver::Bossbar),
         Type::BlockRef => Some(CompletionReceiver::BlockRef),
         Type::Nbt => Some(CompletionReceiver::Nbt),
         _ => None,
@@ -1703,6 +1897,7 @@ fn parse_type_name(name: &str) -> Option<Type> {
         "entity_set" => Some(Type::EntitySet),
         "entity_ref" => Some(Type::EntityRef),
         "block_ref" => Some(Type::BlockRef),
+        "bossbar" => Some(Type::Bossbar),
         "nbt" => Some(Type::Nbt),
         "void" => Some(Type::Void),
         _ => None,
@@ -1716,6 +1911,8 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::EntitySet)
     } else if value.starts_with("block(") {
         Some(Type::BlockRef)
+    } else if value.starts_with("bossbar(") {
+        Some(Type::Bossbar)
     } else if value.starts_with('"') || value.starts_with('\'') {
         Some(Type::String)
     } else if value.starts_with("true") || value.starts_with("false") {
@@ -2023,21 +2220,15 @@ end
                 .any(|item| item.label == "random(min, max)")
         );
         assert!(top_level_items.iter().any(|item| item.label == "summon"));
-        assert!(top_level_items.iter().any(|item| item.label == "tellraw"));
+        assert!(top_level_items.iter().any(|item| item.label == "bossbar"));
+        assert!(top_level_items.iter().any(|item| item.label == "async: end"));
         assert!(top_level_items.iter().any(|item| item.label == "debug"));
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "debug_marker")
-        );
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "debug_entity")
-        );
-        assert!(top_level_items.iter().any(|item| item.label == "fill"));
+        assert!(!top_level_items.iter().any(|item| item.label == "tellraw"));
 
         let pig_items = completion_items(source, &analysis, source.find("pig.").unwrap() + 4);
+        assert!(pig_items.iter().any(|item| item.label == "teleport"));
+        assert!(pig_items.iter().any(|item| item.label == "tellraw"));
+        assert!(pig_items.iter().any(|item| item.label == "position"));
         assert!(pig_items.iter().any(|item| item.label == "add_tag"));
         assert!(pig_items.iter().any(|item| item.label == "remove_tag"));
         assert!(pig_items.iter().any(|item| item.label == "has_tag"));

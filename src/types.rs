@@ -9,7 +9,6 @@ pub struct TypedProgram {
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
     pub call_depths: BTreeMap<String, usize>,
-    pub book_commands: BTreeMap<String, BookCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,7 +20,6 @@ pub struct TypedFunction {
     pub locals: BTreeMap<String, Type>,
     pub local_ref_kinds: BTreeMap<String, RefKind>,
     pub called_functions: BTreeSet<String>,
-    pub book_exposed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -39,12 +37,6 @@ pub struct FunctionSignature {
 #[derive(Debug, Clone)]
 pub struct StructTypeDef {
     pub fields: BTreeMap<String, Type>,
-}
-
-#[derive(Debug, Clone)]
-pub struct BookCommand {
-    pub function_name: String,
-    pub arg_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +74,13 @@ pub enum TypedStmtKind {
         anchor: TypedExpr,
         body: Vec<TypedStmt>,
     },
+    Async {
+        captures: Vec<AsyncCapture>,
+        body: Vec<TypedStmt>,
+        locals: BTreeMap<String, Type>,
+        local_ref_kinds: BTreeMap<String, RefKind>,
+        called_functions: BTreeSet<String>,
+    },
     Break,
     Continue,
     Return(Option<TypedExpr>),
@@ -94,6 +93,13 @@ pub enum TypedStmtKind {
         seconds: TypedExpr,
     },
     Expr(TypedExpr),
+}
+
+#[derive(Debug, Clone)]
+pub struct AsyncCapture {
+    pub name: String,
+    pub ty: Type,
+    pub ref_kind: RefKind,
 }
 
 #[derive(Debug, Clone)]
@@ -279,7 +285,6 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     }
 
     let mut functions = Vec::new();
-    let mut book_commands = BTreeMap::new();
     for function in &program.functions {
         let mut env = HashMap::new();
         let mut ref_env = HashMap::new();
@@ -314,6 +319,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             &mut locals,
             &mut called_functions,
             0,
+            false,
             &mut diagnostics,
         );
 
@@ -328,40 +334,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
                 .map(|(name, kind)| (name.clone(), *kind))
                 .collect(),
             called_functions,
-            book_exposed: function.book_exposed,
         });
-
-        if function.book_exposed {
-            if function.return_type != Type::Void {
-                diagnostics.push(Diagnostic::new(
-                    format!("@book function '{}' must return 'void'", function.name),
-                    function.span.clone(),
-                ));
-            }
-            if function.params.iter().any(|param| param.ty != Type::Int) {
-                diagnostics.push(Diagnostic::new(
-                    format!(
-                        "@book function '{}' may only have 'int' parameters",
-                        function.name
-                    ),
-                    function.span.clone(),
-                ));
-            }
-            if book_commands.contains_key(&function.name) {
-                diagnostics.push(Diagnostic::new(
-                    format!("duplicate @book command '{}'", function.name),
-                    function.span.clone(),
-                ));
-            } else {
-                book_commands.insert(
-                    function.name.clone(),
-                    BookCommand {
-                        function_name: function.name.clone(),
-                        arg_count: function.params.len(),
-                    },
-                );
-            }
-        }
     }
 
     detect_recursion(&functions, &mut diagnostics);
@@ -372,7 +345,6 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         functions,
         function_signatures: signatures,
         call_depths,
-        book_commands,
     })
 }
 
@@ -386,6 +358,7 @@ fn type_check_block(
     locals: &mut BTreeMap<String, Type>,
     called_functions: &mut BTreeSet<String>,
     loop_depth: usize,
+    in_async: bool,
     diagnostics: &mut Diagnostics,
 ) -> Vec<TypedStmt> {
     let mut typed = Vec::new();
@@ -496,9 +469,16 @@ fn type_check_block(
                                     statement.span.clone(),
                                 ));
                             }
+                        } else if matches!(typed_path.base.ty, Type::Bossbar) {
+                            validate_bossbar_path_write(
+                                &typed_path,
+                                &value,
+                                statement.span.clone(),
+                                diagnostics,
+                            );
                         } else {
                             diagnostics.push(Diagnostic::new(
-                                "path assignment requires an 'entity_ref' or 'block_ref' base",
+                                "path assignment requires an 'entity_ref', 'block_ref', bossbar, or storage-backed base",
                                 statement.span.clone(),
                             ));
                         }
@@ -537,6 +517,7 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth,
+                    in_async,
                     diagnostics,
                 );
                 let else_body = type_check_block(
@@ -549,6 +530,7 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth,
+                    in_async,
                     diagnostics,
                 );
                 TypedStmtKind::If {
@@ -583,6 +565,7 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth + 1,
+                    in_async,
                     diagnostics,
                 );
                 TypedStmtKind::While { condition, body }
@@ -678,6 +661,7 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth + 1,
+                    in_async,
                     diagnostics,
                 );
                 TypedStmtKind::For {
@@ -725,6 +709,7 @@ fn type_check_block(
                         locals,
                         called_functions,
                         loop_depth,
+                        in_async,
                         diagnostics,
                     );
                     typed_arms.push((arm.pattern.clone(), body));
@@ -739,6 +724,7 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth,
+                    in_async,
                     diagnostics,
                 );
                 lower_string_match_stmt(value, typed_arms, else_body)
@@ -772,12 +758,57 @@ fn type_check_block(
                     locals,
                     called_functions,
                     loop_depth,
+                    in_async,
                     diagnostics,
                 );
                 TypedStmtKind::Context {
                     kind: *kind,
                     anchor,
                     body,
+                }
+            }
+            StmtKind::Async { body } => {
+                let mut capture_items: Vec<_> = env
+                    .iter()
+                    .filter(|(_, ty)| **ty != Type::Void)
+                    .map(|(name, ty)| AsyncCapture {
+                        name: name.clone(),
+                        ty: ty.clone(),
+                        ref_kind: ref_env.get(name).copied().unwrap_or(RefKind::Unknown),
+                    })
+                    .collect();
+                capture_items.sort_by(|left, right| left.name.cmp(&right.name));
+
+                let mut async_env = env.clone();
+                let mut async_ref_env = ref_env.clone();
+                let mut async_locals: BTreeMap<String, Type> = capture_items
+                    .iter()
+                    .map(|capture| (capture.name.clone(), capture.ty.clone()))
+                    .collect();
+                let mut async_called = BTreeSet::new();
+                let typed_body = type_check_block(
+                    body,
+                    &Type::Void,
+                    struct_defs,
+                    signatures,
+                    &mut async_env,
+                    &mut async_ref_env,
+                    &mut async_locals,
+                    &mut async_called,
+                    loop_depth,
+                    true,
+                    diagnostics,
+                );
+                called_functions.extend(async_called.iter().cloned());
+                TypedStmtKind::Async {
+                    captures: capture_items,
+                    body: typed_body,
+                    locals: async_locals,
+                    local_ref_kinds: async_ref_env
+                        .iter()
+                        .map(|(name, kind)| (name.clone(), *kind))
+                        .collect(),
+                    called_functions: async_called,
                 }
             }
             StmtKind::Break => {
@@ -799,6 +830,12 @@ fn type_check_block(
                 TypedStmtKind::Continue
             }
             StmtKind::Return(value) => {
+                if in_async {
+                    diagnostics.push(Diagnostic::new(
+                        "return may not appear inside an async block",
+                        statement.span.clone(),
+                    ));
+                }
                 let value = value.as_ref().map(|expr| {
                     type_check_expr(
                         expr,
@@ -1421,6 +1458,9 @@ fn type_check_path(
 
     for segment in &path.segments {
         match (&current_ty, segment) {
+            (Type::EntityRef, PathSegment::Field(field)) if field == "position" => {
+                current_ty = Type::BlockRef;
+            }
             (Type::EntityRef | Type::BlockRef, PathSegment::Field(_)) => {
                 current_ty = Type::Nbt;
             }
@@ -1526,6 +1566,28 @@ fn type_check_path(
                 ));
                 current_ty = Type::Nbt;
             }
+            (Type::Bossbar, PathSegment::Field(field)) => {
+                current_ty = match field.as_str() {
+                    "name" => Type::String,
+                    "value" | "max" => Type::Int,
+                    "visible" => Type::Bool,
+                    "players" => Type::EntitySet,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            format!("unknown bossbar property '{}'", field),
+                            span.clone(),
+                        ));
+                        Type::Nbt
+                    }
+                };
+            }
+            (Type::Bossbar, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "bossbar values must be accessed with '.property'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
             (Type::Array(_) | Type::Dict(_), PathSegment::Field(_)) => {
                 diagnostics.push(Diagnostic::new(
                     "collection values must be accessed with '[...]'",
@@ -1535,7 +1597,7 @@ fn type_check_path(
             }
             _ => {
                 diagnostics.push(Diagnostic::new(
-                    "path access requires an entity, block, nbt, array, or dictionary base",
+                    "path access requires an entity, block, bossbar, nbt, array, or dictionary base",
                     span.clone(),
                 ));
                 current_ty = Type::Nbt;
@@ -1625,6 +1687,7 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
             | Type::Array(_)
             | Type::Dict(_)
             | Type::Struct(_)
+            | Type::Bossbar
     ) {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -1655,6 +1718,7 @@ fn is_storage_data_expr(expr: &TypedExpr) -> bool {
     }
 }
 
+#[allow(unreachable_patterns)]
 fn type_check_builtin_call(
     function: &str,
     args: &[Expr],
@@ -1703,6 +1767,36 @@ fn type_check_builtin_call(
             called_functions,
             diagnostics,
         )),
+        "bossbar" => Some(type_check_bossbar_constructor(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "teleport" | "damage" | "heal" | "give" | "clear" | "loot_give" | "loot_insert"
+        | "loot_spawn" | "tellraw" | "title" | "actionbar" | "debug_marker"
+        | "debug_entity" | "bossbar_add" | "bossbar_remove" | "bossbar_name"
+        | "bossbar_value" | "bossbar_max" | "bossbar_visible" | "bossbar_players"
+        | "playsound" | "stopsound" | "particle" | "setblock" | "fill" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            diagnostics.push(Diagnostic::new(
+                removed_builtin_message(function),
+                expr.span.clone(),
+            ));
+            Some(builtin_call_expr(function, args, Type::Void))
+        }
         "teleport" => Some(type_check_gameplay_call(
             function,
             args,
@@ -2456,6 +2550,18 @@ fn type_check_method_call(
             })
         }
         "remove" => {
+            if receiver.ty == Type::Bossbar {
+                expect_arity(method, &args, 0, expr, diagnostics);
+                return Some(TypedExpr {
+                    kind: TypedExprKind::MethodCall {
+                        receiver: Box::new(receiver),
+                        method: method.to_string(),
+                        args,
+                    },
+                    ty: Type::Void,
+                    ref_kind: RefKind::Unknown,
+                });
+            }
             expect_arity(method, &args, 1, expr, diagnostics);
             if !is_storage_lvalue_expr(receiver_expr) {
                 diagnostics.push(Diagnostic::new(
@@ -2484,6 +2590,145 @@ fn type_check_method_call(
                 ty: Type::Void,
                 ref_kind: RefKind::Unknown,
             })
+        }
+        "teleport" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::EntityRef | Type::BlockRef),
+                "an 'entity_ref' or 'block_ref'",
+                "destination",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "damage" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::Int, "amount", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "heal" => {
+            if receiver.ty != Type::EntityRef {
+                diagnostics.push(Diagnostic::new(
+                    "heal(...) requires an 'entity_ref' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            match receiver.ref_kind {
+                RefKind::Player => diagnostics.push(Diagnostic::new(
+                    "heal(...) only supports known non-player 'entity_ref' receivers in v1",
+                    expr.span.clone(),
+                )),
+                RefKind::Unknown => diagnostics.push(Diagnostic::new(
+                    "heal(...) rejects ambiguous 'entity_ref' receivers in v1",
+                    expr.span.clone(),
+                )),
+                RefKind::NonPlayer => {}
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::Int, "amount", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "give" | "clear" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 2, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "item id", expr, diagnostics);
+            expect_arg_type(method, &args, 1, Type::Int, "count", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "loot_give" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "loot table", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "tellraw" | "title" | "actionbar" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "message", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "playsound" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 2, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "sound id", expr, diagnostics);
+            expect_arg_type(method, &args, 1, Type::String, "category", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "stopsound" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 2, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "category", expr, diagnostics);
+            expect_arg_type(method, &args, 1, Type::String, "sound id", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "debug_entity" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::String, "label", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "loot_insert" | "loot_spawn" | "setblock" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            let label = if method == "setblock" {
+                "block id"
+            } else {
+                "loot table"
+            };
+            expect_arg_type(method, &args, 0, Type::String, label, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "fill" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 2, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::BlockRef, "to", expr, diagnostics);
+            expect_arg_type(method, &args, 1, Type::String, "block id", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "debug_marker" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            if !(args.len() == 1 || args.len() == 2) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected 1 or 2, found {}",
+                        method,
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arg_type(method, &args, 0, Type::String, "label", expr, diagnostics);
+            if args.len() >= 2 {
+                expect_arg_type(method, &args, 1, Type::String, "marker block id", expr, diagnostics);
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "particle" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            if !(args.len() == 1 || args.len() == 2 || args.len() == 3) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected 1, 2, or 3, found {}",
+                        method,
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arg_type(method, &args, 0, Type::String, "particle id", expr, diagnostics);
+            if args.len() >= 2 {
+                expect_arg_type(method, &args, 1, Type::Int, "count", expr, diagnostics);
+            }
+            if args.len() >= 3 {
+                expect_entity_target_arg(method, &args, 2, expr, diagnostics);
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "add_tag" | "remove_tag" | "has_tag" => {
             if receiver.ty != Type::EntityRef {
@@ -2679,6 +2924,66 @@ fn type_check_random_builtin(
         }
     }
     builtin_call_expr("random", args, Type::Int)
+}
+
+fn type_check_bossbar_constructor(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    expect_arity("bossbar", &args, 2, expr, diagnostics);
+    expect_arg_type("bossbar", &args, 0, Type::String, "id", expr, diagnostics);
+    expect_arg_type("bossbar", &args, 1, Type::String, "name", expr, diagnostics);
+    builtin_call_expr("bossbar", args, Type::Bossbar)
+}
+
+fn removed_builtin_message(function: &str) -> String {
+    let replacement = match function {
+        "teleport" => "target.teleport(destination)",
+        "damage" => "target.damage(amount)",
+        "heal" => "target.heal(amount)",
+        "give" => "target.give(item_id, count)",
+        "clear" => "target.clear(item_id, count)",
+        "loot_give" => "target.loot_give(table)",
+        "loot_insert" => "position.loot_insert(table)",
+        "loot_spawn" => "position.loot_spawn(table)",
+        "tellraw" => "target.tellraw(message)",
+        "title" => "target.title(message)",
+        "actionbar" => "target.actionbar(message)",
+        "debug_marker" => "position.debug_marker(label)",
+        "debug_entity" => "target.debug_entity(label)",
+        "bossbar_add" => "let bb = bossbar(id, name)",
+        "bossbar_remove" => "bb.remove()",
+        "bossbar_name" => "bb.name = name",
+        "bossbar_value" => "bb.value = value",
+        "bossbar_max" => "bb.max = max",
+        "bossbar_visible" => "bb.visible = visible",
+        "bossbar_players" => "bb.players = targets",
+        "playsound" => "target.playsound(sound, category)",
+        "stopsound" => "target.stopsound(category, sound)",
+        "particle" => "position.particle(name, count?, viewers?)",
+        "setblock" => "position.setblock(block_id)",
+        "fill" => "from.fill(to, block_id)",
+        _ => "the method/property-style API",
+    };
+    format!(
+        "{}(...) has been replaced by object-style syntax; use {}",
+        function, replacement
+    )
 }
 
 fn type_check_gameplay_call(
@@ -3090,6 +3395,51 @@ fn builtin_call_expr(function: &str, args: Vec<TypedExpr>, ty: Type) -> TypedExp
     }
 }
 
+fn method_call_expr(
+    receiver: TypedExpr,
+    method: &str,
+    args: Vec<TypedExpr>,
+    ty: Type,
+) -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::MethodCall {
+            receiver: Box::new(receiver),
+            method: method.to_string(),
+            args,
+        },
+        ty,
+        ref_kind: RefKind::Unknown,
+    }
+}
+
+fn expect_entity_receiver(
+    method: &str,
+    receiver: &TypedExpr,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    if !matches!(receiver.ty, Type::EntityRef | Type::EntitySet) {
+        diagnostics.push(Diagnostic::new(
+            format!("{}(...) requires an 'entity_ref' or 'entity_set' receiver", method),
+            expr.span.clone(),
+        ));
+    }
+}
+
+fn expect_block_receiver(
+    method: &str,
+    receiver: &TypedExpr,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    if receiver.ty != Type::BlockRef {
+        diagnostics.push(Diagnostic::new(
+            format!("{}(...) requires a 'block_ref' receiver", method),
+            expr.span.clone(),
+        ));
+    }
+}
+
 fn expect_entity_target_arg(
     function: &str,
     args: &[TypedExpr],
@@ -3198,9 +3548,10 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
             | "chest"
             | "legs"
             | "feet"
+            | "position"
     ) {
         diagnostics.push(Diagnostic::new(
-            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or an equipment namespace such as 'mainhand'",
+            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', or an equipment namespace such as 'mainhand'",
             span,
         ));
     }
@@ -3223,6 +3574,10 @@ fn validate_player_path_write(
         return;
     };
     match first.as_str() {
+        "position" => diagnostics.push(Diagnostic::new(
+            "entity.position is read-only; use methods such as entity.position.setblock(...)",
+            span,
+        )),
         "nbt" if path.base.ref_kind == RefKind::Player => diagnostics.push(Diagnostic::new(
             "player.nbt.* is read-only; use player.state, player.tags, player.team, or equipment namespaces instead",
             span,
@@ -3259,6 +3614,44 @@ fn validate_player_path_write(
             span,
         )),
         _ => {}
+    }
+}
+
+fn validate_bossbar_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let [PathSegment::Field(field)] = path.segments.as_slice() else {
+        diagnostics.push(Diagnostic::new(
+            "bossbar assignment must target one property such as '.value'",
+            span,
+        ));
+        return;
+    };
+    let valid = match field.as_str() {
+        "name" => value.ty == Type::String,
+        "value" | "max" => value.ty == Type::Int,
+        "visible" => value.ty == Type::Bool,
+        "players" => matches!(value.ty, Type::EntityRef | Type::EntitySet),
+        _ => {
+            diagnostics.push(Diagnostic::new(
+                format!("unknown bossbar property '{}'", field),
+                span,
+            ));
+            return;
+        }
+    };
+    if !valid {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "bossbar.{} cannot be assigned a value of type '{}'",
+                field,
+                value.ty.as_str()
+            ),
+            span,
+        ));
     }
 }
 

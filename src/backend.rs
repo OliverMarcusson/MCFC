@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, ContextKind, PathSegment, Type, UnaryOp};
 use crate::ir::{
-    IrAssignTarget, IrBookCommand, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
+    IrAssignTarget, IrCapture, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
     IrPathExpr, IrProgram, IrStmt,
 };
 use crate::types::{CastKind, RefKind};
@@ -38,7 +38,6 @@ struct Backend {
     namespace: String,
     files: BTreeMap<String, String>,
     functions: BTreeMap<String, FunctionInfo>,
-    book_commands: BTreeMap<String, IrBookCommand>,
     max_depth: usize,
     block_counter: usize,
     temp_counter: usize,
@@ -160,7 +159,6 @@ impl Backend {
             namespace,
             files: BTreeMap::new(),
             functions,
-            book_commands: program.book_commands.clone(),
             max_depth: program.call_depths.values().copied().max().unwrap_or(0) + 1,
             block_counter: 0,
             temp_counter: 0,
@@ -180,7 +178,6 @@ impl Backend {
                 self.emit_function_variant(function, depth);
             }
         }
-        self.emit_book_runtime();
         self.emit_export_wrappers(&options.exports);
     }
 
@@ -203,13 +200,12 @@ impl Backend {
     }
 
     fn emit_tick_tag(&mut self, override_values: Option<&[String]>) {
-        let values = override_values
-            .map(|items| items.to_vec())
-            .unwrap_or_else(|| vec![format!("{}:generated/book/tick", self.namespace)]);
-        self.files.insert(
-            "data/minecraft/tags/function/tick.json".to_string(),
-            render_tag_file(&values),
-        );
+        if let Some(values) = override_values {
+            self.files.insert(
+                "data/minecraft/tags/function/tick.json".to_string(),
+                render_tag_file(values),
+            );
+        }
     }
 
     fn emit_setup(&mut self) {
@@ -273,194 +269,6 @@ impl Backend {
             format!("data/{}/function/main.mcfunction", self.namespace),
             lines.join("\n") + "\n",
         );
-    }
-
-    fn emit_book_runtime(&mut self) {
-        self.files.insert(
-            format!(
-                "data/{}/function/generated/book/tick.mcfunction",
-                self.namespace
-            ),
-            format!(
-                "execute as @a run function {}:generated/book/tick_player\n",
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tick_player.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "execute unless items entity @s contents minecraft:writable_book[minecraft:custom_data~{{mcfc:{{managed:1b}}}}] run give @s minecraft:writable_book[minecraft:custom_data={{mcfc:{{managed:1b,last_cmd:\"\"}}}},minecraft:item_name='\"MCFC Commands\"',minecraft:writable_book_content={{pages:[{{raw:\"fibb 8\"}}]}}]\n",
-                    "execute if data entity @s {{SelectedItem:{{id:\"minecraft:writable_book\",components:{{\"minecraft:custom_data\":{{mcfc:{{managed:1b}}}}}}}}}} run function {}:generated/book/process_mainhand\n"
-                ),
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/process_mainhand.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "data remove storage {}:runtime book\n",
-                    "execute if data entity @s SelectedItem.components.\"minecraft:writable_book_content\".pages[0].raw run data modify storage {}:runtime book.current set from entity @s SelectedItem.components.\"minecraft:writable_book_content\".pages[0].raw\n",
-                    "execute unless data entity @s SelectedItem.components.\"minecraft:writable_book_content\".pages[0].raw if data entity @s SelectedItem.components.\"minecraft:writable_book_content\".pages[0] run data modify storage {}:runtime book.current set from entity @s SelectedItem.components.\"minecraft:writable_book_content\".pages[0]\n",
-                    "execute store result score $book_cmd_len mcfc run data get storage {}:runtime book.current\n",
-                    "execute if score $book_cmd_len mcfc matches 1.. run function {}:generated/book/check_changed with storage {}:runtime book\n"
-                ),
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/check_changed.mcfunction", self.namespace),
-            format!(
-                "$execute unless data entity @s {{SelectedItem:{{components:{{\"minecraft:custom_data\":{{mcfc:{{last_cmd:\"$(current)\"}}}}}}}}}} run function {}:generated/book/process_changed\n",
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/process_changed.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "function {}:generated/book/tokenize_init\n",
-                    "scoreboard players set $book_dispatch_matched mcfc 0\n",
-                    "execute store result score $book_token_count mcfc run data get storage {}:runtime book.tokens\n",
-                    "execute if score $book_token_count mcfc matches 1.. run data modify storage {}:runtime book.command_name set from storage {}:runtime book.tokens[0]\n",
-                    "{}",
-                    "execute if score $book_dispatch_matched mcfc matches 0 if score $book_token_count mcfc matches 1.. run tellraw @s \"Unknown book command\"\n",
-                    "data modify storage {}:runtime book.update.last_cmd set from storage {}:runtime book.current\n",
-                    "item modify entity @s weapon.mainhand {{\"function\":\"minecraft:copy_custom_data\",\"source\":{{\"type\":\"storage\",\"source\":\"{}:runtime\"}},\"ops\":[{{\"source\":\"book.update.last_cmd\",\"target\":\"mcfc.last_cmd\",\"op\":\"replace\"}}]}}\n"
-                ),
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.render_book_dispatch_calls(),
-                self.namespace,
-                self.namespace,
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_init.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "data modify storage {}:runtime book.tokens set value []\n",
-                    "data modify storage {}:runtime book.remaining set from storage {}:runtime book.current\n",
-                    "data modify storage {}:runtime book.current_token set value \"\"\n",
-                    "function {}:generated/book/tokenize_step\n"
-                ),
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_step.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "execute store result score $book_rem_len mcfc run data get storage {}:runtime book.remaining\n",
-                    "execute if score $book_rem_len mcfc matches 0 run function {}:generated/book/tokenize_finish\n",
-                    "execute if score $book_rem_len mcfc matches 1.. run function {}:generated/book/tokenize_consume\n"
-                ),
-                self.namespace, self.namespace, self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_consume.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "data modify storage {}:runtime book.char set string storage {}:runtime book.remaining 0 1\n",
-                    "data modify storage {}:runtime book.remaining set string storage {}:runtime book.remaining 1 1024\n",
-                    "execute if data storage {}:runtime {{book:{{char:\" \"}}}} run function {}:generated/book/tokenize_space\n",
-                    "execute unless data storage {}:runtime {{book:{{char:\" \"}}}} run function {}:generated/book/tokenize_append\n",
-                    "function {}:generated/book/tokenize_step\n"
-                ),
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace,
-                self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_space.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "execute store result score $book_tok_len mcfc run data get storage {}:runtime book.current_token\n",
-                    "execute if score $book_tok_len mcfc matches 1.. run function {}:generated/book/tokenize_push\n"
-                ),
-                self.namespace, self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_append.mcfunction", self.namespace),
-            format!(
-                "data modify storage {}:runtime book.current_token append string storage {}:runtime book.char 0 1\n",
-                self.namespace, self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_push.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "data modify storage {}:runtime book.tokens append from storage {}:runtime book.current_token\n",
-                    "data modify storage {}:runtime book.current_token set value \"\"\n"
-                ),
-                self.namespace, self.namespace, self.namespace
-            ),
-        );
-
-        self.files.insert(
-            format!("data/{}/function/generated/book/tokenize_finish.mcfunction", self.namespace),
-            format!(
-                concat!(
-                    "execute store result score $book_tok_len mcfc run data get storage {}:runtime book.current_token\n",
-                    "execute if score $book_tok_len mcfc matches 1.. run function {}:generated/book/tokenize_push\n"
-                ),
-                self.namespace, self.namespace
-            ),
-        );
-
-        let max_args = self
-            .book_commands
-            .values()
-            .map(|command| command.arg_count)
-            .max()
-            .unwrap_or(0);
-        for index in 1..=max_args {
-            self.files.insert(
-                format!(
-                    "data/{}/function/generated/book/parse_arg_{}.mcfunction",
-                    self.namespace, index
-                ),
-                format!("$scoreboard players set $book_arg{} mcfc $(arg)\n", index),
-            );
-        }
-
-        let book_commands: Vec<_> = self.book_commands.values().cloned().collect();
-        for command in &book_commands {
-            self.emit_book_dispatch_function(command);
-        }
     }
 
     fn emit_export_wrappers(&mut self, exports: &[ExportedFunction]) {
@@ -654,6 +462,14 @@ impl Backend {
                         ),
                         true,
                     )));
+                }
+                IrStmt::Async {
+                    function: async_function,
+                    captures,
+                } => {
+                    let mut stmt_lines = Vec::new();
+                    self.emit_async_launch(function, depth, async_function, captures, &mut stmt_lines);
+                    self.extend_guarded(lines, guard, stmt_lines);
                 }
                 IrStmt::Expr(expr) => {
                     let scratch = self.new_temp();
@@ -1357,6 +1173,44 @@ impl Backend {
         self.emit_continuation_items(function, depth, outside, guard, loop_ctx, None, lines)
     }
 
+    fn emit_async_launch(
+        &mut self,
+        parent: &IrFunction,
+        parent_depth: usize,
+        async_function: &IrFunction,
+        captures: &[IrCapture],
+        lines: &mut Vec<String>,
+    ) {
+        for capture in captures {
+            let source = local_slot(parent_depth, &parent.name, &capture.name, &capture.ty);
+            let target = local_slot(0, &async_function.name, &capture.name, &capture.ty);
+            match capture.ty {
+                Type::Int | Type::Bool => lines.push(format!(
+                    "scoreboard players operation {} mcfc = {} mcfc",
+                    target.numeric_name(),
+                    source.numeric_name()
+                )),
+                Type::Void => {}
+                _ => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                    self.namespace,
+                    target.storage_path(),
+                    self.namespace,
+                    source.storage_path()
+                )),
+            }
+        }
+        lines.push(format!(
+            "scoreboard players set {} mcfc 0",
+            control_slot(0, &async_function.name)
+        ));
+        lines.push(format!(
+            "function {}:{}",
+            self.namespace,
+            self.function_entry_name(&async_function.name, 0)
+        ));
+    }
+
     fn extend_guarded(&self, target: &mut Vec<String>, guard: &Guard, lines: Vec<String>) {
         target.extend(lines.into_iter().map(|line| guard.wrap(line)));
     }
@@ -1439,7 +1293,7 @@ impl Backend {
                     target.numeric_name(),
                     numeric_slot(depth, &function.name, name)
                 )),
-                Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) => {
+                Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Bossbar => {
                     lines.push(format!(
                         "data modify storage {}:runtime {} set from storage {}:runtime {}",
                         self.namespace,
@@ -1570,7 +1424,7 @@ impl Backend {
                             target.numeric_name(),
                             numeric_return_slot(callee_depth, callee)
                         )),
-                        Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) => lines
+                Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Bossbar => lines
                             .push(format!(
                                 "data modify storage {}:runtime {} set from storage {}:runtime {}",
                                 self.namespace,
@@ -1616,6 +1470,11 @@ impl Backend {
         let value_slot = local_slot(depth, &function.name, &value_name, &Type::Nbt);
         self.compile_value_as_nbt(function, depth, value, &value_slot, lines);
 
+        if path.base.ty == Type::Bossbar {
+            self.compile_bossbar_property_assign(function, depth, &base_slot, path, value, lines);
+            return;
+        }
+
         if matches!(
             path.base.ty,
             Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Nbt
@@ -1636,6 +1495,25 @@ impl Backend {
         }
 
         if path.base.ty == Type::EntityRef {
+            if let Some(PathSegment::Field(first)) = path.segments.first() {
+                if first == "position" && path.segments.len() > 1 {
+                    let pos_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
+                    self.compose_entity_position_slot(&base_slot, &pos_slot, lines);
+                    let path_text = render_path_segments(&path.segments[1..]);
+                    let storage_target =
+                        format!("{}:runtime {}", self.namespace, value_slot.storage_path());
+                    lines.push(self.block_command(
+                        &pos_slot,
+                        format!(
+                            "data modify block $(pos) {} set from storage {}",
+                            path_text, storage_target
+                        ),
+                        true,
+                    ));
+                    return;
+                }
+            }
             if self.try_compile_player_path_assign(
                 function,
                 depth,
@@ -1668,6 +1546,114 @@ impl Backend {
                 ),
                 true,
             )),
+            _ => {}
+        }
+    }
+
+    fn compile_bossbar_property_assign(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        base_slot: &SlotRef,
+        path: &IrPathExpr,
+        value: &IrExpr,
+        lines: &mut Vec<String>,
+    ) {
+        let [PathSegment::Field(field)] = path.segments.as_slice() else {
+            return;
+        };
+        match field.as_str() {
+            "name" => {
+                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    base_slot.storage_path()
+                ));
+                if let IrExprKind::String(text) = &value.kind {
+                    let component = selector_text_components(text).unwrap_or_else(|| quoted(text));
+                    lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        format!("bossbar set $(id) name {}", component),
+                    ));
+                    return;
+                }
+                let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                self.compile_expr_into_slot(function, depth, value, &name_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    name_slot.storage_path()
+                ));
+                lines.push(self.inline_macro_command(
+                    macro_slot.storage_path(),
+                    "bossbar set $(id) name [\"$(name)\"]".to_string(),
+                ));
+            }
+            "value" | "max" => {
+                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                let value_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    base_slot.storage_path()
+                ));
+                lines.push(format!(
+                    "execute store result storage {}:runtime {}.value int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    value_slot.numeric_name()
+                ));
+                lines.push(self.inline_macro_command(
+                    macro_slot.storage_path(),
+                    format!("bossbar set $(id) {} $(value)", field),
+                ));
+            }
+            "visible" => {
+                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                let visible_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Bool);
+                self.compile_expr_into_slot(function, depth, value, &visible_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    base_slot.storage_path()
+                ));
+                lines.push(format!(
+                    "execute store result storage {}:runtime {}.visible int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    visible_slot.numeric_name()
+                ));
+                lines.push(self.inline_macro_command(
+                    macro_slot.storage_path(),
+                    "bossbar set $(id) visible $(visible)".to_string(),
+                ));
+            }
+            "players" => {
+                let target_slot = local_slot(depth, &function.name, &self.new_temp(), &value.ty);
+                self.compile_expr_into_slot(function, depth, value, &target_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                    self.namespace,
+                    target_slot.storage_path(),
+                    self.namespace,
+                    base_slot.storage_path()
+                ));
+                lines.push(self.query_command(
+                    &target_slot,
+                    "bossbar set $(id) players $(selector)".to_string(),
+                    true,
+                ));
+            }
             _ => {}
         }
     }
@@ -2342,6 +2328,25 @@ impl Backend {
                 return;
             }
             "remove" => {
+                if receiver.ty == Type::Bossbar {
+                    let receiver_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);
+                    self.compile_expr_into_slot(function, depth, receiver, &receiver_slot, lines);
+                    let macro_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                    lines.push(format!(
+                        "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                        self.namespace,
+                        macro_slot.storage_path(),
+                        self.namespace,
+                        receiver_slot.storage_path()
+                    ));
+                    lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        "bossbar remove $(id)".to_string(),
+                    ));
+                    return;
+                }
                 if let Some(key) = args.first() {
                     if let Some(receiver_path) =
                         self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
@@ -2362,6 +2367,45 @@ impl Backend {
                             key_rendered.macro_storage,
                         ));
                     }
+                }
+                return;
+            }
+            "teleport" | "damage" | "heal" | "give" | "clear" | "loot_give" | "tellraw"
+            | "title" | "actionbar" | "debug_entity" => {
+                let mut synthetic = Vec::with_capacity(args.len() + 1);
+                synthetic.push(receiver.clone());
+                synthetic.extend(args.iter().cloned());
+                self.compile_builtin_call(function, depth, method, &synthetic, target, lines);
+                return;
+            }
+            "playsound" => {
+                if args.len() >= 2 {
+                    let synthetic = vec![args[0].clone(), args[1].clone(), receiver.clone()];
+                    self.compile_builtin_call(function, depth, "playsound", &synthetic, target, lines);
+                }
+                return;
+            }
+            "stopsound" => {
+                if args.len() >= 2 {
+                    let synthetic = vec![receiver.clone(), args[0].clone(), args[1].clone()];
+                    self.compile_builtin_call(function, depth, "stopsound", &synthetic, target, lines);
+                }
+                return;
+            }
+            "loot_insert" | "loot_spawn" | "setblock" | "fill" | "debug_marker" => {
+                let mut synthetic = Vec::with_capacity(args.len() + 1);
+                synthetic.push(receiver.clone());
+                synthetic.extend(args.iter().cloned());
+                self.compile_builtin_call(function, depth, method, &synthetic, target, lines);
+                return;
+            }
+            "particle" => {
+                if let Some(name) = args.first() {
+                    let mut synthetic = Vec::with_capacity(args.len() + 1);
+                    synthetic.push(name.clone());
+                    synthetic.push(receiver.clone());
+                    synthetic.extend(args.iter().skip(1).cloned());
+                    self.compile_builtin_call(function, depth, "particle", &synthetic, target, lines);
                 }
                 return;
             }
@@ -2542,6 +2586,47 @@ impl Backend {
                         "execute store result score {} mcfc run random value $(min)..$(max)",
                         target.numeric_name()
                     ),
+                ));
+                true
+            }
+            "bossbar" => {
+                let id_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                self.compile_expr_into_slot(function, depth, &args[0], &id_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}",
+                    self.namespace,
+                    target.storage_path(),
+                    self.namespace,
+                    id_slot.storage_path()
+                ));
+                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    target.storage_path()
+                ));
+                if let IrExprKind::String(text) = &args[1].kind {
+                    let component = selector_text_components(text).unwrap_or_else(|| quoted(text));
+                    lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        format!("bossbar add $(id) {}", component),
+                    ));
+                    return true;
+                }
+                let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                self.compile_expr_into_slot(function, depth, &args[1], &name_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    self.namespace,
+                    name_slot.storage_path()
+                ));
+                lines.push(self.inline_macro_command(
+                    macro_slot.storage_path(),
+                    "bossbar add $(id) [\"$(name)\"]".to_string(),
                 ));
                 true
             }
@@ -3344,8 +3429,8 @@ impl Backend {
 
     fn try_compile_player_path_read(
         &mut self,
-        _function: &IrFunction,
-        _depth: usize,
+        function: &IrFunction,
+        depth: usize,
         base_slot: &SlotRef,
         path: &IrPathExpr,
         target: &SlotRef,
@@ -3355,6 +3440,32 @@ impl Backend {
             return false;
         };
         match first.as_str() {
+            "position" => {
+                let pos_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
+                self.compose_entity_position_slot(base_slot, &pos_slot, lines);
+                if path.segments.len() == 1 {
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        pos_slot.storage_path()
+                    ));
+                } else {
+                    let path_text = render_path_segments(&path.segments[1..]);
+                    lines.push(self.block_command(
+                        &pos_slot,
+                        format!(
+                            "data modify storage {}:runtime {} set from block $(pos) {}",
+                            self.namespace,
+                            target.storage_path(),
+                            path_text
+                        ),
+                        true,
+                    ));
+                }
+                true
+            }
             "nbt" => {
                 if path.base.ref_kind != RefKind::Player {
                     return false;
@@ -3575,7 +3686,7 @@ impl Backend {
                     temp_slot.numeric_name()
                 ));
             }
-            Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) => {
+            Type::String | Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Bossbar => {
                 self.compile_expr_into_slot(function, depth, expr, target, lines);
             }
             _ => {}
@@ -3676,6 +3787,43 @@ impl Backend {
             )),
             _ => {}
         }
+    }
+
+    fn compose_entity_position_slot(
+        &self,
+        entity: &SlotRef,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set from storage {}:runtime {}.prefix",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            entity.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append value \"execute at \"",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append from storage {}:runtime {}.selector",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            entity.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append value \" run \"",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.pos set value \"~ ~ ~\"",
+            self.namespace,
+            target.storage_path()
+        ));
     }
 
     fn query_command(&mut self, slot: &SlotRef, command: String, wrap_macro: bool) -> String {
@@ -3983,7 +4131,7 @@ impl Backend {
                     self.namespace,
                     source_slot.storage_path()
                 )),
-                Type::Array(_) | Type::Dict(_) | Type::Struct(_) => lines.push(format!(
+                Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Bossbar => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -4087,7 +4235,7 @@ impl Backend {
                     self.namespace,
                     source_slot.storage_path()
                 )),
-                Type::Array(_) | Type::Dict(_) | Type::Struct(_) => lines.push(format!(
+                Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Bossbar => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -4127,83 +4275,6 @@ impl Backend {
         format!("__tmp{}", self.temp_counter)
     }
 
-    fn render_book_dispatch_calls(&self) -> String {
-        let mut lines = String::new();
-        for name in self.book_commands.keys() {
-            lines.push_str(&format!(
-                "execute if data storage {}:runtime {{book:{{command_name:\"{}\"}}}} run function {}:generated/book/dispatch_{}\n",
-                self.namespace,
-                name,
-                self.namespace,
-                sanitize(name)
-            ));
-        }
-        lines
-    }
-
-    fn emit_book_dispatch_function(&mut self, command: &IrBookCommand) {
-        let Some(function) = self.functions.get(&command.function_name) else {
-            return;
-        };
-
-        let expected_tokens = command.arg_count + 1;
-        let mut lines = vec![
-            "scoreboard players set $book_dispatch_matched mcfc 1".to_string(),
-            format!(
-                "execute unless score $book_token_count mcfc matches {} run tellraw @s \"Wrong argument count for {}\"",
-                expected_tokens, command.function_name
-            ),
-        ];
-
-        let mut final_conditions = vec![format!(
-            "execute if score $book_token_count mcfc matches {}",
-            expected_tokens
-        )];
-
-        for index in 0..command.arg_count {
-            let token_index = index + 1;
-            let param_name = &function.params[index].0;
-            lines.push(format!(
-                "execute if score $book_token_count mcfc matches {} run data modify storage {}:runtime book.dispatch.arg set from storage {}:runtime book.tokens[{}]",
-                expected_tokens, self.namespace, self.namespace, token_index
-            ));
-            lines.push(format!(
-                "execute if score $book_token_count mcfc matches {} store success score $book_parse_{} mcfc run function {}:generated/book/parse_arg_{} with storage {}:runtime book.dispatch",
-                expected_tokens, token_index, self.namespace, token_index, self.namespace
-            ));
-            lines.push(format!(
-                "execute if score $book_token_count mcfc matches {} unless score $book_parse_{} mcfc matches 1 run tellraw @s \"Invalid integer argument {} for {}\"",
-                expected_tokens, token_index, token_index, command.function_name
-            ));
-            lines.push(format!(
-                "execute if score $book_token_count mcfc matches {} if score $book_parse_{} mcfc matches 1 run scoreboard players operation {} mcfc = $book_arg{} mcfc",
-                expected_tokens,
-                token_index,
-                numeric_slot(0, &command.function_name, param_name),
-                token_index
-            ));
-            final_conditions.push(format!(
-                "if score $book_parse_{} mcfc matches 1",
-                token_index
-            ));
-        }
-
-        lines.push(format!(
-            "{} run function {}:{}",
-            final_conditions.join(" "),
-            self.namespace,
-            self.function_entry_name(&command.function_name, 0)
-        ));
-
-        self.files.insert(
-            format!(
-                "data/{}/function/generated/book/dispatch_{}.mcfunction",
-                self.namespace,
-                sanitize(&command.function_name)
-            ),
-            lines.join("\n") + "\n",
-        );
-    }
 }
 
 fn continuation_after_stmts(stmts: &[IrStmt], tail: &[ContinuationItem]) -> Vec<ContinuationItem> {
@@ -4239,6 +4310,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
         | Type::Array(_)
         | Type::Dict(_)
         | Type::Struct(_)
+        | Type::Bossbar
         | Type::EntitySet
         | Type::EntityRef
         | Type::BlockRef
@@ -4260,6 +4332,7 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
         | Type::Array(_)
         | Type::Dict(_)
         | Type::Struct(_)
+        | Type::Bossbar
         | Type::EntitySet
         | Type::EntityRef
         | Type::BlockRef
@@ -4625,6 +4698,9 @@ fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, 
             IrStmt::Context { anchor, body, .. } => {
                 collect_objectives_from_expr(anchor, names);
                 collect_objectives_from_stmts(body, names);
+            }
+            IrStmt::Async { function, .. } => {
+                collect_objectives_from_stmts(&function.body, names);
             }
             IrStmt::Let { value, .. }
             | IrStmt::Return(Some(value))

@@ -18,7 +18,6 @@ pub struct FunctionInfo {
     pub name: String,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
-    pub book_exposed: bool,
     pub range: TextRange,
     pub name_range: TextRange,
 }
@@ -134,7 +133,6 @@ fn fallback_functions(program: &Program) -> Vec<FunctionInfo> {
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect(),
             return_type: function.return_type.clone(),
-            book_exposed: function.book_exposed,
             range: function.span.range,
             name_range: function.span.range,
         })
@@ -164,14 +162,10 @@ fn collect_function_info(
         fn_index += 1;
     }
 
-    let start = if fn_index > 0 && matches!(tokens[fn_index - 1].kind, TokenKind::BookAnnotation) {
-        tokens[fn_index - 1].range.start
-    } else {
-        tokens
-            .get(fn_index)
-            .map(|token| token.range.start)
-            .unwrap_or(function.span.range.start)
-    };
+    let start = tokens
+        .get(fn_index)
+        .map(|token| token.range.start)
+        .unwrap_or(function.span.range.start);
     let name_range = tokens
         .get(fn_index + 1)
         .map(|token| token.range)
@@ -186,7 +180,7 @@ fn collect_function_info(
     while index < tokens.len() {
         match tokens[index].kind {
             TokenKind::If if !previous_significant_is_else(tokens, index) => block_depth += 1,
-            TokenKind::While | TokenKind::For => block_depth += 1,
+            TokenKind::While | TokenKind::For | TokenKind::Async => block_depth += 1,
             TokenKind::End if block_depth == 0 => {
                 end = tokens[index].range.end;
                 index += 1;
@@ -208,7 +202,6 @@ fn collect_function_info(
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect(),
             return_type: function.return_type.clone(),
-            book_exposed: function.book_exposed,
             range: TextRange::new(start, end),
             name_range,
         },
@@ -346,7 +339,6 @@ end
     #[test]
     fn collects_functions_and_locals_for_valid_source() {
         let source = r#"
-@book
 fn launch(level: int) -> void
     let amount = level
     return
@@ -357,7 +349,6 @@ end
 
         assert!(analysis.diagnostics.is_empty());
         assert_eq!(analysis.functions[0].name, "launch");
-        assert!(analysis.functions[0].book_exposed);
         assert!(
             analysis
                 .locals

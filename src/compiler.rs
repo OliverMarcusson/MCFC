@@ -227,12 +227,12 @@ fn main() -> void
     pig.head.name = "Captain"
     pig.chest.count = 1
     pig.effect("speed", 10, 1)
-    teleport(pig, block("~ ~1 ~"))
-    damage(pig, 2)
-    heal(pig, 1)
-    give(pig, "minecraft:apple", 2)
-    clear(pig, "minecraft:apple", 1)
-    loot_give(pig, "minecraft:chests/simple_dungeon")
+    pig.teleport(block("~ ~1 ~"))
+    pig.damage(2)
+    pig.heal(1)
+    pig.give("minecraft:apple", 2)
+    pig.clear("minecraft:apple", 1)
+    pig.loot_give("minecraft:chests/simple_dungeon")
     return
 end
 "#;
@@ -276,23 +276,23 @@ end
 fn main() -> void
     let pig = single(selector("@e[type=pig,limit=1]"))
     let pos = block("~ ~ ~")
-    tellraw(pig, "hello @s")
-    title(pig, "Danger")
-    actionbar(pig, "Run")
-    bossbar_add("mcfc:test", "Boss @s")
-    bossbar_value("mcfc:test", 10)
-    bossbar_max("mcfc:test", 20)
-    bossbar_visible("mcfc:test", true)
-    bossbar_players("mcfc:test", pig)
-    bossbar_name("mcfc:test", "Still here")
-    playsound("minecraft:entity.experience_orb.pickup", "master", pig)
-    stopsound(pig, "master", "minecraft:entity.experience_orb.pickup")
-    particle("minecraft:flame", pos)
-    particle("minecraft:smoke", pos, 4, pig)
-    loot_insert(pos, "minecraft:chests/simple_dungeon")
-    loot_spawn(pos, "minecraft:chests/simple_dungeon")
-    setblock(pos, "minecraft:stone")
-    fill(pos, block("~1 ~1 ~1"), "minecraft:glass")
+    pig.tellraw("hello @s")
+    pig.title("Danger")
+    pig.actionbar("Run")
+    let bb = bossbar("mcfc:test", "Boss @s")
+    bb.value = 10
+    bb.max = 20
+    bb.visible = true
+    bb.players = pig
+    bb.name = "Still here"
+    pig.playsound("minecraft:entity.experience_orb.pickup", "master")
+    pig.stopsound("master", "minecraft:entity.experience_orb.pickup")
+    pos.particle("minecraft:flame")
+    pos.particle("minecraft:smoke", 4, pig)
+    pos.loot_insert("minecraft:chests/simple_dungeon")
+    pos.loot_spawn("minecraft:chests/simple_dungeon")
+    pos.setblock("minecraft:stone")
+    pos.fill(block("~1 ~1 ~1"), "minecraft:glass")
     return
 end
 "#;
@@ -364,7 +364,7 @@ end
 fn main() -> void
     let demo_title = "MCFC Demo $(random(100))"
     let player = single(selector("@p"))
-    tellraw(player, demo_title)
+    player.tellraw(demo_title)
     return
 end
 "#;
@@ -444,6 +444,93 @@ end
     }
 
     #[test]
+    fn compiles_async_blocks_and_entity_position() {
+        let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    let bb = bossbar("mcfc:demo", "MCFC Bossbar")
+    let count = 5
+    bb.value = count
+    bb.max = 10
+    bb.visible = true
+    bb.players = player
+    player.position.particle("minecraft:happy_villager", 20, player)
+    async:
+        sleep(5)
+        bb.remove()
+        player.position.setblock("minecraft:gold_block")
+    end
+    count = 7
+    player.tellraw("caller continues")
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result.artifacts.files;
+        let joined = files.values().cloned().collect::<Vec<_>>().join("\n");
+        let entry = files
+            .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+            .unwrap();
+
+        assert!(joined.contains("bossbar add $(id) \"MCFC Bossbar\""));
+        assert!(joined.contains("bossbar set $(id) value $(value)"));
+        assert!(joined.contains("bossbar set $(id) max $(value)"));
+        assert!(joined.contains("bossbar set $(id) visible $(visible)"));
+        assert!(joined.contains("bossbar set $(id) players $(selector)"));
+        assert!(joined.contains("bossbar remove $(id)"));
+        assert!(joined.contains("schedule function mcfc:generated/main__async_1__d0__sleep_resume_"));
+        assert!(joined.contains("prefix append value \"execute at \""));
+        assert!(joined.contains("setblock $(pos) $(block)"));
+        assert!(entry.contains("function mcfc:generated/main__async_1__d0__entry"));
+        assert!(joined.contains("caller continues"));
+    }
+
+    #[test]
+    fn rejects_async_return_old_builtins_and_book_annotation() {
+        let async_error = compile_source(
+            r#"
+fn main() -> void
+    async:
+        return
+    end
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(async_error.contains("return may not appear inside an async block"));
+
+        let legacy_error = compile_source(
+            r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    tellraw(player, "old")
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(legacy_error.contains("target.tellraw(message)"));
+
+        let book_error = compile_source(
+            r#"
+@book
+fn main() -> void
+    return
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(book_error.contains("unknown annotation '@book'"));
+    }
+
+    #[test]
     fn rejects_invalid_random_and_sleep_usage() {
         let source = r#"
 fn main() -> void
@@ -487,9 +574,9 @@ fn main() -> void
     let pig = single(selector("@e[type=pig,limit=1]"))
     let pos = block("~ ~1 ~")
     debug("checkpoint")
-    debug_marker(pos, "marker")
-    debug_marker(pos, "block marker", "minecraft:gold_block")
-    debug_entity(pig, "nearest pig")
+    pos.debug_marker("marker")
+    pos.debug_marker("block marker", "minecraft:gold_block")
+    pig.debug_entity("nearest pig")
     return
 end
 "#;
@@ -518,7 +605,7 @@ end
             r#"
 fn main() -> void
     let player = single(selector("@p"))
-    heal(player, 1)
+    player.heal(1)
 end
 "#,
             &CompileOptions::default(),
@@ -531,7 +618,7 @@ end
             r#"
 fn main() -> void
     let target = single(selector("@e"))
-    heal(target, 1)
+    target.heal(1)
 end
 "#,
             &CompileOptions::default(),

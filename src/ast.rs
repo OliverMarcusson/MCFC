@@ -26,7 +26,6 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
-    pub book_exposed: bool,
     pub span: Span,
 }
 
@@ -45,6 +44,7 @@ pub enum Type {
     Array(Box<Type>),
     Dict(Box<Type>),
     Struct(String),
+    Bossbar,
     EntitySet,
     EntityRef,
     BlockRef,
@@ -61,6 +61,7 @@ impl Type {
             Type::Array(element) => format!("array<{}>", element.as_str()),
             Type::Dict(value) => format!("dict<{}>", value.as_str()),
             Type::Struct(name) => name.clone(),
+            Type::Bossbar => "bossbar".to_string(),
             Type::EntitySet => "entity_set".to_string(),
             Type::EntityRef => "entity_ref".to_string(),
             Type::BlockRef => "block_ref".to_string(),
@@ -108,6 +109,9 @@ pub enum StmtKind {
     Context {
         kind: ContextKind,
         anchor: Expr,
+        body: Vec<Stmt>,
+    },
+    Async {
         body: Vec<Stmt>,
     },
     Break,

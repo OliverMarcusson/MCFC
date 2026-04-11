@@ -1,11 +1,5 @@
 # MCFC syntax highlighting fixture
 
-@book
-fn launch(level: int) -> void
-    mcf "tellraw @a \"launching level $(level)\""
-    return
-end
-
 fn classify(value: int) -> string
     if value == 0:
         return 'zero'
@@ -24,6 +18,7 @@ fn main() -> void
     let counts = {"wood": 12, "stone": 4}
     let roll = random(1, 20)
     let title = "MCFC Demo $(random(100))"
+    let bb = bossbar("mcfc:test", "Boss")
 
     for i in 0..=10:
         values.push(i)
@@ -40,32 +35,43 @@ fn main() -> void
     player.effect("speed", 10, 1)
     pig.add_tag("elite")
     pig.offhand.item = "minecraft:shield"
-    summon("minecraft:pig")
-    teleport(pig, block("~ ~1 ~"))
-    damage(pig, 2)
-    heal(pig, 1)
-    give(pig, "minecraft:apple", 1)
-    clear(pig, "minecraft:apple", 1)
-    loot_give(pig, "minecraft:chests/simple_dungeon")
-    loot_insert(chest, "minecraft:chests/simple_dungeon")
-    tellraw(pig, "hello @s")
-    title(pig, "Warning")
-    actionbar(pig, "Incoming")
-    debug("entered gameplay branch")
-    debug_marker(chest, "chest marker", "minecraft:gold_block")
-    debug_entity(pig, "nearest pig")
-    bossbar_add("mcfc:test", "Boss")
-    bossbar_players("mcfc:test", pig)
-    playsound("minecraft:entity.experience_orb.pickup", "master", pig)
-    stopsound(pig, "master", "minecraft:entity.experience_orb.pickup")
-    particle("minecraft:flame", chest, 4, pig)
-    sleep(1)
-    setblock(chest, "minecraft:stone")
-    fill(chest, block("1 65 1"), "minecraft:glass")
-    chest.Items[0].Count = values.len()
-    counts.remove("stone")
+    pig.teleport(block("~ ~1 ~"))
+    pig.damage(2)
+    pig.heal(1)
+    pig.give("minecraft:apple", 1)
+    pig.clear("minecraft:apple", 1)
+    pig.loot_give("minecraft:chests/simple_dungeon")
+    pig.tellraw("hello @s")
+    pig.title("Warning")
+    pig.actionbar("Incoming")
+    pig.playsound("minecraft:entity.experience_orb.pickup", "master")
+    pig.stopsound("master", "minecraft:entity.experience_orb.pickup")
+    pig.debug_entity("nearest pig")
 
+    chest.loot_insert("minecraft:chests/simple_dungeon")
+    chest.loot_spawn("minecraft:chests/simple_dungeon")
+    chest.debug_marker("chest marker", "minecraft:gold_block")
+    chest.particle("minecraft:flame", 4, pig)
+    chest.setblock("minecraft:stone")
+    chest.fill(block("1 65 1"), "minecraft:glass")
+
+    bb.value = 5
+    bb.max = 10
+    bb.visible = true
+    bb.players = pig
+    bb.name = "Boss Updated"
+
+    async:
+        sleep(1)
+        bb.remove()
+        pig.position.setblock("minecraft:gold_block")
+        player.position.particle("minecraft:happy_villager", 8, player)
+    end
+
+    debug("entered gameplay branch")
     let amount = values.len()
+    let label = classify(roll)
+    counts.remove("stone")
     mc "say plain command"
-    mcf "say count $(amount)"
+    mcf "say $(title) $(label) $(amount)"
 end

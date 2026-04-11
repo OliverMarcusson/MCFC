@@ -22,9 +22,9 @@ pub enum TokenKind {
     In,
     Break,
     Continue,
+    Async,
     Mc,
     Mcf,
-    BookAnnotation,
     True,
     False,
     And,
@@ -317,14 +317,10 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 cursor.consume_while(is_ident_continue);
                 let ident = &source[ident_start..cursor.position()];
                 let range = TextRange::new(start, cursor.position());
-                if ident == "book" {
-                    push_token(&mut tokens, &source_file, TokenKind::BookAnnotation, range);
-                } else {
-                    diagnostics.push(Diagnostic::new(
-                        format!("unknown annotation '@{}'", ident),
-                        Span::from_range(&source_file, range),
-                    ));
-                }
+                diagnostics.push(Diagnostic::new(
+                    format!("unknown annotation '@{}'", ident),
+                    Span::from_range(&source_file, range),
+                ));
             }
             ch if ch.is_ascii_digit() => {
                 let start = cursor.position();
@@ -353,6 +349,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                     "in" => TokenKind::In,
                     "break" => TokenKind::Break,
                     "continue" => TokenKind::Continue,
+                    "async" => TokenKind::Async,
                     "mc" => TokenKind::Mc,
                     "mcf" => TokenKind::Mcf,
                     "true" => TokenKind::True,
@@ -484,9 +481,9 @@ mod tests {
     }
 
     #[test]
-    fn lexes_book_annotation_and_ranges() {
-        let tokens = lex("@book\n0..10\n0..=10\n").unwrap();
-        assert!(matches!(tokens[0].kind, TokenKind::BookAnnotation));
+    fn lexes_async_and_ranges() {
+        let tokens = lex("async\n0..10\n0..=10\n").unwrap();
+        assert!(matches!(tokens[0].kind, TokenKind::Async));
         assert_eq!(tokens[0].range.start, 0);
         assert_eq!(tokens[0].range.end, 5);
         assert!(

@@ -33,7 +33,7 @@ impl Parser {
         while !self.at(&TokenKind::Eof) {
             if self.at(&TokenKind::Struct) {
                 structs.push(self.parse_struct());
-            } else if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+            } else if self.at(&TokenKind::Fn) {
                 functions.push(self.parse_function());
             } else {
                 self.error_here("expected struct or function definition");
@@ -80,11 +80,6 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Function {
-        let book_exposed = self.eat(&TokenKind::BookAnnotation);
-        if book_exposed {
-            self.skip_newlines();
-        }
-
         let start = self.expect(TokenKind::Fn, "expected 'fn'").span;
         let name = self.expect_identifier("expected function name");
         self.expect(TokenKind::LeftParen, "expected '(' after function name");
@@ -115,7 +110,6 @@ impl Parser {
             params,
             return_type,
             body,
-            book_exposed,
             span: start,
         }
     }
@@ -164,6 +158,14 @@ impl Parser {
             TokenKind::Match => {
                 self.bump();
                 self.parse_match_stmt(span.clone())
+            }
+            TokenKind::Async => {
+                self.bump();
+                self.expect(TokenKind::Colon, "expected ':' after async");
+                self.expect_statement_break("expected newline after async");
+                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
+                self.expect(TokenKind::End, "expected 'end'");
+                StmtKind::Async { body }
             }
             TokenKind::For => {
                 self.bump();
@@ -632,6 +634,7 @@ impl Parser {
                     self.expect(TokenKind::Gt, "expected '>' after dictionary value type");
                     Type::Dict(Box::new(value))
                 }
+                "bossbar" => Type::Bossbar,
                 _ => Type::Struct(name),
             },
             _ => {
@@ -720,11 +723,11 @@ impl Parser {
 
     fn recover_top_level(&mut self) {
         while !self.at(&TokenKind::Eof) {
-            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+            if self.at(&TokenKind::Fn) {
                 break;
             }
             self.bump();
-            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+            if self.at(&TokenKind::Fn) {
                 break;
             }
         }
@@ -843,20 +846,21 @@ mod tests {
     use crate::ast::{BinaryOp, Expr, ExprKind, ForKind, StmtKind, UnaryOp};
 
     #[test]
-    fn parses_comments_and_function_annotations() {
+    fn parses_comments_and_async_blocks() {
         let program = parse(
             r#"
 # leading
-@book
 fn fibb(n: int) -> void # trailing
-    return
+    async:
+        return
+    end
 end
 "#,
         )
         .unwrap();
 
         assert_eq!(program.functions.len(), 1);
-        assert!(program.functions[0].book_exposed);
+        assert!(matches!(program.functions[0].body[0].kind, StmtKind::Async { .. }));
     }
 
     #[test]

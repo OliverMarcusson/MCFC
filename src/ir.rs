@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, ContextKind, Type};
 use crate::types::{
-    BookCommand, CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind,
-    TypedForKind, TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
+    CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind, TypedForKind,
+    TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
 };
 
 #[derive(Debug, Clone)]
@@ -11,7 +11,6 @@ pub struct IrProgram {
     pub struct_defs: BTreeMap<String, crate::types::StructTypeDef>,
     pub functions: Vec<IrFunction>,
     pub call_depths: BTreeMap<String, usize>,
-    pub book_commands: BTreeMap<String, IrBookCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,13 +20,6 @@ pub struct IrFunction {
     pub return_type: Type,
     pub body: Vec<IrStmt>,
     pub locals: BTreeMap<String, Type>,
-    pub book_exposed: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct IrBookCommand {
-    pub function_name: String,
-    pub arg_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +58,10 @@ pub enum IrStmt {
         anchor: IrExpr,
         body: Vec<IrStmt>,
     },
+    Async {
+        function: IrFunction,
+        captures: Vec<IrCapture>,
+    },
     Break,
     Continue,
     Return(Option<IrExpr>),
@@ -78,6 +74,13 @@ pub enum IrStmt {
         seconds: IrExpr,
     },
     Expr(IrExpr),
+}
+
+#[derive(Debug, Clone)]
+pub struct IrCapture {
+    pub name: String,
+    pub ty: Type,
+    pub ref_kind: RefKind,
 }
 
 #[derive(Debug, Clone)]
@@ -175,44 +178,86 @@ pub enum IrExprKind {
 }
 
 pub fn lower(program: &TypedProgram) -> IrProgram {
+    let mut ctx = LowerCtx {
+        async_counter: 0,
+        async_functions: Vec::new(),
+    };
+    let mut functions: Vec<_> = program
+        .functions
+        .iter()
+        .map(|function| ctx.lower_function(function))
+        .collect();
+    functions.extend(ctx.async_functions);
     IrProgram {
         struct_defs: program.struct_defs.clone(),
-        functions: program.functions.iter().map(lower_function).collect(),
+        functions,
         call_depths: program.call_depths.clone(),
-        book_commands: program
-            .book_commands
-            .iter()
-            .map(|(name, command)| (name.clone(), lower_book_command(command)))
-            .collect(),
     }
 }
 
-fn lower_function(function: &TypedFunction) -> IrFunction {
-    IrFunction {
-        name: function.name.clone(),
-        params: function
-            .params
-            .iter()
-            .map(|param| IrParam {
-                name: param.name.clone(),
-                ty: param.ty.clone(),
-            })
-            .collect(),
-        return_type: function.return_type.clone(),
-        body: function.body.iter().map(lower_stmt).collect(),
-        locals: function.locals.clone(),
-        book_exposed: function.book_exposed,
+struct LowerCtx {
+    async_counter: usize,
+    async_functions: Vec<IrFunction>,
+}
+
+impl LowerCtx {
+    fn lower_function(&mut self, function: &TypedFunction) -> IrFunction {
+        IrFunction {
+            name: function.name.clone(),
+            params: function
+                .params
+                .iter()
+                .map(|param| IrParam {
+                    name: param.name.clone(),
+                    ty: param.ty.clone(),
+                })
+                .collect(),
+            return_type: function.return_type.clone(),
+            body: self.lower_stmts(&function.body, &function.name),
+            locals: function.locals.clone(),
+        }
+    }
+
+    fn lower_stmts(&mut self, stmts: &[TypedStmt], owner: &str) -> Vec<IrStmt> {
+        stmts.iter().map(|stmt| self.lower_stmt(stmt, owner)).collect()
+    }
+
+    fn lower_stmt(&mut self, stmt: &TypedStmt, owner: &str) -> IrStmt {
+        match &stmt.kind {
+            TypedStmtKind::Async {
+                captures,
+                body,
+                locals,
+                called_functions: _,
+                local_ref_kinds: _,
+            } => {
+                self.async_counter += 1;
+                let async_name = format!("{}__async_{}", owner, self.async_counter);
+                let async_owner = async_name.clone();
+                let captures: Vec<_> = captures
+                    .iter()
+                    .map(|capture| IrCapture {
+                        name: capture.name.clone(),
+                        ty: capture.ty.clone(),
+                        ref_kind: capture.ref_kind,
+                    })
+                    .collect();
+                let function = IrFunction {
+                    name: async_name,
+                    params: Vec::new(),
+                    return_type: Type::Void,
+                    body: self.lower_stmts(body, &async_owner),
+                    locals: locals.clone(),
+                };
+                self.async_functions.push(function.clone());
+                IrStmt::Async { function, captures }
+            }
+            _ => lower_stmt_with_ctx(self, stmt, owner),
+        }
     }
 }
 
-fn lower_book_command(command: &BookCommand) -> IrBookCommand {
-    IrBookCommand {
-        function_name: command.function_name.clone(),
-        arg_count: command.arg_count,
-    }
-}
-
-fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
+fn lower_stmt_with_ctx(ctx: &mut LowerCtx, stmt: &TypedStmt, owner: &str) -> IrStmt {
     match &stmt.kind {
         TypedStmtKind::Let { name, ty, value } => IrStmt::Let {
             name: name.clone(),
@@ -229,22 +274,22 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             else_body,
         } => IrStmt::If {
             condition: lower_expr(condition),
-            then_body: then_body.iter().map(lower_stmt).collect(),
-            else_body: else_body.iter().map(lower_stmt).collect(),
+            then_body: ctx.lower_stmts(then_body, owner),
+            else_body: ctx.lower_stmts(else_body, owner),
         },
         TypedStmtKind::While { condition, body } => IrStmt::While {
             condition: lower_expr(condition),
-            body: body.iter().map(lower_stmt).collect(),
+            body: ctx.lower_stmts(body, owner),
         },
         TypedStmtKind::For { name, kind, body } => IrStmt::For {
             name: name.clone(),
             kind: lower_for_kind(kind),
-            body: body.iter().map(lower_stmt).collect(),
+            body: ctx.lower_stmts(body, owner),
         },
         TypedStmtKind::Context { kind, anchor, body } => IrStmt::Context {
             kind: *kind,
             anchor: lower_expr(anchor),
-            body: body.iter().map(lower_stmt).collect(),
+            body: ctx.lower_stmts(body, owner),
         },
         TypedStmtKind::Break => IrStmt::Break,
         TypedStmtKind::Continue => IrStmt::Continue,
@@ -261,6 +306,7 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             seconds: lower_expr(seconds),
         },
         TypedStmtKind::Expr(expr) => IrStmt::Expr(lower_expr(expr)),
+        TypedStmtKind::Async { .. } => unreachable!("async is lowered in LowerCtx::lower_stmt"),
     }
 }
 

@@ -170,12 +170,7 @@
       ]
     },
     "annotations": {
-      "patterns": [
-        {
-          "name": "storage.type.annotation.mcfc",
-          "match": "@book\\b"
-        }
-      ]
+      "patterns": []
     },
     "functions": {
       "patterns": [
@@ -201,7 +196,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|end|struct)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|end|struct|async)\\b"
         },
         {
           "name": "storage.type.function.mcfc",
@@ -225,7 +220,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|block_ref|nbt|void)\\b"
+          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|block_ref|bossbar|nbt|void)\\b"
         }
       ]
     },
@@ -233,11 +228,15 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:sleep|random|selector|single|exists|block|at|as|summon|teleport|damage|heal|give|clear|loot_give|loot_insert|loot_spawn|tellraw|title|actionbar|debug|debug_marker|debug_entity|bossbar_add|bossbar_remove|bossbar_name|bossbar_value|bossbar_max|bossbar_visible|bossbar_players|playsound|stopsound|particle|setblock|fill)\\b(?=\\s*\\()"
+          "match": "\\b(?:sleep|random|selector|single|exists|has_data|block|at|as|summon|debug|bossbar|int|bool|string)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect|add_tag|remove_tag|has_tag)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.variable.member.mcfc",
+          "match": "(?<=\\.)\\b(?:position|name|value|max|visible|players|nbt|state|tags|team|mainhand|offhand|head|chest|legs|feet|item|count)\\b"
         }
       ]
     },

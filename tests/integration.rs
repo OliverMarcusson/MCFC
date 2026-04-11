@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mcfc::compiler::{compile_source, CompileOptions};
+use mcfc::compiler::{CompileOptions, compile_source};
 
 #[test]
 fn compiles_straight_line_program() {
@@ -18,10 +18,12 @@ end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
-    assert!(result
-        .artifacts
-        .files
-        .contains_key("data/mcfc/function/main.mcfunction"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/main.mcfunction")
+    );
     let load_tag = result
         .artifacts
         .files
@@ -131,18 +133,24 @@ end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
-    assert!(result
-        .artifacts
-        .files
-        .contains_key("data/minecraft/tags/function/tick.json"));
-    assert!(result
-        .artifacts
-        .files
-        .contains_key("data/mcfc/function/generated/book/tick.mcfunction"));
-    assert!(result
-        .artifacts
-        .files
-        .contains_key("data/mcfc/function/generated/book/dispatch_fibb.mcfunction"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/minecraft/tags/function/tick.json")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/generated/book/tick.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/generated/book/dispatch_fibb.mcfunction")
+    );
     let dispatch = result
         .artifacts
         .files
@@ -177,7 +185,147 @@ end
         .keys()
         .filter(|path| path.contains("while_") || path.contains("if_then"))
         .collect();
-    assert!(!generated_files.is_empty(), "expected generated block files");
+    assert!(
+        !generated_files.is_empty(),
+        "expected generated block files"
+    );
+}
+
+#[test]
+fn compiles_else_for_logic_and_loop_control() {
+    let source = r#"
+fn main() -> void
+    for i in 0..=5:
+        if i == 0 or not false:
+            continue
+        else if i == 3:
+            break
+        else:
+            mc "say loop"
+        end
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let generated_files: Vec<_> = result.artifacts.files.keys().cloned().collect();
+    assert!(generated_files.iter().any(|path| path.contains("if_else")));
+    assert!(generated_files.iter().any(|path| path.contains("for_cond")));
+    assert!(generated_files.iter().any(|path| path.contains("for_step")));
+    assert!(
+        generated_files
+            .iter()
+            .any(|path| path.contains("logic_or_rhs"))
+    );
+}
+
+#[test]
+fn compiles_string_equality() {
+    let source = r#"
+fn main() -> void
+    let a = "done"
+    let b = "done"
+    if a == b:
+        mc "say equal"
+    end
+    if a != "other":
+        mc "say diff"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("execute store success score $d0___cmp_"));
+    assert!(main.contains("data modify storage mcfc:runtime frames.__cmp__tmp"));
+}
+
+#[test]
+fn for_bounds_are_evaluated_once() {
+    let source = r#"
+fn start() -> int
+    return 1
+end
+
+fn finish() -> int
+    return 3
+end
+
+fn main() -> void
+    for i in start()..=finish():
+        mc "say loop"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert_eq!(main.matches("generated/start__d1__entry").count(), 1);
+    assert_eq!(main.matches("generated/finish__d1__entry").count(), 1);
+}
+
+#[test]
+fn rejects_invalid_loop_control_logic_and_for_usage() {
+    let source = r#"
+fn main() -> void
+    break
+    continue
+    let i = 0
+    for i in 0.."bad":
+        return
+    end
+    if 1 and true:
+        return
+    end
+    if "a" < "b":
+        return
+    end
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("'break' may only appear inside a loop"));
+    assert!(rendered.contains("'continue' may only appear inside a loop"));
+    assert!(rendered.contains("variable 'i' is already defined"));
+    assert!(rendered.contains("for range end must have type 'int'"));
+    assert!(rendered.contains("logical operators require 'bool' operands"));
+    assert!(rendered.contains("strings only support '==' and '!=' comparisons"));
+}
+
+#[test]
+fn guards_later_statements_after_nested_return() {
+    let source = r#"
+fn main() -> void
+    if true:
+        return
+    else:
+        mc "say no"
+    end
+    mc "say after"
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("execute if score $d0_main__ctrl mcfc matches 0 run say after"));
 }
 
 #[test]
@@ -269,6 +417,60 @@ end
     assert_eq!(status, 0);
     assert!(out.join("pack.mcmeta").exists());
     assert!(out.join("debug").join("ir.txt").exists());
+}
+
+#[test]
+fn cli_infers_namespace_from_input_filename() {
+    let source = r#"
+fn main() -> void
+    return
+end
+"#;
+
+    let base = temp_path();
+    let input = base.join("Test-Pack.mcf");
+    let out = base.join("out");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(&input, source).unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        input.display().to_string(),
+        "--out".into(),
+        out.display().to_string(),
+    ]);
+
+    assert_eq!(status, 0);
+    assert!(out.join("data").join("test-pack").join("function").join("main.mcfunction").exists());
+}
+
+#[test]
+fn cli_explicit_namespace_overrides_filename_inference() {
+    let source = r#"
+fn main() -> void
+    return
+end
+"#;
+
+    let base = temp_path();
+    let input = base.join("test.mcf");
+    let out = base.join("out");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(&input, source).unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        input.display().to_string(),
+        "--out".into(),
+        out.display().to_string(),
+        "--namespace".into(),
+        "custom_space".into(),
+    ]);
+
+    assert_eq!(status, 0);
+    assert!(out.join("data").join("custom_space").join("function").join("main.mcfunction").exists());
 }
 
 fn temp_path() -> PathBuf {

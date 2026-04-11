@@ -33,7 +33,10 @@ pub struct CompileResult {
     pub artifacts: BuildArtifacts,
 }
 
-pub fn compile_source(source: &str, options: &CompileOptions) -> Result<CompileResult, Diagnostics> {
+pub fn compile_source(
+    source: &str,
+    options: &CompileOptions,
+) -> Result<CompileResult, Diagnostics> {
     let ast = parser::parse(source)?;
     let typed_program = types::type_check(&ast)?;
     let ir_program = ir::lower(&typed_program);

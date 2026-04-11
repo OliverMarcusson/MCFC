@@ -14,13 +14,23 @@ pub enum TokenKind {
     Return,
     End,
     If,
+    Else,
     While,
+    For,
+    In,
+    Break,
+    Continue,
     Mc,
     Mcf,
     BookAnnotation,
     True,
     False,
+    And,
+    Or,
+    Not,
     Arrow,
+    DotDot,
+    DotDotEq,
     Colon,
     Comma,
     LeftParen,
@@ -66,12 +76,41 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 );
             }
             '(' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::LeftParen),
-            ')' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::RightParen),
+            ')' => push_simple(
+                &mut cursor,
+                &mut tokens,
+                &source_file,
+                TokenKind::RightParen,
+            ),
             ':' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Colon),
             ',' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Comma),
             '+' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Plus),
             '*' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Star),
             '/' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Slash),
+            '.' => {
+                let start = cursor.position();
+                cursor.bump();
+                if cursor.peek() == Some('.') {
+                    cursor.bump();
+                    let kind = if cursor.peek() == Some('=') {
+                        cursor.bump();
+                        TokenKind::DotDotEq
+                    } else {
+                        TokenKind::DotDot
+                    };
+                    push_token(
+                        &mut tokens,
+                        &source_file,
+                        kind,
+                        TextRange::new(start, cursor.position()),
+                    );
+                } else {
+                    diagnostics.push(Diagnostic::new(
+                        "unexpected '.'",
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                    ));
+                }
+            }
             '-' => {
                 let start = cursor.position();
                 cursor.bump();
@@ -269,11 +308,19 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                     "return" => TokenKind::Return,
                     "end" => TokenKind::End,
                     "if" => TokenKind::If,
+                    "else" => TokenKind::Else,
                     "while" => TokenKind::While,
+                    "for" => TokenKind::For,
+                    "in" => TokenKind::In,
+                    "break" => TokenKind::Break,
+                    "continue" => TokenKind::Continue,
                     "mc" => TokenKind::Mc,
                     "mcf" => TokenKind::Mcf,
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
+                    "and" => TokenKind::And,
+                    "or" => TokenKind::Or,
+                    "not" => TokenKind::Not,
                     _ => TokenKind::Identifier(raw.to_string()),
                 };
                 push_token(&mut tokens, &source_file, kind, range);
@@ -310,7 +357,12 @@ fn push_simple(
     );
 }
 
-fn push_token(tokens: &mut Vec<Token>, source_file: &SourceFile<'_>, kind: TokenKind, range: TextRange) {
+fn push_token(
+    tokens: &mut Vec<Token>,
+    source_file: &SourceFile<'_>,
+    kind: TokenKind,
+    range: TextRange,
+) {
     tokens.push(Token {
         span: Span::from_range(source_file, range),
         kind,
@@ -375,23 +427,39 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lex, TokenKind};
+    use super::{TokenKind, lex};
 
     #[test]
     fn lexes_comments_and_newlines() {
         let tokens = lex("fn main() -> void # trailing\n# own line\nend\n").unwrap();
         let kinds: Vec<_> = tokens.into_iter().map(|token| token.kind).collect();
         assert!(matches!(kinds[0], TokenKind::Fn));
-        assert!(kinds.iter().filter(|kind| matches!(kind, TokenKind::Newline)).count() >= 2);
+        assert!(
+            kinds
+                .iter()
+                .filter(|kind| matches!(kind, TokenKind::Newline))
+                .count()
+                >= 2
+        );
         assert!(matches!(kinds.last(), Some(TokenKind::Eof)));
     }
 
     #[test]
     fn lexes_book_annotation_and_ranges() {
-        let tokens = lex("@book\n").unwrap();
+        let tokens = lex("@book\n0..10\n0..=10\n").unwrap();
         assert!(matches!(tokens[0].kind, TokenKind::BookAnnotation));
         assert_eq!(tokens[0].range.start, 0);
         assert_eq!(tokens[0].range.end, 5);
+        assert!(
+            tokens
+                .iter()
+                .any(|token| matches!(token.kind, TokenKind::DotDot))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|token| matches!(token.kind, TokenKind::DotDotEq))
+        );
     }
 
     #[test]
@@ -414,5 +482,19 @@ mod tests {
             .collect();
 
         assert_eq!(strings, vec!["hello", "\"\"", "it's"]);
+    }
+
+    #[test]
+    fn lexes_control_flow_keywords() {
+        let tokens = lex("else for in break continue and or not\n").unwrap();
+        let kinds: Vec<_> = tokens.into_iter().map(|token| token.kind).collect();
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Else)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::For)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::In)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Break)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Continue)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::And)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Or)));
+        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Not)));
     }
 }

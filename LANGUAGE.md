@@ -10,7 +10,7 @@ The compiler is currently focused on a compact core language:
 - local variables with inferred types
 - integer arithmetic
 - boolean conditions
-- `if` and `while`
+- `if`, `else`, `while`, and range `for`
 - function calls
 - raw Minecraft commands
 - storage-backed strings
@@ -104,7 +104,12 @@ Supported statements:
 - `let name = expr`
 - `name = expr`
 - `if condition: ... end`
+- `if condition: ... else: ... end`
 - `while condition: ... end`
+- `for name in start..end: ... end`
+- `for name in start..=end: ... end`
+- `break`
+- `continue`
 - `return`
 - `return expr`
 - `mc "raw minecraft command"`
@@ -114,8 +119,8 @@ Supported statements:
 Notes:
 
 - only function calls may be used as bare expression statements
-- `if` and `while` bodies are block-scoped for new `let` bindings
-- there is currently no `else`
+- `if`, `while`, and `for` bodies are block-scoped for new `let` bindings
+- `for` loop variables are loop-local and do not exist after the loop ends
 - `mc` is literal-only; `mcf` is the runtime interpolation form
 
 ### Expressions
@@ -127,18 +132,23 @@ Supported expressions:
 - string literals, for example `"hello"` or `'hello'`
 - variables
 - function calls
+- unary `not`
 - binary operators
 
 Binary operators:
 
 - arithmetic: `+`, `-`, `*`, `/`
+- logical: `and`, `or`
 - comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
 
 Precedence:
 
-1. `*`, `/`
-2. `+`, `-`
-3. comparisons
+1. `not`
+2. `*`, `/`
+3. `+`, `-`
+4. comparisons
+5. `and`
+6. `or`
 
 Parentheses may be used to group expressions.
 
@@ -162,8 +172,9 @@ Type rules:
 Current operator support:
 
 - arithmetic requires `int`
-- comparisons currently support `int` and `bool`
-- strings can be stored, passed, assigned, and returned, but string comparison/operators are not supported yet
+- `and`, `or`, and `not` require `bool`
+- ordering comparisons currently support `int` and `bool`
+- string equality supports only `==` and `!=`
 
 String literal notes:
 
@@ -180,7 +191,8 @@ Important behavior:
 - parameters are available throughout the function
 - `let` introduces a new binding
 - reusing an existing local or parameter name with `let` is rejected
-- `let` bindings created inside an `if` or `while` body do not become visible outside that block
+- `let` bindings created inside an `if`, `while`, or `for` body do not become visible outside that block
+- `for` loop variables follow the same block-scoping rule
 
 Example:
 
@@ -219,6 +231,35 @@ end
 ```
 
 The compiler lowers loops into generated datapack functions. It does not try to protect you from infinite loops, so loop termination is your responsibility.
+
+### `for`
+
+`for` loops are range-based and require `int` bounds.
+
+```text
+for i in 0..10:
+    mc "say half open"
+end
+
+for i in 0..=10:
+    mc "say inclusive"
+end
+```
+
+Rules:
+
+- `start..end` is half-open and iterates while `i < end`
+- `start..=end` is inclusive and iterates while `i <= end`
+- range bounds are evaluated once before the loop starts
+- the loop variable is local to the loop body
+
+### `break` and `continue`
+
+`break` exits the nearest enclosing loop.
+
+`continue` skips the rest of the current iteration and starts the next one.
+
+Both statements are only valid inside `while` and `for`.
 
 ## Functions and Calls
 
@@ -340,6 +381,9 @@ Common errors include:
 - wrong argument type
 - invalid return type
 - non-boolean `if`/`while` conditions
+- non-boolean logical operands
+- invalid `for` range bounds
+- `break` or `continue` outside a loop
 - unsupported recursion
 
 ## Current Limitations
@@ -348,10 +392,8 @@ This is the current implemented language, not the final design.
 
 Not supported yet:
 
-- `else`
 - recursion
 - implicit conversions
-- string operators or string comparison
 - placeholder expressions such as `$(a + 1)`
 - direct entity, block, or arbitrary storage-path placeholders in `mcf`
 - `@book` string arguments

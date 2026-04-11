@@ -49,10 +49,32 @@ pub struct Stmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StmtKind {
-    Let { name: String, value: Expr },
-    Assign { name: String, value: Expr },
-    If { condition: Expr, body: Vec<Stmt> },
-    While { condition: Expr, body: Vec<Stmt> },
+    Let {
+        name: String,
+        value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    If {
+        condition: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Vec<Stmt>,
+    },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    For {
+        name: String,
+        start: Expr,
+        end: Expr,
+        inclusive: bool,
+        body: Vec<Stmt>,
+    },
+    Break,
+    Continue,
     Return(Option<Expr>),
     RawCommand(String),
     MacroCommand(String),
@@ -71,6 +93,10 @@ pub enum ExprKind {
     Bool(bool),
     String(String),
     Variable(String),
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
     Binary {
         op: BinaryOp,
         left: Box<Expr>,
@@ -80,6 +106,11 @@ pub enum ExprKind {
         function: String,
         args: Vec<Expr>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,4 +125,6 @@ pub enum BinaryOp {
     Lte,
     Gt,
     Gte,
+    And,
+    Or,
 }

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::ast::{BinaryOp, Type};
+use crate::ast::{BinaryOp, Type, UnaryOp};
 use crate::ir::{
     IrBookCommand, IrExpr, IrExprKind, IrFunction, IrMacroPlaceholder, IrProgram, IrStmt,
 };
@@ -39,6 +39,66 @@ struct FunctionInfo {
     params: Vec<(String, Type)>,
     return_type: Type,
     locals: BTreeMap<String, Type>,
+}
+
+#[derive(Debug, Clone)]
+struct Guard {
+    ctrl_slot: String,
+    break_slot: Option<String>,
+    continue_slot: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LoopContext {
+    break_slot: String,
+    continue_slot: String,
+    continue_target: String,
+}
+
+impl Guard {
+    fn for_function(depth: usize, function: &str) -> Self {
+        Self {
+            ctrl_slot: control_slot(depth, function),
+            break_slot: None,
+            continue_slot: None,
+        }
+    }
+
+    fn within_loop(&self, loop_ctx: &LoopContext) -> Self {
+        Self {
+            ctrl_slot: self.ctrl_slot.clone(),
+            break_slot: Some(loop_ctx.break_slot.clone()),
+            continue_slot: Some(loop_ctx.continue_slot.clone()),
+        }
+    }
+
+    fn wrap(&self, command: impl Into<String>) -> String {
+        self.wrap_with_options(command, true, true)
+    }
+
+    fn wrap_allow_continue(&self, command: impl Into<String>) -> String {
+        self.wrap_with_options(command, true, false)
+    }
+
+    fn wrap_with_options(
+        &self,
+        command: impl Into<String>,
+        check_break: bool,
+        check_continue: bool,
+    ) -> String {
+        let mut prefix = format!("execute if score {} mcfc matches 0", self.ctrl_slot);
+        if check_break {
+            if let Some(slot) = &self.break_slot {
+                prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
+            }
+        }
+        if check_continue {
+            if let Some(slot) = &self.continue_slot {
+                prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
+            }
+        }
+        format!("{} run {}", prefix, command.into())
+    }
 }
 
 impl Backend {
@@ -118,11 +178,18 @@ impl Backend {
     fn emit_setup(&mut self) {
         let mut lines = vec![
             "scoreboard objectives add mcfc dummy".to_string(),
-            format!("data modify storage {}:runtime frames set value {{}}", self.namespace),
+            format!(
+                "data modify storage {}:runtime frames set value {{}}",
+                self.namespace
+            ),
         ];
 
         for depth in 0..=self.max_depth {
             for (function, info) in &self.functions {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    control_slot(depth, function)
+                ));
                 for (name, ty) in &info.locals {
                     if matches!(ty, Type::Int | Type::Bool) {
                         lines.push(format!(
@@ -141,7 +208,10 @@ impl Backend {
         }
 
         self.files.insert(
-            format!("data/{}/function/generated/setup.mcfunction", self.namespace),
+            format!(
+                "data/{}/function/generated/setup.mcfunction",
+                self.namespace
+            ),
             lines.join("\n") + "\n",
         );
     }
@@ -149,6 +219,10 @@ impl Backend {
     fn emit_main_entry(&mut self) {
         let mut lines = vec![format!("function {}:generated/setup", self.namespace)];
         if self.functions.contains_key("main") {
+            lines.push(format!(
+                "scoreboard players set {} mcfc 0",
+                control_slot(0, "main")
+            ));
             lines.push(format!(
                 "function {}:{}",
                 self.namespace,
@@ -163,8 +237,14 @@ impl Backend {
 
     fn emit_book_runtime(&mut self) {
         self.files.insert(
-            format!("data/{}/function/generated/book/tick.mcfunction", self.namespace),
-            format!("execute as @a run function {}:generated/book/tick_player\n", self.namespace),
+            format!(
+                "data/{}/function/generated/book/tick.mcfunction",
+                self.namespace
+            ),
+            format!(
+                "execute as @a run function {}:generated/book/tick_player\n",
+                self.namespace
+            ),
         );
 
         self.files.insert(
@@ -346,7 +426,8 @@ impl Backend {
     fn emit_function_variant(&mut self, function: &IrFunction, depth: usize) {
         let path = self.function_entry_path(&function.name, depth);
         let mut lines = Vec::new();
-        self.emit_stmt_list(function, depth, &function.body, &mut lines);
+        let guard = Guard::for_function(depth, &function.name);
+        self.emit_stmt_list(function, depth, &function.body, &guard, None, &mut lines);
         self.files.insert(
             path,
             if lines.is_empty() {
@@ -362,84 +443,356 @@ impl Backend {
         function: &IrFunction,
         depth: usize,
         stmts: &[IrStmt],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
         lines: &mut Vec<String>,
     ) {
         for stmt in stmts {
             match stmt {
                 IrStmt::Let { name, value, .. } | IrStmt::Assign { name, value } => {
-                    self.compile_expr_into_named_slot(function, depth, value, name, lines);
+                    let mut stmt_lines = Vec::new();
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        value,
+                        name,
+                        &mut stmt_lines,
+                    );
+                    self.extend_guarded(lines, guard, stmt_lines);
                 }
-                IrStmt::RawCommand(raw) => lines.push(raw.clone()),
+                IrStmt::RawCommand(raw) => lines.push(guard.wrap(raw.clone())),
                 IrStmt::MacroCommand {
                     template,
                     placeholders,
                 } => {
-                    self.emit_macro_command(function, depth, template, placeholders, lines);
+                    let mut stmt_lines = Vec::new();
+                    self.emit_macro_command(
+                        function,
+                        depth,
+                        template,
+                        placeholders,
+                        &mut stmt_lines,
+                    );
+                    self.extend_guarded(lines, guard, stmt_lines);
                 }
                 IrStmt::Expr(expr) => {
                     let scratch = self.new_temp();
-                    self.compile_expr_into_named_slot(function, depth, expr, &scratch, lines);
+                    let mut stmt_lines = Vec::new();
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        expr,
+                        &scratch,
+                        &mut stmt_lines,
+                    );
+                    self.extend_guarded(lines, guard, stmt_lines);
                 }
                 IrStmt::Return(expr) => {
+                    let mut stmt_lines = Vec::new();
                     if let Some(expr) = expr {
                         let slot = return_slot(depth, &function.name, &expr.ty);
-                        self.compile_expr_into_slot(function, depth, expr, &slot, lines);
+                        self.compile_expr_into_slot(function, depth, expr, &slot, &mut stmt_lines);
                     }
+                    stmt_lines.push(format!(
+                        "scoreboard players set {} mcfc 1",
+                        control_slot(depth, &function.name)
+                    ));
+                    self.extend_guarded(lines, guard, stmt_lines);
                     return;
                 }
-                IrStmt::If { condition, body } => {
+                IrStmt::Break => {
+                    let Some(loop_ctx) = loop_ctx else {
+                        continue;
+                    };
+                    lines.push(guard.wrap(format!(
+                        "scoreboard players set {} mcfc 1",
+                        loop_ctx.break_slot
+                    )));
+                    return;
+                }
+                IrStmt::Continue => {
+                    let Some(loop_ctx) = loop_ctx else {
+                        continue;
+                    };
+                    lines.push(guard.wrap(format!(
+                        "scoreboard players set {} mcfc 1",
+                        loop_ctx.continue_slot
+                    )));
+                    return;
+                }
+                IrStmt::If {
+                    condition,
+                    then_body,
+                    else_body,
+                } => {
                     let cond_temp = self.new_temp();
-                    self.compile_expr_into_named_slot(function, depth, condition, &cond_temp, lines);
-                    let (path, name) = self.new_block(function, depth, "if_then");
+                    let mut stmt_lines = Vec::new();
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        condition,
+                        &cond_temp,
+                        &mut stmt_lines,
+                    );
+                    self.extend_guarded(lines, guard, stmt_lines);
+
+                    let (then_path, then_name) = self.new_block(function, depth, "if_then");
                     let mut then_lines = Vec::new();
-                    self.emit_stmt_list(function, depth, body, &mut then_lines);
+                    self.emit_stmt_list(
+                        function,
+                        depth,
+                        then_body,
+                        guard,
+                        loop_ctx,
+                        &mut then_lines,
+                    );
                     self.files.insert(
-                        path,
+                        then_path,
                         if then_lines.is_empty() {
                             "# empty if block\n".to_string()
                         } else {
                             then_lines.join("\n") + "\n"
                         },
                     );
-                    lines.push(format!(
+                    lines.push(guard.wrap(format!(
                         "execute if score {} mcfc matches 1 run function {}:{}",
                         numeric_slot(depth, &function.name, &cond_temp),
                         self.namespace,
-                        name
-                    ));
+                        then_name
+                    )));
+
+                    if !else_body.is_empty() {
+                        let (else_path, else_name) = self.new_block(function, depth, "if_else");
+                        let mut else_lines = Vec::new();
+                        self.emit_stmt_list(
+                            function,
+                            depth,
+                            else_body,
+                            guard,
+                            loop_ctx,
+                            &mut else_lines,
+                        );
+                        self.files.insert(
+                            else_path,
+                            if else_lines.is_empty() {
+                                "# empty else block\n".to_string()
+                            } else {
+                                else_lines.join("\n") + "\n"
+                            },
+                        );
+                        lines.push(guard.wrap(format!(
+                            "execute unless score {} mcfc matches 1 run function {}:{}",
+                            numeric_slot(depth, &function.name, &cond_temp),
+                            self.namespace,
+                            else_name
+                        )));
+                    }
                 }
                 IrStmt::While { condition, body } => {
+                    let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
+                    let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
                     let (cond_path, cond_name) = self.new_block(function, depth, "while_cond");
                     let (body_path, body_name) = self.new_block(function, depth, "while_body");
 
-                    let mut cond_lines = Vec::new();
+                    let loop_ctx = LoopContext {
+                        break_slot: break_slot.clone(),
+                        continue_slot: continue_slot.clone(),
+                        continue_target: cond_name.clone(),
+                    };
+                    let loop_guard = guard.within_loop(&loop_ctx);
+
+                    let mut cond_lines = vec![loop_guard.wrap_allow_continue(format!(
+                        "scoreboard players set {} mcfc 0",
+                        continue_slot
+                    ))];
                     let cond_temp = self.new_temp();
+                    let mut cond_eval = Vec::new();
                     self.compile_expr_into_named_slot(
                         function,
                         depth,
                         condition,
                         &cond_temp,
-                        &mut cond_lines,
+                        &mut cond_eval,
                     );
-                    cond_lines.push(format!(
+                    self.extend_guarded_allow_continue(&mut cond_lines, &loop_guard, cond_eval);
+                    cond_lines.push(loop_guard.wrap_allow_continue(format!(
                         "execute if score {} mcfc matches 1 run function {}:{}",
                         numeric_slot(depth, &function.name, &cond_temp),
                         self.namespace,
                         body_name
-                    ));
+                    )));
 
                     let mut body_lines = Vec::new();
-                    self.emit_stmt_list(function, depth, body, &mut body_lines);
-                    body_lines.push(format!("function {}:{}", self.namespace, cond_name));
+                    self.emit_stmt_list(
+                        function,
+                        depth,
+                        body,
+                        &loop_guard,
+                        Some(&loop_ctx),
+                        &mut body_lines,
+                    );
+                    body_lines.push(loop_guard.wrap_allow_continue(format!(
+                        "function {}:{}",
+                        self.namespace, loop_ctx.continue_target
+                    )));
 
-                    self.files
-                        .insert(cond_path, cond_lines.join("\n") + "\n");
-                    self.files
-                        .insert(body_path, body_lines.join("\n") + "\n");
-                    lines.push(format!("function {}:{}", self.namespace, cond_name));
+                    self.files.insert(cond_path, cond_lines.join("\n") + "\n");
+                    self.files.insert(
+                        body_path,
+                        if body_lines.is_empty() {
+                            "# empty while body\n".to_string()
+                        } else {
+                            body_lines.join("\n") + "\n"
+                        },
+                    );
+
+                    lines.push(guard.wrap(format!("scoreboard players set {} mcfc 0", break_slot)));
+                    lines.push(
+                        guard.wrap(format!("scoreboard players set {} mcfc 0", continue_slot)),
+                    );
+                    lines.push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
+                }
+                IrStmt::For {
+                    name,
+                    start,
+                    end,
+                    inclusive,
+                    body,
+                } => {
+                    let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
+                    let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
+                    let end_name = self.new_temp();
+                    let cond_temp = self.new_temp();
+                    let (cond_path, cond_name) = self.new_block(function, depth, "for_cond");
+                    let (body_path, body_name) = self.new_block(function, depth, "for_body");
+                    let (step_path, step_name) = self.new_block(function, depth, "for_step");
+
+                    let loop_ctx = LoopContext {
+                        break_slot: break_slot.clone(),
+                        continue_slot: continue_slot.clone(),
+                        continue_target: step_name.clone(),
+                    };
+                    let loop_guard = guard.within_loop(&loop_ctx);
+
+                    let mut init_lines = Vec::new();
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        start,
+                        name,
+                        &mut init_lines,
+                    );
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        end,
+                        &end_name,
+                        &mut init_lines,
+                    );
+                    self.extend_guarded(lines, guard, init_lines);
+                    lines.push(guard.wrap(format!("scoreboard players set {} mcfc 0", break_slot)));
+                    lines.push(
+                        guard.wrap(format!("scoreboard players set {} mcfc 0", continue_slot)),
+                    );
+
+                    let cmp_op = if *inclusive {
+                        BinaryOp::Lte
+                    } else {
+                        BinaryOp::Lt
+                    };
+                    let cond_expr = IrExpr {
+                        ty: Type::Bool,
+                        kind: IrExprKind::Binary {
+                            op: cmp_op,
+                            left: Box::new(IrExpr {
+                                ty: Type::Int,
+                                kind: IrExprKind::Variable(name.clone()),
+                            }),
+                            right: Box::new(IrExpr {
+                                ty: Type::Int,
+                                kind: IrExprKind::Variable(end_name.clone()),
+                            }),
+                        },
+                    };
+
+                    let mut cond_lines = Vec::new();
+                    let mut cond_eval = Vec::new();
+                    self.compile_expr_into_named_slot(
+                        function,
+                        depth,
+                        &cond_expr,
+                        &cond_temp,
+                        &mut cond_eval,
+                    );
+                    self.extend_guarded(&mut cond_lines, &loop_guard, cond_eval);
+                    cond_lines.push(loop_guard.wrap(format!(
+                        "execute if score {} mcfc matches 1 run function {}:{}",
+                        numeric_slot(depth, &function.name, &cond_temp),
+                        self.namespace,
+                        body_name
+                    )));
+
+                    let mut body_lines = Vec::new();
+                    self.emit_stmt_list(
+                        function,
+                        depth,
+                        body,
+                        &loop_guard,
+                        Some(&loop_ctx),
+                        &mut body_lines,
+                    );
+                    body_lines.push(loop_guard.wrap_allow_continue(format!(
+                        "function {}:{}",
+                        self.namespace, loop_ctx.continue_target
+                    )));
+
+                    let mut step_lines = vec![loop_guard.wrap_allow_continue(format!(
+                        "scoreboard players set {} mcfc 0",
+                        continue_slot
+                    ))];
+                    step_lines.push(loop_guard.wrap_allow_continue(format!(
+                        "scoreboard players add {} mcfc 1",
+                        numeric_slot(depth, &function.name, name)
+                    )));
+                    step_lines.push(
+                        loop_guard.wrap_allow_continue(format!(
+                            "function {}:{}",
+                            self.namespace, cond_name
+                        )),
+                    );
+
+                    self.files.insert(cond_path, cond_lines.join("\n") + "\n");
+                    self.files.insert(
+                        body_path,
+                        if body_lines.is_empty() {
+                            "# empty for body\n".to_string()
+                        } else {
+                            body_lines.join("\n") + "\n"
+                        },
+                    );
+                    self.files.insert(step_path, step_lines.join("\n") + "\n");
+
+                    lines.push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
                 }
             }
         }
+    }
+
+    fn extend_guarded(&self, target: &mut Vec<String>, guard: &Guard, lines: Vec<String>) {
+        target.extend(lines.into_iter().map(|line| guard.wrap(line)));
+    }
+
+    fn extend_guarded_allow_continue(
+        &self,
+        target: &mut Vec<String>,
+        guard: &Guard,
+        lines: Vec<String>,
+    ) {
+        target.extend(
+            lines
+                .into_iter()
+                .map(|line| guard.wrap_allow_continue(line)),
+        );
     }
 
     fn compile_expr_into_named_slot(
@@ -494,12 +847,22 @@ impl Backend {
                 )),
                 Type::Void => {}
             },
+            IrExprKind::Unary { op, expr } => {
+                self.compile_unary(function, depth, *op, expr, target, lines);
+            }
             IrExprKind::Binary { op, left, right } => {
                 self.compile_binary(function, depth, *op, left, right, target, lines);
             }
-            IrExprKind::Call { function: callee, args } => {
+            IrExprKind::Call {
+                function: callee,
+                args,
+            } => {
                 let callee_depth = depth + 1;
                 if let Some(info) = self.functions.get(callee).cloned() {
+                    lines.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        control_slot(callee_depth, callee)
+                    ));
                     for ((param_name, param_ty), arg) in info.params.iter().zip(args.iter()) {
                         let param_slot = local_slot(callee_depth, callee, param_name, param_ty);
                         self.compile_expr_into_slot(function, depth, arg, &param_slot, lines);
@@ -529,6 +892,34 @@ impl Backend {
         }
     }
 
+    fn compile_unary(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        op: UnaryOp,
+        expr: &IrExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let temp = self.new_temp();
+        let temp_slot = local_slot(depth, &function.name, &temp, &expr.ty);
+        self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
+
+        match op {
+            UnaryOp::Not => {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 1",
+                    target.numeric_name()
+                ));
+                lines.push(format!(
+                    "execute if score {} mcfc matches 1 run scoreboard players set {} mcfc 0",
+                    temp_slot.numeric_name(),
+                    target.numeric_name()
+                ));
+            }
+        }
+    }
+
     fn compile_binary(
         &mut self,
         function: &IrFunction,
@@ -539,6 +930,50 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        match op {
+            BinaryOp::And => {
+                let left_temp = self.new_temp();
+                let left_slot = local_slot(depth, &function.name, &left_temp, &left.ty);
+                self.compile_expr_into_slot(function, depth, left, &left_slot, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                let (rhs_path, rhs_name) = self.new_block(function, depth, "logic_and_rhs");
+                let mut rhs_lines = Vec::new();
+                self.compile_expr_into_slot(function, depth, right, target, &mut rhs_lines);
+                self.files.insert(rhs_path, rhs_lines.join("\n") + "\n");
+                lines.push(format!(
+                    "execute if score {} mcfc matches 1 run function {}:{}",
+                    left_slot.numeric_name(),
+                    self.namespace,
+                    rhs_name
+                ));
+                return;
+            }
+            BinaryOp::Or => {
+                let left_temp = self.new_temp();
+                let left_slot = local_slot(depth, &function.name, &left_temp, &left.ty);
+                self.compile_expr_into_slot(function, depth, left, &left_slot, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 1",
+                    target.numeric_name()
+                ));
+                let (rhs_path, rhs_name) = self.new_block(function, depth, "logic_or_rhs");
+                let mut rhs_lines = Vec::new();
+                self.compile_expr_into_slot(function, depth, right, target, &mut rhs_lines);
+                self.files.insert(rhs_path, rhs_lines.join("\n") + "\n");
+                lines.push(format!(
+                    "execute if score {} mcfc matches 0 run function {}:{}",
+                    left_slot.numeric_name(),
+                    self.namespace,
+                    rhs_name
+                ));
+                return;
+            }
+            _ => {}
+        }
+
         let left_temp = self.new_temp();
         let right_temp = self.new_temp();
         let left_slot = local_slot(depth, &function.name, &left_temp, &left.ty);
@@ -566,6 +1001,11 @@ impl Backend {
                     operator,
                     right_slot.numeric_name()
                 ));
+            }
+            BinaryOp::Eq | BinaryOp::NotEq
+                if matches!(left.ty, Type::String) && matches!(right.ty, Type::String) =>
+            {
+                self.compile_string_equality(op, &left_slot, &right_slot, target, lines);
             }
             BinaryOp::Eq
             | BinaryOp::NotEq
@@ -595,6 +1035,60 @@ impl Backend {
                     target.numeric_name()
                 ));
             }
+            BinaryOp::And | BinaryOp::Or => unreachable!(),
+        }
+    }
+
+    fn compile_string_equality(
+        &mut self,
+        op: BinaryOp,
+        left_slot: &SlotRef,
+        right_slot: &SlotRef,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let compare_storage = format!("frames.__cmp{}", self.new_temp());
+        let compare_result = numeric_slot(0, "__cmp", &self.new_temp());
+        lines.push(format!(
+            "data modify storage {}:runtime {} set from storage {}:runtime {}",
+            self.namespace,
+            compare_storage,
+            self.namespace,
+            left_slot.storage_path()
+        ));
+        lines.push(format!(
+            "execute store success score {} mcfc run data modify storage {}:runtime {} set from storage {}:runtime {}",
+            compare_result,
+            self.namespace,
+            compare_storage,
+            self.namespace,
+            right_slot.storage_path()
+        ));
+
+        match op {
+            BinaryOp::Eq => {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 1",
+                    target.numeric_name()
+                ));
+                lines.push(format!(
+                    "execute if score {} mcfc matches 1 run scoreboard players set {} mcfc 0",
+                    compare_result,
+                    target.numeric_name()
+                ));
+            }
+            BinaryOp::NotEq => {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(format!(
+                    "execute if score {} mcfc matches 1 run scoreboard players set {} mcfc 1",
+                    compare_result,
+                    target.numeric_name()
+                ));
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -619,8 +1113,7 @@ impl Backend {
             macro_id
         );
         let path = format!("data/{}/function/{}.mcfunction", self.namespace, relative);
-        self.files
-            .insert(path, format!("${}\n", template));
+        self.files.insert(path, format!("${}\n", template));
 
         let storage_base = macro_storage_base(depth, &function.name, macro_id);
         for placeholder in placeholders {
@@ -732,7 +1225,10 @@ impl Backend {
                 numeric_slot(0, &command.function_name, param_name),
                 token_index
             ));
-            final_conditions.push(format!("if score $book_parse_{} mcfc matches 1", token_index));
+            final_conditions.push(format!(
+                "if score $book_parse_{} mcfc matches 1",
+                token_index
+            ));
         }
 
         lines.push(format!(
@@ -796,6 +1292,10 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
     }
 }
 
+fn control_slot(depth: usize, function: &str) -> String {
+    format!("$d{}_{}__ctrl", depth, sanitize(function))
+}
+
 fn numeric_slot(depth: usize, function: &str, name: &str) -> String {
     format!("$d{}_{}_{}", depth, sanitize(function), sanitize(name))
 }
@@ -805,7 +1305,12 @@ fn numeric_return_slot(depth: usize, function: &str) -> String {
 }
 
 fn string_slot(depth: usize, function: &str, name: &str) -> String {
-    format!("frames.d{}.{}.{}", depth, sanitize(function), sanitize(name))
+    format!(
+        "frames.d{}.{}.{}",
+        depth,
+        sanitize(function),
+        sanitize(name)
+    )
 }
 
 fn string_return_slot(depth: usize, function: &str) -> String {
@@ -815,7 +1320,13 @@ fn string_return_slot(depth: usize, function: &str) -> String {
 fn sanitize(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

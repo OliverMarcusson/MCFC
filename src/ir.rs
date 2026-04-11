@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, Type};
 use crate::types::{
-    BookCommand, MacroPlaceholder, TypedExpr, TypedExprKind, TypedFunction, TypedProgram, TypedStmt,
-    TypedStmtKind,
+    BookCommand, MacroPlaceholder, TypedExpr, TypedExprKind, TypedFunction, TypedProgram,
+    TypedStmt, TypedStmtKind,
 };
 
 #[derive(Debug, Clone)]
@@ -37,10 +37,33 @@ pub struct IrParam {
 
 #[derive(Debug, Clone)]
 pub enum IrStmt {
-    Let { name: String, ty: Type, value: IrExpr },
-    Assign { name: String, value: IrExpr },
-    If { condition: IrExpr, body: Vec<IrStmt> },
-    While { condition: IrExpr, body: Vec<IrStmt> },
+    Let {
+        name: String,
+        ty: Type,
+        value: IrExpr,
+    },
+    Assign {
+        name: String,
+        value: IrExpr,
+    },
+    If {
+        condition: IrExpr,
+        then_body: Vec<IrStmt>,
+        else_body: Vec<IrStmt>,
+    },
+    While {
+        condition: IrExpr,
+        body: Vec<IrStmt>,
+    },
+    For {
+        name: String,
+        start: IrExpr,
+        end: IrExpr,
+        inclusive: bool,
+        body: Vec<IrStmt>,
+    },
+    Break,
+    Continue,
     Return(Option<IrExpr>),
     RawCommand(String),
     MacroCommand {
@@ -68,6 +91,10 @@ pub enum IrExprKind {
     Bool(bool),
     String(String),
     Variable(String),
+    Unary {
+        op: crate::ast::UnaryOp,
+        expr: Box<IrExpr>,
+    },
     Binary {
         op: BinaryOp,
         left: Box<IrExpr>,
@@ -127,14 +154,34 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             name: name.clone(),
             value: lower_expr(value),
         },
-        TypedStmtKind::If { condition, body } => IrStmt::If {
+        TypedStmtKind::If {
+            condition,
+            then_body,
+            else_body,
+        } => IrStmt::If {
             condition: lower_expr(condition),
-            body: body.iter().map(lower_stmt).collect(),
+            then_body: then_body.iter().map(lower_stmt).collect(),
+            else_body: else_body.iter().map(lower_stmt).collect(),
         },
         TypedStmtKind::While { condition, body } => IrStmt::While {
             condition: lower_expr(condition),
             body: body.iter().map(lower_stmt).collect(),
         },
+        TypedStmtKind::For {
+            name,
+            start,
+            end,
+            inclusive,
+            body,
+        } => IrStmt::For {
+            name: name.clone(),
+            start: lower_expr(start),
+            end: lower_expr(end),
+            inclusive: *inclusive,
+            body: body.iter().map(lower_stmt).collect(),
+        },
+        TypedStmtKind::Break => IrStmt::Break,
+        TypedStmtKind::Continue => IrStmt::Continue,
         TypedStmtKind::Return(value) => IrStmt::Return(value.as_ref().map(lower_expr)),
         TypedStmtKind::RawCommand(raw) => IrStmt::RawCommand(raw.clone()),
         TypedStmtKind::MacroCommand {
@@ -163,6 +210,10 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
             TypedExprKind::String(value) => IrExprKind::String(value.clone()),
             TypedExprKind::Variable(name) => IrExprKind::Variable(name.clone()),
+            TypedExprKind::Unary { op, expr } => IrExprKind::Unary {
+                op: *op,
+                expr: Box::new(lower_expr(expr)),
+            },
             TypedExprKind::Binary { op, left, right } => IrExprKind::Binary {
                 op: *op,
                 left: Box::new(lower_expr(left)),

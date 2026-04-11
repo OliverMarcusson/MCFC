@@ -47,10 +47,33 @@ pub struct TypedStmt {
 
 #[derive(Debug, Clone)]
 pub enum TypedStmtKind {
-    Let { name: String, ty: Type, value: TypedExpr },
-    Assign { name: String, value: TypedExpr },
-    If { condition: TypedExpr, body: Vec<TypedStmt> },
-    While { condition: TypedExpr, body: Vec<TypedStmt> },
+    Let {
+        name: String,
+        ty: Type,
+        value: TypedExpr,
+    },
+    Assign {
+        name: String,
+        value: TypedExpr,
+    },
+    If {
+        condition: TypedExpr,
+        then_body: Vec<TypedStmt>,
+        else_body: Vec<TypedStmt>,
+    },
+    While {
+        condition: TypedExpr,
+        body: Vec<TypedStmt>,
+    },
+    For {
+        name: String,
+        start: TypedExpr,
+        end: TypedExpr,
+        inclusive: bool,
+        body: Vec<TypedStmt>,
+    },
+    Break,
+    Continue,
     Return(Option<TypedExpr>),
     RawCommand(String),
     MacroCommand {
@@ -78,6 +101,10 @@ pub enum TypedExprKind {
     Bool(bool),
     String(String),
     Variable(String),
+    Unary {
+        op: UnaryOp,
+        expr: Box<TypedExpr>,
+    },
     Binary {
         op: BinaryOp,
         left: Box<TypedExpr>,
@@ -104,7 +131,11 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         signatures.insert(
             function.name.clone(),
             FunctionSignature {
-                params: function.params.iter().map(|param| param.ty.clone()).collect(),
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
                 return_type: function.return_type.clone(),
             },
         );
@@ -141,6 +172,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             &mut env,
             &mut locals,
             &mut called_functions,
+            0,
             &mut diagnostics,
         );
 
@@ -157,18 +189,11 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         if function.book_exposed {
             if function.return_type != Type::Void {
                 diagnostics.push(Diagnostic::new(
-                    format!(
-                        "@book function '{}' must return 'void'",
-                        function.name
-                    ),
+                    format!("@book function '{}' must return 'void'", function.name),
                     function.span.clone(),
                 ));
             }
-            if function
-                .params
-                .iter()
-                .any(|param| param.ty != Type::Int)
-            {
+            if function.params.iter().any(|param| param.ty != Type::Int) {
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "@book function '{}' may only have 'int' parameters",
@@ -212,6 +237,7 @@ fn type_check_block(
     env: &mut HashMap<String, Type>,
     locals: &mut BTreeMap<String, Type>,
     called_functions: &mut BTreeSet<String>,
+    loop_depth: usize,
     diagnostics: &mut Diagnostics,
 ) -> Vec<TypedStmt> {
     let mut typed = Vec::new();
@@ -259,7 +285,11 @@ fn type_check_block(
                     value,
                 }
             }
-            StmtKind::If { condition, body } => {
+            StmtKind::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 let condition =
                     type_check_expr(condition, signatures, env, called_functions, diagnostics);
                 if condition.ty != Type::Bool {
@@ -268,16 +298,31 @@ fn type_check_block(
                         statement.span.clone(),
                     ));
                 }
-                let body = type_check_block(
-                    body,
+                let then_body = type_check_block(
+                    then_body,
                     return_type,
                     signatures,
                     &mut env.clone(),
                     locals,
                     called_functions,
+                    loop_depth,
                     diagnostics,
                 );
-                TypedStmtKind::If { condition, body }
+                let else_body = type_check_block(
+                    else_body,
+                    return_type,
+                    signatures,
+                    &mut env.clone(),
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    diagnostics,
+                );
+                TypedStmtKind::If {
+                    condition,
+                    then_body,
+                    else_body,
+                }
             }
             StmtKind::While { condition, body } => {
                 let condition =
@@ -295,49 +340,122 @@ fn type_check_block(
                     &mut env.clone(),
                     locals,
                     called_functions,
+                    loop_depth + 1,
                     diagnostics,
                 );
                 TypedStmtKind::While { condition, body }
             }
+            StmtKind::For {
+                name,
+                start,
+                end,
+                inclusive,
+                body,
+            } => {
+                if env.contains_key(name) {
+                    diagnostics.push(Diagnostic::new(
+                        format!("variable '{}' is already defined", name),
+                        statement.span.clone(),
+                    ));
+                }
+                let start = type_check_expr(start, signatures, env, called_functions, diagnostics);
+                let end = type_check_expr(end, signatures, env, called_functions, diagnostics);
+                if start.ty != Type::Int {
+                    diagnostics.push(Diagnostic::new(
+                        "for range start must have type 'int'",
+                        statement.span.clone(),
+                    ));
+                }
+                if end.ty != Type::Int {
+                    diagnostics.push(Diagnostic::new(
+                        "for range end must have type 'int'",
+                        statement.span.clone(),
+                    ));
+                }
+
+                let mut loop_env = env.clone();
+                loop_env.insert(name.clone(), Type::Int);
+                locals.insert(name.clone(), Type::Int);
+                let body = type_check_block(
+                    body,
+                    return_type,
+                    signatures,
+                    &mut loop_env,
+                    locals,
+                    called_functions,
+                    loop_depth + 1,
+                    diagnostics,
+                );
+                TypedStmtKind::For {
+                    name: name.clone(),
+                    start,
+                    end,
+                    inclusive: *inclusive,
+                    body,
+                }
+            }
+            StmtKind::Break => {
+                if loop_depth == 0 {
+                    diagnostics.push(Diagnostic::new(
+                        "'break' may only appear inside a loop",
+                        statement.span.clone(),
+                    ));
+                }
+                TypedStmtKind::Break
+            }
+            StmtKind::Continue => {
+                if loop_depth == 0 {
+                    diagnostics.push(Diagnostic::new(
+                        "'continue' may only appear inside a loop",
+                        statement.span.clone(),
+                    ));
+                }
+                TypedStmtKind::Continue
+            }
             StmtKind::Return(value) => {
-                let value = value
-                    .as_ref()
-                    .map(|expr| type_check_expr(expr, signatures, env, called_functions, diagnostics));
+                let value = value.as_ref().map(|expr| {
+                    type_check_expr(expr, signatures, env, called_functions, diagnostics)
+                });
                 match (return_type, &value) {
                     (Type::Void, None) => {}
                     (Type::Void, Some(_)) => diagnostics.push(Diagnostic::new(
                         "void function cannot return a value",
                         statement.span.clone(),
                     )),
-                    (expected, Some(expr)) if expected != &expr.ty => diagnostics.push(
-                        Diagnostic::new(
+                    (expected, Some(expr)) if expected != &expr.ty => {
+                        diagnostics.push(Diagnostic::new(
                             format!(
                                 "return type mismatch: expected '{}', found '{}'",
                                 expected.as_str(),
                                 expr.ty.as_str()
                             ),
                             statement.span.clone(),
-                        ),
-                    ),
-                    (expected, None) if expected != &Type::Void => diagnostics.push(
-                        Diagnostic::new(
+                        ))
+                    }
+                    (expected, None) if expected != &Type::Void => {
+                        diagnostics.push(Diagnostic::new(
                             format!(
                                 "return statement must produce a value of type '{}'",
                                 expected.as_str()
                             ),
                             statement.span.clone(),
-                        ),
-                    ),
+                        ))
+                    }
                     _ => {}
                 }
                 TypedStmtKind::Return(value)
             }
             StmtKind::RawCommand(raw) => TypedStmtKind::RawCommand(raw.clone()),
             StmtKind::MacroCommand(template) => {
-                let names = validate_macro_placeholders(template, env, statement.span.clone(), diagnostics);
+                let names =
+                    validate_macro_placeholders(template, env, statement.span.clone(), diagnostics);
                 let placeholders = names
                     .into_iter()
-                    .filter_map(|name| env.get(&name).cloned().map(|ty| MacroPlaceholder { name, ty }))
+                    .filter_map(|name| {
+                        env.get(&name)
+                            .cloned()
+                            .map(|ty| MacroPlaceholder { name, ty })
+                    })
                     .collect();
                 TypedStmtKind::MacroCommand {
                     template: template.clone(),
@@ -398,6 +516,27 @@ fn type_check_expr(
                 }
             }
         },
+        ExprKind::Unary { op, expr } => {
+            let operand = type_check_expr(expr, signatures, env, called_functions, diagnostics);
+            let ty = match op {
+                UnaryOp::Not => {
+                    if operand.ty != Type::Bool {
+                        diagnostics.push(Diagnostic::new(
+                            "'not' requires a 'bool' operand",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Type::Bool
+                }
+            };
+            TypedExpr {
+                kind: TypedExprKind::Unary {
+                    op: *op,
+                    expr: Box::new(operand),
+                },
+                ty,
+            }
+        }
         ExprKind::Binary { op, left, right } => {
             let left = type_check_expr(left, signatures, env, called_functions, diagnostics);
             let right = type_check_expr(right, signatures, env, called_functions, diagnostics);
@@ -411,6 +550,15 @@ fn type_check_expr(
                     }
                     Type::Int
                 }
+                BinaryOp::And | BinaryOp::Or => {
+                    if left.ty != Type::Bool || right.ty != Type::Bool {
+                        diagnostics.push(Diagnostic::new(
+                            "logical operators require 'bool' operands",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Type::Bool
+                }
                 BinaryOp::Eq
                 | BinaryOp::NotEq
                 | BinaryOp::Lt
@@ -423,11 +571,29 @@ fn type_check_expr(
                             expr.span.clone(),
                         ));
                     }
-                    if !matches!(left.ty, Type::Int | Type::Bool) {
-                        diagnostics.push(Diagnostic::new(
-                            "comparison operators currently support only 'int' and 'bool'",
-                            expr.span.clone(),
-                        ));
+                    match op {
+                        BinaryOp::Eq | BinaryOp::NotEq => {
+                            if !matches!(left.ty, Type::Int | Type::Bool | Type::String) {
+                                diagnostics.push(Diagnostic::new(
+                                    "equality operators currently support only 'int', 'bool', and 'string'",
+                                    expr.span.clone(),
+                                ));
+                            }
+                        }
+                        _ => {
+                            if !matches!(left.ty, Type::Int | Type::Bool) {
+                                diagnostics.push(Diagnostic::new(
+                                    "ordering comparisons currently support only 'int' and 'bool'",
+                                    expr.span.clone(),
+                                ));
+                            }
+                            if matches!(left.ty, Type::String) {
+                                diagnostics.push(Diagnostic::new(
+                                    "strings only support '==' and '!=' comparisons",
+                                    expr.span.clone(),
+                                ));
+                            }
+                        }
                     }
                     Type::Bool
                 }
@@ -455,7 +621,13 @@ fn type_check_expr(
                             args: args
                                 .iter()
                                 .map(|arg| {
-                                    type_check_expr(arg, signatures, env, called_functions, diagnostics)
+                                    type_check_expr(
+                                        arg,
+                                        signatures,
+                                        env,
+                                        called_functions,
+                                        diagnostics,
+                                    )
                                 })
                                 .collect(),
                         },

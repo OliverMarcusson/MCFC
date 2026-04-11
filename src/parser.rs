@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind, lex};
 
 pub fn parse(source: &str) -> Result<Program, Diagnostics> {
     let tokens = lex(source)?;
@@ -65,7 +65,8 @@ impl Parser {
         self.expect(TokenKind::Arrow, "expected '->' before return type");
         let return_type = self.parse_type();
         self.expect_statement_break("expected newline after function signature");
-        let body = self.parse_block();
+        let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
+        self.expect(TokenKind::End, "expected 'end'");
 
         Function {
             name,
@@ -77,16 +78,14 @@ impl Parser {
         }
     }
 
-    fn parse_block(&mut self) -> Vec<Stmt> {
+    fn parse_block_until(&mut self, terminator: impl Fn(&TokenKind) -> bool) -> Vec<Stmt> {
         let mut statements = Vec::new();
         self.skip_newlines();
 
-        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+        while !terminator(&self.peek().kind) && !self.at(&TokenKind::Eof) {
             statements.push(self.parse_stmt());
             self.skip_newlines();
         }
-
-        self.expect(TokenKind::End, "expected 'end'");
         statements
     }
 
@@ -103,24 +102,62 @@ impl Parser {
             }
             TokenKind::If => {
                 self.bump();
-                let condition = self.parse_expr();
-                self.expect(TokenKind::Colon, "expected ':' after if condition");
-                self.expect_statement_break("expected newline after if condition");
-                let body = self.parse_block();
-                StmtKind::If { condition, body }
+                let (condition, then_body, else_body) = self.parse_if_parts(span.clone());
+                self.expect(TokenKind::End, "expected 'end'");
+                StmtKind::If {
+                    condition,
+                    then_body,
+                    else_body,
+                }
             }
             TokenKind::While => {
                 self.bump();
                 let condition = self.parse_expr();
                 self.expect(TokenKind::Colon, "expected ':' after while condition");
                 self.expect_statement_break("expected newline after while condition");
-                let body = self.parse_block();
+                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
+                self.expect(TokenKind::End, "expected 'end'");
                 StmtKind::While { condition, body }
+            }
+            TokenKind::For => {
+                self.bump();
+                let name = self.expect_identifier("expected loop variable name after 'for'");
+                self.expect(TokenKind::In, "expected 'in' after loop variable");
+                let start = self.parse_expr_bp(0);
+                let inclusive = if self.eat(&TokenKind::DotDotEq) {
+                    true
+                } else {
+                    self.expect(TokenKind::DotDot, "expected '..' or '..=' in for range");
+                    false
+                };
+                let end = self.parse_expr_bp(0);
+                self.expect(TokenKind::Colon, "expected ':' after for range");
+                self.expect_statement_break("expected newline after for range");
+                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
+                self.expect(TokenKind::End, "expected 'end'");
+                StmtKind::For {
+                    name,
+                    start,
+                    end,
+                    inclusive,
+                    body,
+                }
+            }
+            TokenKind::Break => {
+                self.bump();
+                self.expect_statement_break("expected newline after break");
+                StmtKind::Break
+            }
+            TokenKind::Continue => {
+                self.bump();
+                self.expect_statement_break("expected newline after continue");
+                StmtKind::Continue
             }
             TokenKind::Return => {
                 self.bump();
                 let value = if self.at(&TokenKind::Newline)
                     || self.at(&TokenKind::End)
+                    || self.at(&TokenKind::Else)
                     || self.at(&TokenKind::Eof)
                 {
                     None
@@ -164,7 +201,7 @@ impl Parser {
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
-        let mut left = self.parse_primary();
+        let mut left = self.parse_prefix();
 
         loop {
             let Some((op, left_bp, right_bp)) = self.current_infix_binding_power() else {
@@ -187,6 +224,22 @@ impl Parser {
         }
 
         left
+    }
+
+    fn parse_prefix(&mut self) -> Expr {
+        if self.at(&TokenKind::Not) {
+            let token = self.bump();
+            let expr = self.parse_expr_bp(7);
+            Expr {
+                kind: ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    expr: Box::new(expr),
+                },
+                span: token.span,
+            }
+        } else {
+            self.parse_primary()
+        }
     }
 
     fn parse_primary(&mut self) -> Expr {
@@ -225,7 +278,10 @@ impl Parser {
                     }
                     self.expect(TokenKind::RightParen, "expected ')' after call arguments");
                     Expr {
-                        kind: ExprKind::Call { function: name, args },
+                        kind: ExprKind::Call {
+                            function: name,
+                            args,
+                        },
                         span: token.span,
                     }
                 } else {
@@ -241,10 +297,8 @@ impl Parser {
                 expr
             }
             _ => {
-                self.diagnostics.push(Diagnostic::new(
-                    "expected expression",
-                    token.span.clone(),
-                ));
+                self.diagnostics
+                    .push(Diagnostic::new("expected expression", token.span.clone()));
                 self.recover_expression();
                 Expr {
                     kind: ExprKind::Int(0),
@@ -256,18 +310,48 @@ impl Parser {
 
     fn current_infix_binding_power(&self) -> Option<(BinaryOp, u8, u8)> {
         match self.peek().kind {
-            TokenKind::EqEq => Some((BinaryOp::Eq, 1, 2)),
-            TokenKind::BangEq => Some((BinaryOp::NotEq, 1, 2)),
-            TokenKind::Lt => Some((BinaryOp::Lt, 1, 2)),
-            TokenKind::Lte => Some((BinaryOp::Lte, 1, 2)),
-            TokenKind::Gt => Some((BinaryOp::Gt, 1, 2)),
-            TokenKind::Gte => Some((BinaryOp::Gte, 1, 2)),
-            TokenKind::Plus => Some((BinaryOp::Add, 3, 4)),
-            TokenKind::Minus => Some((BinaryOp::Sub, 3, 4)),
-            TokenKind::Star => Some((BinaryOp::Mul, 5, 6)),
-            TokenKind::Slash => Some((BinaryOp::Div, 5, 6)),
+            TokenKind::Or => Some((BinaryOp::Or, 1, 2)),
+            TokenKind::And => Some((BinaryOp::And, 3, 4)),
+            TokenKind::EqEq => Some((BinaryOp::Eq, 5, 6)),
+            TokenKind::BangEq => Some((BinaryOp::NotEq, 5, 6)),
+            TokenKind::Lt => Some((BinaryOp::Lt, 5, 6)),
+            TokenKind::Lte => Some((BinaryOp::Lte, 5, 6)),
+            TokenKind::Gt => Some((BinaryOp::Gt, 5, 6)),
+            TokenKind::Gte => Some((BinaryOp::Gte, 5, 6)),
+            TokenKind::Plus => Some((BinaryOp::Add, 7, 8)),
+            TokenKind::Minus => Some((BinaryOp::Sub, 7, 8)),
+            TokenKind::Star => Some((BinaryOp::Mul, 9, 10)),
+            TokenKind::Slash => Some((BinaryOp::Div, 9, 10)),
             _ => None,
         }
+    }
+
+    fn parse_if_parts(&mut self, span: Span) -> (Expr, Vec<Stmt>, Vec<Stmt>) {
+        let condition = self.parse_expr();
+        self.expect(TokenKind::Colon, "expected ':' after if condition");
+        self.expect_statement_break("expected newline after if condition");
+        let then_body =
+            self.parse_block_until(|kind| matches!(kind, TokenKind::Else | TokenKind::End));
+        let else_body = if self.eat(&TokenKind::Else) {
+            if self.eat(&TokenKind::If) {
+                let (condition, then_body, else_body) = self.parse_if_parts(span.clone());
+                vec![Stmt {
+                    kind: StmtKind::If {
+                        condition,
+                        then_body,
+                        else_body,
+                    },
+                    span: span.clone(),
+                }]
+            } else {
+                self.expect(TokenKind::Colon, "expected ':' after else");
+                self.expect_statement_break("expected newline after else");
+                self.parse_block_until(|kind| matches!(kind, TokenKind::End))
+            }
+        } else {
+            Vec::new()
+        };
+        (condition, then_body, else_body)
     }
 
     fn parse_type(&mut self) -> Type {
@@ -399,12 +483,18 @@ impl Parser {
         while !self.at(&TokenKind::Eof)
             && !self.at(&TokenKind::Comma)
             && !self.at(&TokenKind::RightParen)
+            && !self.at(&TokenKind::DotDot)
+            && !self.at(&TokenKind::DotDotEq)
             && !self.at(&TokenKind::Newline)
             && !self.at(&TokenKind::End)
+            && !self.at(&TokenKind::Else)
             && !self.at(&TokenKind::Colon)
             && !self.at(&TokenKind::Let)
             && !self.at(&TokenKind::If)
+            && !self.at(&TokenKind::For)
             && !self.at(&TokenKind::While)
+            && !self.at(&TokenKind::Break)
+            && !self.at(&TokenKind::Continue)
             && !self.at(&TokenKind::Return)
             && !self.at(&TokenKind::Mc)
             && !self.at(&TokenKind::Mcf)
@@ -454,7 +544,7 @@ fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::ast::{ExprKind, StmtKind};
+    use crate::ast::{BinaryOp, ExprKind, StmtKind, UnaryOp};
 
     #[test]
     fn parses_comments_and_function_annotations() {
@@ -491,8 +581,64 @@ end
         let ExprKind::Binary { op, right, .. } = &value.kind else {
             panic!("expected binary expression");
         };
-        assert!(matches!(op, crate::ast::BinaryOp::Add));
+        assert!(matches!(op, BinaryOp::Add));
         assert!(matches!(right.kind, ExprKind::Binary { .. }));
+    }
+
+    #[test]
+    fn parses_else_if_for_and_logic() {
+        let program = parse(
+            r#"
+fn main() -> void
+    for i in 0..=10:
+        if true and not false:
+            return
+        else if i == 2:
+            continue
+        else:
+            break
+        end
+    end
+end
+"#,
+        )
+        .unwrap();
+
+        let StmtKind::For {
+            inclusive, body, ..
+        } = &program.functions[0].body[0].kind
+        else {
+            panic!("expected for statement");
+        };
+        assert!(*inclusive);
+
+        let StmtKind::If {
+            condition,
+            then_body,
+            else_body,
+        } = &body[0].kind
+        else {
+            panic!("expected if statement");
+        };
+        assert!(matches!(
+            condition.kind,
+            ExprKind::Binary {
+                op: BinaryOp::And,
+                ..
+            }
+        ));
+        let ExprKind::Binary { right, .. } = &condition.kind else {
+            panic!("expected binary condition");
+        };
+        assert!(matches!(
+            right.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Not,
+                ..
+            }
+        ));
+        assert!(matches!(then_body[0].kind, StmtKind::Return(None)));
+        assert!(matches!(else_body[0].kind, StmtKind::If { .. }));
     }
 
     #[test]
@@ -509,5 +655,28 @@ end
 
         assert!(error.0.len() >= 2);
         assert!(error.to_string().contains("expected expression"));
+    }
+
+    #[test]
+    fn rejects_malformed_else_and_for() {
+        let error = parse(
+            r#"
+fn main() -> void
+    if true:
+        return
+    else
+        return
+    end
+    for i in 0 10:
+        return
+    end
+end
+"#,
+        )
+        .unwrap_err();
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("expected ':' after else"));
+        assert!(rendered.contains("expected '..' or '..=' in for range"));
     }
 }

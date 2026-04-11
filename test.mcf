@@ -8,11 +8,45 @@ fn fibb(n: int) -> void
     let b = 1
 
     while i < n:
-        mcf "tellraw @a \"$(b)\""
+        mcf 'tellraw @a "$(b)"'
         let next = a + b
         a = b
         b = next
         i = i + 1
+    end
+
+    return
+end
+
+fn classify(value: int) -> string
+    if value == 0:
+        return "zero"
+    else if value == 1:
+        return "one"
+    else:
+        return "many"
+    end
+end
+
+fn range_demo(limit: int) -> void
+    for i in 0..=limit:
+        if i == 1 or not false:
+            mcf "say range i: $(i)"
+        end
+    end
+
+    return
+end
+
+fn loop_control_demo(limit: int) -> void
+    for i in 0..limit:
+        if i == 1:
+            continue
+        else if i == 4:
+            break
+        else:
+            mcf "say loop i: $(i)"
+        end
     end
 
     return
@@ -33,6 +67,15 @@ fn main() -> void
         a = a + 1
     end
 
+    let kind = classify(2)
+    if kind == "many" and not false:
+        mcf "say class: $(kind)"
+    else:
+        mc "say unexpected class"
+    end
+
+    range_demo(3)
+    loop_control_demo(6)
     fibb(8)
     mc "say done"
     return

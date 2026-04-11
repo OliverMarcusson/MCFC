@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::compiler::{canonicalize_output_path, compile_file, CompileOptions};
+use crate::compiler::{CompileOptions, canonicalize_output_path, compile_file};
 
 pub fn run(args: Vec<String>) -> i32 {
     match try_run(args) {
@@ -34,6 +34,7 @@ fn build_command(args: &[String]) -> Result<(), String> {
     let input = PathBuf::from(&args[0]);
     let mut out_dir = None;
     let mut options = CompileOptions::default();
+    let mut namespace_overridden = false;
     let mut index = 1usize;
 
     while index < args.len() {
@@ -51,6 +52,7 @@ fn build_command(args: &[String]) -> Result<(), String> {
                     return Err("expected namespace after '--namespace'".to_string());
                 };
                 options.namespace = value.clone();
+                namespace_overridden = true;
             }
             "--emit-ast" => options.emit_ast = true,
             "--emit-ir" => options.emit_ir = true,
@@ -61,6 +63,9 @@ fn build_command(args: &[String]) -> Result<(), String> {
     }
 
     let out_dir = out_dir.ok_or_else(|| "missing required '--out <directory>'".to_string())?;
+    if !namespace_overridden {
+        options.namespace = infer_namespace(&input);
+    }
     let out_dir = canonicalize_output_path(&out_dir);
     compile_file(&input, &out_dir, &options)?;
     println!("wrote datapack to {}", out_dir.display());
@@ -69,4 +74,24 @@ fn build_command(args: &[String]) -> Result<(), String> {
 
 fn usage() -> String {
     "Usage:\n  mcfc build <input-file> --out <directory> [--namespace <name>] [--emit-ast] [--emit-ir] [--clean]".to_string()
+}
+
+fn infer_namespace(input: &std::path::Path) -> String {
+    let stem = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("mcfc");
+    let mut namespace = String::with_capacity(stem.len());
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            namespace.push(ch.to_ascii_lowercase());
+        } else {
+            namespace.push('_');
+        }
+    }
+    if namespace.is_empty() {
+        "mcfc".to_string()
+    } else {
+        namespace
+    }
 }

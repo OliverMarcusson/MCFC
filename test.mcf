@@ -52,6 +52,32 @@ fn loop_control_demo(limit: int) -> void
     return
 end
 
+fn name_closest_pig() -> void
+    let player = single(selector("@p"))
+    if exists(player):
+        let pig = single(at(player, selector("@e[type=pig,sort=nearest]")))
+        if exists(pig):
+            pig.CustomName = "MCFC"
+        end
+    end
+
+    return
+end
+
+fn style_closest_pig() -> void
+    let player = single(selector("@p"))
+    if exists(player):
+        let pig = single(at(player, selector("@e[type=pig,sort=nearest]")))
+        if exists(pig):
+            pig.CustomName = "MCFC Jr"
+            pig.Variant = "minecraft:cold"
+            pig.Age = 0 - 24000
+        end
+    end
+
+    return
+end
+
 fn main() -> void
     let version = 1
     mcf 'tellraw @a "MCFC version 0.$(version)"'
@@ -77,6 +103,8 @@ fn main() -> void
     range_demo(3)
     loop_control_demo(6)
     fibb(8)
+    name_closest_pig()
+    style_closest_pig()
     mc "say done"
     return
 end

@@ -119,6 +119,77 @@ end
 }
 
 #[test]
+fn compiles_entity_queries_and_iteration() {
+    let source = r#"
+fn main() -> void
+    let pigs = selector("@e[type=pig,limit=3]")
+    for pig in pigs:
+        pig.CustomName = "Hello"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("selector set value \"@e[type=pig,limit=3]\""));
+    assert!(result.artifacts.files.values().any(|file| file.contains("execute as $(selector) run function mcfc:generated/main__d0__for_each_1")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("data modify entity $(selector) CustomName set from storage")));
+}
+
+#[test]
+fn compiles_single_exists_and_context_composition() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@a[tag=hunter]"))
+    if exists(player):
+        let nearest = single(at(player, selector("@e[type=pig,sort=nearest]")))
+        if exists(nearest):
+            nearest.CustomName = "Target"
+        end
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("@a[tag=hunter,limit=1]"));
+    assert!(result.artifacts.files.values().any(|file| file.contains("execute at ")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("@e[type=pig,sort=nearest,limit=1]")));
+}
+
+#[test]
+fn compiles_block_paths_and_nbt_casts() {
+    let source = r#"
+fn main() -> void
+    let chest = block("~ ~ ~")
+    chest.CustomName = "Loot"
+    let name = string(chest.CustomName)
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("pos set value \"~ ~ ~\""));
+    assert!(result.artifacts.files.values().any(|file| file.contains("data modify block $(pos) CustomName set from storage")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("set from block $(pos) CustomName")));
+}
+
+#[test]
 fn compiles_book_runtime_for_annotated_functions() {
     let source = r#"
 @book
@@ -303,6 +374,23 @@ end
     assert!(rendered.contains("for range end must have type 'int'"));
     assert!(rendered.contains("logical operators require 'bool' operands"));
     assert!(rendered.contains("strings only support '==' and '!=' comparisons"));
+}
+
+#[test]
+fn rejects_invalid_query_usage() {
+    let source = r#"
+fn main() -> void
+    let bad = single(selector("@e[type=pig,limit=2]"))
+    let also_bad = selector("@e[type=pig]")
+    also_bad.CustomName = "Nope"
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("single(selector(...)) requires no limit or 'limit=1'"));
+    assert!(rendered.contains("path assignment requires an 'entity_ref' or 'block_ref' base"));
 }
 
 #[test]

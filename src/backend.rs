@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::ast::{BinaryOp, Type, UnaryOp};
+use crate::ast::{BinaryOp, PathSegment, Type, UnaryOp};
 use crate::ir::{
-    IrBookCommand, IrExpr, IrExprKind, IrFunction, IrMacroPlaceholder, IrProgram, IrStmt,
+    IrAssignTarget, IrBookCommand, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
+    IrPathExpr, IrProgram, IrStmt,
 };
+use crate::types::CastKind;
 
 #[derive(Debug, Clone)]
 pub struct BuildArtifacts {
@@ -191,10 +193,10 @@ impl Backend {
                     control_slot(depth, function)
                 ));
                 for (name, ty) in &info.locals {
-                    if matches!(ty, Type::Int | Type::Bool) {
-                        lines.push(format!(
-                            "scoreboard players set {} mcfc 0",
-                            numeric_slot(depth, function, name)
+                if matches!(ty, Type::Int | Type::Bool) {
+                    lines.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        numeric_slot(depth, function, name)
                         ));
                     }
                 }
@@ -449,7 +451,7 @@ impl Backend {
     ) {
         for stmt in stmts {
             match stmt {
-                IrStmt::Let { name, value, .. } | IrStmt::Assign { name, value } => {
+                IrStmt::Let { name, value, .. } => {
                     let mut stmt_lines = Vec::new();
                     self.compile_expr_into_named_slot(
                         function,
@@ -458,6 +460,24 @@ impl Backend {
                         name,
                         &mut stmt_lines,
                     );
+                    self.extend_guarded(lines, guard, stmt_lines);
+                }
+                IrStmt::Assign { target, value } => {
+                    let mut stmt_lines = Vec::new();
+                    match target {
+                        IrAssignTarget::Variable(name) => {
+                            self.compile_expr_into_named_slot(
+                                function,
+                                depth,
+                                value,
+                                name,
+                                &mut stmt_lines,
+                            );
+                        }
+                        IrAssignTarget::Path(path) => {
+                            self.compile_path_assign(function, depth, path, value, &mut stmt_lines);
+                        }
+                    }
                     self.extend_guarded(lines, guard, stmt_lines);
                 }
                 IrStmt::RawCommand(raw) => lines.push(guard.wrap(raw.clone())),
@@ -652,13 +672,13 @@ impl Backend {
                     );
                     lines.push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
                 }
-                IrStmt::For {
-                    name,
-                    start,
-                    end,
-                    inclusive,
-                    body,
-                } => {
+                IrStmt::For { name, kind, body } => {
+                    match kind {
+                        IrForKind::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
                     let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
                     let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
                     let end_name = self.new_temp();
@@ -774,6 +794,48 @@ impl Backend {
 
                     lines.push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
                 }
+                        IrForKind::Each { iterable } => {
+                            let query_name = self.new_temp();
+                            let mut init_lines = Vec::new();
+                            self.compile_expr_into_named_slot(
+                                function,
+                                depth,
+                                iterable,
+                                &query_name,
+                                &mut init_lines,
+                            );
+                            self.extend_guarded(lines, guard, init_lines);
+
+                            let (body_path, body_name) = self.new_block(function, depth, "for_each");
+                            let mut body_lines = vec![
+                                format!(
+                                    "data modify storage {}:runtime {}.prefix set value \"\"",
+                                    self.namespace,
+                                    string_slot(depth, &function.name, name)
+                                ),
+                                format!(
+                                    "data modify storage {}:runtime {}.selector set value \"@s\"",
+                                    self.namespace,
+                                    string_slot(depth, &function.name, name)
+                                ),
+                            ];
+                            self.emit_stmt_list(
+                                function,
+                                depth,
+                                body,
+                                guard,
+                                loop_ctx,
+                                &mut body_lines,
+                            );
+                            self.files.insert(body_path, body_lines.join("\n") + "\n");
+                            lines.push(guard.wrap(self.query_command(
+                                &local_slot(depth, &function.name, &query_name, &Type::EntitySet),
+                                format!("execute as $(selector) run function {}:{}", self.namespace, body_name),
+                                true,
+                            )));
+                        }
+                    }
+                }
             }
         }
     }
@@ -832,6 +894,8 @@ impl Backend {
                 target.storage_path(),
                 quoted(value)
             )),
+            IrExprKind::Selector(value) => self.write_query_slot(target, "", value, lines),
+            IrExprKind::Block(value) => self.write_block_slot(target, "", value, lines),
             IrExprKind::Variable(name) => match expr.ty {
                 Type::Int | Type::Bool => lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
@@ -845,8 +909,50 @@ impl Backend {
                     self.namespace,
                     string_slot(depth, &function.name, name)
                 )),
+                Type::EntitySet | Type::EntityRef | Type::BlockRef | Type::Nbt => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                    self.namespace,
+                    target.storage_path(),
+                    self.namespace,
+                    string_slot(depth, &function.name, name)
+                )),
                 Type::Void => {}
             },
+            IrExprKind::Single(expr) => {
+                self.compile_expr_into_slot(function, depth, expr, target, lines);
+            }
+            IrExprKind::At { anchor, value } => {
+                let anchor_name = self.new_temp();
+                let value_name = self.new_temp();
+                let anchor_slot = local_slot(depth, &function.name, &anchor_name, &anchor.ty);
+                let value_slot = local_slot(depth, &function.name, &value_name, &value.ty);
+                self.compile_expr_into_slot(function, depth, anchor, &anchor_slot, lines);
+                self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
+                self.compose_context_slots(&anchor_slot, &value_slot, target, &value.ty, lines);
+            }
+            IrExprKind::Exists(expr) => {
+                let temp = self.new_temp();
+                let source_slot = local_slot(depth, &function.name, &temp, &expr.ty);
+                self.compile_expr_into_slot(function, depth, expr, &source_slot, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(self.query_command(
+                    &source_slot,
+                    format!(
+                        "execute if entity $(selector) run scoreboard players set {} mcfc 1",
+                        target.numeric_name()
+                    ),
+                    true,
+                ));
+            }
+            IrExprKind::Path(path) => {
+                self.compile_path_read(function, depth, path, target, lines);
+            }
+            IrExprKind::Cast { kind, expr } => {
+                self.compile_cast(function, depth, *kind, expr, target, lines);
+            }
             IrExprKind::Unary { op, expr } => {
                 self.compile_unary(function, depth, *op, expr, target, lines);
             }
@@ -885,11 +991,311 @@ impl Backend {
                             self.namespace,
                             string_return_slot(callee_depth, callee)
                         )),
+                        Type::EntitySet | Type::EntityRef | Type::BlockRef | Type::Nbt => lines.push(format!(
+                            "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                            self.namespace,
+                            target.storage_path(),
+                            self.namespace,
+                            string_return_slot(callee_depth, callee)
+                        )),
                         Type::Void => {}
                     }
                 }
             }
         }
+    }
+
+    fn compile_path_assign(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        path: &IrPathExpr,
+        value: &IrExpr,
+        lines: &mut Vec<String>,
+    ) {
+        let base_name = self.new_temp();
+        let base_slot = local_slot(depth, &function.name, &base_name, &path.base.ty);
+        self.compile_expr_into_slot(function, depth, &path.base, &base_slot, lines);
+
+        let value_name = self.new_temp();
+        let value_slot = local_slot(depth, &function.name, &value_name, &Type::Nbt);
+        self.compile_value_as_nbt(function, depth, value, &value_slot, lines);
+
+        let path_text = render_path_segments(&path.segments);
+        let storage_target = format!("{}:runtime {}", self.namespace, value_slot.storage_path());
+        match path.base.ty {
+            Type::EntityRef => lines.push(self.query_command(
+                &base_slot,
+                format!(
+                    "data modify entity $(selector) {} set from storage {}",
+                    path_text, storage_target
+                ),
+                true,
+            )),
+            Type::BlockRef => lines.push(self.block_command(
+                &base_slot,
+                format!(
+                    "data modify block $(pos) {} set from storage {}",
+                    path_text, storage_target
+                ),
+                true,
+            )),
+            _ => {}
+        }
+    }
+
+    fn compile_path_read(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        path: &IrPathExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let base_name = self.new_temp();
+        let base_slot = local_slot(depth, &function.name, &base_name, &path.base.ty);
+        self.compile_expr_into_slot(function, depth, &path.base, &base_slot, lines);
+        let path_text = render_path_segments(&path.segments);
+        match path.base.ty {
+            Type::EntityRef => lines.push(self.query_command(
+                &base_slot,
+                format!(
+                    "data modify storage {}:runtime {} set from entity $(selector) {}",
+                    self.namespace,
+                    target.storage_path(),
+                    path_text
+                ),
+                true,
+            )),
+            Type::BlockRef => lines.push(self.block_command(
+                &base_slot,
+                format!(
+                    "data modify storage {}:runtime {} set from block $(pos) {}",
+                    self.namespace,
+                    target.storage_path(),
+                    path_text
+                ),
+                true,
+            )),
+            _ => {}
+        }
+    }
+
+    fn compile_cast(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        kind: CastKind,
+        expr: &IrExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let temp_name = self.new_temp();
+        let temp_slot = local_slot(depth, &function.name, &temp_name, &Type::Nbt);
+        self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
+        match kind {
+            CastKind::Int | CastKind::Bool => {
+                lines.push(format!(
+                    "execute store result score {} mcfc run data get storage {}:runtime {} 1",
+                    target.numeric_name(),
+                    self.namespace,
+                    temp_slot.storage_path()
+                ));
+                if matches!(kind, CastKind::Bool) {
+                    let raw = self.new_temp();
+                    let raw_slot = local_slot(depth, &function.name, &raw, &Type::Int);
+                    lines.push(format!(
+                        "scoreboard players operation {} mcfc = {} mcfc",
+                        raw_slot.numeric_name(),
+                        target.numeric_name()
+                    ));
+                    lines.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        target.numeric_name()
+                    ));
+                    lines.push(format!(
+                        "execute unless score {} mcfc matches 0 run scoreboard players set {} mcfc 1",
+                        raw_slot.numeric_name(),
+                        target.numeric_name()
+                    ));
+                }
+            }
+            CastKind::String => lines.push(format!(
+                "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                self.namespace,
+                target.storage_path(),
+                self.namespace,
+                temp_slot.storage_path()
+            )),
+        }
+    }
+
+    fn compile_value_as_nbt(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        expr: &IrExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        match expr.ty {
+            Type::Nbt => self.compile_expr_into_slot(function, depth, expr, target, lines),
+            Type::Int | Type::Bool => {
+                let temp = self.new_temp();
+                let temp_slot = local_slot(depth, &function.name, &temp, &expr.ty);
+                self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
+                lines.push(format!(
+                    "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    target.storage_path(),
+                    temp_slot.numeric_name()
+                ));
+            }
+            Type::String => {
+                self.compile_expr_into_slot(function, depth, expr, target, lines);
+            }
+            _ => {}
+        }
+    }
+
+    fn write_query_slot(
+        &self,
+        target: &SlotRef,
+        prefix: &str,
+        selector: &str,
+        lines: &mut Vec<String>,
+    ) {
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(prefix)
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.selector set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(selector)
+        ));
+    }
+
+    fn write_block_slot(&self, target: &SlotRef, prefix: &str, pos: &str, lines: &mut Vec<String>) {
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(prefix)
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.pos set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(pos)
+        ));
+    }
+
+    fn compose_context_slots(
+        &self,
+        anchor: &SlotRef,
+        value: &SlotRef,
+        target: &SlotRef,
+        ty: &Type,
+        lines: &mut Vec<String>,
+    ) {
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set from storage {}:runtime {}.prefix",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            anchor.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append value \"execute at \"",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append from storage {}:runtime {}.selector",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            anchor.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append value \" run \"",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix append from storage {}:runtime {}.prefix",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            value.storage_path()
+        ));
+        match ty {
+            Type::EntitySet | Type::EntityRef => lines.push(format!(
+                "data modify storage {}:runtime {}.selector set from storage {}:runtime {}.selector",
+                self.namespace,
+                target.storage_path(),
+                self.namespace,
+                value.storage_path()
+            )),
+            Type::BlockRef => lines.push(format!(
+                "data modify storage {}:runtime {}.pos set from storage {}:runtime {}.pos",
+                self.namespace,
+                target.storage_path(),
+                self.namespace,
+                value.storage_path()
+            )),
+            _ => {}
+        }
+    }
+
+    fn query_command(&mut self, slot: &SlotRef, command: String, wrap_macro: bool) -> String {
+        let storage = slot.storage_path();
+        let macro_line = format!("$(prefix){}", command);
+        let relative = if wrap_macro {
+            macro_line
+        } else {
+            command
+        };
+        let namespace = self.namespace.clone();
+        let macro_name = self.ensure_inline_macro(relative);
+        format!(
+            "function {}:{} with storage {}:runtime {}",
+            namespace,
+            macro_name,
+            namespace,
+            storage
+        )
+    }
+
+    fn block_command(&mut self, slot: &SlotRef, command: String, wrap_macro: bool) -> String {
+        let storage = slot.storage_path();
+        let macro_line = format!("$(prefix){}", command);
+        let relative = if wrap_macro {
+            macro_line
+        } else {
+            command
+        };
+        let namespace = self.namespace.clone();
+        let macro_name = self.ensure_inline_macro(relative);
+        format!(
+            "function {}:{} with storage {}:runtime {}",
+            namespace,
+            macro_name,
+            namespace,
+            storage
+        )
+    }
+
+    fn ensure_inline_macro(&mut self, command: String) -> String {
+        self.macro_counter += 1;
+        let relative = format!("generated/internal_macro_{}", self.macro_counter);
+        let path = format!("data/{}/function/{}.mcfunction", self.namespace, relative);
+        self.files.insert(path, format!("${}\n", command));
+        relative
     }
 
     fn compile_unary(
@@ -1126,8 +1532,22 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String => lines.push(format!(
+                Type::String | Type::Nbt => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::EntitySet | Type::EntityRef => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}.selector",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::BlockRef => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}.pos",
                     self.namespace,
                     target_path,
                     self.namespace,
@@ -1269,7 +1689,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
         Type::Int | Type::Bool => SlotRef {
             name: numeric_slot(depth, function, name),
         },
-        Type::String => SlotRef {
+        Type::String | Type::EntitySet | Type::EntityRef | Type::BlockRef | Type::Nbt => SlotRef {
             name: string_slot(depth, function, name),
         },
         Type::Void => SlotRef {
@@ -1283,7 +1703,7 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
         Type::Int | Type::Bool => SlotRef {
             name: numeric_return_slot(depth, function),
         },
-        Type::String => SlotRef {
+        Type::String | Type::EntitySet | Type::EntityRef | Type::BlockRef | Type::Nbt => SlotRef {
             name: string_return_slot(depth, function),
         },
         Type::Void => SlotRef {
@@ -1332,6 +1752,24 @@ fn sanitize(value: &str) -> String {
 
 fn quoted(value: &str) -> String {
     format!("{:?}", value)
+}
+
+fn render_path_segments(segments: &[PathSegment]) -> String {
+    let mut rendered = String::new();
+    for segment in segments {
+        match segment {
+            PathSegment::Field(name) => {
+                if !rendered.is_empty() {
+                    rendered.push('.');
+                }
+                rendered.push_str(name);
+            }
+            PathSegment::Index(index) => {
+                rendered.push_str(&format!("[{}]", index));
+            }
+        }
+    }
+    rendered
 }
 
 fn macro_storage_base(depth: usize, function: &str, macro_id: usize) -> String {

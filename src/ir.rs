@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, Type};
 use crate::types::{
-    BookCommand, MacroPlaceholder, TypedExpr, TypedExprKind, TypedFunction, TypedProgram,
-    TypedStmt, TypedStmtKind,
+    BookCommand, CastKind, MacroPlaceholder, TypedAssignTarget, TypedExpr, TypedExprKind,
+    TypedForKind, TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
 };
 
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub enum IrStmt {
         value: IrExpr,
     },
     Assign {
-        name: String,
+        target: IrAssignTarget,
         value: IrExpr,
     },
     If {
@@ -57,9 +57,7 @@ pub enum IrStmt {
     },
     For {
         name: String,
-        start: IrExpr,
-        end: IrExpr,
-        inclusive: bool,
+        kind: IrForKind,
         body: Vec<IrStmt>,
     },
     Break,
@@ -71,6 +69,24 @@ pub enum IrStmt {
         placeholders: Vec<IrMacroPlaceholder>,
     },
     Expr(IrExpr),
+}
+
+#[derive(Debug, Clone)]
+pub enum IrAssignTarget {
+    Variable(String),
+    Path(IrPathExpr),
+}
+
+#[derive(Debug, Clone)]
+pub enum IrForKind {
+    Range {
+        start: IrExpr,
+        end: IrExpr,
+        inclusive: bool,
+    },
+    Each {
+        iterable: IrExpr,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -86,11 +102,19 @@ pub struct IrExpr {
 }
 
 #[derive(Debug, Clone)]
+pub struct IrPathExpr {
+    pub base: Box<IrExpr>,
+    pub segments: Vec<crate::ast::PathSegment>,
+}
+
+#[derive(Debug, Clone)]
 pub enum IrExprKind {
     Int(i64),
     Bool(bool),
     String(String),
     Variable(String),
+    Selector(String),
+    Block(String),
     Unary {
         op: crate::ast::UnaryOp,
         expr: Box<IrExpr>,
@@ -103,6 +127,17 @@ pub enum IrExprKind {
     Call {
         function: String,
         args: Vec<IrExpr>,
+    },
+    Single(Box<IrExpr>),
+    Exists(Box<IrExpr>),
+    At {
+        anchor: Box<IrExpr>,
+        value: Box<IrExpr>,
+    },
+    Path(IrPathExpr),
+    Cast {
+        kind: crate::types::CastKind,
+        expr: Box<IrExpr>,
     },
 }
 
@@ -150,8 +185,8 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             ty: ty.clone(),
             value: lower_expr(value),
         },
-        TypedStmtKind::Assign { name, value } => IrStmt::Assign {
-            name: name.clone(),
+        TypedStmtKind::Assign { target, value } => IrStmt::Assign {
+            target: lower_assign_target(target),
             value: lower_expr(value),
         },
         TypedStmtKind::If {
@@ -167,17 +202,9 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             condition: lower_expr(condition),
             body: body.iter().map(lower_stmt).collect(),
         },
-        TypedStmtKind::For {
-            name,
-            start,
-            end,
-            inclusive,
-            body,
-        } => IrStmt::For {
+        TypedStmtKind::For { name, kind, body } => IrStmt::For {
             name: name.clone(),
-            start: lower_expr(start),
-            end: lower_expr(end),
-            inclusive: *inclusive,
+            kind: lower_for_kind(kind),
             body: body.iter().map(lower_stmt).collect(),
         },
         TypedStmtKind::Break => IrStmt::Break,
@@ -192,6 +219,37 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             placeholders: placeholders.iter().map(lower_macro_placeholder).collect(),
         },
         TypedStmtKind::Expr(expr) => IrStmt::Expr(lower_expr(expr)),
+    }
+}
+
+fn lower_assign_target(target: &TypedAssignTarget) -> IrAssignTarget {
+    match target {
+        TypedAssignTarget::Variable(name) => IrAssignTarget::Variable(name.clone()),
+        TypedAssignTarget::Path(path) => IrAssignTarget::Path(lower_path_expr(path)),
+    }
+}
+
+fn lower_for_kind(kind: &TypedForKind) -> IrForKind {
+    match kind {
+        TypedForKind::Range {
+            start,
+            end,
+            inclusive,
+        } => IrForKind::Range {
+            start: lower_expr(start),
+            end: lower_expr(end),
+            inclusive: *inclusive,
+        },
+        TypedForKind::Each { iterable } => IrForKind::Each {
+            iterable: lower_expr(iterable),
+        },
+    }
+}
+
+fn lower_path_expr(path: &TypedPathExpr) -> IrPathExpr {
+    IrPathExpr {
+        base: Box::new(lower_expr(&path.base)),
+        segments: path.segments.clone(),
     }
 }
 
@@ -210,6 +268,8 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
             TypedExprKind::String(value) => IrExprKind::String(value.clone()),
             TypedExprKind::Variable(name) => IrExprKind::Variable(name.clone()),
+            TypedExprKind::Selector(value) => IrExprKind::Selector(value.clone()),
+            TypedExprKind::Block(value) => IrExprKind::Block(value.clone()),
             TypedExprKind::Unary { op, expr } => IrExprKind::Unary {
                 op: *op,
                 expr: Box::new(lower_expr(expr)),
@@ -222,6 +282,21 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Call { function, args } => IrExprKind::Call {
                 function: function.clone(),
                 args: args.iter().map(lower_expr).collect(),
+            },
+            TypedExprKind::Single(expr) => IrExprKind::Single(Box::new(lower_expr(expr))),
+            TypedExprKind::Exists(expr) => IrExprKind::Exists(Box::new(lower_expr(expr))),
+            TypedExprKind::At { anchor, value } => IrExprKind::At {
+                anchor: Box::new(lower_expr(anchor)),
+                value: Box::new(lower_expr(value)),
+            },
+            TypedExprKind::Path(path) => IrExprKind::Path(lower_path_expr(path)),
+            TypedExprKind::Cast { kind, expr } => IrExprKind::Cast {
+                kind: match kind {
+                    CastKind::Int => CastKind::Int,
+                    CastKind::Bool => CastKind::Bool,
+                    CastKind::String => CastKind::String,
+                },
+                expr: Box::new(lower_expr(expr)),
             },
         },
     }

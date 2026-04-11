@@ -123,25 +123,29 @@ impl Parser {
                 self.bump();
                 let name = self.expect_identifier("expected loop variable name after 'for'");
                 self.expect(TokenKind::In, "expected 'in' after loop variable");
-                let start = self.parse_expr_bp(0);
-                let inclusive = if self.eat(&TokenKind::DotDotEq) {
-                    true
+                let first = self.parse_expr_bp(0);
+                let kind = if self.eat(&TokenKind::DotDotEq) {
+                    let end = self.parse_expr_bp(0);
+                    ForKind::Range {
+                        start: first,
+                        end,
+                        inclusive: true,
+                    }
+                } else if self.eat(&TokenKind::DotDot) {
+                    let end = self.parse_expr_bp(0);
+                    ForKind::Range {
+                        start: first,
+                        end,
+                        inclusive: false,
+                    }
                 } else {
-                    self.expect(TokenKind::DotDot, "expected '..' or '..=' in for range");
-                    false
+                    ForKind::Each { iterable: first }
                 };
-                let end = self.parse_expr_bp(0);
                 self.expect(TokenKind::Colon, "expected ':' after for range");
                 self.expect_statement_break("expected newline after for range");
                 let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
                 self.expect(TokenKind::End, "expected 'end'");
-                StmtKind::For {
-                    name,
-                    start,
-                    end,
-                    inclusive,
-                    body,
-                }
+                StmtKind::For { name, kind, body }
             }
             TokenKind::Break => {
                 self.bump();
@@ -179,17 +183,17 @@ impl Parser {
                 self.expect_statement_break("expected newline after macro command");
                 StmtKind::MacroCommand(value)
             }
-            TokenKind::Identifier(_) if self.peek_n_is(1, &TokenKind::Assign) => {
-                let name = self.expect_identifier("expected variable name");
-                self.expect(TokenKind::Assign, "expected '=' in assignment");
-                let value = self.parse_expr();
-                self.expect_statement_break("expected newline after assignment");
-                StmtKind::Assign { name, value }
-            }
             _ => {
                 let expr = self.parse_expr();
-                self.expect_statement_break("expected newline after expression");
-                StmtKind::Expr(expr)
+                if self.eat(&TokenKind::Assign) {
+                    let target = self.into_assign_target(expr);
+                    let value = self.parse_expr();
+                    self.expect_statement_break("expected newline after assignment");
+                    StmtKind::Assign { target, value }
+                } else {
+                    self.expect_statement_break("expected newline after expression");
+                    StmtKind::Expr(expr)
+                }
             }
         };
 
@@ -244,7 +248,7 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Expr {
         let token = self.bump();
-        match token.kind {
+        let expr = match token.kind {
             TokenKind::Integer(value) => Expr {
                 kind: ExprKind::Int(value),
                 span: token.span,
@@ -305,6 +309,52 @@ impl Parser {
                     span: token.span,
                 }
             }
+        };
+
+        self.parse_postfix(expr)
+    }
+
+    fn parse_postfix(&mut self, mut expr: Expr) -> Expr {
+        loop {
+            if self.eat(&TokenKind::Dot) {
+                let span = self.current_span();
+                let field = self.expect_identifier("expected field name after '.'");
+                expr = self.append_path_segment(expr, PathSegment::Field(field), span);
+            } else if self.eat(&TokenKind::LeftBracket) {
+                let span = self.current_span();
+                let index_expr = self.parse_expr_bp(0);
+                let index = match index_expr.kind {
+                    ExprKind::Int(value) => value,
+                    _ => {
+                        self.diagnostics.push(Diagnostic::new(
+                            "path indices must be integer literals",
+                            span.clone(),
+                        ));
+                        0
+                    }
+                };
+                self.expect(TokenKind::RightBracket, "expected ']' after index");
+                expr = self.append_path_segment(expr, PathSegment::Index(index), span);
+            } else {
+                break;
+            }
+        }
+
+        expr
+    }
+
+    fn append_path_segment(&mut self, expr: Expr, segment: PathSegment, span: Span) -> Expr {
+        let mut path = match expr.kind {
+            ExprKind::Path(path) => path,
+            _ => PathExpr {
+                base: Box::new(expr),
+                segments: Vec::new(),
+            },
+        };
+        path.segments.push(segment);
+        Expr {
+            kind: ExprKind::Path(path),
+            span,
         }
     }
 
@@ -361,6 +411,10 @@ impl Parser {
                 "int" => Type::Int,
                 "bool" => Type::Bool,
                 "string" => Type::String,
+                "entity_set" => Type::EntitySet,
+                "entity_ref" => Type::EntityRef,
+                "block_ref" => Type::BlockRef,
+                "nbt" => Type::Nbt,
                 "void" => Type::Void,
                 _ => {
                     self.diagnostics.push(Diagnostic::new(
@@ -438,10 +492,6 @@ impl Parser {
         same_variant(&self.peek().kind, expected)
     }
 
-    fn peek_n_is(&self, offset: usize, expected: &TokenKind) -> bool {
-        same_variant(&self.tokens.peek_n(offset).kind, expected)
-    }
-
     fn peek(&self) -> &Token {
         self.tokens.peek()
     }
@@ -483,6 +533,7 @@ impl Parser {
         while !self.at(&TokenKind::Eof)
             && !self.at(&TokenKind::Comma)
             && !self.at(&TokenKind::RightParen)
+            && !self.at(&TokenKind::RightBracket)
             && !self.at(&TokenKind::DotDot)
             && !self.at(&TokenKind::DotDotEq)
             && !self.at(&TokenKind::Newline)
@@ -507,6 +558,20 @@ impl Parser {
         self.diagnostics
             .push(Diagnostic::new(message, self.current_span()));
     }
+
+    fn into_assign_target(&mut self, expr: Expr) -> AssignTarget {
+        match expr.kind {
+            ExprKind::Variable(name) => AssignTarget::Variable(name),
+            ExprKind::Path(path) => AssignTarget::Path(path),
+            _ => {
+                self.diagnostics.push(Diagnostic::new(
+                    "invalid assignment target",
+                    expr.span,
+                ));
+                AssignTarget::Variable("_error".to_string())
+            }
+        }
+    }
 }
 
 struct TokenStream {
@@ -522,12 +587,6 @@ impl TokenStream {
     fn peek(&self) -> &Token {
         &self.tokens[self.index]
     }
-
-    fn peek_n(&self, offset: usize) -> &Token {
-        let index = (self.index + offset).min(self.tokens.len().saturating_sub(1));
-        &self.tokens[index]
-    }
-
     fn bump(&mut self) -> Token {
         let token = self.peek().clone();
         if !matches!(token.kind, TokenKind::Eof) {
@@ -544,7 +603,7 @@ fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::ast::{BinaryOp, ExprKind, StmtKind, UnaryOp};
+    use crate::ast::{BinaryOp, ExprKind, ForKind, StmtKind, UnaryOp};
 
     #[test]
     fn parses_comments_and_function_annotations() {
@@ -604,13 +663,17 @@ end
         )
         .unwrap();
 
-        let StmtKind::For {
-            inclusive, body, ..
-        } = &program.functions[0].body[0].kind
+        let StmtKind::For { kind, body, .. } = &program.functions[0].body[0].kind
         else {
             panic!("expected for statement");
         };
-        assert!(*inclusive);
+        assert!(matches!(
+            kind,
+            ForKind::Range {
+                inclusive: true,
+                ..
+            }
+        ));
 
         let StmtKind::If {
             condition,
@@ -677,6 +740,27 @@ end
 
         let rendered = error.to_string();
         assert!(rendered.contains("expected ':' after else"));
-        assert!(rendered.contains("expected '..' or '..=' in for range"));
+        assert!(rendered.contains("expected ':' after for range"));
+    }
+
+    #[test]
+    fn parses_for_each_and_path_assignment() {
+        let program = parse(
+            r#"
+fn main() -> void
+    let pigs = selector("@e[type=pig]")
+    for pig in pigs:
+        pig.CustomName = "Hello"
+    end
+end
+"#,
+        )
+        .unwrap();
+
+        let StmtKind::For { kind, body, .. } = &program.functions[0].body[1].kind else {
+            panic!("expected for statement");
+        };
+        assert!(matches!(kind, ForKind::Each { .. }));
+        assert!(matches!(body[0].kind, StmtKind::Assign { .. }));
     }
 }

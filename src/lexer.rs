@@ -33,8 +33,11 @@ pub enum TokenKind {
     DotDotEq,
     Colon,
     Comma,
+    Dot,
     LeftParen,
     RightParen,
+    LeftBracket,
+    RightBracket,
     Assign,
     Plus,
     Minus,
@@ -82,6 +85,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 &source_file,
                 TokenKind::RightParen,
             ),
+            '[' => push_simple(
+                &mut cursor,
+                &mut tokens,
+                &source_file,
+                TokenKind::LeftBracket,
+            ),
+            ']' => push_simple(
+                &mut cursor,
+                &mut tokens,
+                &source_file,
+                TokenKind::RightBracket,
+            ),
             ':' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Colon),
             ',' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Comma),
             '+' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Plus),
@@ -105,10 +120,12 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                         TextRange::new(start, cursor.position()),
                     );
                 } else {
-                    diagnostics.push(Diagnostic::new(
-                        "unexpected '.'",
-                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
-                    ));
+                    push_token(
+                        &mut tokens,
+                        &source_file,
+                        TokenKind::Dot,
+                        TextRange::new(start, cursor.position()),
+                    );
                 }
             }
             '-' => {

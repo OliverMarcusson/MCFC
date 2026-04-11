@@ -27,6 +27,10 @@ pub enum Type {
     Int,
     Bool,
     String,
+    EntitySet,
+    EntityRef,
+    BlockRef,
+    Nbt,
     Void,
 }
 
@@ -36,6 +40,10 @@ impl Type {
             Type::Int => "int",
             Type::Bool => "bool",
             Type::String => "string",
+            Type::EntitySet => "entity_set",
+            Type::EntityRef => "entity_ref",
+            Type::BlockRef => "block_ref",
+            Type::Nbt => "nbt",
             Type::Void => "void",
         }
     }
@@ -54,7 +62,7 @@ pub enum StmtKind {
         value: Expr,
     },
     Assign {
-        name: String,
+        target: AssignTarget,
         value: Expr,
     },
     If {
@@ -68,9 +76,7 @@ pub enum StmtKind {
     },
     For {
         name: String,
-        start: Expr,
-        end: Expr,
-        inclusive: bool,
+        kind: ForKind,
         body: Vec<Stmt>,
     },
     Break,
@@ -82,9 +88,39 @@ pub enum StmtKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssignTarget {
+    Variable(String),
+    Path(PathExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForKind {
+    Range {
+        start: Expr,
+        end: Expr,
+        inclusive: bool,
+    },
+    Each {
+        iterable: Expr,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathExpr {
+    pub base: Box<Expr>,
+    pub segments: Vec<PathSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathSegment {
+    Field(String),
+    Index(i64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +142,7 @@ pub enum ExprKind {
         function: String,
         args: Vec<Expr>,
     },
+    Path(PathExpr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

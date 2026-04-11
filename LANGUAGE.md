@@ -108,6 +108,7 @@ Supported statements:
 - `while condition: ... end`
 - `for name in start..end: ... end`
 - `for name in start..=end: ... end`
+- `for name in selector_expr: ... end`
 - `break`
 - `continue`
 - `return`
@@ -132,6 +133,7 @@ Supported expressions:
 - string literals, for example `"hello"` or `'hello'`
 - variables
 - function calls
+- path access, for example `pig.CustomName` or `pig.HandItems[0]`
 - unary `not`
 - binary operators
 
@@ -159,6 +161,10 @@ Built-in types:
 - `int`
 - `bool`
 - `string`
+- `entity_set`
+- `entity_ref`
+- `block_ref`
+- `nbt`
 - `void`
 
 Type rules:
@@ -175,6 +181,15 @@ Current operator support:
 - `and`, `or`, and `not` require `bool`
 - ordering comparisons currently support `int` and `bool`
 - string equality supports only `==` and `!=`
+
+Minecraft query builtins:
+
+- `selector("...") -> entity_set`
+- `single(entity_set) -> entity_ref`
+- `exists(entity_ref) -> bool`
+- `block("...") -> block_ref`
+- `at(entity_ref, entity_set|entity_ref|block_ref)`
+- `int(nbt)`, `bool(nbt)`, `string(nbt)`
 
 String literal notes:
 

@@ -53,7 +53,7 @@ pub enum TypedStmtKind {
         value: TypedExpr,
     },
     Assign {
-        name: String,
+        target: TypedAssignTarget,
         value: TypedExpr,
     },
     If {
@@ -67,9 +67,7 @@ pub enum TypedStmtKind {
     },
     For {
         name: String,
-        start: TypedExpr,
-        end: TypedExpr,
-        inclusive: bool,
+        kind: TypedForKind,
         body: Vec<TypedStmt>,
     },
     Break,
@@ -81,6 +79,24 @@ pub enum TypedStmtKind {
         placeholders: Vec<MacroPlaceholder>,
     },
     Expr(TypedExpr),
+}
+
+#[derive(Debug, Clone)]
+pub enum TypedAssignTarget {
+    Variable(String),
+    Path(TypedPathExpr),
+}
+
+#[derive(Debug, Clone)]
+pub enum TypedForKind {
+    Range {
+        start: TypedExpr,
+        end: TypedExpr,
+        inclusive: bool,
+    },
+    Each {
+        iterable: TypedExpr,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -96,11 +112,19 @@ pub struct TypedExpr {
 }
 
 #[derive(Debug, Clone)]
+pub struct TypedPathExpr {
+    pub base: Box<TypedExpr>,
+    pub segments: Vec<PathSegment>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TypedExprKind {
     Int(i64),
     Bool(bool),
     String(String),
     Variable(String),
+    Selector(String),
+    Block(String),
     Unary {
         op: UnaryOp,
         expr: Box<TypedExpr>,
@@ -114,6 +138,24 @@ pub enum TypedExprKind {
         function: String,
         args: Vec<TypedExpr>,
     },
+    Single(Box<TypedExpr>),
+    Exists(Box<TypedExpr>),
+    At {
+        anchor: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+    },
+    Path(TypedPathExpr),
+    Cast {
+        kind: CastKind,
+        expr: Box<TypedExpr>,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CastKind {
+    Int,
+    Bool,
+    String,
 }
 
 pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
@@ -260,30 +302,55 @@ fn type_check_block(
                     value,
                 }
             }
-            StmtKind::Assign { name, value } => {
-                let Some(existing) = env.get(name).cloned() else {
-                    diagnostics.push(Diagnostic::new(
-                        format!("undefined variable '{}'", name),
-                        statement.span.clone(),
-                    ));
-                    continue;
-                };
+            StmtKind::Assign { target, value } => {
                 let value = type_check_expr(value, signatures, env, called_functions, diagnostics);
-                if existing != value.ty {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "cannot assign '{}' to variable '{}' of type '{}'",
-                            value.ty.as_str(),
-                            name,
-                            existing.as_str()
-                        ),
-                        statement.span.clone(),
-                    ));
-                }
-                TypedStmtKind::Assign {
-                    name: name.clone(),
-                    value,
-                }
+                let target = match target {
+                    AssignTarget::Variable(name) => {
+                        let Some(existing) = env.get(name).cloned() else {
+                            diagnostics.push(Diagnostic::new(
+                                format!("undefined variable '{}'", name),
+                                statement.span.clone(),
+                            ));
+                            continue;
+                        };
+                        if existing != value.ty {
+                            diagnostics.push(Diagnostic::new(
+                                format!(
+                                    "cannot assign '{}' to variable '{}' of type '{}'",
+                                    value.ty.as_str(),
+                                    name,
+                                    existing.as_str()
+                                ),
+                                statement.span.clone(),
+                            ));
+                        }
+                        TypedAssignTarget::Variable(name.clone())
+                    }
+                    AssignTarget::Path(path) => {
+                        let typed_path = type_check_path(
+                            path,
+                            signatures,
+                            env,
+                            called_functions,
+                            diagnostics,
+                            statement.span.clone(),
+                        );
+                        if !matches!(typed_path.base.ty, Type::EntityRef | Type::BlockRef) {
+                            diagnostics.push(Diagnostic::new(
+                                "path assignment requires an 'entity_ref' or 'block_ref' base",
+                                statement.span.clone(),
+                            ));
+                        }
+                        if !matches!(value.ty, Type::Int | Type::Bool | Type::String | Type::Nbt) {
+                            diagnostics.push(Diagnostic::new(
+                                "path assignment requires a value of type 'int', 'bool', 'string', or 'nbt'",
+                                statement.span.clone(),
+                            ));
+                        }
+                        TypedAssignTarget::Path(typed_path)
+                    }
+                };
+                TypedStmtKind::Assign { target, value }
             }
             StmtKind::If {
                 condition,
@@ -345,37 +412,63 @@ fn type_check_block(
                 );
                 TypedStmtKind::While { condition, body }
             }
-            StmtKind::For {
-                name,
-                start,
-                end,
-                inclusive,
-                body,
-            } => {
+            StmtKind::For { name, kind, body } => {
                 if env.contains_key(name) {
                     diagnostics.push(Diagnostic::new(
                         format!("variable '{}' is already defined", name),
                         statement.span.clone(),
                     ));
                 }
-                let start = type_check_expr(start, signatures, env, called_functions, diagnostics);
-                let end = type_check_expr(end, signatures, env, called_functions, diagnostics);
-                if start.ty != Type::Int {
-                    diagnostics.push(Diagnostic::new(
-                        "for range start must have type 'int'",
-                        statement.span.clone(),
-                    ));
-                }
-                if end.ty != Type::Int {
-                    diagnostics.push(Diagnostic::new(
-                        "for range end must have type 'int'",
-                        statement.span.clone(),
-                    ));
-                }
-
                 let mut loop_env = env.clone();
-                loop_env.insert(name.clone(), Type::Int);
-                locals.insert(name.clone(), Type::Int);
+                let kind = match kind {
+                    ForKind::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        let start =
+                            type_check_expr(start, signatures, env, called_functions, diagnostics);
+                        let end =
+                            type_check_expr(end, signatures, env, called_functions, diagnostics);
+                        if start.ty != Type::Int {
+                            diagnostics.push(Diagnostic::new(
+                                "for range start must have type 'int'",
+                                statement.span.clone(),
+                            ));
+                        }
+                        if end.ty != Type::Int {
+                            diagnostics.push(Diagnostic::new(
+                                "for range end must have type 'int'",
+                                statement.span.clone(),
+                            ));
+                        }
+                        loop_env.insert(name.clone(), Type::Int);
+                        locals.insert(name.clone(), Type::Int);
+                        TypedForKind::Range {
+                            start,
+                            end,
+                            inclusive: *inclusive,
+                        }
+                    }
+                    ForKind::Each { iterable } => {
+                        let iterable = type_check_expr(
+                            iterable,
+                            signatures,
+                            env,
+                            called_functions,
+                            diagnostics,
+                        );
+                        if iterable.ty != Type::EntitySet {
+                            diagnostics.push(Diagnostic::new(
+                                "for-each iteration requires an 'entity_set'",
+                                statement.span.clone(),
+                            ));
+                        }
+                        loop_env.insert(name.clone(), Type::EntityRef);
+                        locals.insert(name.clone(), Type::EntityRef);
+                        TypedForKind::Each { iterable }
+                    }
+                };
                 let body = type_check_block(
                     body,
                     return_type,
@@ -386,13 +479,7 @@ fn type_check_block(
                     loop_depth + 1,
                     diagnostics,
                 );
-                TypedStmtKind::For {
-                    name: name.clone(),
-                    start,
-                    end,
-                    inclusive: *inclusive,
-                    body,
-                }
+                TypedStmtKind::For { name: name.clone(), kind, body }
             }
             StmtKind::Break => {
                 if loop_depth == 0 {
@@ -499,6 +586,17 @@ fn type_check_expr(
         ExprKind::String(value) => TypedExpr {
             kind: TypedExprKind::String(value.clone()),
             ty: Type::String,
+        },
+        ExprKind::Path(path) => TypedExpr {
+            kind: TypedExprKind::Path(type_check_path(
+                path,
+                signatures,
+                env,
+                called_functions,
+                diagnostics,
+                expr.span.clone(),
+            )),
+            ty: Type::Nbt,
         },
         ExprKind::Variable(name) => match env.get(name) {
             Some(ty) => TypedExpr {
@@ -608,6 +706,11 @@ fn type_check_expr(
             }
         }
         ExprKind::Call { function, args } => {
+            if let Some(builtin) =
+                type_check_builtin_call(function, args, expr, signatures, env, called_functions, diagnostics)
+            {
+                return builtin;
+            }
             let signature = match signatures.get(function) {
                 Some(signature) => signature,
                 None => {
@@ -678,6 +781,252 @@ fn type_check_expr(
                 ty: signature.return_type.clone(),
             }
         }
+    }
+}
+
+fn type_check_path(
+    path: &PathExpr,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+    span: Span,
+) -> TypedPathExpr {
+    let base = type_check_expr(&path.base, signatures, env, called_functions, diagnostics);
+    if !matches!(base.ty, Type::EntityRef | Type::BlockRef) {
+        diagnostics.push(Diagnostic::new(
+            "path access requires an 'entity_ref' or 'block_ref' base",
+            span,
+        ));
+    }
+    TypedPathExpr {
+        base: Box::new(base),
+        segments: path.segments.clone(),
+    }
+}
+
+fn type_check_builtin_call(
+    function: &str,
+    args: &[Expr],
+    expr: &Expr,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> Option<TypedExpr> {
+    match function {
+        "selector" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 1, expr, diagnostics);
+            if let Some(arg) = args.first() {
+                if arg.ty != Type::String {
+                    diagnostics.push(Diagnostic::new(
+                        "selector(...) requires a 'string' argument",
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            let raw = extract_string_literal(args.first(), "selector", expr, diagnostics);
+            Some(TypedExpr {
+                kind: TypedExprKind::Selector(raw),
+                ty: Type::EntitySet,
+            })
+        }
+        "block" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 1, expr, diagnostics);
+            if let Some(arg) = args.first() {
+                if arg.ty != Type::String {
+                    diagnostics.push(Diagnostic::new(
+                        "block(...) requires a 'string' argument",
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            let raw = extract_string_literal(args.first(), "block", expr, diagnostics);
+            Some(TypedExpr {
+                kind: TypedExprKind::Block(raw),
+                ty: Type::BlockRef,
+            })
+        }
+        "single" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 1, expr, diagnostics);
+            let mut arg = args.into_iter().next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Selector(String::new()),
+                ty: Type::EntitySet,
+            });
+            if arg.ty != Type::EntitySet {
+                diagnostics.push(Diagnostic::new(
+                    "single(...) requires an 'entity_set' argument",
+                    expr.span.clone(),
+                ));
+            }
+            rewrite_single_limit(&mut arg, diagnostics, expr.span.clone());
+            Some(TypedExpr {
+                kind: TypedExprKind::Single(Box::new(arg)),
+                ty: Type::EntityRef,
+            })
+        }
+        "exists" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 1, expr, diagnostics);
+            let arg = args.into_iter().next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::EntityRef,
+            });
+            if arg.ty != Type::EntityRef {
+                diagnostics.push(Diagnostic::new(
+                    "exists(...) requires an 'entity_ref' argument",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::Exists(Box::new(arg)),
+                ty: Type::Bool,
+            })
+        }
+        "at" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 2, expr, diagnostics);
+            let mut iter = args.into_iter();
+            let anchor = iter.next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::EntityRef,
+            });
+            let value = iter.next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Selector(String::new()),
+                ty: Type::EntitySet,
+            });
+            if anchor.ty != Type::EntityRef {
+                diagnostics.push(Diagnostic::new(
+                    "at(...) requires an 'entity_ref' anchor",
+                    expr.span.clone(),
+                ));
+            }
+            if !matches!(value.ty, Type::EntitySet | Type::EntityRef | Type::BlockRef) {
+                diagnostics.push(Diagnostic::new(
+                    "at(...) requires an 'entity_set', 'entity_ref', or 'block_ref' value",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::At {
+                    anchor: Box::new(anchor),
+                    value: Box::new(value.clone()),
+                },
+                ty: value.ty,
+            })
+        }
+        "int" | "bool" | "string" => {
+            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            expect_arity(function, &args, 1, expr, diagnostics);
+            let arg = args.into_iter().next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::Nbt,
+            });
+            if arg.ty != Type::Nbt {
+                diagnostics.push(Diagnostic::new(
+                    format!("{}(...) requires an 'nbt' argument", function),
+                    expr.span.clone(),
+                ));
+            }
+            let (kind, ty) = match function {
+                "int" => (CastKind::Int, Type::Int),
+                "bool" => (CastKind::Bool, Type::Bool),
+                _ => (CastKind::String, Type::String),
+            };
+            Some(TypedExpr {
+                kind: TypedExprKind::Cast {
+                    kind,
+                    expr: Box::new(arg),
+                },
+                ty,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn type_check_args(
+    args: &[Expr],
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> Vec<TypedExpr> {
+    args.iter()
+        .map(|arg| type_check_expr(arg, signatures, env, called_functions, diagnostics))
+        .collect()
+}
+
+fn expect_arity(
+    function: &str,
+    args: &[TypedExpr],
+    expected: usize,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    if args.len() != expected {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "wrong arity for '{}': expected {}, found {}",
+                function, expected, args.len()
+            ),
+            expr.span.clone(),
+        ));
+    }
+}
+
+fn extract_string_literal(
+    arg: Option<&TypedExpr>,
+    function: &str,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) -> String {
+    match arg.map(|value| &value.kind) {
+        Some(TypedExprKind::String(value)) => value.clone(),
+        _ => {
+            diagnostics.push(Diagnostic::new(
+                format!("{}(...) currently requires a string literal", function),
+                expr.span.clone(),
+            ));
+            String::new()
+        }
+    }
+}
+
+fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, span: Span) {
+    match &mut expr.kind {
+        TypedExprKind::Selector(value) => {
+            *value = add_or_validate_limit(value, diagnostics, span);
+        }
+        TypedExprKind::At { value, .. } => rewrite_single_limit(value, diagnostics, span),
+        _ => {}
+    }
+}
+
+fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span) -> String {
+    let lower = value.to_ascii_lowercase();
+    if let Some(index) = lower.find("limit=") {
+        let suffix = &lower[index + 6..];
+        let digits: String = suffix.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if digits == "1" {
+            return value.to_string();
+        }
+        diagnostics.push(Diagnostic::new(
+            "single(selector(...)) requires no limit or 'limit=1'",
+            span,
+        ));
+        return value.to_string();
+    }
+
+    if let Some(close) = value.rfind(']') {
+        let mut rewritten = value.to_string();
+        rewritten.insert_str(close, ",limit=1");
+        rewritten
+    } else {
+        format!("{}[limit=1]", value)
     }
 }
 
@@ -842,7 +1191,16 @@ fn validate_macro_placeholders(
 
             let name = &template[start..index];
             if let Some(ty) = env.get(name) {
-                if !matches!(ty, Type::Int | Type::Bool | Type::String) {
+                if !matches!(
+                    ty,
+                    Type::Int
+                        | Type::Bool
+                        | Type::String
+                        | Type::EntitySet
+                        | Type::EntityRef
+                        | Type::BlockRef
+                        | Type::Nbt
+                ) {
                     diagnostics.push(Diagnostic::new(
                         format!(
                             "macro placeholder '{}' has unsupported type '{}'",

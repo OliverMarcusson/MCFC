@@ -19,7 +19,7 @@ use crate::analysis::{AnalysisResult, analyze_source, function_at_offset, word_a
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
 use crate::project::{collect_source_files, find_manifest_in_ancestors, load_manifest};
-use crate::types::StructTypeDef;
+use crate::types::{RefKind, StructTypeDef};
 
 #[derive(Debug, Clone)]
 struct DocumentState {
@@ -153,7 +153,8 @@ impl Backend {
             state.text.clone()
         };
         let analysis = analyze_source(&text);
-        self.publish_diagnostics(uri.clone(), &text, &analysis).await;
+        self.publish_diagnostics(uri.clone(), &text, &analysis)
+            .await;
         if let Some(state) = self.documents.write().await.get_mut(uri) {
             state.mode = DocumentMode::Standalone { analysis };
         }
@@ -201,7 +202,9 @@ impl Backend {
                 .segment_for_path(&path_from_url(&uri).unwrap_or_default())
                 .map(|segment| project_diagnostics_for_segment(&text, segment, &snapshot.analysis))
                 .unwrap_or_default();
-            self.client.publish_diagnostics(uri, diagnostics, None).await;
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
         }
 
         Ok(())
@@ -353,8 +356,10 @@ impl LanguageServer for Backend {
         let Some(context) = self.ensure_document_context(uri).await else {
             return Ok(None);
         };
-        let local_offset =
-            position_to_offset(&context.local_text, params.text_document_position_params.position);
+        let local_offset = position_to_offset(
+            &context.local_text,
+            params.text_document_position_params.position,
+        );
         let offset = context
             .segment
             .as_ref()
@@ -387,10 +392,8 @@ impl LanguageServer for Backend {
             .await
         {
             Some(context) => {
-                let local_offset = position_to_offset(
-                    &context.local_text,
-                    params.text_document_position.position,
-                );
+                let local_offset =
+                    position_to_offset(&context.local_text, params.text_document_position.position);
                 let offset = context
                     .segment
                     .as_ref()
@@ -407,11 +410,16 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(context) = self.ensure_document_context(&params.text_document.uri).await else {
+        let Some(context) = self
+            .ensure_document_context(&params.text_document.uri)
+            .await
+        else {
             return Ok(Some(DocumentSymbolResponse::Nested(Vec::new())));
         };
         let symbols = match context.segment.as_ref() {
-            Some(segment) => project_document_symbols(&context.local_text, &context.analysis, segment),
+            Some(segment) => {
+                project_document_symbols(&context.local_text, &context.analysis, segment)
+            }
             None => document_symbols_for_analysis(&context.local_text, &context.analysis),
         };
 
@@ -428,7 +436,9 @@ fn resolve_project_config_for_uri(uri: &Url) -> Option<ProjectConfig> {
     resolve_project_config_for_path(&path).ok().flatten()
 }
 
-fn resolve_project_config_for_path(path: &Path) -> std::result::Result<Option<ProjectConfig>, String> {
+fn resolve_project_config_for_path(
+    path: &Path,
+) -> std::result::Result<Option<ProjectConfig>, String> {
     if !is_mcf_file(path) {
         return Ok(None);
     }
@@ -437,9 +447,12 @@ fn resolve_project_config_for_path(path: &Path) -> std::result::Result<Option<Pr
         return Ok(None);
     };
     let manifest = load_manifest(&manifest_path)?;
-    let project_root = manifest_path
-        .parent()
-        .ok_or_else(|| format!("manifest '{}' has no parent directory", manifest_path.display()))?;
+    let project_root = manifest_path.parent().ok_or_else(|| {
+        format!(
+            "manifest '{}' has no parent directory",
+            manifest_path.display()
+        )
+    })?;
     let source_root = project_root.join(manifest.source_dir);
     if !is_project_source_file(path, &source_root) {
         return Ok(None);
@@ -629,12 +642,13 @@ fn project_document_symbols(
 }
 
 fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Option<String> {
-    if let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) {
+    if let Some(struct_defs) = analysis
+        .typed_program
+        .as_ref()
+        .map(|program| &program.struct_defs)
+    {
         if let Some(def) = struct_defs.get(word) {
-            return Some(format!(
-                "```mcfc\n{}\n```",
-                struct_signature(word, def)
-            ));
+            return Some(format!("```mcfc\n{}\n```", struct_signature(word, def)));
         }
     }
 
@@ -688,6 +702,71 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "int" => Some("```mcfc\nint(value: nbt) -> int\n```"),
         "bool" => Some("```mcfc\nbool(value: nbt) -> bool\n```"),
         "string" => Some("```mcfc\nstring(value: nbt) -> string\n```"),
+        "summon" => Some(
+            "```mcfc\nsummon(entity_id: string) -> entity_ref\nsummon(entity_id: string, data: nbt) -> entity_ref\n```",
+        ),
+        "teleport" => Some(
+            "```mcfc\nteleport(target: entity_ref|entity_set, destination: entity_ref|block_ref) -> void\n```",
+        ),
+        "damage" => {
+            Some("```mcfc\ndamage(target: entity_ref|entity_set, amount: int) -> void\n```")
+        }
+        "heal" => Some("```mcfc\nheal(target: entity_ref, amount: int) -> void\n```"),
+        "give" => Some(
+            "```mcfc\ngive(target: entity_ref|entity_set, item_id: string, count: int) -> void\n```",
+        ),
+        "clear" => Some(
+            "```mcfc\nclear(target: entity_ref|entity_set, item_id: string, count: int) -> void\n```",
+        ),
+        "loot_give" => {
+            Some("```mcfc\nloot_give(target: entity_ref|entity_set, table: string) -> void\n```")
+        }
+        "loot_insert" => {
+            Some("```mcfc\nloot_insert(container: block_ref, table: string) -> void\n```")
+        }
+        "loot_spawn" => {
+            Some("```mcfc\nloot_spawn(position: block_ref, table: string) -> void\n```")
+        }
+        "tellraw" => {
+            Some("```mcfc\ntellraw(target: entity_ref|entity_set, message: string) -> void\n```")
+        }
+        "title" => {
+            Some("```mcfc\ntitle(target: entity_ref|entity_set, message: string) -> void\n```")
+        }
+        "actionbar" => {
+            Some("```mcfc\nactionbar(target: entity_ref|entity_set, message: string) -> void\n```")
+        }
+        "debug" => Some("```mcfc\ndebug(message: string) -> void\n```"),
+        "debug_marker" => Some(
+            "```mcfc\ndebug_marker(position: block_ref, label: string) -> void\ndebug_marker(position: block_ref, label: string, marker_block: string) -> void\n```",
+        ),
+        "debug_entity" => {
+            Some("```mcfc\ndebug_entity(target: entity_ref|entity_set, label: string) -> void\n```")
+        }
+        "bossbar_add" => Some("```mcfc\nbossbar_add(id: string, name: string) -> void\n```"),
+        "bossbar_remove" => Some("```mcfc\nbossbar_remove(id: string) -> void\n```"),
+        "bossbar_name" => Some("```mcfc\nbossbar_name(id: string, name: string) -> void\n```"),
+        "bossbar_value" => Some("```mcfc\nbossbar_value(id: string, value: int) -> void\n```"),
+        "bossbar_max" => Some("```mcfc\nbossbar_max(id: string, max: int) -> void\n```"),
+        "bossbar_visible" => {
+            Some("```mcfc\nbossbar_visible(id: string, visible: bool) -> void\n```")
+        }
+        "bossbar_players" => Some(
+            "```mcfc\nbossbar_players(id: string, targets: entity_ref|entity_set) -> void\n```",
+        ),
+        "playsound" => Some(
+            "```mcfc\nplaysound(sound: string, category: string, target: entity_ref|entity_set) -> void\n```",
+        ),
+        "stopsound" => Some(
+            "```mcfc\nstopsound(target: entity_ref|entity_set, category: string, sound: string) -> void\n```",
+        ),
+        "particle" => Some(
+            "```mcfc\nparticle(name: string, position: block_ref) -> void\nparticle(name: string, position: block_ref, count: int) -> void\nparticle(name: string, position: block_ref, count: int, viewers: entity_ref|entity_set) -> void\n```",
+        ),
+        "setblock" => Some("```mcfc\nsetblock(position: block_ref, block_id: string) -> void\n```"),
+        "fill" => {
+            Some("```mcfc\nfill(from: block_ref, to: block_ref, block_id: string) -> void\n```")
+        }
         "len" => Some("```mcfc\narray<T>.len() -> int\n```"),
         "push" => Some("```mcfc\narray<T>.push(value: T) -> void\n```"),
         "pop" => Some("```mcfc\narray<T>.pop() -> T\n```"),
@@ -695,8 +774,11 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "has" => Some("```mcfc\ndict<T>.has(key: string) -> bool\n```"),
         "remove" => Some("```mcfc\ndict<T>.remove(key: string) -> void\n```"),
         "effect" => {
-            Some("```mcfc\nplayer.effect(name: string, duration: int, amplifier: int) -> void\n```")
+            Some("```mcfc\nentity.effect(name: string, duration: int, amplifier: int) -> void\n```")
         }
+        "add_tag" => Some("```mcfc\nentity.add_tag(name: string) -> void\n```"),
+        "remove_tag" => Some("```mcfc\nentity.remove_tag(name: string) -> void\n```"),
+        "has_tag" => Some("```mcfc\nentity.has_tag(name: string) -> bool\n```"),
         _ => None,
     }
 }
@@ -779,18 +861,38 @@ fn static_completion_items(
             ),
             (
                 "effect",
-                "player.effect(name: string, duration: int, amplifier: int) -> void",
+                "entity.effect(name: string, duration: int, amplifier: int) -> void",
                 "effect(${1:name}, ${2:duration}, ${3:amplifier})",
+            ),
+            (
+                "add_tag",
+                "entity.add_tag(name: string) -> void",
+                "add_tag(${1:name})",
+            ),
+            (
+                "remove_tag",
+                "entity.remove_tag(name: string) -> void",
+                "remove_tag(${1:name})",
+            ),
+            (
+                "has_tag",
+                "entity.has_tag(name: string) -> bool",
+                "has_tag(${1:name})",
             ),
             ("nbt", "player.nbt.* read namespace", "nbt"),
             ("state", "player.state.* read/write namespace", "state"),
             ("tags", "player.tags.* read/write namespace", "tags"),
-            ("team", "player.team writable string", "team"),
+            ("team", "entity.team writable string", "team"),
             (
                 "mainhand",
-                "player.mainhand.* writable namespace",
+                "entity.mainhand.* writable namespace",
                 "mainhand",
             ),
+            ("offhand", "entity.offhand.* writable namespace", "offhand"),
+            ("head", "entity.head.* writable namespace", "head"),
+            ("chest", "entity.chest.* writable namespace", "chest"),
+            ("legs", "entity.legs.* writable namespace", "legs"),
+            ("feet", "entity.feet.* writable namespace", "feet"),
         ]
         .into_iter()
         .map(|(label, detail, insert_text)| {
@@ -801,8 +903,8 @@ fn static_completion_items(
 
     let mut items = Vec::new();
     for keyword in [
-        "fn", "struct", "let", "return", "end", "if", "match", "else", "while", "for", "in", "break", "continue",
-        "mc", "mcf", "true", "false", "and", "or", "not", "@book",
+        "fn", "struct", "let", "return", "end", "if", "match", "else", "while", "for", "in",
+        "break", "continue", "mc", "mcf", "true", "false", "and", "or", "not", "@book",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -894,6 +996,141 @@ fn static_completion_items(
             "string(value: nbt) -> string",
             "string(${1:value})",
         ),
+        (
+            "summon",
+            "summon(entity_id: string) -> entity_ref",
+            "summon(${1:\"minecraft:pig\"})",
+        ),
+        (
+            "teleport",
+            "teleport(target: entity_ref|entity_set, destination: entity_ref|block_ref) -> void",
+            "teleport(${1:target}, ${2:destination})",
+        ),
+        (
+            "damage",
+            "damage(target: entity_ref|entity_set, amount: int) -> void",
+            "damage(${1:target}, ${2:amount})",
+        ),
+        (
+            "heal",
+            "heal(target: entity_ref, amount: int) -> void",
+            "heal(${1:target}, ${2:amount})",
+        ),
+        (
+            "give",
+            "give(target: entity_ref|entity_set, item_id: string, count: int) -> void",
+            "give(${1:target}, ${2:\"minecraft:stone\"}, ${3:1})",
+        ),
+        (
+            "clear",
+            "clear(target: entity_ref|entity_set, item_id: string, count: int) -> void",
+            "clear(${1:target}, ${2:\"minecraft:stone\"}, ${3:1})",
+        ),
+        (
+            "loot_give",
+            "loot_give(target: entity_ref|entity_set, table: string) -> void",
+            "loot_give(${1:target}, ${2:\"minecraft:chests/simple_dungeon\"})",
+        ),
+        (
+            "loot_insert",
+            "loot_insert(container: block_ref, table: string) -> void",
+            "loot_insert(${1:container}, ${2:\"minecraft:chests/simple_dungeon\"})",
+        ),
+        (
+            "loot_spawn",
+            "loot_spawn(position: block_ref, table: string) -> void",
+            "loot_spawn(${1:position}, ${2:\"minecraft:chests/simple_dungeon\"})",
+        ),
+        (
+            "tellraw",
+            "tellraw(target: entity_ref|entity_set, message: string) -> void",
+            "tellraw(${1:target}, ${2:\"hello\"})",
+        ),
+        (
+            "title",
+            "title(target: entity_ref|entity_set, message: string) -> void",
+            "title(${1:target}, ${2:\"hello\"})",
+        ),
+        (
+            "actionbar",
+            "actionbar(target: entity_ref|entity_set, message: string) -> void",
+            "actionbar(${1:target}, ${2:\"hello\"})",
+        ),
+        (
+            "debug",
+            "debug(message: string) -> void",
+            "debug(${1:\"reached checkpoint\"})",
+        ),
+        (
+            "debug_marker",
+            "debug_marker(position: block_ref, label: string) -> void",
+            "debug_marker(${1:block(\"~ ~ ~\")}, ${2:\"checkpoint\"})",
+        ),
+        (
+            "debug_entity",
+            "debug_entity(target: entity_ref|entity_set, label: string) -> void",
+            "debug_entity(${1:target}, ${2:\"target\"})",
+        ),
+        (
+            "bossbar_add",
+            "bossbar_add(id: string, name: string) -> void",
+            "bossbar_add(${1:\"mcfc:boss\"}, ${2:\"Boss\"})",
+        ),
+        (
+            "bossbar_remove",
+            "bossbar_remove(id: string) -> void",
+            "bossbar_remove(${1:\"mcfc:boss\"})",
+        ),
+        (
+            "bossbar_name",
+            "bossbar_name(id: string, name: string) -> void",
+            "bossbar_name(${1:\"mcfc:boss\"}, ${2:\"Boss\"})",
+        ),
+        (
+            "bossbar_value",
+            "bossbar_value(id: string, value: int) -> void",
+            "bossbar_value(${1:\"mcfc:boss\"}, ${2:10})",
+        ),
+        (
+            "bossbar_max",
+            "bossbar_max(id: string, max: int) -> void",
+            "bossbar_max(${1:\"mcfc:boss\"}, ${2:20})",
+        ),
+        (
+            "bossbar_visible",
+            "bossbar_visible(id: string, visible: bool) -> void",
+            "bossbar_visible(${1:\"mcfc:boss\"}, ${2:true})",
+        ),
+        (
+            "bossbar_players",
+            "bossbar_players(id: string, targets: entity_ref|entity_set) -> void",
+            "bossbar_players(${1:\"mcfc:boss\"}, ${2:target})",
+        ),
+        (
+            "playsound",
+            "playsound(sound: string, category: string, target: entity_ref|entity_set) -> void",
+            "playsound(${1:\"minecraft:entity.experience_orb.pickup\"}, ${2:\"master\"}, ${3:target})",
+        ),
+        (
+            "stopsound",
+            "stopsound(target: entity_ref|entity_set, category: string, sound: string) -> void",
+            "stopsound(${1:target}, ${2:\"master\"}, ${3:\"minecraft:entity.experience_orb.pickup\"})",
+        ),
+        (
+            "particle",
+            "particle(name: string, position: block_ref) -> void",
+            "particle(${1:\"minecraft:flame\"}, ${2:block(\"~ ~ ~\")})",
+        ),
+        (
+            "setblock",
+            "setblock(position: block_ref, block_id: string) -> void",
+            "setblock(${1:block(\"~ ~ ~\")}, ${2:\"minecraft:stone\"})",
+        ),
+        (
+            "fill",
+            "fill(from: block_ref, to: block_ref, block_id: string) -> void",
+            "fill(${1:block(\"~ ~ ~\")}, ${2:block(\"~1 ~1 ~1\")}, ${3:\"minecraft:stone\"})",
+        ),
     ] {
         items.push(snippet_item(
             label,
@@ -935,12 +1172,13 @@ fn member_completion_items(
     match resolve_receiver_kind(source, analysis, offset, chain) {
         Some(CompletionReceiver::Array) => array_method_items(),
         Some(CompletionReceiver::Dict) => dict_method_items(),
-        Some(CompletionReceiver::EntityRef) => player_root_items(),
-        Some(CompletionReceiver::PlayerMainhand) => player_mainhand_items(),
+        Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
+        Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
+        Some(CompletionReceiver::EquipmentSlot) => equipment_slot_items(),
         Some(CompletionReceiver::Struct(name)) => struct_field_items(analysis, &name),
         Some(
             CompletionReceiver::PlayerDynamicNamespace
-            | CompletionReceiver::PlayerTeam
+            | CompletionReceiver::EntityTeam
             | CompletionReceiver::BlockRef
             | CompletionReceiver::Nbt,
         ) => Vec::new(),
@@ -952,7 +1190,7 @@ fn broad_member_items() -> Vec<CompletionItem> {
     [
         array_method_items(),
         dict_method_items(),
-        player_root_items(),
+        player_entity_root_items(),
     ]
     .concat()
 }
@@ -995,42 +1233,72 @@ fn dict_method_items() -> Vec<CompletionItem> {
     .collect()
 }
 
-fn player_root_items() -> Vec<CompletionItem> {
+fn generic_entity_root_items() -> Vec<CompletionItem> {
     [
         (
             "effect",
-            "player.effect(name: string, duration: int, amplifier: int) -> void",
+            "entity.effect(name: string, duration: int, amplifier: int) -> void",
             "effect(${1:name}, ${2:duration}, ${3:amplifier})",
             CompletionItemKind::METHOD,
         ),
         (
-            "nbt",
-            "player.nbt.* read namespace",
-            "nbt",
-            CompletionItemKind::FIELD,
+            "add_tag",
+            "entity.add_tag(name: string) -> void",
+            "add_tag(${1:name})",
+            CompletionItemKind::METHOD,
         ),
         (
-            "state",
-            "player.state.* read/write namespace",
-            "state",
-            CompletionItemKind::FIELD,
+            "remove_tag",
+            "entity.remove_tag(name: string) -> void",
+            "remove_tag(${1:name})",
+            CompletionItemKind::METHOD,
         ),
         (
-            "tags",
-            "player.tags.* read/write namespace",
-            "tags",
-            CompletionItemKind::FIELD,
+            "has_tag",
+            "entity.has_tag(name: string) -> bool",
+            "has_tag(${1:name})",
+            CompletionItemKind::METHOD,
         ),
         (
             "team",
-            "player.team writable string",
+            "entity.team writable string",
             "team",
             CompletionItemKind::FIELD,
         ),
         (
             "mainhand",
-            "player.mainhand.* writable namespace",
+            "entity.mainhand.* writable namespace",
             "mainhand",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "offhand",
+            "entity.offhand.* writable namespace",
+            "offhand",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "head",
+            "entity.head.* writable namespace",
+            "head",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "chest",
+            "entity.chest.* writable namespace",
+            "chest",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "legs",
+            "entity.legs.* writable namespace",
+            "legs",
+            CompletionItemKind::FIELD,
+        ),
+        (
+            "feet",
+            "entity.feet.* writable namespace",
+            "feet",
             CompletionItemKind::FIELD,
         ),
     ]
@@ -1039,14 +1307,30 @@ fn player_root_items() -> Vec<CompletionItem> {
     .collect()
 }
 
-fn player_mainhand_items() -> Vec<CompletionItem> {
+fn player_entity_root_items() -> Vec<CompletionItem> {
+    let mut items = generic_entity_root_items();
+    items.extend(
+        [
+            ("nbt", "player.nbt.* read namespace", "nbt"),
+            ("state", "player.state.* read/write namespace", "state"),
+            ("tags", "player.tags.* read/write namespace", "tags"),
+        ]
+        .into_iter()
+        .map(|(label, detail, insert_text)| {
+            snippet_item(label, CompletionItemKind::FIELD, detail, insert_text)
+        }),
+    );
+    items
+}
+
+fn equipment_slot_items() -> Vec<CompletionItem> {
     ["name", "item", "count"]
         .into_iter()
         .map(|label| {
             snippet_item(
                 label,
                 CompletionItemKind::FIELD,
-                "player.mainhand field",
+                "equipment slot field",
                 label,
             )
         })
@@ -1123,21 +1407,21 @@ fn local_type_at_offset(
     analysis: &AnalysisResult,
     offset: usize,
     name: &str,
-) -> Option<Type> {
+) -> Option<(Type, RefKind)> {
     if let Some(function) = function_at_offset(analysis, offset) {
         if let Some(local) = analysis
             .locals
             .iter()
             .find(|local| local.function == function.name && local.name == name)
         {
-            return Some(local.ty.clone());
+            return Some((local.ty.clone(), local.ref_kind));
         }
     }
 
     syntactic_locals_at_offset(source, offset)
         .into_iter()
         .find(|local| local.name == name)
-        .and_then(|local| local.ty)
+        .and_then(|local| local.ty.map(|ty| (ty, RefKind::Unknown)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1145,10 +1429,11 @@ enum CompletionReceiver {
     Array,
     Dict,
     Struct(String),
-    EntityRef,
+    GenericEntityRef,
+    PlayerEntityRef,
     PlayerDynamicNamespace,
-    PlayerTeam,
-    PlayerMainhand,
+    EntityTeam,
+    EquipmentSlot,
     BlockRef,
     Nbt,
 }
@@ -1162,17 +1447,18 @@ fn resolve_receiver_kind(
     let Some((base_name, segments)) = chain.split_first() else {
         return None;
     };
-    let base_ty = local_type_at_offset(source, analysis, offset, base_name)?;
-    receiver_from_type(base_ty, segments, analysis)
+    let (base_ty, base_ref_kind) = local_type_at_offset(source, analysis, offset, base_name)?;
+    receiver_from_type(base_ty, base_ref_kind, segments, analysis)
 }
 
 fn receiver_from_type(
     current: Type,
+    current_ref_kind: RefKind,
     segments: &[String],
     analysis: &AnalysisResult,
 ) -> Option<CompletionReceiver> {
     if segments.is_empty() {
-        return receiver_for_terminal_type(&current);
+        return receiver_for_terminal_type(&current, current_ref_kind);
     }
 
     let (segment, rest) = segments.split_first()?;
@@ -1184,14 +1470,17 @@ fn receiver_from_type(
             .and_then(|def| def.fields.get(segment))
             .cloned()?,
         Type::EntityRef => match segment.as_str() {
-            "mainhand" => {
+            "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" => {
                 return if rest.is_empty() {
-                    Some(CompletionReceiver::PlayerMainhand)
+                    Some(CompletionReceiver::EquipmentSlot)
                 } else {
                     None
                 };
             }
             "state" | "tags" | "nbt" => {
+                if current_ref_kind != RefKind::Player {
+                    return None;
+                }
                 return if rest.is_empty() {
                     Some(CompletionReceiver::PlayerDynamicNamespace)
                 } else {
@@ -1200,26 +1489,30 @@ fn receiver_from_type(
             }
             "team" => {
                 return if rest.is_empty() {
-                    Some(CompletionReceiver::PlayerTeam)
+                    Some(CompletionReceiver::EntityTeam)
                 } else {
                     None
                 };
             }
-            "effect" => return None,
+            "effect" | "add_tag" | "remove_tag" | "has_tag" => return None,
             _ => return None,
         },
         _ => return None,
     };
 
-    receiver_from_type(next, rest, analysis)
+    receiver_from_type(next, RefKind::Unknown, rest, analysis)
 }
 
-fn receiver_for_terminal_type(ty: &Type) -> Option<CompletionReceiver> {
+fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<CompletionReceiver> {
     match ty {
         Type::Array(_) => Some(CompletionReceiver::Array),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
-        Type::EntityRef => Some(CompletionReceiver::EntityRef),
+        Type::EntityRef => Some(if ref_kind == RefKind::Player {
+            CompletionReceiver::PlayerEntityRef
+        } else {
+            CompletionReceiver::GenericEntityRef
+        }),
         Type::BlockRef => Some(CompletionReceiver::BlockRef),
         Type::Nbt => Some(CompletionReceiver::Nbt),
         _ => None,
@@ -1227,18 +1520,33 @@ fn receiver_for_terminal_type(ty: &Type) -> Option<CompletionReceiver> {
 }
 
 fn struct_type_items(analysis: &AnalysisResult) -> Vec<CompletionItem> {
-    let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) else {
+    let Some(struct_defs) = analysis
+        .typed_program
+        .as_ref()
+        .map(|program| &program.struct_defs)
+    else {
         return Vec::new();
     };
 
     struct_defs
         .iter()
-        .map(|(name, def)| snippet_item(name, CompletionItemKind::STRUCT, &struct_signature(name, def), name))
+        .map(|(name, def)| {
+            snippet_item(
+                name,
+                CompletionItemKind::STRUCT,
+                &struct_signature(name, def),
+                name,
+            )
+        })
         .collect()
 }
 
 fn struct_field_items(analysis: &AnalysisResult, name: &str) -> Vec<CompletionItem> {
-    let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) else {
+    let Some(struct_defs) = analysis
+        .typed_program
+        .as_ref()
+        .map(|program| &program.struct_defs)
+    else {
         return Vec::new();
     };
     let Some(def) = struct_defs.get(name) else {
@@ -1416,7 +1724,8 @@ fn opens_block(line: &str) -> bool {
         || line.starts_with("while ")
         || line.starts_with("for ")
         || line.starts_with("match ")
-        || line.starts_with("as(") || line.starts_with("at("))
+        || line.starts_with("as(")
+        || line.starts_with("at("))
         && line.contains(':')
 }
 
@@ -1500,9 +1809,8 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use super::{
-        build_project_snapshot, completion_items, project_diagnostics_for_segment,
+        ProjectConfig, build_project_snapshot, completion_items, project_diagnostics_for_segment,
         project_document_symbols, range_from_text_range, resolve_project_config_for_path,
-        ProjectConfig,
     };
     use super::{offset_to_position, position_to_offset};
     use crate::analysis::analyze_source;
@@ -1614,7 +1922,7 @@ fn main() -> void
     }
 
     #[test]
-fn completes_struct_types_and_fields() {
+    fn completes_struct_types_and_fields() {
         let source = r#"
 struct Profile:
     duration: int
@@ -1633,7 +1941,11 @@ fn main(action: Action) -> void
 end
 "#;
         let analysis = analyze_source(source);
-        assert!(analysis.typed_program.is_some(), "{:?}", analysis.diagnostics);
+        assert!(
+            analysis.typed_program.is_some(),
+            "{:?}",
+            analysis.diagnostics
+        );
 
         let top_level_items = completion_items(source, &analysis, source.find("fn main").unwrap());
         assert!(top_level_items.iter().any(|item| item.label == "Action"));
@@ -1681,6 +1993,40 @@ end
     }
 
     #[test]
+    fn completes_gameplay_builtins_and_generic_entity_members() {
+        let source = r#"
+fn main() -> void
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    pig.
+end
+"#;
+        let analysis = analyze_source(source);
+        let top_level_items = completion_items(source, &analysis, source.find("fn main").unwrap());
+        assert!(top_level_items.iter().any(|item| item.label == "summon"));
+        assert!(top_level_items.iter().any(|item| item.label == "tellraw"));
+        assert!(top_level_items.iter().any(|item| item.label == "debug"));
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "debug_marker")
+        );
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "debug_entity")
+        );
+        assert!(top_level_items.iter().any(|item| item.label == "fill"));
+
+        let pig_items = completion_items(source, &analysis, source.find("pig.").unwrap() + 4);
+        assert!(pig_items.iter().any(|item| item.label == "add_tag"));
+        assert!(pig_items.iter().any(|item| item.label == "remove_tag"));
+        assert!(pig_items.iter().any(|item| item.label == "has_tag"));
+        assert!(pig_items.iter().any(|item| item.label == "offhand"));
+        assert!(pig_items.iter().any(|item| item.label == "team"));
+        assert!(!pig_items.iter().any(|item| item.label == "state"));
+    }
+
+    #[test]
     fn resolves_project_config_only_for_files_under_source_dir() {
         let base = temp_path();
         let project = base.join("project");
@@ -1700,10 +2046,17 @@ end
         let source_config = resolve_project_config_for_path(&source_file)
             .unwrap()
             .expect("source file should resolve to project");
-        assert_eq!(source_config.manifest_path, project.join("sample.mcfc.toml"));
+        assert_eq!(
+            source_config.manifest_path,
+            project.join("sample.mcfc.toml")
+        );
         assert_eq!(source_config.source_root, project.join("src"));
 
-        assert!(resolve_project_config_for_path(&asset_file).unwrap().is_none());
+        assert!(
+            resolve_project_config_for_path(&asset_file)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1794,8 +2147,11 @@ end
             .expect("hover should resolve cross-file function");
         assert!(hover.contains("fn helper() -> void"));
 
-        let top_level_items =
-            completion_items(&snapshot.merged_text, &snapshot.analysis, merged_call_offset);
+        let top_level_items = completion_items(
+            &snapshot.merged_text,
+            &snapshot.analysis,
+            merged_call_offset,
+        );
         assert!(top_level_items.iter().any(|item| item.label == "helper"));
         assert!(top_level_items.iter().any(|item| item.label == "Action"));
 
@@ -1821,8 +2177,10 @@ end
             broken_main_segment,
             &broken_snapshot.analysis,
         );
-        assert!(diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("unknown function")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unknown function"))
+        );
     }
 }

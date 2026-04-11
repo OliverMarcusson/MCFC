@@ -2,7 +2,7 @@ use crate::ast::{Function, Program, Stmt, StmtKind, Type};
 use crate::diagnostics::{Diagnostic, Diagnostics, TextRange};
 use crate::lexer::{Token, TokenKind, lex};
 use crate::parser;
-use crate::types::{self, TypedProgram};
+use crate::types::{self, RefKind, TypedProgram};
 
 #[derive(Debug, Clone)]
 pub struct AnalysisResult {
@@ -45,6 +45,7 @@ pub struct LocalInfo {
     pub function: String,
     pub name: String,
     pub ty: Type,
+    pub ref_kind: RefKind,
 }
 
 pub fn analyze_source(source: &str) -> AnalysisResult {
@@ -93,6 +94,11 @@ fn collect_locals(typed_program: &TypedProgram) -> Vec<LocalInfo> {
                     function: function.name.clone(),
                     name: name.clone(),
                     ty: ty.clone(),
+                    ref_kind: function
+                        .local_ref_kinds
+                        .get(name)
+                        .copied()
+                        .unwrap_or(RefKind::Unknown),
                 })
                 .collect::<Vec<_>>()
         })

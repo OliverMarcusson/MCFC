@@ -102,7 +102,11 @@ pub fn collect_asset_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn collect_files_recursive(root: &Path, extension: &str, files: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_files_recursive(
+    root: &Path,
+    extension: &str,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
     if !root.exists() {
         return Ok(());
     }

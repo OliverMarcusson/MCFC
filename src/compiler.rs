@@ -82,9 +82,12 @@ pub fn compile_project(
     options: &CompileOptions,
 ) -> Result<CompileResult, String> {
     let manifest = load_manifest(manifest_path)?;
-    let project_root = manifest_path
-        .parent()
-        .ok_or_else(|| format!("manifest '{}' has no parent directory", manifest_path.display()))?;
+    let project_root = manifest_path.parent().ok_or_else(|| {
+        format!(
+            "manifest '{}' has no parent directory",
+            manifest_path.display()
+        )
+    })?;
     let source_root = project_root.join(&manifest.source_dir);
     let asset_root = project_root.join(&manifest.asset_dir);
     let sources = collect_source_files(&source_root)?;
@@ -198,12 +201,187 @@ fn copy_project_assets(asset_root: &Path, artifacts: &mut BuildArtifacts) -> Res
         let relative = file
             .strip_prefix(asset_root)
             .map_err(|error| error.to_string())?;
-        let normalized = relative
-            .to_string_lossy()
-            .replace('\\', "/");
+        let normalized = relative.to_string_lossy().replace('\\', "/");
         let contents = fs::read_to_string(&file)
             .map_err(|error| format!("failed to read '{}': {}", file.display(), error))?;
         artifacts.files.insert(normalized, contents);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompileOptions, compile_source};
+
+    #[test]
+    fn compiles_gameplay_entity_and_inventory_builtins() {
+        let source = r#"
+fn main() -> void
+    let pig = summon("minecraft:pig")
+    pig.add_tag("elite")
+    let tagged = pig.has_tag("elite")
+    pig.remove_tag("elite")
+    pig.team = "red"
+    pig.mainhand.item = "minecraft:carrot_on_a_stick"
+    pig.offhand.item = "minecraft:shield"
+    pig.head.name = "Captain"
+    pig.chest.count = 1
+    pig.effect("speed", 10, 1)
+    teleport(pig, block("~ ~1 ~"))
+    damage(pig, 2)
+    heal(pig, 1)
+    give(pig, "minecraft:apple", 2)
+    clear(pig, "minecraft:apple", 1)
+    loot_give(pig, "minecraft:chests/simple_dungeon")
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(files.contains("summon $(entity) ~ ~ ~ $(data)"));
+        assert!(files.contains("mcfc_summon_capture_"));
+        assert!(files.contains("mcfc_summon_ref_"));
+        assert!(files.contains("tag $(selector) add $(tag)"));
+        assert!(files.contains("tag $(selector) remove $(tag)"));
+        assert!(files.contains("if entity @s[tag=$(tag)]"));
+        assert!(files.contains("team join $(team) $(selector)"));
+        assert!(files.contains("item replace entity $(selector) weapon.mainhand with $(item_id)"));
+        assert!(files.contains("item replace entity $(selector) weapon.offhand with $(item_id)"));
+        assert!(files.contains(
+            "item modify entity $(selector) armor.head {\"function\":\"minecraft:set_name\""
+        ));
+        assert!(files.contains(
+            "item modify entity $(selector) armor.chest {\"function\":\"minecraft:set_count\""
+        ));
+        assert!(files.contains("effect give $(selector) $(effect) $(duration) $(amplifier) true"));
+        assert!(files.contains("teleport $(selector) $(dest)"));
+        assert!(files.contains("damage $(selector) $(amount)"));
+        assert!(files.contains("store result entity $(selector) Health float 1"));
+        assert!(files.contains("give $(selector) $(item) $(count)"));
+        assert!(files.contains("clear $(selector) $(item) $(count)"));
+        assert!(files.contains("loot give $(selector) loot $(table)"));
+    }
+
+    #[test]
+    fn compiles_ui_audio_particle_and_world_builtins() {
+        let source = r#"
+fn main() -> void
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    let pos = block("~ ~ ~")
+    tellraw(pig, "hello @s")
+    title(pig, "Danger")
+    actionbar(pig, "Run")
+    bossbar_add("mcfc:test", "Boss @s")
+    bossbar_value("mcfc:test", 10)
+    bossbar_max("mcfc:test", 20)
+    bossbar_visible("mcfc:test", true)
+    bossbar_players("mcfc:test", pig)
+    bossbar_name("mcfc:test", "Still here")
+    playsound("minecraft:entity.experience_orb.pickup", "master", pig)
+    stopsound(pig, "master", "minecraft:entity.experience_orb.pickup")
+    particle("minecraft:flame", pos)
+    particle("minecraft:smoke", pos, 4, pig)
+    loot_insert(pos, "minecraft:chests/simple_dungeon")
+    loot_spawn(pos, "minecraft:chests/simple_dungeon")
+    setblock(pos, "minecraft:stone")
+    fill(pos, block("~1 ~1 ~1"), "minecraft:glass")
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(files.contains("tellraw $(selector) [\"hello \",{"));
+        assert!(files.contains("title $(selector) title \"Danger\""));
+        assert!(files.contains("title $(selector) actionbar \"Run\""));
+        assert!(files.contains("bossbar add $(id) [\"Boss \",{"));
+        assert!(files.contains("bossbar set $(id) value $(value)"));
+        assert!(files.contains("bossbar set $(id) max $(value)"));
+        assert!(files.contains("bossbar set $(id) visible $(visible)"));
+        assert!(files.contains("bossbar set $(id) players $(selector)"));
+        assert!(files.contains("bossbar set $(id) name \"Still here\""));
+        assert!(files.contains("playsound $(sound) $(category) $(selector)"));
+        assert!(files.contains("stopsound $(selector) $(category) $(sound)"));
+        assert!(files.contains("particle $(particle) $(pos) 0 0 0 0 $(count) force"));
+        assert!(files.contains("loot insert $(pos) loot $(table)"));
+        assert!(files.contains("loot spawn $(pos) loot $(table)"));
+        assert!(files.contains("setblock $(pos) $(block)"));
+        assert!(files.contains("fill $(from) $(to) $(block)"));
+    }
+
+    #[test]
+    fn compiles_debug_builtins() {
+        let source = r#"
+fn main() -> void
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    let pos = block("~ ~1 ~")
+    debug("checkpoint")
+    debug_marker(pos, "marker")
+    debug_marker(pos, "block marker", "minecraft:gold_block")
+    debug_entity(pig, "nearest pig")
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(files.contains("[MCFC debug]"));
+        assert!(files.contains("[MCFC marker]"));
+        assert!(files.contains("particle minecraft:happy_villager $(pos)"));
+        assert!(files.contains("playsound minecraft:block.note_block.pling master @a $(pos)"));
+        assert!(files.contains("setblock $(pos) $(block) replace"));
+        assert!(files.contains("[MCFC entity] found"));
+        assert!(files.contains("effect give $(selector) minecraft:glowing 3 0 true"));
+    }
+
+    #[test]
+    fn heal_rejects_player_and_ambiguous_targets() {
+        let player_error = compile_source(
+            r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    heal(player, 1)
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(player_error.contains("known non-player"));
+
+        let ambiguous_error = compile_source(
+            r#"
+fn main() -> void
+    let target = single(selector("@e"))
+    heal(target, 1)
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(ambiguous_error.contains("ambiguous 'entity_ref'"));
+    }
 }

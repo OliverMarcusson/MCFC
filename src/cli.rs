@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use crate::compiler::{
-    CompileOptions, canonicalize_output_path, compile_file, compile_project, project_default_out_dir,
+    CompileOptions, canonicalize_output_path, compile_file, compile_project,
+    project_default_out_dir,
 };
 use crate::project::find_manifest;
 

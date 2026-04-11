@@ -614,11 +614,9 @@ end
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
     let files = result.artifacts.files;
-    assert!(
-        files
-            .values()
-            .any(|file| file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]"))
-    );
+    assert!(files.values().any(|file| {
+        file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]")
+    }));
     assert!(
         files
             .values()
@@ -642,11 +640,9 @@ end
     let files: Vec<_> = result.artifacts.files.values().cloned().collect();
     assert!(files.iter().any(|file| file.contains("for_each_cond")));
     assert!(files.iter().any(|file| file.contains("for_each_step")));
-    assert!(
-        files
-            .iter()
-            .any(|file| file.contains("__for_each") && file.contains("internal_macro") || file.contains("[$(index)]"))
-    );
+    assert!(files.iter().any(|file| file.contains("__for_each")
+        && file.contains("internal_macro")
+        || file.contains("[$(index)]")));
 }
 
 #[test]
@@ -705,8 +701,16 @@ end
             .values()
             .any(|file| file.contains("execute if data storage mcfc:runtime"))
     );
-    assert!(files.values().any(|file| file.contains(".$(n1)") || file.contains(".$(k1)")));
-    assert!(files.values().any(|file| file.contains("[$(n") || file.contains("[$(i")));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains(".$(n1)") || file.contains(".$(k1)"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("[$(n") || file.contains("[$(i"))
+    );
 }
 
 #[test]
@@ -794,16 +798,31 @@ fn compiles_anpc_pilot_slice() {
     let source = include_str!("../ANPC/pilot/action_queue.mcf");
     let result = compile_source(source, &CompileOptions::default()).expect("pilot should compile");
     let files = result.artifacts.files;
-    assert!(files.values().any(|file| file.contains("data remove storage mcfc:runtime")));
-    assert!(files.values().any(|file| file.contains("execute if data storage mcfc:runtime")));
-    assert!(files.values().any(|file| file.contains("execute store success score $d")));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("data remove storage mcfc:runtime"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute if data storage mcfc:runtime"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute store success score $d"))
+    );
     assert!(files.values().any(|file| file.contains("say pathfind")));
     assert!(files.values().any(|file| file.contains("say no_next_page")));
     let apply_action = files
         .get("data/mcfc/function/generated/apply_action__d1__entry.mcfunction")
         .unwrap();
     assert!(apply_action.contains("scoreboard players set $d1_apply_action___tmp25 mcfc 0"));
-    assert!(apply_action.contains("matches 0 run scoreboard players set $d1_apply_action___tmp25 mcfc 1"));
+    assert!(
+        apply_action
+            .contains("matches 0 run scoreboard players set $d1_apply_action___tmp25 mcfc 1")
+    );
 }
 
 #[test]
@@ -1068,9 +1087,23 @@ end
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
     let files = result.artifacts.files;
     assert!(files.values().any(|file| file.contains("$(p1)")));
-    assert!(files.values().any(|file| file.contains("arithmetic operators") || file.contains("scoreboard players operation") || file.contains("scoreboard players set")));
-    assert!(files.values().any(|file| file.contains("data remove storage mcfc:runtime")));
-    assert!(files.values().any(|file| file.contains("function mcfc:generated/")));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("arithmetic operators")
+                || file.contains("scoreboard players operation")
+                || file.contains("scoreboard players set"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("data remove storage mcfc:runtime"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("function mcfc:generated/"))
+    );
 }
 
 #[test]
@@ -1220,7 +1253,11 @@ fn compiles_multi_file_project_with_assets_and_exports() {
     let base = temp_path();
     let project = base.join("sample_project");
     let src_dir = project.join("src");
-    let assets_dir = project.join("assets").join("data").join("sample").join("predicate");
+    let assets_dir = project
+        .join("assets")
+        .join("data")
+        .join("sample")
+        .join("predicate");
     fs::create_dir_all(src_dir.join("api")).unwrap();
     fs::create_dir_all(&assets_dir).unwrap();
 
@@ -1277,7 +1314,11 @@ end
     )
     .unwrap();
 
-    fs::write(assets_dir.join("enabled.json"), "{\n  \"condition\": \"minecraft:inverted\"\n}\n").unwrap();
+    fs::write(
+        assets_dir.join("enabled.json"),
+        "{\n  \"condition\": \"minecraft:inverted\"\n}\n",
+    )
+    .unwrap();
 
     let out = project.join("dist");
     let result = compile_project(
@@ -1290,9 +1331,24 @@ end
     )
     .expect("project should compile");
 
-    assert!(result.artifacts.files.contains_key("data/sample/function/bootstrap/load.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/sample/function/api/create.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/sample/predicate/enabled.json"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/sample/function/bootstrap/load.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/sample/function/api/create.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/sample/predicate/enabled.json")
+    );
 
     let load_tag = result
         .artifacts
@@ -1314,7 +1370,13 @@ end
         .get("data/sample/function/api/create.mcfunction")
         .unwrap();
     assert!(wrapper.contains("function sample:generated/api_create__d0__entry"));
-    assert!(out.join("data").join("sample").join("predicate").join("enabled.json").exists());
+    assert!(
+        out.join("data")
+            .join("sample")
+            .join("predicate")
+            .join("enabled.json")
+            .exists()
+    );
 }
 
 #[test]
@@ -1386,15 +1448,48 @@ fn anpc_project_builds_expected_public_outputs() {
     )
     .expect("ANPC project should compile");
 
-    assert!(result.artifacts.files.contains_key("data/anpc/function/internal/init.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/anpc/function/internal/tick.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_default.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_dialogue.mcfunction"));
-    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_guard.mcfunction"));
-    assert!(result.artifacts.files.contains_key(
-        "data/anpc/advancement/internal/interacted_with_interaction.json"
-    ));
-    assert!(result.artifacts.files.contains_key("data/anpc/predicate/has_vehicle.json"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/function/internal/init.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/function/internal/tick.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/function/api/create_default.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/function/api/create_dialogue.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/function/api/create_guard.mcfunction")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/advancement/internal/interacted_with_interaction.json")
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/anpc/predicate/has_vehicle.json")
+    );
 }
 
 fn temp_path() -> PathBuf {

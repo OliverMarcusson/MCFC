@@ -19,6 +19,7 @@ pub struct TypedFunction {
     pub return_type: Type,
     pub body: Vec<TypedStmt>,
     pub locals: BTreeMap<String, Type>,
+    pub local_ref_kinds: BTreeMap<String, RefKind>,
     pub called_functions: BTreeSet<String>,
     pub book_exposed: bool,
 }
@@ -211,7 +212,10 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             continue;
         }
         for field in &struct_def.fields {
-            if fields.insert(field.name.clone(), field.ty.clone()).is_some() {
+            if fields
+                .insert(field.name.clone(), field.ty.clone())
+                .is_some()
+            {
                 diagnostics.push(Diagnostic::new(
                     format!("duplicate field '{}.{}'", struct_def.name, field.name),
                     field.span.clone(),
@@ -223,13 +227,23 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
 
     for struct_def in &program.structs {
         for field in &struct_def.fields {
-            validate_declared_type(&field.ty, &struct_defs, field.span.clone(), &mut diagnostics);
+            validate_declared_type(
+                &field.ty,
+                &struct_defs,
+                field.span.clone(),
+                &mut diagnostics,
+            );
         }
     }
 
     for function in &program.functions {
         for param in &function.params {
-            validate_declared_type(&param.ty, &struct_defs, param.span.clone(), &mut diagnostics);
+            validate_declared_type(
+                &param.ty,
+                &struct_defs,
+                param.span.clone(),
+                &mut diagnostics,
+            );
         }
         validate_declared_type(
             &function.return_type,
@@ -302,6 +316,10 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             return_type: function.return_type.clone(),
             body,
             locals,
+            local_ref_kinds: ref_env
+                .iter()
+                .map(|(name, kind)| (name.clone(), *kind))
+                .collect(),
             called_functions,
             book_exposed: function.book_exposed,
         });
@@ -1408,7 +1426,11 @@ fn type_check_path(
                 current_ty = *value.clone();
             }
             (Type::Struct(name), PathSegment::Field(field)) => {
-                match struct_defs.get(name).and_then(|def| def.fields.get(field)).cloned() {
+                match struct_defs
+                    .get(name)
+                    .and_then(|def| def.fields.get(field))
+                    .cloned()
+                {
                     Some(ty) => current_ty = ty,
                     None => {
                         diagnostics.push(Diagnostic::new(
@@ -1508,10 +1530,9 @@ fn validate_declared_type(
             validate_collection_value_type(value, span.clone(), diagnostics);
             validate_declared_type(value, struct_defs, span, diagnostics);
         }
-        Type::Struct(name) if !struct_defs.contains_key(name) => diagnostics.push(Diagnostic::new(
-            format!("unknown struct '{}'", name),
-            span,
-        )),
+        Type::Struct(name) if !struct_defs.contains_key(name) => {
+            diagnostics.push(Diagnostic::new(format!("unknown struct '{}'", name), span))
+        }
         _ => {}
     }
 }
@@ -1568,6 +1589,328 @@ fn type_check_builtin_call(
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
     match function {
+        "summon" => Some(type_check_summon_builtin(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "teleport" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Teleport,
+        )),
+        "damage" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Damage,
+        )),
+        "heal" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Heal,
+        )),
+        "give" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Give,
+        )),
+        "clear" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Clear,
+        )),
+        "loot_give" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::LootGive,
+        )),
+        "loot_insert" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::LootInsert,
+        )),
+        "loot_spawn" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::LootSpawn,
+        )),
+        "tellraw" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Tellraw,
+        )),
+        "title" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Title,
+        )),
+        "actionbar" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Actionbar,
+        )),
+        "debug" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Debug,
+        )),
+        "debug_marker" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::DebugMarker,
+        )),
+        "debug_entity" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::DebugEntity,
+        )),
+        "bossbar_add" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarAdd,
+        )),
+        "bossbar_remove" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarRemove,
+        )),
+        "bossbar_name" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarName,
+        )),
+        "bossbar_value" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarValue,
+        )),
+        "bossbar_max" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarMax,
+        )),
+        "bossbar_visible" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarVisible,
+        )),
+        "bossbar_players" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::BossbarPlayers,
+        )),
+        "playsound" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Playsound,
+        )),
+        "stopsound" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Stopsound,
+        )),
+        "particle" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Particle,
+        )),
+        "setblock" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Setblock,
+        )),
+        "fill" => Some(type_check_gameplay_call(
+            function,
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            GameplayBuiltinKind::Fill,
+        )),
         "selector" => {
             let args = type_check_args(
                 args,
@@ -2038,10 +2381,41 @@ fn type_check_method_call(
                 ref_kind: RefKind::Unknown,
             })
         }
-        "effect" => {
-            if receiver.ref_kind != RefKind::Player || receiver.ty != Type::EntityRef {
+        "add_tag" | "remove_tag" | "has_tag" => {
+            if receiver.ty != Type::EntityRef {
                 diagnostics.push(Diagnostic::new(
-                    "player.effect(...) requires a player 'entity_ref' receiver",
+                    format!(
+                        "{}.{}(...) requires an 'entity_ref' receiver",
+                        "entity", method
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{}(...) tag name must be 'string'", method),
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: if method == "has_tag" {
+                    Type::Bool
+                } else {
+                    Type::Void
+                },
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "effect" => {
+            if receiver.ty != Type::EntityRef {
+                diagnostics.push(Diagnostic::new(
+                    "effect(...) requires an 'entity_ref' receiver",
                     expr.span.clone(),
                 ));
             }
@@ -2080,6 +2454,561 @@ fn type_check_method_call(
     }
 }
 
+#[derive(Clone, Copy)]
+enum GameplayBuiltinKind {
+    Teleport,
+    Damage,
+    Heal,
+    Give,
+    Clear,
+    LootGive,
+    LootInsert,
+    LootSpawn,
+    Tellraw,
+    Title,
+    Actionbar,
+    Debug,
+    DebugMarker,
+    DebugEntity,
+    BossbarAdd,
+    BossbarRemove,
+    BossbarName,
+    BossbarValue,
+    BossbarMax,
+    BossbarVisible,
+    BossbarPlayers,
+    Playsound,
+    Stopsound,
+    Particle,
+    Setblock,
+    Fill,
+}
+
+fn type_check_summon_builtin(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    if !(args.len() == 1 || args.len() == 2) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "wrong arity for 'summon': expected 1 or 2, found {}",
+                args.len()
+            ),
+            expr.span.clone(),
+        ));
+    }
+    if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+        diagnostics.push(Diagnostic::new(
+            "summon(...) entity id must be 'string'",
+            expr.span.clone(),
+        ));
+    }
+    if args.len() >= 2 && args.get(1).map(|arg| &arg.ty) != Some(&Type::Nbt) {
+        diagnostics.push(Diagnostic::new(
+            "summon(..., data) requires 'nbt' summon data",
+            expr.span.clone(),
+        ));
+    }
+    TypedExpr {
+        kind: TypedExprKind::Call {
+            function: "summon".to_string(),
+            args,
+        },
+        ty: Type::EntityRef,
+        ref_kind: RefKind::NonPlayer,
+    }
+}
+
+fn type_check_gameplay_call(
+    function: &str,
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+    kind: GameplayBuiltinKind,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    match kind {
+        GameplayBuiltinKind::Teleport => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_matches(
+                function,
+                &args,
+                1,
+                |ty| matches!(ty, Type::EntityRef | Type::BlockRef),
+                "an 'entity_ref' or 'block_ref'",
+                "destination",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Damage => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(function, &args, 1, Type::Int, "amount", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Heal => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::EntityRef,
+                "target",
+                expr,
+                diagnostics,
+            );
+            if let Some(target) = args.first() {
+                match target.ref_kind {
+                    RefKind::Player => diagnostics.push(Diagnostic::new(
+                        "heal(...) only supports known non-player 'entity_ref' targets in v1",
+                        expr.span.clone(),
+                    )),
+                    RefKind::Unknown => diagnostics.push(Diagnostic::new(
+                        "heal(...) rejects ambiguous 'entity_ref' targets in v1",
+                        expr.span.clone(),
+                    )),
+                    RefKind::NonPlayer => {}
+                }
+            }
+            expect_arg_type(function, &args, 1, Type::Int, "amount", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Give | GameplayBuiltinKind::Clear => {
+            expect_arity(function, &args, 3, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "item id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(function, &args, 2, Type::Int, "count", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::LootGive => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "loot table",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::LootInsert | GameplayBuiltinKind::LootSpawn => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::BlockRef,
+                "position",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "loot table",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Tellraw
+        | GameplayBuiltinKind::Title
+        | GameplayBuiltinKind::Actionbar => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "message",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Debug => {
+            expect_arity(function, &args, 1, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "message",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::DebugMarker => {
+            if !(args.len() == 2 || args.len() == 3) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected 2 or 3, found {}",
+                        function,
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::BlockRef,
+                "position",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(function, &args, 1, Type::String, "label", expr, diagnostics);
+            if args.len() >= 3 {
+                expect_arg_type(
+                    function,
+                    &args,
+                    2,
+                    Type::String,
+                    "marker block id",
+                    expr,
+                    diagnostics,
+                );
+            }
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::DebugEntity => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(function, &args, 1, Type::String, "label", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::BossbarAdd | GameplayBuiltinKind::BossbarName => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "bossbar id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "bossbar name",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::BossbarRemove => {
+            expect_arity(function, &args, 1, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "bossbar id",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::BossbarValue | GameplayBuiltinKind::BossbarMax => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "bossbar id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(function, &args, 1, Type::Int, "value", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::BossbarVisible => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "bossbar id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(function, &args, 1, Type::Bool, "visible", expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::BossbarPlayers => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "bossbar id",
+                expr,
+                diagnostics,
+            );
+            expect_entity_target_arg(function, &args, 1, expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Playsound => {
+            expect_arity(function, &args, 3, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "sound id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "category",
+                expr,
+                diagnostics,
+            );
+            expect_entity_target_arg(function, &args, 2, expr, diagnostics);
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Stopsound => {
+            expect_arity(function, &args, 3, expr, diagnostics);
+            expect_entity_target_arg(function, &args, 0, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "category",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                2,
+                Type::String,
+                "sound id",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Particle => {
+            if !(args.len() == 2 || args.len() == 3 || args.len() == 4) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected 2, 3, or 4, found {}",
+                        function,
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::String,
+                "particle id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::BlockRef,
+                "position",
+                expr,
+                diagnostics,
+            );
+            if args.len() >= 3 {
+                expect_arg_type(function, &args, 2, Type::Int, "count", expr, diagnostics);
+            }
+            if args.len() >= 4 {
+                expect_entity_target_arg(function, &args, 3, expr, diagnostics);
+            }
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Setblock => {
+            expect_arity(function, &args, 2, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::BlockRef,
+                "position",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                function,
+                &args,
+                1,
+                Type::String,
+                "block id",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+        GameplayBuiltinKind::Fill => {
+            expect_arity(function, &args, 3, expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                0,
+                Type::BlockRef,
+                "from",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(function, &args, 1, Type::BlockRef, "to", expr, diagnostics);
+            expect_arg_type(
+                function,
+                &args,
+                2,
+                Type::String,
+                "block id",
+                expr,
+                diagnostics,
+            );
+            builtin_call_expr(function, args, Type::Void)
+        }
+    }
+}
+
+fn builtin_call_expr(function: &str, args: Vec<TypedExpr>, ty: Type) -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::Call {
+            function: function.to_string(),
+            args,
+        },
+        ty,
+        ref_kind: RefKind::Unknown,
+    }
+}
+
+fn expect_entity_target_arg(
+    function: &str,
+    args: &[TypedExpr],
+    index: usize,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    expect_arg_matches(
+        function,
+        args,
+        index,
+        |ty| matches!(ty, Type::EntityRef | Type::EntitySet),
+        "an 'entity_ref' or 'entity_set'",
+        "target",
+        expr,
+        diagnostics,
+    );
+}
+
+fn expect_arg_type(
+    function: &str,
+    args: &[TypedExpr],
+    index: usize,
+    expected: Type,
+    label: &str,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    expect_arg_matches(
+        function,
+        args,
+        index,
+        |ty| *ty == expected,
+        &expected.as_str(),
+        label,
+        expr,
+        diagnostics,
+    );
+}
+
+fn expect_arg_matches(
+    function: &str,
+    args: &[TypedExpr],
+    index: usize,
+    predicate: impl Fn(&Type) -> bool,
+    expected: &str,
+    label: &str,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) {
+    if let Some(arg) = args.get(index) {
+        if !predicate(&arg.ty) {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "{}(...) {} must be {}, found '{}'",
+                    function,
+                    label,
+                    expected,
+                    arg.ty.as_str()
+                ),
+                expr.span.clone(),
+            ));
+        }
+    }
+}
+
 fn detect_selector_ref_kind(selector: &str) -> RefKind {
     let trimmed = selector.trim().to_ascii_lowercase();
     if trimmed.starts_with("@p")
@@ -2112,10 +3041,19 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
     };
     if !matches!(
         first.as_str(),
-        "nbt" | "state" | "tags" | "team" | "mainhand"
+        "nbt"
+            | "state"
+            | "tags"
+            | "team"
+            | "mainhand"
+            | "offhand"
+            | "head"
+            | "chest"
+            | "legs"
+            | "feet"
     ) {
         diagnostics.push(Diagnostic::new(
-            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or 'player.mainhand'",
+            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or an equipment namespace such as 'mainhand'",
             span,
         ));
     }
@@ -2127,23 +3065,23 @@ fn validate_player_path_write(
     span: Span,
     diagnostics: &mut Diagnostics,
 ) {
-    if path.base.ref_kind != RefKind::Player || path.base.ty != Type::EntityRef {
+    if path.base.ty != Type::EntityRef {
         return;
     }
     let Some(PathSegment::Field(first)) = path.segments.first() else {
         diagnostics.push(Diagnostic::new(
-            "player writes must use a player-safe namespace",
+            "entity writes must use a supported gameplay namespace or raw NBT path",
             span,
         ));
         return;
     };
     match first.as_str() {
-        "nbt" => diagnostics.push(Diagnostic::new(
-            "player.nbt.* is read-only; use player.state, player.tags, player.team, or player.mainhand instead",
+        "nbt" if path.base.ref_kind == RefKind::Player => diagnostics.push(Diagnostic::new(
+            "player.nbt.* is read-only; use player.state, player.tags, player.team, or equipment namespaces instead",
             span,
         )),
         "state" => {
-            if !matches!(value.ty, Type::Int | Type::Bool) {
+            if path.base.ref_kind == RefKind::Player && !matches!(value.ty, Type::Int | Type::Bool) {
                 diagnostics.push(Diagnostic::new(
                     "player.state.* currently supports only 'int' and 'bool' values",
                     span,
@@ -2151,7 +3089,7 @@ fn validate_player_path_write(
             }
         }
         "tags" => {
-            if value.ty != Type::Bool {
+            if path.base.ref_kind == RefKind::Player && value.ty != Type::Bool {
                 diagnostics.push(Diagnostic::new(
                     "player.tags.* assignments require a 'bool' value",
                     span,
@@ -2161,14 +3099,54 @@ fn validate_player_path_write(
         "team" => {
             if value.ty != Type::String {
                 diagnostics.push(Diagnostic::new(
-                    "player.team requires a 'string' value",
+                    "team requires a 'string' value",
                     span,
                 ));
             }
         }
-        "mainhand" => {}
+        "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" => {
+            validate_equipment_path_write(path, value, span, diagnostics);
+        }
+        _ if path.base.ref_kind == RefKind::Player => diagnostics.push(Diagnostic::new(
+            "unsafe writable player path; use player.state, player.tags, player.team, or equipment namespaces",
+            span,
+        )),
+        _ => {}
+    }
+}
+
+fn validate_equipment_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(PathSegment::Field(field)) = path.segments.get(1) else {
+        diagnostics.push(Diagnostic::new(
+            "equipment writes must target '.item', '.name', or '.count'",
+            span,
+        ));
+        return;
+    };
+    match field.as_str() {
+        "item" | "name" => {
+            if value.ty != Type::String {
+                diagnostics.push(Diagnostic::new(
+                    format!("equipment.{} requires a 'string' value", field),
+                    span,
+                ));
+            }
+        }
+        "count" => {
+            if value.ty != Type::Int {
+                diagnostics.push(Diagnostic::new(
+                    "equipment.count requires an 'int' value",
+                    span,
+                ));
+            }
+        }
         _ => diagnostics.push(Diagnostic::new(
-            "unsafe writable player path; use player.state, player.tags, player.team, or player.mainhand",
+            "equipment writes must target '.item', '.name', or '.count'",
             span,
         )),
     }
@@ -2457,7 +3435,10 @@ fn collect_macro_placeholders(
             Err(parse_diags) => {
                 for diag in parse_diags.0 {
                     diagnostics.push(Diagnostic::new(
-                        format!("invalid macro placeholder expression '{}': {}", body, diag.message),
+                        format!(
+                            "invalid macro placeholder expression '{}': {}",
+                            body, diag.message
+                        ),
                         span.clone(),
                     ));
                 }
@@ -2505,7 +3486,11 @@ fn collect_macro_placeholders(
     placeholders
 }
 
-fn scan_macro_placeholders(template: &str, span: Span, diagnostics: &mut Diagnostics) -> Vec<String> {
+fn scan_macro_placeholders(
+    template: &str,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> Vec<String> {
     let bytes = template.as_bytes();
     let mut index = 0usize;
     let mut placeholders = Vec::new();

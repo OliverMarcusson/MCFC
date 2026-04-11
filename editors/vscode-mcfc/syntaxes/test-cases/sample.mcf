@@ -18,6 +18,7 @@ end
 
 fn main() -> void
     let player = single(selector("@p"))
+    let pig = single(selector("@e[type=pig,limit=1]"))
     let chest = block("0 64 0")
     let values = [1, 2, 3]
     let counts = {"wood": 12, "stone": 4}
@@ -35,6 +36,29 @@ fn main() -> void
 
     player.tags.mcfc_demo = true
     player.effect("speed", 10, 1)
+    pig.add_tag("elite")
+    pig.offhand.item = "minecraft:shield"
+    summon("minecraft:pig")
+    teleport(pig, block("~ ~1 ~"))
+    damage(pig, 2)
+    heal(pig, 1)
+    give(pig, "minecraft:apple", 1)
+    clear(pig, "minecraft:apple", 1)
+    loot_give(pig, "minecraft:chests/simple_dungeon")
+    loot_insert(chest, "minecraft:chests/simple_dungeon")
+    tellraw(pig, "hello @s")
+    title(pig, "Warning")
+    actionbar(pig, "Incoming")
+    debug("entered gameplay branch")
+    debug_marker(chest, "chest marker", "minecraft:gold_block")
+    debug_entity(pig, "nearest pig")
+    bossbar_add("mcfc:test", "Boss")
+    bossbar_players("mcfc:test", pig)
+    playsound("minecraft:entity.experience_orb.pickup", "master", pig)
+    stopsound(pig, "master", "minecraft:entity.experience_orb.pickup")
+    particle("minecraft:flame", chest, 4, pig)
+    setblock(chest, "minecraft:stone")
+    fill(chest, block("1 65 1"), "minecraft:glass")
     chest.Items[0].Count = values.len()
     counts.remove("stone")
 

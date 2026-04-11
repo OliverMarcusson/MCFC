@@ -205,6 +205,32 @@ Minecraft query builtins:
 - `as(entity_set|entity_ref, entity_set|entity_ref|block_ref)`
 - `int(nbt)`, `bool(nbt)`, `string(nbt)`
 
+Gameplay builtins:
+
+- `summon(entity_id: string) -> entity_ref`
+- `summon(entity_id: string, data: nbt) -> entity_ref`
+- `teleport(target: entity_ref|entity_set, destination: entity_ref|block_ref) -> void`
+- `damage(target: entity_ref|entity_set, amount: int) -> void`
+- `heal(target: entity_ref, amount: int) -> void`
+- `give(target: entity_ref|entity_set, item_id: string, count: int) -> void`
+- `clear(target: entity_ref|entity_set, item_id: string, count: int) -> void`
+- `loot_give(target: entity_ref|entity_set, table: string) -> void`
+- `loot_insert(container: block_ref, table: string) -> void`
+- `loot_spawn(position: block_ref, table: string) -> void`
+- `tellraw(target: entity_ref|entity_set, message: string) -> void`
+- `title(target: entity_ref|entity_set, message: string) -> void`
+- `actionbar(target: entity_ref|entity_set, message: string) -> void`
+- `debug(message: string) -> void`
+- `debug_marker(position: block_ref, label: string) -> void`
+- `debug_marker(position: block_ref, label: string, marker_block: string) -> void`
+- `debug_entity(target: entity_ref|entity_set, label: string) -> void`
+- `bossbar_add`, `bossbar_remove`, `bossbar_name`, `bossbar_value`, `bossbar_max`, `bossbar_visible`, `bossbar_players`
+- `playsound(sound: string, category: string, target: entity_ref|entity_set) -> void`
+- `stopsound(target: entity_ref|entity_set, category: string, sound: string) -> void`
+- `particle(name: string, position: block_ref[, count: int[, viewers: entity_ref|entity_set]]) -> void`
+- `setblock(position: block_ref, block_id: string) -> void`
+- `fill(from: block_ref, to: block_ref, block_id: string) -> void`
+
 Collection methods:
 
 - `array<T>.len() -> int`
@@ -235,9 +261,19 @@ Player-safe surfaces:
 - `player.nbt.*` reads vanilla player NBT
 - `player.state.*` stores MCFC-managed integer and boolean player state
 - `player.tags.*` reads and writes entity tags as booleans
-- `player.team = "name"` assigns a team
-- `player.mainhand.name`, `player.mainhand.item`, and `player.mainhand.count` modify the held item
-- `player.effect("name", duration, amplifier)` applies an effect
+- `entity.add_tag("name")`, `entity.remove_tag("name")`, and `entity.has_tag("name")` work on any `entity_ref`
+- `entity.team = "name"` assigns a team for any `entity_ref`
+- `entity.mainhand.*`, `entity.offhand.*`, `entity.head.*`, `entity.chest.*`, `entity.legs.*`, and `entity.feet.*` modify equipped items
+- `entity.effect("name", duration, amplifier)` applies an effect for any `entity_ref`
+- `heal(...)` is a synthetic helper in v1 and only accepts known non-player `entity_ref` targets
+
+Debugging helpers:
+
+- `debug(message)` prints a gold `[MCFC debug]` chat line to all players
+- `debug_marker(position, label)` prints a marker line, emits a visible particle burst, and plays a note-block ping at the position
+- `debug_marker(position, label, marker_block)` also places `marker_block` at the position, which is intentionally destructive and should be used only for temporary checks
+- `debug_entity(target, label)` reports whether the selector/entity resolves and briefly gives matching entities the glowing effect
+- relative block positions such as `block("~ ~ ~")` follow the current execution position; use `at(player):` for player-position world effects, while `as(player):` only changes the executing entity
 
 String literal notes:
 

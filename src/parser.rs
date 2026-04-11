@@ -284,8 +284,10 @@ impl Parser {
         }
         self.expect(TokenKind::End, "expected 'end'");
         if arms.is_empty() && else_body.is_empty() {
-            self.diagnostics
-                .push(Diagnostic::new("match requires at least one arm", span.clone()));
+            self.diagnostics.push(Diagnostic::new(
+                "match requires at least one arm",
+                span.clone(),
+            ));
         }
         StmtKind::Match {
             value,
@@ -1014,6 +1016,54 @@ end
             program.functions[0].body[1].kind,
             StmtKind::Expr(Expr {
                 kind: ExprKind::MethodCall { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_gameplay_builtins_and_equipment_paths() {
+        let program = parse(
+            r#"
+fn main() -> void
+    let pig = summon("minecraft:pig")
+    pig.add_tag("elite")
+    pig.offhand.item = "minecraft:shield"
+    teleport(pig, block("~ ~ ~"))
+    tellraw(pig, "hello")
+    debug_marker(block("~ ~1 ~"), "marker")
+    debug_entity(pig, "pig")
+    fill(block("~ ~ ~"), block("~1 ~1 ~1"), "minecraft:stone")
+end
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            program.functions[0].body[0].kind,
+            StmtKind::Let {
+                value: Expr {
+                    kind: ExprKind::Call { .. },
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            program.functions[0].body[1].kind,
+            StmtKind::Expr(Expr {
+                kind: ExprKind::MethodCall { .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            program.functions[0].body[2].kind,
+            StmtKind::Assign { .. }
+        ));
+        assert!(matches!(
+            program.functions[0].body[3].kind,
+            StmtKind::Expr(Expr {
+                kind: ExprKind::Call { .. },
                 ..
             })
         ));

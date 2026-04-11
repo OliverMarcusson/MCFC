@@ -225,11 +225,11 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|exists|block|at|as)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|exists|block|at|as|summon|teleport|damage|heal|give|clear|loot_give|loot_insert|loot_spawn|tellraw|title|actionbar|debug|debug_marker|debug_entity|bossbar_add|bossbar_remove|bossbar_name|bossbar_value|bossbar_max|bossbar_visible|bossbar_players|playsound|stopsound|particle|setblock|fill)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect|add_tag|remove_tag|has_tag)\\b(?=\\s*\\()"
         }
       ]
     },

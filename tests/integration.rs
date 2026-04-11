@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mcfc::compiler::{CompileOptions, compile_source};
+use mcfc::compiler::{CompileOptions, compile_project, compile_source};
 
 #[test]
 fn compiles_straight_line_program() {
@@ -1213,6 +1213,188 @@ end
             .join("main.mcfunction")
             .exists()
     );
+}
+
+#[test]
+fn compiles_multi_file_project_with_assets_and_exports() {
+    let base = temp_path();
+    let project = base.join("sample_project");
+    let src_dir = project.join("src");
+    let assets_dir = project.join("assets").join("data").join("sample").join("predicate");
+    fs::create_dir_all(src_dir.join("api")).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+
+    fs::write(
+        project.join("sample.mcfc.toml"),
+        r#"
+namespace = "sample"
+source_dir = "src"
+asset_dir = "assets"
+out_dir = "out"
+
+load = ["sample:bootstrap/load"]
+tick = ["sample:bootstrap/tick"]
+
+[[export]]
+path = "bootstrap/load"
+function = "bootstrap_load"
+
+[[export]]
+path = "bootstrap/tick"
+function = "bootstrap_tick"
+
+[[export]]
+path = "api/create"
+function = "api_create"
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        src_dir.join("bootstrap.mcf"),
+        r#"
+fn bootstrap_load() -> void
+    mc "say load"
+    return
+end
+
+fn bootstrap_tick() -> void
+    mc "say tick"
+    return
+end
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        src_dir.join("api").join("create.mcf"),
+        r#"
+fn api_create() -> void
+    mc "say create"
+    return
+end
+"#,
+    )
+    .unwrap();
+
+    fs::write(assets_dir.join("enabled.json"), "{\n  \"condition\": \"minecraft:inverted\"\n}\n").unwrap();
+
+    let out = project.join("dist");
+    let result = compile_project(
+        &project.join("sample.mcfc.toml"),
+        &out,
+        &CompileOptions {
+            clean: true,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("project should compile");
+
+    assert!(result.artifacts.files.contains_key("data/sample/function/bootstrap/load.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/sample/function/api/create.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/sample/predicate/enabled.json"));
+
+    let load_tag = result
+        .artifacts
+        .files
+        .get("data/minecraft/tags/function/load.json")
+        .unwrap();
+    assert!(load_tag.contains("\"sample:bootstrap/load\""));
+
+    let tick_tag = result
+        .artifacts
+        .files
+        .get("data/minecraft/tags/function/tick.json")
+        .unwrap();
+    assert!(tick_tag.contains("\"sample:bootstrap/tick\""));
+
+    let wrapper = result
+        .artifacts
+        .files
+        .get("data/sample/function/api/create.mcfunction")
+        .unwrap();
+    assert!(wrapper.contains("function sample:generated/api_create__d0__entry"));
+    assert!(out.join("data").join("sample").join("predicate").join("enabled.json").exists());
+}
+
+#[test]
+fn cli_builds_project_directory_using_manifest_default_output() {
+    let base = temp_path();
+    let project = base.join("cli_project");
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+
+    fs::write(
+        project.join("cli.mcfc.toml"),
+        r#"
+namespace = "cli_demo"
+source_dir = "src"
+asset_dir = "assets"
+out_dir = "out"
+
+[[export]]
+path = "bootstrap/load"
+function = "bootstrap_load"
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        src_dir.join("bootstrap.mcf"),
+        r#"
+fn bootstrap_load() -> void
+    mc "say hello"
+    return
+end
+"#,
+    )
+    .unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        project.display().to_string(),
+        "--clean".into(),
+    ]);
+
+    assert_eq!(status, 0);
+    assert!(
+        project
+            .join("out")
+            .join("data")
+            .join("cli_demo")
+            .join("function")
+            .join("bootstrap")
+            .join("load.mcfunction")
+            .exists()
+    );
+}
+
+#[test]
+fn anpc_project_builds_expected_public_outputs() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("ANPC_MCF")
+        .join("anpc.mcfc.toml");
+    let out = temp_path().join("anpc_out");
+    let result = compile_project(
+        &manifest,
+        &out,
+        &CompileOptions {
+            clean: true,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("ANPC project should compile");
+
+    assert!(result.artifacts.files.contains_key("data/anpc/function/internal/init.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/anpc/function/internal/tick.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_default.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_dialogue.mcfunction"));
+    assert!(result.artifacts.files.contains_key("data/anpc/function/api/create_guard.mcfunction"));
+    assert!(result.artifacts.files.contains_key(
+        "data/anpc/advancement/internal/interacted_with_interaction.json"
+    ));
+    assert!(result.artifacts.files.contains_key("data/anpc/predicate/has_vehicle.json"));
 }
 
 fn temp_path() -> PathBuf {

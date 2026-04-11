@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::compiler::{CompileOptions, canonicalize_output_path, compile_file};
+use crate::compiler::{
+    CompileOptions, canonicalize_output_path, compile_file, compile_project, project_default_out_dir,
+};
+use crate::project::find_manifest;
 
 pub fn run(args: Vec<String>) -> i32 {
     match try_run(args) {
@@ -28,7 +31,7 @@ fn try_run(args: Vec<String>) -> Result<(), String> {
 
 fn build_command(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
-        return Err(format!("missing input file\n\n{}", usage()));
+        return Err(format!("missing input path\n\n{}", usage()));
     }
 
     let input = PathBuf::from(&args[0]);
@@ -62,18 +65,31 @@ fn build_command(args: &[String]) -> Result<(), String> {
         index += 1;
     }
 
-    let out_dir = out_dir.ok_or_else(|| "missing required '--out <directory>'".to_string())?;
+    let manifest_path = find_manifest(&input)?;
+    let inferred_out_dir = match manifest_path.as_deref() {
+        Some(manifest) => project_default_out_dir(manifest)?,
+        None => None,
+    };
+    let out_dir = out_dir
+        .or(inferred_out_dir)
+        .ok_or_else(|| "missing required '--out <directory>'".to_string())?;
     if !namespace_overridden {
-        options.namespace = infer_namespace(&input);
+        options.namespace = manifest_path
+            .as_deref()
+            .map_or_else(|| infer_namespace(&input), |_| options.namespace.clone());
     }
     let out_dir = canonicalize_output_path(&out_dir);
-    compile_file(&input, &out_dir, &options)?;
+    if let Some(manifest_path) = manifest_path {
+        compile_project(&manifest_path, &out_dir, &options)?;
+    } else {
+        compile_file(&input, &out_dir, &options)?;
+    }
     println!("wrote datapack to {}", out_dir.display());
     Ok(())
 }
 
 fn usage() -> String {
-    "Usage:\n  mcfc build <input-file> --out <directory> [--namespace <name>] [--emit-ast] [--emit-ir] [--clean]".to_string()
+    "Usage:\n  mcfc build <input-file|project-dir|manifest> --out <directory> [--namespace <name>] [--emit-ast] [--emit-ir] [--clean]".to_string()
 }
 
 fn infer_namespace(input: &std::path::Path) -> String {

@@ -15,11 +15,20 @@ pub struct BuildArtifacts {
 #[derive(Debug, Clone)]
 pub struct BackendOptions {
     pub namespace: String,
+    pub load_tag_values: Option<Vec<String>>,
+    pub tick_tag_values: Option<Vec<String>>,
+    pub exports: Vec<ExportedFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedFunction {
+    pub path: String,
+    pub function: String,
 }
 
 pub fn generate(program: &IrProgram, options: &BackendOptions) -> BuildArtifacts {
     let mut backend = Backend::new(program, options.namespace.clone());
-    backend.generate(program);
+    backend.generate(program, options);
     BuildArtifacts {
         files: backend.files,
     }
@@ -143,10 +152,10 @@ impl Backend {
         }
     }
 
-    fn generate(&mut self, program: &IrProgram) {
+    fn generate(&mut self, program: &IrProgram, options: &BackendOptions) {
         self.emit_pack_mcmeta();
-        self.emit_load_tag();
-        self.emit_tick_tag();
+        self.emit_load_tag(options.load_tag_values.as_deref());
+        self.emit_tick_tag(options.tick_tag_values.as_deref());
         self.emit_setup();
         self.emit_main_entry();
         for function in &program.functions {
@@ -155,6 +164,7 @@ impl Backend {
             }
         }
         self.emit_book_runtime();
+        self.emit_export_wrappers(&options.exports);
     }
 
     fn emit_pack_mcmeta(&mut self) {
@@ -165,23 +175,23 @@ impl Backend {
         );
     }
 
-    fn emit_load_tag(&mut self) {
+    fn emit_load_tag(&mut self, override_values: Option<&[String]>) {
+        let values = override_values
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| vec![format!("{}:main", self.namespace)]);
         self.files.insert(
             "data/minecraft/tags/function/load.json".to_string(),
-            format!(
-                "{{\n  \"values\": [\n    \"{}:main\"\n  ]\n}}\n",
-                self.namespace
-            ),
+            render_tag_file(&values),
         );
     }
 
-    fn emit_tick_tag(&mut self) {
+    fn emit_tick_tag(&mut self, override_values: Option<&[String]>) {
+        let values = override_values
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| vec![format!("{}:generated/book/tick", self.namespace)]);
         self.files.insert(
             "data/minecraft/tags/function/tick.json".to_string(),
-            format!(
-                "{{\n  \"values\": [\n    \"{}:generated/book/tick\"\n  ]\n}}\n",
-                self.namespace
-            ),
+            render_tag_file(&values),
         );
     }
 
@@ -433,6 +443,23 @@ impl Backend {
         let book_commands: Vec<_> = self.book_commands.values().cloned().collect();
         for command in &book_commands {
             self.emit_book_dispatch_function(command);
+        }
+    }
+
+    fn emit_export_wrappers(&mut self, exports: &[ExportedFunction]) {
+        for export in exports {
+            let path = export.path.trim_matches('/');
+            if path.is_empty() {
+                continue;
+            }
+            let relative = format!("data/{}/function/{}.mcfunction", self.namespace, path);
+            let contents = format!(
+                "scoreboard players set {} mcfc 0\nfunction {}:{}\n",
+                control_slot(0, &export.function),
+                self.namespace,
+                self.function_entry_name(&export.function, 0)
+            );
+            self.files.insert(relative, contents);
         }
     }
 
@@ -3421,4 +3448,13 @@ fn macro_storage_base(depth: usize, function: &str, macro_id: usize) -> String {
         sanitize(function),
         macro_id
     )
+}
+
+fn render_tag_file(values: &[String]) -> String {
+    let body = values
+        .iter()
+        .map(|value| format!("    \"{}\"", value))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("{{\n  \"values\": [\n{}\n  ]\n}}\n", body)
 }

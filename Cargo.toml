@@ -12,5 +12,7 @@ name = "mcfc"
 path = "src/main.rs"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread"] }
 tower-lsp = "0.20"

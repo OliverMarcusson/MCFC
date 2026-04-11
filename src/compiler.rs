@@ -325,6 +325,162 @@ end
     }
 
     #[test]
+    fn compiles_random_builtin_forms() {
+        let source = r#"
+fn roll() -> int
+    return random()
+end
+
+fn main() -> void
+    let any = random()
+    let bounded = random(6)
+    let between = random(1, 20)
+    bounded = random(between)
+    let combined = random() + roll()
+    mcf "say $(random(1, 3))"
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(files.contains("random value 0..2147483647"));
+        assert!(files.contains("random value $(min)..$(max)"));
+        assert!(files.contains("execute store result storage mcfc:runtime"));
+        assert!(files.contains("with storage mcfc:runtime"));
+    }
+
+    #[test]
+    fn compiles_interpolated_string_literals() {
+        let source = r#"
+fn main() -> void
+    let demo_title = "MCFC Demo $(random(100))"
+    let player = single(selector("@p"))
+    tellraw(player, demo_title)
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(files.contains("random value $(min)..$(max)"));
+        assert!(files.contains("set value \"MCFC Demo $(p1)\""));
+        assert!(files.contains("data modify storage mcfc:runtime frames.d0.main.demo_title"));
+    }
+
+    #[test]
+    fn compiles_sleep_continuations() {
+        let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    let flag = true
+
+    sleep(1)
+    mc "say after straight sleep"
+
+    if flag:
+        sleep(1)
+        mc "say after if sleep"
+    end
+    mc "say after if"
+
+    at(player):
+        sleep(1)
+        mc "say after context sleep"
+    end
+
+    let i = 0
+    while i < 2:
+        sleep(1)
+        i = i + 1
+    end
+
+    for n in 0..2:
+        sleep(1)
+        mc "say after for sleep"
+    end
+
+    mc "say done"
+    return
+end
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result.artifacts.files;
+        let joined = files.values().cloned().collect::<Vec<_>>().join("\n");
+        let entry = files
+            .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+            .unwrap();
+
+        assert!(joined.contains("schedule function mcfc:generated/main__d0__sleep_resume_"));
+        assert!(joined.contains("$(seconds)s"));
+        assert!(joined.contains(
+            "execute at $(selector) run function mcfc:generated/main__d0__sleep_context_"
+        ));
+        assert!(joined.contains("scoreboard players set $d0_main__ctrl mcfc 1"));
+        assert!(joined.contains("say after straight sleep"));
+        assert!(joined.contains("say after if sleep"));
+        assert!(joined.contains("say after context sleep"));
+        assert!(joined.contains("say after for sleep"));
+        assert!(joined.contains("say done"));
+        assert!(!entry.contains("say after straight sleep"));
+    }
+
+    #[test]
+    fn rejects_invalid_random_and_sleep_usage() {
+        let source = r#"
+fn main() -> void
+    let bad_sleep = sleep(1)
+    random(sleep(1))
+    mcf "say $(sleep(1))"
+    sleep(0)
+    sleep("bad")
+    let bad_random = random("bad")
+    let too_many = random(1, 2, 3)
+    return
+end
+"#;
+
+        let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("sleep(...) may only appear as a standalone statement"));
+        assert!(rendered.contains("sleep(...) seconds must be at least 1"));
+        assert!(rendered.contains("sleep(...) seconds must have type 'int'"));
+        assert!(rendered.contains("argument 1 for 'random' must be 'int'"));
+        assert!(rendered.contains("wrong arity for 'random': expected 0, 1, or 2, found 3"));
+
+        let string_error = compile_source(
+            r#"
+fn main() -> void
+    let bad = "value $(sleep(1))"
+    return
+end
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(string_error.contains("sleep(...) may only appear as a standalone statement"));
+    }
+
+    #[test]
     fn compiles_debug_builtins() {
         let source = r#"
 fn main() -> void

@@ -688,6 +688,10 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nmatch value:\n    \"pattern\" =>\n        ...\n    else =>\n        ...\nend\n```",
         ),
         "mcf" => Some("```mcfc\nmcf \"say $(expr)\"\n```"),
+        "sleep" => Some("```mcfc\nsleep(seconds: int) -> void\n```"),
+        "random" => Some(
+            "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
+        ),
         "selector" => Some("```mcfc\nselector(value: string) -> entity_set\n```"),
         "single" => Some("```mcfc\nsingle(value: entity_set) -> entity_ref\n```"),
         "exists" => Some("```mcfc\nexists(value: entity_ref) -> bool\n```"),
@@ -948,6 +952,14 @@ fn static_completion_items(
             "selector",
             "selector(value: string) -> entity_set",
             "selector(${1:\"@e\"})",
+        ),
+        ("sleep", "sleep(seconds: int) -> void", "sleep(${1:1})"),
+        ("random", "random() -> int", "random()"),
+        ("random(max)", "random(max: int) -> int", "random(${1:max})"),
+        (
+            "random(min, max)",
+            "random(min: int, max: int) -> int",
+            "random(${1:min}, ${2:max})",
         ),
         (
             "single",
@@ -1809,8 +1821,9 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use super::{
-        ProjectConfig, build_project_snapshot, completion_items, project_diagnostics_for_segment,
-        project_document_symbols, range_from_text_range, resolve_project_config_for_path,
+        ProjectConfig, build_project_snapshot, builtin_hover, completion_items,
+        project_diagnostics_for_segment, project_document_symbols, range_from_text_range,
+        resolve_project_config_for_path,
     };
     use super::{offset_to_position, position_to_offset};
     use crate::analysis::analyze_source;
@@ -2002,6 +2015,13 @@ end
 "#;
         let analysis = analyze_source(source);
         let top_level_items = completion_items(source, &analysis, source.find("fn main").unwrap());
+        assert!(top_level_items.iter().any(|item| item.label == "sleep"));
+        assert!(top_level_items.iter().any(|item| item.label == "random"));
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "random(min, max)")
+        );
         assert!(top_level_items.iter().any(|item| item.label == "summon"));
         assert!(top_level_items.iter().any(|item| item.label == "tellraw"));
         assert!(top_level_items.iter().any(|item| item.label == "debug"));
@@ -2024,6 +2044,11 @@ end
         assert!(pig_items.iter().any(|item| item.label == "offhand"));
         assert!(pig_items.iter().any(|item| item.label == "team"));
         assert!(!pig_items.iter().any(|item| item.label == "state"));
+
+        let sleep_hover = builtin_hover("sleep").expect("sleep hover");
+        assert!(sleep_hover.contains("sleep(seconds: int) -> void"));
+        let random_hover = builtin_hover("random").expect("random hover");
+        assert!(random_hover.contains("random(min: int, max: int) -> int"));
     }
 
     #[test]

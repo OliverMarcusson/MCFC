@@ -73,6 +73,23 @@ struct RenderedStoragePath {
     macro_storage: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+enum ContinuationItem {
+    Stmt(IrStmt),
+    Call {
+        function_name: String,
+        allow_continue: bool,
+    },
+    ClearScore(String),
+    ExitContext,
+}
+
+#[derive(Debug, Clone)]
+struct ContextResume {
+    kind: ContextKind,
+    anchor_slot: SlotRef,
+}
+
 impl Guard {
     fn for_function(depth: usize, function: &str) -> Self {
         Self {
@@ -467,7 +484,16 @@ impl Backend {
         let path = self.function_entry_path(&function.name, depth);
         let mut lines = Vec::new();
         let guard = Guard::for_function(depth, &function.name);
-        self.emit_stmt_list(function, depth, &function.body, &guard, None, &mut lines);
+        self.emit_stmt_list(
+            function,
+            depth,
+            &function.body,
+            &guard,
+            None,
+            None,
+            &[],
+            &mut lines,
+        );
         self.files.insert(
             path,
             if lines.is_empty() {
@@ -485,9 +511,12 @@ impl Backend {
         stmts: &[IrStmt],
         guard: &Guard,
         loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+        sleep_tail: &[ContinuationItem],
         lines: &mut Vec<String>,
-    ) {
-        for stmt in stmts {
+    ) -> bool {
+        for (index, stmt) in stmts.iter().enumerate() {
+            let tail = continuation_after_stmts(&stmts[index + 1..], sleep_tail);
             match stmt {
                 IrStmt::Let { name, value, .. } => {
                     let mut stmt_lines = Vec::new();
@@ -533,6 +562,44 @@ impl Backend {
                     );
                     self.extend_guarded(lines, guard, stmt_lines);
                 }
+                IrStmt::Sleep { seconds } => {
+                    let continuation_name = self.emit_sleep_continuation(
+                        function,
+                        depth,
+                        &tail,
+                        guard,
+                        loop_ctx,
+                        resume_context,
+                    );
+                    let seconds_name = self.new_temp();
+                    let seconds_slot = local_slot(depth, &function.name, &seconds_name, &Type::Int);
+                    let macro_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                    let mut stmt_lines = Vec::new();
+                    self.compile_expr_into_slot(
+                        function,
+                        depth,
+                        seconds,
+                        &seconds_slot,
+                        &mut stmt_lines,
+                    );
+                    stmt_lines.push(format!(
+                        "execute store result storage {}:runtime {}.seconds int 1 run scoreboard players get {} mcfc",
+                        self.namespace,
+                        macro_slot.storage_path(),
+                        seconds_slot.numeric_name()
+                    ));
+                    stmt_lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        format!(
+                            "schedule function {}:{} $(seconds)s",
+                            self.namespace, continuation_name
+                        ),
+                    ));
+                    stmt_lines.push(format!("scoreboard players set {} mcfc 1", guard.ctrl_slot));
+                    self.extend_guarded(lines, guard, stmt_lines);
+                    return true;
+                }
                 IrStmt::Context { kind, anchor, body } => {
                     let anchor_name = self.new_temp();
                     let anchor_slot = local_slot(depth, &function.name, &anchor_name, &anchor.ty);
@@ -546,13 +613,28 @@ impl Backend {
                     );
                     self.extend_guarded(lines, guard, stmt_lines);
 
+                    let mut context_tail = vec![ContinuationItem::ExitContext];
+                    context_tail.extend(tail.clone());
+                    let context_resume = ContextResume {
+                        kind: *kind,
+                        anchor_slot: anchor_slot.clone(),
+                    };
                     let (body_path, body_name) = self.new_block(
                         function,
                         depth,
                         &format!("context_{}", context_execute_keyword(*kind)),
                     );
                     let mut body_lines = Vec::new();
-                    self.emit_stmt_list(function, depth, body, guard, loop_ctx, &mut body_lines);
+                    self.emit_stmt_list(
+                        function,
+                        depth,
+                        body,
+                        guard,
+                        loop_ctx,
+                        Some(&context_resume),
+                        &context_tail,
+                        &mut body_lines,
+                    );
                     self.files.insert(
                         body_path,
                         if body_lines.is_empty() {
@@ -596,7 +678,7 @@ impl Backend {
                         control_slot(depth, &function.name)
                     ));
                     self.extend_guarded(lines, guard, stmt_lines);
-                    return;
+                    return true;
                 }
                 IrStmt::Break => {
                     let Some(loop_ctx) = loop_ctx else {
@@ -606,7 +688,7 @@ impl Backend {
                         "scoreboard players set {} mcfc 1",
                         loop_ctx.break_slot
                     )));
-                    return;
+                    return true;
                 }
                 IrStmt::Continue => {
                     let Some(loop_ctx) = loop_ctx else {
@@ -616,7 +698,7 @@ impl Backend {
                         "scoreboard players set {} mcfc 1",
                         loop_ctx.continue_slot
                     )));
-                    return;
+                    return true;
                 }
                 IrStmt::If {
                     condition,
@@ -642,6 +724,8 @@ impl Backend {
                         then_body,
                         guard,
                         loop_ctx,
+                        resume_context,
+                        &tail,
                         &mut then_lines,
                     );
                     self.files.insert(
@@ -668,6 +752,8 @@ impl Backend {
                             else_body,
                             guard,
                             loop_ctx,
+                            resume_context,
+                            &tail,
                             &mut else_lines,
                         );
                         self.files.insert(
@@ -698,6 +784,15 @@ impl Backend {
                         continue_target: cond_name.clone(),
                     };
                     let loop_guard = guard.within_loop(&loop_ctx);
+                    let mut body_sleep_tail = vec![
+                        ContinuationItem::Call {
+                            function_name: cond_name.clone(),
+                            allow_continue: true,
+                        },
+                        ContinuationItem::ClearScore(break_slot.clone()),
+                        ContinuationItem::ClearScore(continue_slot.clone()),
+                    ];
+                    body_sleep_tail.extend(tail.clone());
 
                     let mut cond_lines = vec![loop_guard.wrap_allow_continue(format!(
                         "scoreboard players set {} mcfc 0",
@@ -727,6 +822,8 @@ impl Backend {
                         body,
                         &loop_guard,
                         Some(&loop_ctx),
+                        resume_context,
+                        &body_sleep_tail,
                         &mut body_lines,
                     );
                     body_lines.push(loop_guard.wrap_allow_continue(format!(
@@ -770,6 +867,15 @@ impl Backend {
                             continue_target: step_name.clone(),
                         };
                         let loop_guard = guard.within_loop(&loop_ctx);
+                        let mut body_sleep_tail = vec![
+                            ContinuationItem::Call {
+                                function_name: step_name.clone(),
+                                allow_continue: true,
+                            },
+                            ContinuationItem::ClearScore(break_slot.clone()),
+                            ContinuationItem::ClearScore(continue_slot.clone()),
+                        ];
+                        body_sleep_tail.extend(tail.clone());
 
                         let mut init_lines = Vec::new();
                         self.compile_expr_into_named_slot(
@@ -841,6 +947,8 @@ impl Backend {
                             body,
                             &loop_guard,
                             Some(&loop_ctx),
+                            resume_context,
+                            &body_sleep_tail,
                             &mut body_lines,
                         );
                         body_lines.push(loop_guard.wrap_allow_continue(format!(
@@ -908,6 +1016,8 @@ impl Backend {
                                 body,
                                 guard,
                                 loop_ctx,
+                                resume_context,
+                                &tail,
                                 &mut body_lines,
                             );
                             self.files.insert(body_path, body_lines.join("\n") + "\n");
@@ -939,6 +1049,15 @@ impl Backend {
                                 continue_target: step_name.clone(),
                             };
                             let loop_guard = guard.within_loop(&loop_ctx);
+                            let mut body_sleep_tail = vec![
+                                ContinuationItem::Call {
+                                    function_name: step_name.clone(),
+                                    allow_continue: true,
+                                },
+                                ContinuationItem::ClearScore(break_slot.clone()),
+                                ContinuationItem::ClearScore(continue_slot.clone()),
+                            ];
+                            body_sleep_tail.extend(tail.clone());
 
                             let mut init_lines = Vec::new();
                             self.compile_expr_into_named_slot(
@@ -1060,6 +1179,8 @@ impl Backend {
                                 body,
                                 &loop_guard,
                                 Some(&loop_ctx),
+                                resume_context,
+                                &body_sleep_tail,
                                 &mut body_lines,
                             );
                             body_lines.push(loop_guard.wrap_allow_continue(format!(
@@ -1092,6 +1213,148 @@ impl Backend {
                 },
             }
         }
+        false
+    }
+
+    fn emit_sleep_continuation(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        continuation: &[ContinuationItem],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+    ) -> String {
+        let (path, name) = self.new_block(function, depth, "sleep_resume");
+        let mut lines = vec![format!("scoreboard players set {} mcfc 0", guard.ctrl_slot)];
+        self.emit_contextual_continuation_items(
+            function,
+            depth,
+            continuation,
+            guard,
+            loop_ctx,
+            resume_context,
+            &mut lines,
+        );
+        self.files.insert(
+            path,
+            if lines.is_empty() {
+                "# empty sleep continuation\n".to_string()
+            } else {
+                lines.join("\n") + "\n"
+            },
+        );
+        name
+    }
+
+    fn emit_continuation_items(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        items: &[ContinuationItem],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        for (index, item) in items.iter().enumerate() {
+            match item {
+                ContinuationItem::Stmt(stmt) => {
+                    if self.emit_stmt_list(
+                        function,
+                        depth,
+                        std::slice::from_ref(stmt),
+                        guard,
+                        loop_ctx,
+                        resume_context,
+                        &items[index + 1..],
+                        lines,
+                    ) {
+                        return true;
+                    }
+                }
+                ContinuationItem::Call {
+                    function_name,
+                    allow_continue,
+                } => {
+                    let command = format!("function {}:{}", self.namespace, function_name);
+                    lines.push(if *allow_continue {
+                        guard.wrap_allow_continue(command)
+                    } else {
+                        guard.wrap(command)
+                    });
+                }
+                ContinuationItem::ClearScore(slot) => {
+                    lines.push(guard.wrap_with_options(
+                        format!("scoreboard players set {} mcfc 0", slot),
+                        false,
+                        false,
+                    ));
+                }
+                ContinuationItem::ExitContext => return false,
+            }
+        }
+        false
+    }
+
+    fn emit_contextual_continuation_items(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        items: &[ContinuationItem],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        let Some(context) = resume_context else {
+            return self
+                .emit_continuation_items(function, depth, items, guard, loop_ctx, None, lines);
+        };
+        let split = items
+            .iter()
+            .position(|item| matches!(item, ContinuationItem::ExitContext))
+            .unwrap_or(items.len());
+        let inside = &items[..split];
+        let outside = if split < items.len() {
+            &items[split + 1..]
+        } else {
+            &[]
+        };
+
+        if !inside.is_empty() {
+            let (path, name) = self.new_block(function, depth, "sleep_context");
+            let mut inner_lines = Vec::new();
+            self.emit_continuation_items(
+                function,
+                depth,
+                inside,
+                guard,
+                loop_ctx,
+                resume_context,
+                &mut inner_lines,
+            );
+            self.files.insert(
+                path,
+                if inner_lines.is_empty() {
+                    "# empty sleep context continuation\n".to_string()
+                } else {
+                    inner_lines.join("\n") + "\n"
+                },
+            );
+            lines.push(guard.wrap(self.query_command(
+                &context.anchor_slot,
+                format!(
+                    "execute {} $(selector) run function {}:{}",
+                    context_execute_keyword(context.kind),
+                    self.namespace,
+                    name
+                ),
+                true,
+            )));
+        }
+
+        self.emit_continuation_items(function, depth, outside, guard, loop_ctx, None, lines)
     }
 
     fn extend_guarded(&self, target: &mut Vec<String>, guard: &Guard, lines: Vec<String>) {
@@ -1148,6 +1411,17 @@ impl Backend {
                 target.storage_path(),
                 quoted(value)
             )),
+            IrExprKind::InterpolatedString {
+                template,
+                placeholders,
+            } => self.compile_interpolated_string(
+                function,
+                depth,
+                template,
+                placeholders,
+                target,
+                lines,
+            ),
             IrExprKind::ArrayLiteral(values) => {
                 self.compile_array_literal(function, depth, values, target, lines);
             }
@@ -2224,6 +2498,53 @@ impl Backend {
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "random" => {
+                if args.is_empty() {
+                    lines.push(format!(
+                        "execute store result score {} mcfc run random value 0..2147483647",
+                        target.numeric_name()
+                    ));
+                    return true;
+                }
+
+                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                let min_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                let max_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                match args {
+                    [max] => {
+                        lines.push(format!(
+                            "scoreboard players set {} mcfc 0",
+                            min_slot.numeric_name()
+                        ));
+                        self.compile_expr_into_slot(function, depth, max, &max_slot, lines);
+                    }
+                    [min, max] => {
+                        self.compile_expr_into_slot(function, depth, min, &min_slot, lines);
+                        self.compile_expr_into_slot(function, depth, max, &max_slot, lines);
+                    }
+                    _ => return true,
+                }
+                lines.push(format!(
+                    "execute store result storage {}:runtime {}.min int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    min_slot.numeric_name()
+                ));
+                lines.push(format!(
+                    "execute store result storage {}:runtime {}.max int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    macro_slot.storage_path(),
+                    max_slot.numeric_name()
+                ));
+                lines.push(self.inline_macro_command(
+                    macro_slot.storage_path(),
+                    format!(
+                        "execute store result score {} mcfc run random value $(min)..$(max)",
+                        target.numeric_name()
+                    ),
+                ));
+                true
+            }
             "summon" => {
                 let summon_target = if target.storage_path() == "__void" {
                     local_slot(depth, &function.name, &self.new_temp(), &Type::EntityRef)
@@ -3678,6 +3999,106 @@ impl Backend {
         ));
     }
 
+    fn compile_interpolated_string(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        template: &str,
+        placeholders: &[IrMacroPlaceholder],
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        if placeholders.is_empty() {
+            lines.push(format!(
+                "data modify storage {}:runtime {} set value {}",
+                self.namespace,
+                target.storage_path(),
+                quoted(template)
+            ));
+            return;
+        }
+
+        self.macro_counter += 1;
+        let macro_id = self.macro_counter;
+        let relative = format!(
+            "generated/{}__d{}__string_{}",
+            sanitize(&function.name),
+            depth,
+            macro_id
+        );
+        let path = format!("data/{}/function/{}.mcfunction", self.namespace, relative);
+        let rendered_value = quoted(&rewrite_macro_template(template, placeholders));
+        self.files.insert(
+            path,
+            format!(
+                "$data modify storage {}:runtime {} set value {}\n",
+                self.namespace,
+                target.storage_path(),
+                rendered_value
+            ),
+        );
+
+        let storage_base = macro_storage_base(depth, &function.name, macro_id);
+        self.write_macro_placeholder_values(function, depth, &storage_base, placeholders, lines);
+        lines.push(format!(
+            "function {}:{} with storage {}:runtime {}",
+            self.namespace, relative, self.namespace, storage_base
+        ));
+    }
+
+    fn write_macro_placeholder_values(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        storage_base: &str,
+        placeholders: &[IrMacroPlaceholder],
+        lines: &mut Vec<String>,
+    ) {
+        for placeholder in placeholders {
+            let source_temp = self.new_temp();
+            let source_slot = local_slot(depth, &function.name, &source_temp, &placeholder.ty);
+            self.compile_expr_into_slot(function, depth, &placeholder.expr, &source_slot, lines);
+            let target_path = format!("{}.{}", storage_base, placeholder.key);
+            match placeholder.ty {
+                Type::Int | Type::Bool => lines.push(format!(
+                    "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    target_path,
+                    source_slot.numeric_name()
+                )),
+                Type::String | Type::Nbt => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::EntitySet | Type::EntityRef => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}.selector",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::BlockRef => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}.pos",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::Array(_) | Type::Dict(_) | Type::Struct(_) => lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                    self.namespace,
+                    target_path,
+                    self.namespace,
+                    source_slot.storage_path()
+                )),
+                Type::Void => {}
+            }
+        }
+    }
+
     fn function_entry_path(&self, function: &str, depth: usize) -> String {
         format!(
             "data/{}/function/{}.mcfunction",
@@ -3783,6 +4204,15 @@ impl Backend {
             lines.join("\n") + "\n",
         );
     }
+}
+
+fn continuation_after_stmts(stmts: &[IrStmt], tail: &[ContinuationItem]) -> Vec<ContinuationItem> {
+    stmts
+        .iter()
+        .cloned()
+        .map(ContinuationItem::Stmt)
+        .chain(tail.iter().cloned())
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -4196,9 +4626,10 @@ fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, 
                 collect_objectives_from_expr(anchor, names);
                 collect_objectives_from_stmts(body, names);
             }
-            IrStmt::Let { value, .. } | IrStmt::Return(Some(value)) | IrStmt::Expr(value) => {
-                collect_objectives_from_expr(value, names)
-            }
+            IrStmt::Let { value, .. }
+            | IrStmt::Return(Some(value))
+            | IrStmt::Sleep { seconds: value }
+            | IrStmt::Expr(value) => collect_objectives_from_expr(value, names),
             IrStmt::MacroCommand { .. }
             | IrStmt::RawCommand(_)
             | IrStmt::Break
@@ -4245,6 +4676,11 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, ()>)
             collect_objectives_from_expr(receiver, names);
             for arg in args {
                 collect_objectives_from_expr(arg, names);
+            }
+        }
+        IrExprKind::InterpolatedString { placeholders, .. } => {
+            for placeholder in placeholders {
+                collect_objectives_from_expr(&placeholder.expr, names);
             }
         }
         IrExprKind::At { anchor, value } | IrExprKind::As { anchor, value } => {

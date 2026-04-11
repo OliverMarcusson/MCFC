@@ -22,6 +22,8 @@ fn main() -> void
     let chest = block("0 64 0")
     let values = [1, 2, 3]
     let counts = {"wood": 12, "stone": 4}
+    let roll = random(1, 20)
+    let title = "MCFC Demo $(random(100))"
 
     for i in 0..=10:
         values.push(i)
@@ -57,6 +59,7 @@ fn main() -> void
     playsound("minecraft:entity.experience_orb.pickup", "master", pig)
     stopsound(pig, "master", "minecraft:entity.experience_orb.pickup")
     particle("minecraft:flame", chest, 4, pig)
+    sleep(1)
     setblock(chest, "minecraft:stone")
     fill(chest, block("1 65 1"), "minecraft:glass")
     chest.Items[0].Count = values.len()

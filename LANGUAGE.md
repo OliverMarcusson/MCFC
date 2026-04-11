@@ -224,6 +224,10 @@ Gameplay builtins:
 - `debug_marker(position: block_ref, label: string) -> void`
 - `debug_marker(position: block_ref, label: string, marker_block: string) -> void`
 - `debug_entity(target: entity_ref|entity_set, label: string) -> void`
+- `sleep(seconds: int) -> void`
+- `random() -> int`
+- `random(max: int) -> int`
+- `random(min: int, max: int) -> int`
 - `bossbar_add`, `bossbar_remove`, `bossbar_name`, `bossbar_value`, `bossbar_max`, `bossbar_visible`, `bossbar_players`
 - `playsound(sound: string, category: string, target: entity_ref|entity_set) -> void`
 - `stopsound(target: entity_ref|entity_set, category: string, sound: string) -> void`
@@ -274,6 +278,29 @@ Debugging helpers:
 - `debug_marker(position, label, marker_block)` also places `marker_block` at the position, which is intentionally destructive and should be used only for temporary checks
 - `debug_entity(target, label)` reports whether the selector/entity resolves and briefly gives matching entities the glowing effect
 - relative block positions such as `block("~ ~ ~")` follow the current execution position; use `at(player):` for player-position world effects, while `as(player):` only changes the executing entity
+
+Timing and randomness:
+
+- `sleep(seconds)` pauses the current MCFC execution path and resumes the following statements later with Minecraft `schedule function`
+- `sleep(...)` is statement-only; it cannot be used as a value in `let`, `return`, function arguments, or macro placeholders
+- `random()` returns an `int` from `0..2147483647`
+- `random(max)` returns an `int` from `0..max`
+- `random(min, max)` returns an `int` from `min..max`
+- random bounds are inclusive because they map directly to Minecraft `random value` ranges
+- string literals support `$(expr)` interpolation with the same expression rules as `mcf` placeholders
+
+```text
+fn main() -> void
+    let roll = random(1, 20)
+    let demo_title = "MCFC Demo $(random(100))"
+    if roll == 20:
+        debug("critical")
+    end
+
+    sleep(3)
+    debug(demo_title)
+end
+```
 
 String literal notes:
 

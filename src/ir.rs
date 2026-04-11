@@ -74,6 +74,9 @@ pub enum IrStmt {
         template: String,
         placeholders: Vec<IrMacroPlaceholder>,
     },
+    Sleep {
+        seconds: IrExpr,
+    },
     Expr(IrExpr),
 }
 
@@ -122,6 +125,10 @@ pub enum IrExprKind {
     Int(i64),
     Bool(bool),
     String(String),
+    InterpolatedString {
+        template: String,
+        placeholders: Vec<IrMacroPlaceholder>,
+    },
     ArrayLiteral(Vec<IrExpr>),
     DictLiteral(Vec<(String, IrExpr)>),
     StructLiteral {
@@ -250,6 +257,9 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
             template: template.clone(),
             placeholders: placeholders.iter().map(lower_macro_placeholder).collect(),
         },
+        TypedStmtKind::Sleep { seconds } => IrStmt::Sleep {
+            seconds: lower_expr(seconds),
+        },
         TypedStmtKind::Expr(expr) => IrStmt::Expr(lower_expr(expr)),
     }
 }
@@ -303,6 +313,13 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Int(value) => IrExprKind::Int(*value),
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
             TypedExprKind::String(value) => IrExprKind::String(value.clone()),
+            TypedExprKind::InterpolatedString {
+                template,
+                placeholders,
+            } => IrExprKind::InterpolatedString {
+                template: template.clone(),
+                placeholders: placeholders.iter().map(lower_macro_placeholder).collect(),
+            },
             TypedExprKind::ArrayLiteral(values) => {
                 IrExprKind::ArrayLiteral(values.iter().map(lower_expr).collect())
             }

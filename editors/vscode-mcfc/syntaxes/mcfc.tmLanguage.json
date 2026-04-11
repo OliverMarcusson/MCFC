@@ -75,6 +75,10 @@
           },
           "patterns": [
             {
+              "name": "constant.other.placeholder.macro.mcfc",
+              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*(?:[^()]|\\([^()]*\\))*\\)"
+            },
+            {
               "include": "#escapes"
             }
           ]
@@ -94,6 +98,10 @@
             }
           },
           "patterns": [
+            {
+              "name": "constant.other.placeholder.macro.mcfc",
+              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*(?:[^()]|\\([^()]*\\))*\\)"
+            },
             {
               "include": "#escapes"
             }
@@ -225,7 +233,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|exists|block|at|as|summon|teleport|damage|heal|give|clear|loot_give|loot_insert|loot_spawn|tellraw|title|actionbar|debug|debug_marker|debug_entity|bossbar_add|bossbar_remove|bossbar_name|bossbar_value|bossbar_max|bossbar_visible|bossbar_players|playsound|stopsound|particle|setblock|fill)\\b(?=\\s*\\()"
+          "match": "\\b(?:sleep|random|selector|single|exists|block|at|as|summon|teleport|damage|heal|give|clear|loot_give|loot_insert|loot_spawn|tellraw|title|actionbar|debug|debug_marker|debug_entity|bossbar_add|bossbar_remove|bossbar_name|bossbar_value|bossbar_max|bossbar_visible|bossbar_players|playsound|stopsound|particle|setblock|fill)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",

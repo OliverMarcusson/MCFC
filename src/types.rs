@@ -90,6 +90,9 @@ pub enum TypedStmtKind {
         template: String,
         placeholders: Vec<MacroPlaceholder>,
     },
+    Sleep {
+        seconds: TypedExpr,
+    },
     Expr(TypedExpr),
 }
 
@@ -145,6 +148,10 @@ pub enum TypedExprKind {
     Int(i64),
     Bool(bool),
     String(String),
+    InterpolatedString {
+        template: String,
+        placeholders: Vec<MacroPlaceholder>,
+    },
     ArrayLiteral(Vec<TypedExpr>),
     DictLiteral(Vec<(String, TypedExpr)>),
     StructLiteral {
@@ -850,25 +857,80 @@ fn type_check_block(
                 }
             }
             StmtKind::Expr(expr) => {
-                let expr = type_check_expr(
-                    expr,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
-                );
-                if !matches!(
-                    expr.kind,
-                    TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
-                ) {
-                    diagnostics.push(Diagnostic::new(
-                        "only function calls may appear as bare expression statements",
-                        statement.span.clone(),
-                    ));
+                if let ExprKind::Call { function, args } = &expr.kind {
+                    if function == "sleep" {
+                        let args = type_check_args(
+                            args,
+                            struct_defs,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        );
+                        expect_arity(function, &args, 1, expr, diagnostics);
+                        if let Some(seconds) = args.first() {
+                            if seconds.ty != Type::Int {
+                                diagnostics.push(Diagnostic::new(
+                                    "sleep(...) seconds must have type 'int'",
+                                    statement.span.clone(),
+                                ));
+                            }
+                            if matches!(seconds.kind, TypedExprKind::Int(value) if value < 1) {
+                                diagnostics.push(Diagnostic::new(
+                                    "sleep(...) seconds must be at least 1",
+                                    statement.span.clone(),
+                                ));
+                            }
+                        }
+                        let seconds = args.into_iter().next().unwrap_or(TypedExpr {
+                            kind: TypedExprKind::Int(1),
+                            ty: Type::Int,
+                            ref_kind: RefKind::Unknown,
+                        });
+                        TypedStmtKind::Sleep { seconds }
+                    } else {
+                        let expr = type_check_expr(
+                            expr,
+                            struct_defs,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        );
+                        if !matches!(
+                            expr.kind,
+                            TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
+                        ) {
+                            diagnostics.push(Diagnostic::new(
+                                "only function calls may appear as bare expression statements",
+                                statement.span.clone(),
+                            ));
+                        }
+                        TypedStmtKind::Expr(expr)
+                    }
+                } else {
+                    let expr = type_check_expr(
+                        expr,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                    if !matches!(
+                        expr.kind,
+                        TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
+                    ) {
+                        diagnostics.push(Diagnostic::new(
+                            "only function calls may appear as bare expression statements",
+                            statement.span.clone(),
+                        ));
+                    }
+                    TypedStmtKind::Expr(expr)
                 }
-                TypedStmtKind::Expr(expr)
             }
         };
 
@@ -899,7 +961,23 @@ fn type_check_expr(
             ref_kind: RefKind::Unknown,
         },
         ExprKind::String(value) => TypedExpr {
-            kind: TypedExprKind::String(value.clone()),
+            kind: if value.contains("$(") {
+                TypedExprKind::InterpolatedString {
+                    template: value.clone(),
+                    placeholders: collect_macro_placeholders(
+                        value,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        expr.span.clone(),
+                        diagnostics,
+                    ),
+                }
+            } else {
+                TypedExprKind::String(value.clone())
+            },
             ty: Type::String,
             ref_kind: RefKind::Unknown,
         },
@@ -1590,6 +1668,32 @@ fn type_check_builtin_call(
 ) -> Option<TypedExpr> {
     match function {
         "summon" => Some(type_check_summon_builtin(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "sleep" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            diagnostics.push(Diagnostic::new(
+                "sleep(...) may only appear as a standalone statement",
+                expr.span.clone(),
+            ));
+            Some(builtin_call_expr("sleep", args, Type::Void))
+        }
+        "random" => Some(type_check_random_builtin(
             args,
             expr,
             struct_defs,
@@ -2532,6 +2636,49 @@ fn type_check_summon_builtin(
         ty: Type::EntityRef,
         ref_kind: RefKind::NonPlayer,
     }
+}
+
+fn type_check_random_builtin(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    if args.len() > 2 {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "wrong arity for 'random': expected 0, 1, or 2, found {}",
+                args.len()
+            ),
+            expr.span.clone(),
+        ));
+    }
+    for (index, arg) in args.iter().enumerate() {
+        if arg.ty != Type::Int {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "argument {} for 'random' must be 'int', found '{}'",
+                    index + 1,
+                    arg.ty.as_str()
+                ),
+                expr.span.clone(),
+            ));
+        }
+    }
+    builtin_call_expr("random", args, Type::Int)
 }
 
 fn type_check_gameplay_call(

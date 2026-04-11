@@ -1,0 +1,44 @@
+# MCFC syntax highlighting fixture
+
+@book
+fn launch(level: int) -> void
+    mcf "tellraw @a \"launching level $(level)\""
+    return
+end
+
+fn classify(value: int) -> string
+    if value == 0:
+        return 'zero'
+    else if value < 10 and not false:
+        return "small"
+    else:
+        return "large"
+    end
+end
+
+fn main() -> void
+    let player = single(selector("@p"))
+    let chest = block("0 64 0")
+    let values = [1, 2, 3]
+    let counts = {"wood": 12, "stone": 4}
+
+    for i in 0..=10:
+        values.push(i)
+        if i == 5:
+            continue
+        end
+    end
+
+    for pig in selector("@e[type=pig]"):
+        pig.CustomName = "Highlighted"
+    end
+
+    player.tags.mcfc_demo = true
+    player.effect("speed", 10, 1)
+    chest.Items[0].Count = values.len()
+    counts.remove("stone")
+
+    let amount = values.len()
+    mc "say plain command"
+    mcf "say count $(amount)"
+end

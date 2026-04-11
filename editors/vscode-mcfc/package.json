@@ -1,0 +1,35 @@
+{
+  "name": "mcfc-syntax",
+  "displayName": "MCFC Syntax Highlighting",
+  "description": "Syntax highlighting and editor basics for MCFC .mcf files.",
+  "version": "0.0.1",
+  "publisher": "mcfc",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mcfc",
+        "aliases": [
+          "MCFC",
+          "mcfc"
+        ],
+        "extensions": [
+          ".mcf"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mcfc",
+        "scopeName": "source.mcfc",
+        "path": "./syntaxes/mcfc.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,301 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MCFC",
+  "scopeName": "source.mcfc",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#mcf-command"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.mcfc",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.mcfc",
+          "match": "\\\\(?:[\"'\\\\nt]|.)"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.mcfc",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.mcfc"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.mcfc"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.mcfc",
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.mcfc"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.mcfc"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        }
+      ]
+    },
+    "mcf-command": {
+      "patterns": [
+        {
+          "name": "meta.command.macro.mcfc",
+          "begin": "\\b(mcf)\\s*(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.command.macro.mcfc"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.mcfc"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.mcfc"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.other.placeholder.macro.mcfc",
+              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
+            },
+            {
+              "include": "#escapes"
+            }
+          ],
+          "contentName": "string.quoted.double.macro.mcfc"
+        },
+        {
+          "name": "meta.command.macro.mcfc",
+          "begin": "\\b(mcf)\\s*(')",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.command.macro.mcfc"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.mcfc"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.mcfc"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.other.placeholder.macro.mcfc",
+              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
+            },
+            {
+              "include": "#escapes"
+            }
+          ],
+          "contentName": "string.quoted.single.macro.mcfc"
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "name": "storage.type.annotation.mcfc",
+          "match": "@book\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "meta.function.definition.mcfc",
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.function.mcfc"
+            },
+            "2": {
+              "name": "entity.name.function.mcfc"
+            }
+          }
+        },
+        {
+          "name": "entity.name.function.call.mcfc",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mcfc",
+          "match": "\\b(?:if|else|while|for|in|break|continue|return|end)\\b"
+        },
+        {
+          "name": "storage.type.function.mcfc",
+          "match": "\\bfn\\b"
+        },
+        {
+          "name": "storage.modifier.declaration.mcfc",
+          "match": "\\blet\\b"
+        },
+        {
+          "name": "keyword.other.command.mcfc",
+          "match": "\\bmc\\b"
+        },
+        {
+          "name": "keyword.operator.word.mcfc",
+          "match": "\\b(?:and|or|not)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.mcfc",
+          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|block_ref|nbt|void)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.mcfc",
+          "match": "\\b(?:selector|single|exists|block|at)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.method.mcfc",
+          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.mcfc",
+          "match": "\\b(?:true|false)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.mcfc",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.range.inclusive.mcfc",
+          "match": "\\.\\.="
+        },
+        {
+          "name": "keyword.operator.range.mcfc",
+          "match": "\\.\\."
+        },
+        {
+          "name": "storage.type.function.return.mcfc",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.comparison.mcfc",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.mcfc",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.mcfc",
+          "match": "\\+|-|\\*|/"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.colon.mcfc",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.separator.comma.mcfc",
+          "match": ","
+        },
+        {
+          "name": "punctuation.accessor.dot.mcfc",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.bracket.mcfc",
+          "match": "[()\\[\\]{}<>]"
+        }
+      ]
+    }
+  }
+}

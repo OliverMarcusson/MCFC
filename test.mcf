@@ -78,6 +78,40 @@ fn style_closest_pig() -> void
     return
 end
 
+fn execution_context_demo() -> void
+    mcf 'tellraw @a "execution-context demo: start"'
+
+    let players = selector("@a[limit=1]")
+    as(players):
+        mcf 'tellraw @s "as-block: welcome @s"'
+        mc "say this raw command is executing as @s"
+        mc 'title @s actionbar "actionbar: hello @s"'
+    end
+
+    at(players):
+        mc "particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 8"
+        mcf 'tellraw @a "at-block: sparkles at the player"'
+    end
+
+    at(players):
+        as(selector("@e[type=pig,sort=nearest,limit=1]")):
+            mc "say nested context: nearest pig speaks at the player"
+        end
+    end
+
+    let player = single(players)
+    if exists(player):
+        let self_ref = single(as(player, selector("@s")))
+        if exists(self_ref):
+            self_ref.tags.mcfc_as_demo = true
+            mcf 'tellraw @a "value-as: tagged the executing player via @s"'
+        end
+    end
+
+    mcf 'tellraw @a "execution-context demo: end"'
+    return
+end
+
 fn player_api_demo() -> void
     let player = single(selector("@p"))
     if exists(player):
@@ -173,40 +207,17 @@ end
 
 fn main() -> void
     let version = 1
-    mcf 'tellraw @a "MCFC version 0.$(version)"'
-    let a = 1
-    let b = 2
-    let label = "done"
+    mcf 'tellraw @a "MCFC version 0.0.$(version)"'
 
-    while a < 4:
-        # mcf "say a: $(a)"
-        if a == 2:
-            b = add(a, b)
-        end
-        a = a + 1
-    end
-
-    let kind = classify(2)
-    if kind == "many" and not false:
-        # mcf "say class: $(kind)"
-    else:
-        # mc "say unexpected class"
-    end
-
-    range_demo(3)
-    loop_control_demo(6)
+    # let kind = classify(2)
+    # range_demo(3)
+    # loop_control_demo(6)
     # fibb(8)
-    name_closest_pig()
-    style_closest_pig()
-    player_api_demo()
-    collections_demo()
+    # name_closest_pig()
+    # style_closest_pig()
+    execution_context_demo()
+    # player_api_demo()
+    # collections_demo()
 
-    let me = single(selector("@a"))
-    if exists(me):
-        me.mainhand.item = "minecraft:diamond"
-        me.mainhand.count = 32
-    end
-    
-    mc "say done"
     return
 end

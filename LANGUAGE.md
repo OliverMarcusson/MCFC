@@ -116,6 +116,8 @@ Supported statements:
 - `return expr`
 - `mc "raw minecraft command"`
 - `mcf "macro command with $(placeholders)"`
+- `as(entity): ... end`
+- `at(entity): ... end`
 - a bare function call as a statement, for example `do_work()`
 
 Notes:
@@ -195,6 +197,7 @@ Minecraft query builtins:
 - `exists(entity_ref) -> bool`
 - `block("...") -> block_ref`
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
+- `as(entity_set|entity_ref, entity_set|entity_ref|block_ref)`
 - `int(nbt)`, `bool(nbt)`, `string(nbt)`
 
 Collection methods:
@@ -377,6 +380,26 @@ Implementation model:
 
 - `mc "say $(a)"` emits the literal text `say $(a)`
 - `mcf "say $(a)"` performs runtime substitution through Minecraft macros
+
+## Execution Context Blocks
+
+Use `as(anchor): ... end` to run one or more generated commands as an entity set or entity ref.
+Use `at(anchor): ... end` to run one or more generated commands at an entity set or entity ref.
+
+```text
+let player = single(selector("@p"))
+
+as(player):
+    mcf 'tellraw @s "welcome @s"'
+    mc "say another command as the same entity"
+end
+
+at(player):
+    mc "particle minecraft:happy_villager ~ ~1 ~"
+end
+```
+
+The value-level forms `as(anchor, value)` and `at(anchor, value)` compose execution context onto entity and block reference values. Context blocks are better when several commands should run under the same `execute as` or `execute at` wrapper.
 
 ## Runtime Representation
 

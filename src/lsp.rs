@@ -231,7 +231,10 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "exists" => Some("```mcfc\nexists(value: entity_ref) -> bool\n```"),
         "block" => Some("```mcfc\nblock(position: string) -> block_ref\n```"),
         "at" => Some(
-            "```mcfc\nat(anchor: entity_ref, value: entity_set|entity_ref|block_ref) -> entity_set|entity_ref|block_ref\n```",
+            "```mcfc\nat(anchor: entity_ref, value: entity_set|entity_ref|block_ref) -> entity_set|entity_ref|block_ref\n\nat(anchor):\n    ...\nend\n```",
+        ),
+        "as" => Some(
+            "```mcfc\nas(anchor: entity_set|entity_ref, value: entity_set|entity_ref|block_ref) -> entity_set|entity_ref|block_ref\n\nas(anchor):\n    ...\nend\n```",
         ),
         "int" => Some("```mcfc\nint(value: nbt) -> int\n```"),
         "bool" => Some("```mcfc\nbool(value: nbt) -> bool\n```"),
@@ -397,6 +400,11 @@ fn static_completion_items(
             "at",
             "at(anchor: entity_ref, value: entity_set|entity_ref|block_ref)",
             "at(${1:anchor}, ${2:value})",
+        ),
+        (
+            "as",
+            "as(anchor: entity_set|entity_ref, value: entity_set|entity_ref|block_ref)",
+            "as(${1:anchor}, ${2:value})",
         ),
         ("int", "int(value: nbt) -> int", "int(${1:value})"),
         ("bool", "bool(value: nbt) -> bool", "bool(${1:value})"),

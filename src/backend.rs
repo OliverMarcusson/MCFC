@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::ast::{BinaryOp, PathSegment, Type, UnaryOp};
+use crate::ast::{BinaryOp, ContextKind, PathSegment, Type, UnaryOp};
 use crate::ir::{
     IrAssignTarget, IrBookCommand, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
     IrPathExpr, IrProgram, IrStmt,
@@ -491,7 +491,7 @@ impl Backend {
                     }
                     self.extend_guarded(lines, guard, stmt_lines);
                 }
-                IrStmt::RawCommand(raw) => lines.push(guard.wrap(raw.clone())),
+                IrStmt::RawCommand(raw) => lines.push(guard.wrap(expand_display_text_sugar(raw))),
                 IrStmt::MacroCommand {
                     template,
                     placeholders,
@@ -505,6 +505,46 @@ impl Backend {
                         &mut stmt_lines,
                     );
                     self.extend_guarded(lines, guard, stmt_lines);
+                }
+                IrStmt::Context { kind, anchor, body } => {
+                    let anchor_name = self.new_temp();
+                    let anchor_slot = local_slot(depth, &function.name, &anchor_name, &anchor.ty);
+                    let mut stmt_lines = Vec::new();
+                    self.compile_expr_into_slot(
+                        function,
+                        depth,
+                        anchor,
+                        &anchor_slot,
+                        &mut stmt_lines,
+                    );
+                    self.extend_guarded(lines, guard, stmt_lines);
+
+                    let (body_path, body_name) = self.new_block(
+                        function,
+                        depth,
+                        &format!("context_{}", context_execute_keyword(*kind)),
+                    );
+                    let mut body_lines = Vec::new();
+                    self.emit_stmt_list(function, depth, body, guard, loop_ctx, &mut body_lines);
+                    self.files.insert(
+                        body_path,
+                        if body_lines.is_empty() {
+                            "# empty context block\n".to_string()
+                        } else {
+                            body_lines.join("\n") + "\n"
+                        },
+                    );
+
+                    lines.push(guard.wrap(self.query_command(
+                        &anchor_slot,
+                        format!(
+                            "execute {} $(selector) run function {}:{}",
+                            context_execute_keyword(*kind),
+                            self.namespace,
+                            body_name
+                        ),
+                        true,
+                    )));
                 }
                 IrStmt::Expr(expr) => {
                     let scratch = self.new_temp();
@@ -952,7 +992,30 @@ impl Backend {
                 let value_slot = local_slot(depth, &function.name, &value_name, &value.ty);
                 self.compile_expr_into_slot(function, depth, anchor, &anchor_slot, lines);
                 self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
-                self.compose_context_slots(&anchor_slot, &value_slot, target, &value.ty, lines);
+                self.compose_context_slots(
+                    ContextKind::At,
+                    &anchor_slot,
+                    &value_slot,
+                    target,
+                    &value.ty,
+                    lines,
+                );
+            }
+            IrExprKind::As { anchor, value } => {
+                let anchor_name = self.new_temp();
+                let value_name = self.new_temp();
+                let anchor_slot = local_slot(depth, &function.name, &anchor_name, &anchor.ty);
+                let value_slot = local_slot(depth, &function.name, &value_name, &value.ty);
+                self.compile_expr_into_slot(function, depth, anchor, &anchor_slot, lines);
+                self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
+                self.compose_context_slots(
+                    ContextKind::As,
+                    &anchor_slot,
+                    &value_slot,
+                    target,
+                    &value.ty,
+                    lines,
+                );
             }
             IrExprKind::Exists(expr) => {
                 let temp = self.new_temp();
@@ -2086,6 +2149,7 @@ impl Backend {
 
     fn compose_context_slots(
         &self,
+        kind: ContextKind,
         anchor: &SlotRef,
         value: &SlotRef,
         target: &SlotRef,
@@ -2100,9 +2164,10 @@ impl Backend {
             anchor.storage_path()
         ));
         lines.push(format!(
-            "data modify storage {}:runtime {}.prefix append value \"execute at \"",
+            "data modify storage {}:runtime {}.prefix append value \"execute {} \"",
             self.namespace,
-            target.storage_path()
+            target.storage_path(),
+            context_execute_keyword(kind)
         ));
         lines.push(format!(
             "data modify storage {}:runtime {}.prefix append from storage {}:runtime {}.selector",
@@ -2386,6 +2451,12 @@ impl Backend {
         placeholders: &[IrMacroPlaceholder],
         lines: &mut Vec<String>,
     ) {
+        let template = expand_display_text_sugar(template);
+        if placeholders.is_empty() {
+            lines.push(template);
+            return;
+        }
+
         self.macro_counter += 1;
         let macro_id = self.macro_counter;
         let relative = format!(
@@ -2649,6 +2720,168 @@ fn quoted(value: &str) -> String {
     format!("{:?}", value)
 }
 
+fn expand_display_text_sugar(command: &str) -> String {
+    expand_json_text_command_sugar(command)
+        .or_else(|| expand_say_sugar(command))
+        .unwrap_or_else(|| command.to_string())
+}
+
+fn expand_json_text_command_sugar(command: &str) -> Option<String> {
+    if let Some(rest) = command.strip_prefix("tellraw ") {
+        let (target, message) = split_first_word(rest)?;
+        let json = quoted_message_to_selector_json(message.trim_start())?;
+        return Some(format!("tellraw {} {}", target, json));
+    }
+
+    if let Some(rest) = command.strip_prefix("title ") {
+        let (target, rest) = split_first_word(rest)?;
+        let (mode, message) = split_first_word(rest.trim_start())?;
+        if !matches!(mode, "title" | "subtitle" | "actionbar") {
+            return None;
+        }
+        let json = quoted_message_to_selector_json(message.trim_start())?;
+        return Some(format!("title {} {} {}", target, mode, json));
+    }
+
+    None
+}
+
+fn expand_say_sugar(command: &str) -> Option<String> {
+    let message = command.strip_prefix("say ")?.trim_start();
+    let text = parse_display_message(message)?;
+    let json = selector_text_components(&text)?;
+    Some(format!("tellraw @a {}", json))
+}
+
+fn quoted_message_to_selector_json(message: &str) -> Option<String> {
+    let (text, trailing) = parse_quoted_message(message)?;
+    trailing.trim().is_empty().then_some(())?;
+    selector_text_components(&text)
+}
+
+fn split_first_word(value: &str) -> Option<(&str, &str)> {
+    let split_at = value
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))?;
+    Some((&value[..split_at], &value[split_at..]))
+}
+
+fn parse_quoted_message(value: &str) -> Option<(String, &str)> {
+    let mut chars = value.char_indices();
+    if chars.next()?.1 != '"' {
+        return None;
+    }
+
+    let mut text = String::new();
+    let mut escaped = false;
+    for (index, ch) in chars {
+        if escaped {
+            text.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some((text, &value[index + ch.len_utf8()..])),
+            _ => text.push(ch),
+        }
+    }
+    None
+}
+
+fn parse_display_message(value: &str) -> Option<String> {
+    if let Some((text, trailing)) = parse_quoted_message(value) {
+        if trailing.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    Some(value.to_string())
+}
+
+fn selector_text_components(text: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut plain = String::new();
+    let mut changed = false;
+    let mut index = 0usize;
+
+    while index < text.len() {
+        let rest = &text[index..];
+        if let Some(selector_len) = selector_token_len(rest) {
+            if !plain.is_empty() {
+                parts.push(quoted(&plain));
+                plain.clear();
+            }
+            let selector = &rest[..selector_len];
+            parts.push(format!("{{\"selector\":{}}}", quoted(selector)));
+            index += selector_len;
+            changed = true;
+        } else {
+            let ch = rest.chars().next().expect("non-empty string");
+            plain.push(ch);
+            index += ch.len_utf8();
+        }
+    }
+
+    if !plain.is_empty() {
+        parts.push(quoted(&plain));
+    }
+
+    changed.then(|| format!("[{}]", parts.join(",")))
+}
+
+fn selector_token_len(value: &str) -> Option<usize> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'@' || !matches!(bytes[1], b'p' | b'a' | b'r' | b's' | b'e')
+    {
+        return None;
+    }
+
+    if bytes.get(2) != Some(&b'[') {
+        return Some(2);
+    }
+
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, ch) in value.char_indices().skip(2) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch == '[' {
+            depth += 1;
+        } else if ch == ']' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(index + ch.len_utf8());
+            }
+        }
+    }
+
+    Some(2)
+}
+
+fn context_execute_keyword(kind: ContextKind) -> &'static str {
+    match kind {
+        ContextKind::As => "as",
+        ContextKind::At => "at",
+    }
+}
+
 fn render_path_segments(segments: &[PathSegment]) -> String {
     let mut rendered = String::new();
     for segment in segments {
@@ -2713,6 +2946,10 @@ fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, 
                 }
                 collect_objectives_from_stmts(body, names);
             }
+            IrStmt::Context { anchor, body, .. } => {
+                collect_objectives_from_expr(anchor, names);
+                collect_objectives_from_stmts(body, names);
+            }
             IrStmt::Let { value, .. } | IrStmt::Return(Some(value)) | IrStmt::Expr(value) => {
                 collect_objectives_from_expr(value, names)
             }
@@ -2758,7 +2995,7 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, ()>)
                 collect_objectives_from_expr(arg, names);
             }
         }
-        IrExprKind::At { anchor, value } => {
+        IrExprKind::At { anchor, value } | IrExprKind::As { anchor, value } => {
             collect_objectives_from_expr(anchor, names);
             collect_objectives_from_expr(value, names);
         }

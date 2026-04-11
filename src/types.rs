@@ -70,6 +70,11 @@ pub enum TypedStmtKind {
         kind: TypedForKind,
         body: Vec<TypedStmt>,
     },
+    Context {
+        kind: ContextKind,
+        anchor: TypedExpr,
+        body: Vec<TypedStmt>,
+    },
     Break,
     Continue,
     Return(Option<TypedExpr>),
@@ -157,6 +162,10 @@ pub enum TypedExprKind {
     Single(Box<TypedExpr>),
     Exists(Box<TypedExpr>),
     At {
+        anchor: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+    },
+    As {
         anchor: Box<TypedExpr>,
         value: Box<TypedExpr>,
     },
@@ -588,6 +597,41 @@ fn type_check_block(
                 TypedStmtKind::For {
                     name: name.clone(),
                     kind,
+                    body,
+                }
+            }
+            StmtKind::Context { kind, anchor, body } => {
+                let anchor = type_check_expr(
+                    anchor,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if !matches!(anchor.ty, Type::EntitySet | Type::EntityRef) {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "{} context block requires an 'entity_set' or 'entity_ref' anchor",
+                            context_name(*kind)
+                        ),
+                        statement.span.clone(),
+                    ));
+                }
+                let body = type_check_block(
+                    body,
+                    return_type,
+                    signatures,
+                    &mut env.clone(),
+                    &mut ref_env.clone(),
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    diagnostics,
+                );
+                TypedStmtKind::Context {
+                    kind: *kind,
+                    anchor,
                     body,
                 }
             }
@@ -1393,6 +1437,48 @@ fn type_check_builtin_call(
                 ref_kind: value.ref_kind,
             })
         }
+        "as" => {
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 2, expr, diagnostics);
+            let mut iter = args.into_iter();
+            let anchor = iter.next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::EntityRef,
+                ref_kind: RefKind::Unknown,
+            });
+            let value = iter.next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Selector(String::new()),
+                ty: Type::EntitySet,
+                ref_kind: RefKind::Unknown,
+            });
+            if !matches!(anchor.ty, Type::EntitySet | Type::EntityRef) {
+                diagnostics.push(Diagnostic::new(
+                    "as(...) requires an 'entity_set' or 'entity_ref' anchor",
+                    expr.span.clone(),
+                ));
+            }
+            if !matches!(value.ty, Type::EntitySet | Type::EntityRef | Type::BlockRef) {
+                diagnostics.push(Diagnostic::new(
+                    "as(...) requires an 'entity_set', 'entity_ref', or 'block_ref' value",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::As {
+                    anchor: Box::new(anchor),
+                    value: Box::new(value.clone()),
+                },
+                ty: value.ty,
+                ref_kind: value.ref_kind,
+            })
+        }
         "int" | "bool" | "string" => {
             let args = type_check_args(
                 args,
@@ -1770,6 +1856,13 @@ fn expect_arity(
     }
 }
 
+fn context_name(kind: ContextKind) -> &'static str {
+    match kind {
+        ContextKind::As => "as",
+        ContextKind::At => "at",
+    }
+}
+
 fn extract_string_literal(
     arg: Option<&TypedExpr>,
     function: &str,
@@ -1794,6 +1887,7 @@ fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, spa
             *value = add_or_validate_limit(value, diagnostics, span);
         }
         TypedExprKind::At { value, .. } => rewrite_single_limit(value, diagnostics, span),
+        TypedExprKind::As { value, .. } => rewrite_single_limit(value, diagnostics, span),
         _ => {}
     }
 }

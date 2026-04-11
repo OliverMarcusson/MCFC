@@ -182,6 +182,134 @@ end
 }
 
 #[test]
+fn compiles_as_value_context_composition() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    if exists(player):
+        let self_ref = single(as(player, selector("@s")))
+        self_ref.tags.welcomed = true
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("execute as "))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tag $(selector) add welcomed"))
+    );
+}
+
+#[test]
+fn compiles_as_and_at_context_blocks() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    as(player):
+        mcf 'tellraw @s "welcome @s"'
+        mc 'title @s actionbar "title @s"'
+        mc "say hello @s"
+    end
+    at(player):
+        mc "say here"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("execute as $(selector) run function mcfc:generated/main__d0__context_as_")
+    }));
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("execute at $(selector) run function mcfc:generated/main__d0__context_at_")
+    }));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tellraw @s [\"welcome \",{\"selector\":\"@s\"}]"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| { file.contains("title @s actionbar [\"title \",{\"selector\":\"@s\"}]") })
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tellraw @a [\"hello \",{\"selector\":\"@s\"}]"))
+    );
+    assert!(
+        !result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tellraw @s \"welcome @s\""))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("$$(prefix)execute as $(selector) run function"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("say here"))
+    );
+}
+
+#[test]
+fn compiles_nested_context_blocks() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    at(player):
+        as(selector("@e[type=pig,limit=1]")):
+            mc "say @s"
+        end
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("execute at $(selector) run function mcfc:generated/main__d0__context_at_")
+    }));
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("execute as $(selector) run function mcfc:generated/main__d0__context_as_")
+    }));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tellraw @a [{\"selector\":\"@s\"}]"))
+    );
+}
+
+#[test]
 fn compiles_block_paths_and_nbt_casts() {
     let source = r#"
 fn main() -> void
@@ -697,6 +825,31 @@ end
     assert!(rendered.contains("unknown macro placeholder 'inner'"));
     assert!(rendered.contains("invalid macro placeholder character ' '"));
     assert!(rendered.contains("unterminated macro placeholder"));
+}
+
+#[test]
+fn rejects_invalid_as_and_at_contexts() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    as(block("~ ~ ~")):
+        mc "say bad"
+    end
+    at(block("~ ~ ~")):
+        mc "say bad"
+    end
+    let bad = as(player, 1)
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("as context block requires an 'entity_set' or 'entity_ref' anchor"));
+    assert!(rendered.contains("at context block requires an 'entity_set' or 'entity_ref' anchor"));
+    assert!(
+        rendered.contains("as(...) requires an 'entity_set', 'entity_ref', or 'block_ref' value")
+    );
 }
 
 #[test]

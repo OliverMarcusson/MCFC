@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::ast::{BinaryOp, Type};
+use crate::ast::{BinaryOp, ContextKind, Type};
 use crate::types::{
     BookCommand, CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind,
     TypedForKind, TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
@@ -58,6 +58,11 @@ pub enum IrStmt {
     For {
         name: String,
         kind: IrForKind,
+        body: Vec<IrStmt>,
+    },
+    Context {
+        kind: ContextKind,
+        anchor: IrExpr,
         body: Vec<IrStmt>,
     },
     Break,
@@ -143,6 +148,10 @@ pub enum IrExprKind {
         anchor: Box<IrExpr>,
         value: Box<IrExpr>,
     },
+    As {
+        anchor: Box<IrExpr>,
+        value: Box<IrExpr>,
+    },
     Path(IrPathExpr),
     Cast {
         kind: crate::types::CastKind,
@@ -214,6 +223,11 @@ fn lower_stmt(stmt: &TypedStmt) -> IrStmt {
         TypedStmtKind::For { name, kind, body } => IrStmt::For {
             name: name.clone(),
             kind: lower_for_kind(kind),
+            body: body.iter().map(lower_stmt).collect(),
+        },
+        TypedStmtKind::Context { kind, anchor, body } => IrStmt::Context {
+            kind: *kind,
+            anchor: lower_expr(anchor),
             body: body.iter().map(lower_stmt).collect(),
         },
         TypedStmtKind::Break => IrStmt::Break,
@@ -315,6 +329,10 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Single(expr) => IrExprKind::Single(Box::new(lower_expr(expr))),
             TypedExprKind::Exists(expr) => IrExprKind::Exists(Box::new(lower_expr(expr))),
             TypedExprKind::At { anchor, value } => IrExprKind::At {
+                anchor: Box::new(lower_expr(anchor)),
+                value: Box::new(lower_expr(value)),
+            },
+            TypedExprKind::As { anchor, value } => IrExprKind::As {
                 anchor: Box::new(lower_expr(anchor)),
                 value: Box::new(lower_expr(value)),
             },

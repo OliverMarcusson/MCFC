@@ -190,6 +190,18 @@ impl Parser {
                     let value = self.parse_expr();
                     self.expect_statement_break("expected newline after assignment");
                     StmtKind::Assign { target, value }
+                } else if self.eat(&TokenKind::Colon) {
+                    let context = self.into_context_header(expr);
+                    self.expect_statement_break("expected newline after context header");
+                    let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
+                    self.expect(TokenKind::End, "expected 'end'");
+                    match context {
+                        Some((kind, anchor)) => StmtKind::Context { kind, anchor, body },
+                        None => StmtKind::Expr(Expr {
+                            kind: ExprKind::Variable("_error".to_string()),
+                            span: span.clone(),
+                        }),
+                    }
                 } else {
                     self.expect_statement_break("expected newline after expression");
                     StmtKind::Expr(expr)
@@ -662,6 +674,34 @@ impl Parser {
                 self.diagnostics
                     .push(Diagnostic::new("invalid assignment target", expr.span));
                 AssignTarget::Variable("_error".to_string())
+            }
+        }
+    }
+
+    fn into_context_header(&mut self, expr: Expr) -> Option<(ContextKind, Expr)> {
+        let span = expr.span.clone();
+        match expr.kind {
+            ExprKind::Call { function, mut args } if function == "as" || function == "at" => {
+                if args.len() != 1 {
+                    self.diagnostics.push(Diagnostic::new(
+                        format!("{} context block requires exactly one anchor", function),
+                        span,
+                    ));
+                    return None;
+                }
+                let kind = if function == "as" {
+                    ContextKind::As
+                } else {
+                    ContextKind::At
+                };
+                Some((kind, args.remove(0)))
+            }
+            _ => {
+                self.diagnostics.push(Diagnostic::new(
+                    "only 'as(anchor):' and 'at(anchor):' may introduce context blocks",
+                    span,
+                ));
+                None
             }
         }
     }

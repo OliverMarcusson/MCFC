@@ -83,12 +83,23 @@ pub enum StmtKind {
         kind: ForKind,
         body: Vec<Stmt>,
     },
+    Context {
+        kind: ContextKind,
+        anchor: Expr,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
     Return(Option<Expr>),
     RawCommand(String),
     MacroCommand(String),
     Expr(Expr),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextKind {
+    As,
+    At,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

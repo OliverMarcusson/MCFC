@@ -1,0 +1,6 @@
+{
+    "pack": {
+        "min_format": [101, 1],
+        "description": "NPC library by 7ks"
+    }
+}

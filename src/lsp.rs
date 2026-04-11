@@ -16,6 +16,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::analysis::{AnalysisResult, analyze_source, function_at_offset, word_at_offset};
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
+use crate::types::StructTypeDef;
 
 #[derive(Debug, Clone)]
 struct DocumentState {
@@ -174,11 +175,35 @@ impl LanguageServer for Backend {
         };
 
         #[allow(deprecated)]
-        let symbols = state
+        let mut symbols: Vec<DocumentSymbol> = state
             .analysis
-            .functions
-            .iter()
-            .map(|function| DocumentSymbol {
+            .program
+            .as_ref()
+            .map(|program| {
+                program
+                    .structs
+                    .iter()
+                    .map(|struct_def| DocumentSymbol {
+                        name: struct_def.name.clone(),
+                        detail: Some(struct_signature_from_fields(
+                            &struct_def.name,
+                            &struct_def
+                                .fields
+                                .iter()
+                                .map(|field| (field.name.clone(), field.ty.clone()))
+                                .collect::<Vec<_>>(),
+                        )),
+                        kind: tower_lsp::lsp_types::SymbolKind::STRUCT,
+                        tags: None,
+                        deprecated: None,
+                        range: range_from_text_range(&state.text, struct_def.span.range),
+                        selection_range: range_from_text_range(&state.text, struct_def.span.range),
+                        children: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        symbols.extend(state.analysis.functions.iter().map(|function| DocumentSymbol {
                 name: function.name.clone(),
                 detail: Some(function.signature()),
                 kind: tower_lsp::lsp_types::SymbolKind::FUNCTION,
@@ -187,14 +212,22 @@ impl LanguageServer for Backend {
                 range: range_from_text_range(&state.text, function.range),
                 selection_range: range_from_text_range(&state.text, function.name_range),
                 children: None,
-            })
-            .collect();
+            }));
 
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 }
 
 fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Option<String> {
+    if let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) {
+        if let Some(def) = struct_defs.get(word) {
+            return Some(format!(
+                "```mcfc\n{}\n```",
+                struct_signature(word, def)
+            ));
+        }
+    }
+
     if let Some(function) = analysis
         .functions
         .iter()
@@ -226,9 +259,15 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
 
 fn builtin_hover(word: &str) -> Option<&'static str> {
     match word {
+        "struct" => Some("```mcfc\nstruct Name:\n    field: Type\nend\n```"),
+        "match" => Some(
+            "```mcfc\nmatch value:\n    \"pattern\" =>\n        ...\n    else =>\n        ...\nend\n```",
+        ),
+        "mcf" => Some("```mcfc\nmcf \"say $(expr)\"\n```"),
         "selector" => Some("```mcfc\nselector(value: string) -> entity_set\n```"),
         "single" => Some("```mcfc\nsingle(value: entity_set) -> entity_ref\n```"),
         "exists" => Some("```mcfc\nexists(value: entity_ref) -> bool\n```"),
+        "has_data" => Some("```mcfc\nhas_data(value: storage_path) -> bool\n```"),
         "block" => Some("```mcfc\nblock(position: string) -> block_ref\n```"),
         "at" => Some(
             "```mcfc\nat(anchor: entity_ref, value: entity_set|entity_ref|block_ref) -> entity_set|entity_ref|block_ref\n\nat(anchor):\n    ...\nend\n```",
@@ -242,6 +281,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "len" => Some("```mcfc\narray<T>.len() -> int\n```"),
         "push" => Some("```mcfc\narray<T>.push(value: T) -> void\n```"),
         "pop" => Some("```mcfc\narray<T>.pop() -> T\n```"),
+        "remove_at" => Some("```mcfc\narray<T>.remove_at(index: int) -> T\n```"),
         "has" => Some("```mcfc\ndict<T>.has(key: string) -> bool\n```"),
         "remove" => Some("```mcfc\ndict<T>.remove(key: string) -> void\n```"),
         "effect" => {
@@ -259,6 +299,7 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
     let containing_function =
         function_at_offset(analysis, offset).map(|function| function.name.as_str());
     let mut items = static_completion_items(false, containing_function);
+    items.extend(struct_type_items(analysis));
 
     for function in &analysis.functions {
         items.push(CompletionItem {
@@ -315,6 +356,11 @@ fn static_completion_items(
                 "push(${1:value})",
             ),
             ("pop", "array<T>.pop() -> T", "pop()"),
+            (
+                "remove_at",
+                "array<T>.remove_at(index: int) -> T",
+                "remove_at(${1:index})",
+            ),
             ("has", "dict<T>.has(key: string) -> bool", "has(${1:key})"),
             (
                 "remove",
@@ -345,7 +391,7 @@ fn static_completion_items(
 
     let mut items = Vec::new();
     for keyword in [
-        "fn", "let", "return", "end", "if", "else", "while", "for", "in", "break", "continue",
+        "fn", "struct", "let", "return", "end", "if", "match", "else", "while", "for", "in", "break", "continue",
         "mc", "mcf", "true", "false", "and", "or", "not", "@book",
     ] {
         items.push(CompletionItem {
@@ -377,6 +423,16 @@ fn static_completion_items(
 
     for (label, detail, insert_text) in [
         (
+            "struct … end",
+            "Define a named struct with typed fields",
+            "struct ${1:Name}:\n\t${2:field}: ${3:int}\nend",
+        ),
+        (
+            "match … end",
+            "Dispatch on a string value",
+            "match ${1:value}:\n\t\"${2:pattern}\" =>\n\t\t$0\n\telse =>\n\t\t\nend",
+        ),
+        (
             "selector",
             "selector(value: string) -> entity_set",
             "selector(${1:\"@e\"})",
@@ -390,6 +446,11 @@ fn static_completion_items(
             "exists",
             "exists(value: entity_ref) -> bool",
             "exists(${1:value})",
+        ),
+        (
+            "has_data",
+            "has_data(value: storage_path) -> bool",
+            "has_data(${1:value})",
         ),
         (
             "block",
@@ -426,7 +487,11 @@ fn static_completion_items(
     ] {
         items.push(snippet_item(
             label,
-            CompletionItemKind::FUNCTION,
+            if label.contains("…") {
+                CompletionItemKind::SNIPPET
+            } else {
+                CompletionItemKind::FUNCTION
+            },
             detail,
             insert_text,
         ));
@@ -457,39 +522,19 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
-    let Some(base_name) = chain.first() else {
-        return Vec::new();
-    };
-
-    if chain.len() > 1 {
-        return nested_member_completion_items(chain);
-    }
-
-    match local_type_at_offset(source, analysis, offset, base_name) {
-        Some(Type::Array(_)) => array_method_items(),
-        Some(Type::Dict(_)) => dict_method_items(),
-        Some(Type::EntityRef) => player_root_items(),
-        Some(Type::BlockRef | Type::Nbt) => Vec::new(),
-        Some(_) => Vec::new(),
+    match resolve_receiver_kind(source, analysis, offset, chain) {
+        Some(CompletionReceiver::Array) => array_method_items(),
+        Some(CompletionReceiver::Dict) => dict_method_items(),
+        Some(CompletionReceiver::EntityRef) => player_root_items(),
+        Some(CompletionReceiver::PlayerMainhand) => player_mainhand_items(),
+        Some(CompletionReceiver::Struct(name)) => struct_field_items(analysis, &name),
+        Some(
+            CompletionReceiver::PlayerDynamicNamespace
+            | CompletionReceiver::PlayerTeam
+            | CompletionReceiver::BlockRef
+            | CompletionReceiver::Nbt,
+        ) => Vec::new(),
         None => broad_member_items(),
-    }
-}
-
-fn nested_member_completion_items(chain: &[String]) -> Vec<CompletionItem> {
-    match chain.get(1).map(String::as_str) {
-        Some("mainhand") => ["name", "item", "count"]
-            .into_iter()
-            .map(|label| {
-                snippet_item(
-                    label,
-                    CompletionItemKind::FIELD,
-                    "player.mainhand field",
-                    label,
-                )
-            })
-            .collect(),
-        Some("team" | "state" | "tags" | "nbt") => Vec::new(),
-        _ => Vec::new(),
     }
 }
 
@@ -511,6 +556,11 @@ fn array_method_items() -> Vec<CompletionItem> {
             "push(${1:value})",
         ),
         ("pop", "array<T>.pop() -> T", "pop()"),
+        (
+            "remove_at",
+            "array<T>.remove_at(index: int) -> T",
+            "remove_at(${1:index})",
+        ),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {
@@ -577,6 +627,20 @@ fn player_root_items() -> Vec<CompletionItem> {
     .into_iter()
     .map(|(label, detail, insert_text, kind)| snippet_item(label, kind, detail, insert_text))
     .collect()
+}
+
+fn player_mainhand_items() -> Vec<CompletionItem> {
+    ["name", "item", "count"]
+        .into_iter()
+        .map(|label| {
+            snippet_item(
+                label,
+                CompletionItemKind::FIELD,
+                "player.mainhand field",
+                label,
+            )
+        })
+        .collect()
 }
 
 fn member_chain_before_cursor(source: &str, offset: usize) -> Option<Vec<String>> {
@@ -664,6 +728,149 @@ fn local_type_at_offset(
         .into_iter()
         .find(|local| local.name == name)
         .and_then(|local| local.ty)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CompletionReceiver {
+    Array,
+    Dict,
+    Struct(String),
+    EntityRef,
+    PlayerDynamicNamespace,
+    PlayerTeam,
+    PlayerMainhand,
+    BlockRef,
+    Nbt,
+}
+
+fn resolve_receiver_kind(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    chain: &[String],
+) -> Option<CompletionReceiver> {
+    let Some((base_name, segments)) = chain.split_first() else {
+        return None;
+    };
+    let base_ty = local_type_at_offset(source, analysis, offset, base_name)?;
+    receiver_from_type(base_ty, segments, analysis)
+}
+
+fn receiver_from_type(
+    current: Type,
+    segments: &[String],
+    analysis: &AnalysisResult,
+) -> Option<CompletionReceiver> {
+    if segments.is_empty() {
+        return receiver_for_terminal_type(&current);
+    }
+
+    let (segment, rest) = segments.split_first()?;
+    let next = match current {
+        Type::Struct(name) => analysis
+            .typed_program
+            .as_ref()
+            .and_then(|program| program.struct_defs.get(&name))
+            .and_then(|def| def.fields.get(segment))
+            .cloned()?,
+        Type::EntityRef => match segment.as_str() {
+            "mainhand" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::PlayerMainhand)
+                } else {
+                    None
+                };
+            }
+            "state" | "tags" | "nbt" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::PlayerDynamicNamespace)
+                } else {
+                    None
+                };
+            }
+            "team" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::PlayerTeam)
+                } else {
+                    None
+                };
+            }
+            "effect" => return None,
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    receiver_from_type(next, rest, analysis)
+}
+
+fn receiver_for_terminal_type(ty: &Type) -> Option<CompletionReceiver> {
+    match ty {
+        Type::Array(_) => Some(CompletionReceiver::Array),
+        Type::Dict(_) => Some(CompletionReceiver::Dict),
+        Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
+        Type::EntityRef => Some(CompletionReceiver::EntityRef),
+        Type::BlockRef => Some(CompletionReceiver::BlockRef),
+        Type::Nbt => Some(CompletionReceiver::Nbt),
+        _ => None,
+    }
+}
+
+fn struct_type_items(analysis: &AnalysisResult) -> Vec<CompletionItem> {
+    let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) else {
+        return Vec::new();
+    };
+
+    struct_defs
+        .iter()
+        .map(|(name, def)| snippet_item(name, CompletionItemKind::STRUCT, &struct_signature(name, def), name))
+        .collect()
+}
+
+fn struct_field_items(analysis: &AnalysisResult, name: &str) -> Vec<CompletionItem> {
+    let Some(struct_defs) = analysis.typed_program.as_ref().map(|program| &program.struct_defs) else {
+        return Vec::new();
+    };
+    let Some(def) = struct_defs.get(name) else {
+        return Vec::new();
+    };
+
+    def.fields
+        .iter()
+        .map(|(field, ty)| CompletionItem {
+            label: field.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(ty.as_str()),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+fn struct_signature(name: &str, def: &StructTypeDef) -> String {
+    let fields = def
+        .fields
+        .iter()
+        .map(|(field, ty)| format!("    {}: {}", field, ty.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if fields.is_empty() {
+        format!("struct {}:\nend", name)
+    } else {
+        format!("struct {}:\n{}\nend", name, fields)
+    }
+}
+
+fn struct_signature_from_fields(name: &str, fields: &[(String, Type)]) -> String {
+    let body = fields
+        .iter()
+        .map(|(field, ty)| format!("    {}: {}", field, ty.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if body.is_empty() {
+        format!("struct {}:\nend", name)
+    } else {
+        format!("struct {}:\n{}\nend", name, body)
+    }
 }
 
 fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLocal> {
@@ -795,7 +1002,10 @@ fn infer_expr_type(value: &str) -> Option<Type> {
 }
 
 fn opens_block(line: &str) -> bool {
-    (line.starts_with("if ") || line.starts_with("while ") || line.starts_with("for ")
+    (line.starts_with("if ")
+        || line.starts_with("while ")
+        || line.starts_with("for ")
+        || line.starts_with("match ")
         || line.starts_with("as(") || line.starts_with("at("))
         && line.contains(':')
 }
@@ -958,10 +1168,78 @@ fn main() -> void
         let analysis = analyze_source(source);
         let values_items = completion_items(source, &analysis, source.find("values.").unwrap() + 7);
         assert!(values_items.iter().any(|item| item.label == "push"));
+        assert!(values_items.iter().any(|item| item.label == "remove_at"));
         assert!(!values_items.iter().any(|item| item.label == "team"));
 
         let me_items = completion_items(source, &analysis, source.find("me.").unwrap() + 3);
         assert!(me_items.iter().any(|item| item.label == "team"));
         assert!(!me_items.iter().any(|item| item.label == "push"));
+    }
+
+    #[test]
+fn completes_struct_types_and_fields() {
+        let source = r#"
+struct Profile:
+    duration: int
+    label: string
+end
+
+struct Action:
+    profile: Profile
+    kind: string
+end
+
+fn main(action: Action) -> void
+    let next = action.profile
+    let duration = next.duration
+    let kind = action.kind
+end
+"#;
+        let analysis = analyze_source(source);
+        assert!(analysis.typed_program.is_some(), "{:?}", analysis.diagnostics);
+
+        let top_level_items = completion_items(source, &analysis, source.find("fn main").unwrap());
+        assert!(top_level_items.iter().any(|item| item.label == "Action"));
+        assert!(top_level_items.iter().any(|item| item.label == "Profile"));
+
+        let action_items = completion_items(
+            source,
+            &analysis,
+            source.find("action.kind").unwrap() + "action.".len(),
+        );
+        assert!(action_items.iter().any(|item| item.label == "profile"));
+        assert!(action_items.iter().any(|item| item.label == "kind"));
+
+        let next_items = completion_items(
+            source,
+            &analysis,
+            source.find("next.duration").unwrap() + "next.".len(),
+        );
+        assert!(next_items.iter().any(|item| item.label == "duration"));
+        assert!(next_items.iter().any(|item| item.label == "label"));
+    }
+
+    #[test]
+    fn completes_nested_player_member_paths() {
+        let source = r#"
+fn main() -> void
+    let me = single(selector("@a"))
+    me.mainhand.
+    mcf "say $(me.mainhand.)"
+end
+"#;
+        let analysis = analyze_source(source);
+
+        let mainhand_items =
+            completion_items(source, &analysis, source.find("me.mainhand.").unwrap() + 12);
+        assert!(mainhand_items.iter().any(|item| item.label == "name"));
+        assert!(mainhand_items.iter().any(|item| item.label == "count"));
+
+        let placeholder_items = completion_items(
+            source,
+            &analysis,
+            source.find("me.mainhand.)").unwrap() + "me.mainhand.".len(),
+        );
+        assert!(placeholder_items.iter().any(|item| item.label == "item"));
     }
 }

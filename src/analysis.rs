@@ -274,6 +274,14 @@ pub fn collect_statement_let_names(statements: &[Stmt], names: &mut Vec<String>)
             StmtKind::While { body, .. } | StmtKind::For { body, .. } => {
                 collect_statement_let_names(body, names);
             }
+            StmtKind::Match {
+                arms, else_body, ..
+            } => {
+                for arm in arms {
+                    collect_statement_let_names(&arm.body, names);
+                }
+                collect_statement_let_names(else_body, names);
+            }
             _ => {}
         }
     }
@@ -293,7 +301,9 @@ impl From<Diagnostics> for AnalysisResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze_source, function_at_offset, word_at_offset};
+    use super::{analyze_source, collect_statement_let_names, function_at_offset, word_at_offset};
+    use crate::ast::{Expr, ExprKind, MatchArm, Stmt, StmtKind};
+    use crate::diagnostics::Span;
 
     #[test]
     fn reports_parser_diagnostics() {
@@ -363,5 +373,47 @@ end
 
         assert_eq!(word, "value");
         assert_eq!(&source[range.start..range.end], "value");
+    }
+    #[test]
+    fn collects_match_arm_let_names() {
+        let span = Span::new(1, 1);
+        let statements = vec![Stmt {
+            span: span.clone(),
+            kind: StmtKind::Match {
+                value: Expr {
+                    kind: ExprKind::String("idle".to_string()),
+                    span: span.clone(),
+                },
+                arms: vec![MatchArm {
+                    pattern: "idle".to_string(),
+                    body: vec![Stmt {
+                        span: span.clone(),
+                        kind: StmtKind::Let {
+                            name: "inner".to_string(),
+                            value: Expr {
+                                kind: ExprKind::Int(1),
+                                span: span.clone(),
+                            },
+                        },
+                    }],
+                }],
+                else_body: vec![Stmt {
+                    span: span.clone(),
+                    kind: StmtKind::Let {
+                        name: "fallback".to_string(),
+                        value: Expr {
+                            kind: ExprKind::Int(2),
+                            span: span.clone(),
+                        },
+                    },
+                }],
+            },
+        }];
+        let mut names = Vec::new();
+
+        collect_statement_let_names(&statements, &mut names);
+
+        assert!(names.contains(&"inner".to_string()));
+        assert!(names.contains(&"fallback".to_string()));
     }
 }

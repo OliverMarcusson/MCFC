@@ -8,6 +8,7 @@ use crate::types::{
 
 #[derive(Debug, Clone)]
 pub struct IrProgram {
+    pub struct_defs: BTreeMap<String, crate::types::StructTypeDef>,
     pub functions: Vec<IrFunction>,
     pub call_depths: BTreeMap<String, usize>,
     pub book_commands: BTreeMap<String, IrBookCommand>,
@@ -96,7 +97,8 @@ pub enum IrForKind {
 
 #[derive(Debug, Clone)]
 pub struct IrMacroPlaceholder {
-    pub name: String,
+    pub key: String,
+    pub expr: IrExpr,
     pub ty: Type,
 }
 
@@ -111,6 +113,7 @@ pub struct IrExpr {
 pub struct IrPathExpr {
     pub base: Box<IrExpr>,
     pub segments: Vec<crate::ast::PathSegment>,
+    pub segment_types: Vec<Type>,
     pub ty: Type,
 }
 
@@ -121,6 +124,10 @@ pub enum IrExprKind {
     String(String),
     ArrayLiteral(Vec<IrExpr>),
     DictLiteral(Vec<(String, IrExpr)>),
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, IrExpr)>,
+    },
     Variable(String),
     Selector(String),
     Block(String),
@@ -144,6 +151,7 @@ pub enum IrExprKind {
     },
     Single(Box<IrExpr>),
     Exists(Box<IrExpr>),
+    HasData(Box<IrExpr>),
     At {
         anchor: Box<IrExpr>,
         value: Box<IrExpr>,
@@ -161,6 +169,7 @@ pub enum IrExprKind {
 
 pub fn lower(program: &TypedProgram) -> IrProgram {
     IrProgram {
+        struct_defs: program.struct_defs.clone(),
         functions: program.functions.iter().map(lower_function).collect(),
         call_depths: program.call_depths.clone(),
         book_commands: program
@@ -273,13 +282,15 @@ fn lower_path_expr(path: &TypedPathExpr) -> IrPathExpr {
     IrPathExpr {
         base: Box::new(lower_expr(&path.base)),
         segments: path.segments.clone(),
+        segment_types: path.segment_types.clone(),
         ty: path.ty.clone(),
     }
 }
 
 fn lower_macro_placeholder(placeholder: &MacroPlaceholder) -> IrMacroPlaceholder {
     IrMacroPlaceholder {
-        name: placeholder.name.clone(),
+        key: placeholder.key.clone(),
+        expr: lower_expr(&placeholder.expr),
         ty: placeholder.ty.clone(),
     }
 }
@@ -301,6 +312,13 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
                     .map(|(key, value)| (key.clone(), lower_expr(value)))
                     .collect(),
             ),
+            TypedExprKind::StructLiteral { name, fields } => IrExprKind::StructLiteral {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|(field, value)| (field.clone(), lower_expr(value)))
+                    .collect(),
+            },
             TypedExprKind::Variable(name) => IrExprKind::Variable(name.clone()),
             TypedExprKind::Selector(value) => IrExprKind::Selector(value.clone()),
             TypedExprKind::Block(value) => IrExprKind::Block(value.clone()),
@@ -328,6 +346,7 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             },
             TypedExprKind::Single(expr) => IrExprKind::Single(Box::new(lower_expr(expr))),
             TypedExprKind::Exists(expr) => IrExprKind::Exists(Box::new(lower_expr(expr))),
+            TypedExprKind::HasData(expr) => IrExprKind::HasData(Box::new(lower_expr(expr))),
             TypedExprKind::At { anchor, value } => IrExprKind::At {
                 anchor: Box::new(lower_expr(anchor)),
                 value: Box::new(lower_expr(value)),

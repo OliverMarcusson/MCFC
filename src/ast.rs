@@ -2,7 +2,22 @@ use crate::diagnostics::Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
+    pub structs: Vec<StructDef>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructField {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +44,7 @@ pub enum Type {
     String,
     Array(Box<Type>),
     Dict(Box<Type>),
+    Struct(String),
     EntitySet,
     EntityRef,
     BlockRef,
@@ -44,6 +60,7 @@ impl Type {
             Type::String => "string".to_string(),
             Type::Array(element) => format!("array<{}>", element.as_str()),
             Type::Dict(value) => format!("dict<{}>", value.as_str()),
+            Type::Struct(name) => name.clone(),
             Type::EntitySet => "entity_set".to_string(),
             Type::EntityRef => "entity_ref".to_string(),
             Type::BlockRef => "block_ref".to_string(),
@@ -83,6 +100,11 @@ pub enum StmtKind {
         kind: ForKind,
         body: Vec<Stmt>,
     },
+    Match {
+        value: Expr,
+        arms: Vec<MatchArm>,
+        else_body: Vec<Stmt>,
+    },
     Context {
         kind: ContextKind,
         anchor: Expr,
@@ -121,6 +143,12 @@ pub enum ForKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchArm {
+    pub pattern: String,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
@@ -145,6 +173,10 @@ pub enum ExprKind {
     String(String),
     ArrayLiteral(Vec<Expr>),
     DictLiteral(Vec<(String, Expr)>),
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
     Variable(String),
     Unary {
         op: UnaryOp,

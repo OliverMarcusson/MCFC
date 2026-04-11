@@ -193,7 +193,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|else|while|for|in|break|continue|return|end)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|end|struct)\\b"
         },
         {
           "name": "storage.type.function.mcfc",

@@ -5,6 +5,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
+    pub struct_defs: BTreeMap<String, StructTypeDef>,
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
     pub call_depths: BTreeMap<String, usize>,
@@ -32,6 +33,11 @@ pub struct TypedParam {
 pub struct FunctionSignature {
     pub params: Vec<Type>,
     pub return_type: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructTypeDef {
+    pub fields: BTreeMap<String, Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,7 +112,8 @@ pub enum TypedForKind {
 
 #[derive(Debug, Clone)]
 pub struct MacroPlaceholder {
-    pub name: String,
+    pub key: String,
+    pub expr: TypedExpr,
     pub ty: Type,
 }
 
@@ -128,6 +135,7 @@ pub enum RefKind {
 pub struct TypedPathExpr {
     pub base: Box<TypedExpr>,
     pub segments: Vec<PathSegment>,
+    pub segment_types: Vec<Type>,
     pub ty: Type,
 }
 
@@ -138,6 +146,10 @@ pub enum TypedExprKind {
     String(String),
     ArrayLiteral(Vec<TypedExpr>),
     DictLiteral(Vec<(String, TypedExpr)>),
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, TypedExpr)>,
+    },
     Variable(String),
     Selector(String),
     Block(String),
@@ -161,6 +173,7 @@ pub enum TypedExprKind {
     },
     Single(Box<TypedExpr>),
     Exists(Box<TypedExpr>),
+    HasData(Box<TypedExpr>),
     At {
         anchor: Box<TypedExpr>,
         value: Box<TypedExpr>,
@@ -185,14 +198,42 @@ pub enum CastKind {
 
 pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
+    let mut struct_defs = BTreeMap::new();
     let mut signatures = BTreeMap::new();
+
+    for struct_def in &program.structs {
+        let mut fields = BTreeMap::new();
+        if struct_defs.contains_key(&struct_def.name) {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate struct '{}'", struct_def.name),
+                struct_def.span.clone(),
+            ));
+            continue;
+        }
+        for field in &struct_def.fields {
+            if fields.insert(field.name.clone(), field.ty.clone()).is_some() {
+                diagnostics.push(Diagnostic::new(
+                    format!("duplicate field '{}.{}'", struct_def.name, field.name),
+                    field.span.clone(),
+                ));
+            }
+        }
+        struct_defs.insert(struct_def.name.clone(), StructTypeDef { fields });
+    }
+
+    for struct_def in &program.structs {
+        for field in &struct_def.fields {
+            validate_declared_type(&field.ty, &struct_defs, field.span.clone(), &mut diagnostics);
+        }
+    }
 
     for function in &program.functions {
         for param in &function.params {
-            validate_declared_type(&param.ty, param.span.clone(), &mut diagnostics);
+            validate_declared_type(&param.ty, &struct_defs, param.span.clone(), &mut diagnostics);
         }
         validate_declared_type(
             &function.return_type,
+            &struct_defs,
             function.span.clone(),
             &mut diagnostics,
         );
@@ -245,6 +286,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         let body = type_check_block(
             &function.body,
             &function.return_type,
+            &struct_defs,
             &signatures,
             &mut env,
             &mut ref_env,
@@ -301,6 +343,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     let call_depths = compute_call_depths(&functions, &mut diagnostics);
 
     diagnostics.into_result(TypedProgram {
+        struct_defs,
         functions,
         function_signatures: signatures,
         call_depths,
@@ -311,6 +354,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
 fn type_check_block(
     statements: &[Stmt],
     return_type: &Type,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &mut HashMap<String, Type>,
     ref_env: &mut HashMap<String, RefKind>,
@@ -332,6 +376,7 @@ fn type_check_block(
                 }
                 let value = type_check_expr(
                     value,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -350,6 +395,7 @@ fn type_check_block(
             StmtKind::Assign { target, value } => {
                 let value = type_check_expr(
                     value,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -381,6 +427,7 @@ fn type_check_block(
                     AssignTarget::Path(path) => {
                         let typed_path = type_check_path(
                             path,
+                            struct_defs,
                             signatures,
                             env,
                             ref_env,
@@ -406,7 +453,7 @@ fn type_check_block(
                             );
                         } else if matches!(
                             typed_path.base.ty,
-                            Type::Array(_) | Type::Dict(_) | Type::Nbt
+                            Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Nbt
                         ) {
                             if !is_storage_lvalue_expr(&path.base) {
                                 diagnostics.push(Diagnostic::new(
@@ -442,6 +489,7 @@ fn type_check_block(
             } => {
                 let condition = type_check_expr(
                     condition,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -457,6 +505,7 @@ fn type_check_block(
                 let then_body = type_check_block(
                     then_body,
                     return_type,
+                    struct_defs,
                     signatures,
                     &mut env.clone(),
                     &mut ref_env.clone(),
@@ -468,6 +517,7 @@ fn type_check_block(
                 let else_body = type_check_block(
                     else_body,
                     return_type,
+                    struct_defs,
                     signatures,
                     &mut env.clone(),
                     &mut ref_env.clone(),
@@ -485,6 +535,7 @@ fn type_check_block(
             StmtKind::While { condition, body } => {
                 let condition = type_check_expr(
                     condition,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -500,6 +551,7 @@ fn type_check_block(
                 let body = type_check_block(
                     body,
                     return_type,
+                    struct_defs,
                     signatures,
                     &mut env.clone(),
                     &mut ref_env.clone(),
@@ -527,6 +579,7 @@ fn type_check_block(
                     } => {
                         let start = type_check_expr(
                             start,
+                            struct_defs,
                             signatures,
                             env,
                             ref_env,
@@ -535,6 +588,7 @@ fn type_check_block(
                         );
                         let end = type_check_expr(
                             end,
+                            struct_defs,
                             signatures,
                             env,
                             ref_env,
@@ -565,27 +619,34 @@ fn type_check_block(
                     ForKind::Each { iterable } => {
                         let iterable = type_check_expr(
                             iterable,
+                            struct_defs,
                             signatures,
                             env,
                             ref_env,
                             called_functions,
                             diagnostics,
                         );
-                        if iterable.ty != Type::EntitySet {
-                            diagnostics.push(Diagnostic::new(
-                                "for-each iteration requires an 'entity_set'",
-                                statement.span.clone(),
-                            ));
-                        }
-                        loop_env.insert(name.clone(), Type::EntityRef);
-                        loop_ref_env.insert(name.clone(), iterable.ref_kind);
-                        locals.insert(name.clone(), Type::EntityRef);
+                        let (item_ty, item_ref_kind) = match &iterable.ty {
+                            Type::EntitySet => (Type::EntityRef, iterable.ref_kind),
+                            Type::Array(element) => (*element.clone(), RefKind::Unknown),
+                            _ => {
+                                diagnostics.push(Diagnostic::new(
+                                    "for-each iteration requires an 'entity_set' or 'array'",
+                                    statement.span.clone(),
+                                ));
+                                (Type::Nbt, RefKind::Unknown)
+                            }
+                        };
+                        loop_env.insert(name.clone(), item_ty.clone());
+                        loop_ref_env.insert(name.clone(), item_ref_kind);
+                        locals.insert(name.clone(), item_ty);
                         TypedForKind::Each { iterable }
                     }
                 };
                 let body = type_check_block(
                     body,
                     return_type,
+                    struct_defs,
                     signatures,
                     &mut loop_env,
                     &mut loop_ref_env,
@@ -600,9 +661,67 @@ fn type_check_block(
                     body,
                 }
             }
+            StmtKind::Match {
+                value,
+                arms,
+                else_body,
+            } => {
+                let value = type_check_expr(
+                    value,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if value.ty != Type::String {
+                    diagnostics.push(Diagnostic::new(
+                        "match value must have type 'string'",
+                        statement.span.clone(),
+                    ));
+                }
+                let mut seen = BTreeSet::new();
+                let mut typed_arms = Vec::new();
+                for arm in arms {
+                    if !seen.insert(arm.pattern.clone()) {
+                        diagnostics.push(Diagnostic::new(
+                            format!("duplicate match arm '{}'", arm.pattern),
+                            statement.span.clone(),
+                        ));
+                    }
+                    let body = type_check_block(
+                        &arm.body,
+                        return_type,
+                        struct_defs,
+                        signatures,
+                        &mut env.clone(),
+                        &mut ref_env.clone(),
+                        locals,
+                        called_functions,
+                        loop_depth,
+                        diagnostics,
+                    );
+                    typed_arms.push((arm.pattern.clone(), body));
+                }
+                let else_body = type_check_block(
+                    else_body,
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    &mut env.clone(),
+                    &mut ref_env.clone(),
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    diagnostics,
+                );
+                lower_string_match_stmt(value, typed_arms, else_body)
+            }
             StmtKind::Context { kind, anchor, body } => {
                 let anchor = type_check_expr(
                     anchor,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -621,6 +740,7 @@ fn type_check_block(
                 let body = type_check_block(
                     body,
                     return_type,
+                    struct_defs,
                     signatures,
                     &mut env.clone(),
                     &mut ref_env.clone(),
@@ -657,6 +777,7 @@ fn type_check_block(
                 let value = value.as_ref().map(|expr| {
                     type_check_expr(
                         expr,
+                        struct_defs,
                         signatures,
                         env,
                         ref_env,
@@ -695,16 +816,16 @@ fn type_check_block(
             }
             StmtKind::RawCommand(raw) => TypedStmtKind::RawCommand(raw.clone()),
             StmtKind::MacroCommand(template) => {
-                let names =
-                    validate_macro_placeholders(template, env, statement.span.clone(), diagnostics);
-                let placeholders = names
-                    .into_iter()
-                    .filter_map(|name| {
-                        env.get(&name)
-                            .cloned()
-                            .map(|ty| MacroPlaceholder { name, ty })
-                    })
-                    .collect();
+                let placeholders = collect_macro_placeholders(
+                    template,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    statement.span.clone(),
+                    diagnostics,
+                );
                 TypedStmtKind::MacroCommand {
                     template: template.clone(),
                     placeholders,
@@ -713,6 +834,7 @@ fn type_check_block(
             StmtKind::Expr(expr) => {
                 let expr = type_check_expr(
                     expr,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -740,6 +862,7 @@ fn type_check_block(
 
 fn type_check_expr(
     expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
     ref_env: &HashMap<String, RefKind>,
@@ -768,6 +891,7 @@ fn type_check_expr(
                 .map(|value| {
                     type_check_expr(
                         value,
+                        struct_defs,
                         signatures,
                         env,
                         ref_env,
@@ -798,6 +922,7 @@ fn type_check_expr(
                         key.clone(),
                         type_check_expr(
                             value,
+                            struct_defs,
                             signatures,
                             env,
                             ref_env,
@@ -824,9 +949,79 @@ fn type_check_expr(
                 ref_kind: RefKind::Unknown,
             }
         }
+        ExprKind::StructLiteral { name, fields } => {
+            let Some(def) = struct_defs.get(name) else {
+                diagnostics.push(Diagnostic::new(
+                    format!("unknown struct '{}'", name),
+                    expr.span.clone(),
+                ));
+                return TypedExpr {
+                    kind: TypedExprKind::StructLiteral {
+                        name: name.clone(),
+                        fields: Vec::new(),
+                    },
+                    ty: Type::Nbt,
+                    ref_kind: RefKind::Unknown,
+                };
+            };
+            let mut seen = BTreeSet::new();
+            let mut typed_fields = Vec::new();
+            for (field_name, field_value) in fields {
+                if !seen.insert(field_name.clone()) {
+                    diagnostics.push(Diagnostic::new(
+                        format!("duplicate field '{}.{}'", name, field_name),
+                        expr.span.clone(),
+                    ));
+                }
+                let value = type_check_expr(
+                    field_value,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                match def.fields.get(field_name) {
+                    Some(expected) if expected != &value.ty => diagnostics.push(Diagnostic::new(
+                        format!(
+                            "field '{}.{}' expects '{}', found '{}'",
+                            name,
+                            field_name,
+                            expected.as_str(),
+                            value.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    )),
+                    None => diagnostics.push(Diagnostic::new(
+                        format!("unknown field '{}.{}'", name, field_name),
+                        expr.span.clone(),
+                    )),
+                    _ => {}
+                }
+                typed_fields.push((field_name.clone(), value));
+            }
+            for required in def.fields.keys() {
+                if !seen.contains(required) {
+                    diagnostics.push(Diagnostic::new(
+                        format!("missing field '{}.{}'", name, required),
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            TypedExpr {
+                kind: TypedExprKind::StructLiteral {
+                    name: name.clone(),
+                    fields: typed_fields,
+                },
+                ty: Type::Struct(name.clone()),
+                ref_kind: RefKind::Unknown,
+            }
+        }
         ExprKind::Path(path) => {
             let path = type_check_path(
                 path,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -861,6 +1056,7 @@ fn type_check_expr(
         ExprKind::Unary { op, expr } => {
             let operand = type_check_expr(
                 expr,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -890,6 +1086,7 @@ fn type_check_expr(
         ExprKind::Binary { op, left, right } => {
             let left = type_check_expr(
                 left,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -898,6 +1095,7 @@ fn type_check_expr(
             );
             let right = type_check_expr(
                 right,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -982,6 +1180,7 @@ fn type_check_expr(
                 method,
                 args,
                 expr,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1005,6 +1204,7 @@ fn type_check_expr(
                 function,
                 args,
                 expr,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1028,6 +1228,7 @@ fn type_check_expr(
                                 .map(|arg| {
                                     type_check_expr(
                                         arg,
+                                        struct_defs,
                                         signatures,
                                         env,
                                         ref_env,
@@ -1058,7 +1259,15 @@ fn type_check_expr(
             let args: Vec<_> = args
                 .iter()
                 .map(|arg| {
-                    type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics)
+                    type_check_expr(
+                        arg,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    )
                 })
                 .collect();
             for (index, arg) in args.iter().enumerate() {
@@ -1093,6 +1302,7 @@ fn type_check_expr(
 
 fn type_check_path(
     path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
     ref_env: &HashMap<String, RefKind>,
@@ -1102,6 +1312,7 @@ fn type_check_path(
 ) -> TypedPathExpr {
     let base = type_check_expr(
         &path.base,
+        struct_defs,
         signatures,
         env,
         ref_env,
@@ -1110,6 +1321,7 @@ fn type_check_path(
     );
     let mut current_ty = base.ty.clone();
     let mut collection_mode = false;
+    let mut segment_types = Vec::new();
 
     for segment in &path.segments {
         match (&current_ty, segment) {
@@ -1129,9 +1341,26 @@ fn type_check_path(
                 current_ty = Type::Nbt;
             }
             (Type::Nbt, PathSegment::Index(index)) => {
-                if !matches!(index.kind, ExprKind::Int(_)) {
+                let index = type_check_expr(
+                    index,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if !matches!(index.ty, Type::Int | Type::String) {
                     diagnostics.push(Diagnostic::new(
-                        "nbt path indices must be integer literals",
+                        "nbt path indices must have type 'int' or 'string'",
+                        span.clone(),
+                    ));
+                }
+                if !matches!(index.kind, TypedExprKind::Int(_) | TypedExprKind::String(_))
+                    && !is_storage_data_expr(&base)
+                {
+                    diagnostics.push(Diagnostic::new(
+                        "dynamic nbt path indices require a storage-backed base",
                         span.clone(),
                     ));
                 }
@@ -1141,6 +1370,7 @@ fn type_check_path(
                 collection_mode = true;
                 let index = type_check_expr(
                     index,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -1159,6 +1389,7 @@ fn type_check_path(
                 collection_mode = true;
                 let key = type_check_expr(
                     index,
+                    struct_defs,
                     signatures,
                     env,
                     ref_env,
@@ -1176,6 +1407,25 @@ fn type_check_path(
                 }
                 current_ty = *value.clone();
             }
+            (Type::Struct(name), PathSegment::Field(field)) => {
+                match struct_defs.get(name).and_then(|def| def.fields.get(field)).cloned() {
+                    Some(ty) => current_ty = ty,
+                    None => {
+                        diagnostics.push(Diagnostic::new(
+                            format!("unknown field '{}.{}'", name, field),
+                            span.clone(),
+                        ));
+                        current_ty = Type::Nbt;
+                    }
+                }
+            }
+            (Type::Struct(_), PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "struct values must be accessed with '.field'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
             (Type::Array(_) | Type::Dict(_), PathSegment::Field(_)) => {
                 diagnostics.push(Diagnostic::new(
                     "collection values must be accessed with '[...]'",
@@ -1191,10 +1441,12 @@ fn type_check_path(
                 current_ty = Type::Nbt;
             }
         }
+        segment_types.push(current_ty.clone());
     }
     let typed = TypedPathExpr {
         base: Box::new(base),
         segments: path.segments.clone(),
+        segment_types,
         ty: current_ty,
     };
     if !collection_mode {
@@ -1241,16 +1493,25 @@ fn validate_dict_key_literal(key: &str, span: Span, diagnostics: &mut Diagnostic
     }
 }
 
-fn validate_declared_type(ty: &Type, span: Span, diagnostics: &mut Diagnostics) {
+fn validate_declared_type(
+    ty: &Type,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
     match ty {
         Type::Array(element) => {
             validate_collection_value_type(element, span.clone(), diagnostics);
-            validate_declared_type(element, span, diagnostics);
+            validate_declared_type(element, struct_defs, span, diagnostics);
         }
         Type::Dict(value) => {
             validate_collection_value_type(value, span.clone(), diagnostics);
-            validate_declared_type(value, span, diagnostics);
+            validate_declared_type(value, struct_defs, span, diagnostics);
         }
+        Type::Struct(name) if !struct_defs.contains_key(name) => diagnostics.push(Diagnostic::new(
+            format!("unknown struct '{}'", name),
+            span,
+        )),
         _ => {}
     }
 }
@@ -1258,7 +1519,13 @@ fn validate_declared_type(ty: &Type, span: Span, diagnostics: &mut Diagnostics) 
 fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagnostics) {
     if !matches!(
         ty,
-        Type::Int | Type::Bool | Type::String | Type::Nbt | Type::Array(_) | Type::Dict(_)
+        Type::Int
+            | Type::Bool
+            | Type::String
+            | Type::Nbt
+            | Type::Array(_)
+            | Type::Dict(_)
+            | Type::Struct(_)
     ) {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -1278,10 +1545,22 @@ fn is_storage_lvalue_expr(expr: &Expr) -> bool {
     }
 }
 
+fn is_storage_data_expr(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::Variable(_) => !matches!(
+            expr.ty,
+            Type::Int | Type::Bool | Type::EntitySet | Type::EntityRef | Type::BlockRef
+        ),
+        TypedExprKind::Path(path) => is_storage_data_expr(&path.base),
+        _ => false,
+    }
+}
+
 fn type_check_builtin_call(
     function: &str,
     args: &[Expr],
     expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
     ref_env: &HashMap<String, RefKind>,
@@ -1292,6 +1571,7 @@ fn type_check_builtin_call(
         "selector" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1317,6 +1597,7 @@ fn type_check_builtin_call(
         "block" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1342,6 +1623,7 @@ fn type_check_builtin_call(
         "single" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1371,6 +1653,7 @@ fn type_check_builtin_call(
         "exists" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1395,9 +1678,38 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             })
         }
+        "has_data" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 1, expr, diagnostics);
+            let arg = args.into_iter().next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::Nbt,
+                ref_kind: RefKind::Unknown,
+            });
+            if !is_storage_data_expr(&arg) {
+                diagnostics.push(Diagnostic::new(
+                    "has_data(...) requires a storage-backed variable or path",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::HasData(Box::new(arg)),
+                ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
+            })
+        }
         "at" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1440,6 +1752,7 @@ fn type_check_builtin_call(
         "as" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1482,6 +1795,7 @@ fn type_check_builtin_call(
         "int" | "bool" | "string" => {
             let args = type_check_args(
                 args,
+                struct_defs,
                 signatures,
                 env,
                 ref_env,
@@ -1523,6 +1837,7 @@ fn type_check_method_call(
     method: &str,
     args: &[Expr],
     expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
     ref_env: &HashMap<String, RefKind>,
@@ -1532,6 +1847,7 @@ fn type_check_method_call(
     let receiver_expr = receiver;
     let receiver = type_check_expr(
         receiver_expr,
+        struct_defs,
         signatures,
         env,
         ref_env,
@@ -1540,6 +1856,7 @@ fn type_check_method_call(
     );
     let args = type_check_args(
         args,
+        struct_defs,
         signatures,
         env,
         ref_env,
@@ -1623,6 +1940,40 @@ fn type_check_method_call(
                     Type::Nbt
                 }
             };
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "remove_at" => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if !is_storage_lvalue_expr(receiver_expr) {
+                diagnostics.push(Diagnostic::new(
+                    "remove_at(...) requires a variable or collection element receiver",
+                    expr.span.clone(),
+                ));
+            }
+            let ty = match &receiver.ty {
+                Type::Array(element) => *element.clone(),
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "remove_at(...) requires an 'array' receiver",
+                        expr.span.clone(),
+                    ));
+                    Type::Nbt
+                }
+            };
+            if args.first().map(|arg| &arg.ty) != Some(&Type::Int) {
+                diagnostics.push(Diagnostic::new(
+                    "remove_at(...) index must be 'int'",
+                    expr.span.clone(),
+                ));
+            }
             Some(TypedExpr {
                 kind: TypedExprKind::MethodCall {
                     receiver: Box::new(receiver),
@@ -1825,6 +2176,7 @@ fn validate_player_path_write(
 
 fn type_check_args(
     args: &[Expr],
+    struct_defs: &BTreeMap<String, StructTypeDef>,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
     ref_env: &HashMap<String, RefKind>,
@@ -1832,7 +2184,17 @@ fn type_check_args(
     diagnostics: &mut Diagnostics,
 ) -> Vec<TypedExpr> {
     args.iter()
-        .map(|arg| type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics))
+        .map(|arg| {
+            type_check_expr(
+                arg,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            )
+        })
         .collect()
 }
 
@@ -1861,6 +2223,50 @@ fn context_name(kind: ContextKind) -> &'static str {
         ContextKind::As => "as",
         ContextKind::At => "at",
     }
+}
+
+fn lower_string_match_stmt(
+    value: TypedExpr,
+    arms: Vec<(String, Vec<TypedStmt>)>,
+    else_body: Vec<TypedStmt>,
+) -> TypedStmtKind {
+    let mut current_else = else_body;
+    for (pattern, body) in arms.into_iter().rev() {
+        let condition = TypedExpr {
+            kind: TypedExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(value.clone()),
+                right: Box::new(TypedExpr {
+                    kind: TypedExprKind::String(pattern),
+                    ty: Type::String,
+                    ref_kind: RefKind::Unknown,
+                }),
+            },
+            ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
+        };
+        current_else = vec![TypedStmt {
+            kind: TypedStmtKind::If {
+                condition,
+                then_body: body,
+                else_body: current_else,
+            },
+        }];
+    }
+
+    current_else
+        .into_iter()
+        .next()
+        .map(|stmt| stmt.kind)
+        .unwrap_or(TypedStmtKind::If {
+            condition: TypedExpr {
+                kind: TypedExprKind::Bool(false),
+                ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
+            },
+            then_body: Vec::new(),
+            else_body: Vec::new(),
+        })
 }
 
 fn extract_string_literal(
@@ -2024,92 +2430,131 @@ fn longest_path(
     best
 }
 
-fn validate_macro_placeholders(
+fn collect_macro_placeholders(
     template: &str,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
     span: Span,
     diagnostics: &mut Diagnostics,
-) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut seen = HashSet::new();
-    let bytes = template.as_bytes();
-    let mut index = 0usize;
-
-    while index < bytes.len() {
-        if bytes[index] == b'$' && index + 1 < bytes.len() && bytes[index + 1] == b'(' {
-            index += 2;
-            let start = index;
-            let mut invalid = false;
-            while index < bytes.len() && bytes[index] != b')' {
-                let ch = bytes[index] as char;
-                if !ch.is_ascii_alphanumeric() && ch != '_' {
+) -> Vec<MacroPlaceholder> {
+    let mut placeholders = Vec::new();
+    for (index, body) in scan_macro_placeholders(template, span.clone(), diagnostics)
+        .into_iter()
+        .enumerate()
+    {
+        if body.trim().is_empty() {
+            diagnostics.push(Diagnostic::new(
+                "macro placeholder expression cannot be empty",
+                span.clone(),
+            ));
+            continue;
+        }
+        let parsed = match crate::parser::parse_expression(&body) {
+            Ok(expr) => expr,
+            Err(parse_diags) => {
+                for diag in parse_diags.0 {
                     diagnostics.push(Diagnostic::new(
-                        format!("invalid macro placeholder character '{}'", ch),
+                        format!("invalid macro placeholder expression '{}': {}", body, diag.message),
                         span.clone(),
                     ));
-                    while index < bytes.len() && bytes[index] != b')' {
-                        index += 1;
+                }
+                continue;
+            }
+        };
+        let typed = type_check_expr(
+            &parsed,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        );
+        if !matches!(
+            typed.ty,
+            Type::Int
+                | Type::Bool
+                | Type::String
+                | Type::EntitySet
+                | Type::EntityRef
+                | Type::BlockRef
+                | Type::Nbt
+                | Type::Array(_)
+                | Type::Dict(_)
+                | Type::Struct(_)
+        ) {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "macro placeholder '{}' has unsupported type '{}'",
+                    body,
+                    typed.ty.as_str()
+                ),
+                span.clone(),
+            ));
+            continue;
+        }
+        placeholders.push(MacroPlaceholder {
+            key: format!("p{}", index + 1),
+            ty: typed.ty.clone(),
+            expr: typed,
+        });
+    }
+    placeholders
+}
+
+fn scan_macro_placeholders(template: &str, span: Span, diagnostics: &mut Diagnostics) -> Vec<String> {
+    let bytes = template.as_bytes();
+    let mut index = 0usize;
+    let mut placeholders = Vec::new();
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'$' && bytes[index + 1] == b'(' {
+            let start = index + 2;
+            index = start;
+            let mut paren_depth = 1usize;
+            let mut in_string = false;
+            let mut string_delim = b'"';
+            while index < bytes.len() {
+                let ch = bytes[index];
+                if in_string {
+                    if ch == b'\\' {
+                        index += 2;
+                        continue;
                     }
-                    invalid = true;
-                    break;
+                    if ch == string_delim {
+                        in_string = false;
+                    }
+                    index += 1;
+                    continue;
+                }
+                match ch {
+                    b'"' | b'\'' => {
+                        in_string = true;
+                        string_delim = ch;
+                    }
+                    b'(' => paren_depth += 1,
+                    b')' => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            placeholders.push(template[start..index].to_string());
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
                 index += 1;
             }
-
-            if index >= bytes.len() {
+            if index >= bytes.len() || paren_depth != 0 {
                 diagnostics.push(Diagnostic::new(
                     "unterminated macro placeholder",
                     span.clone(),
                 ));
                 break;
             }
-
-            if start == index {
-                diagnostics.push(Diagnostic::new(
-                    "macro placeholder name cannot be empty",
-                    span.clone(),
-                ));
-                index += 1;
-                continue;
-            }
-
-            if invalid {
-                index += 1;
-                continue;
-            }
-
-            let name = &template[start..index];
-            if let Some(ty) = env.get(name) {
-                if !matches!(
-                    ty,
-                    Type::Int
-                        | Type::Bool
-                        | Type::String
-                        | Type::EntitySet
-                        | Type::EntityRef
-                        | Type::BlockRef
-                        | Type::Nbt
-                ) {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "macro placeholder '{}' has unsupported type '{}'",
-                            name,
-                            ty.as_str()
-                        ),
-                        span.clone(),
-                    ));
-                } else if seen.insert(name.to_string()) {
-                    names.push(name.to_string());
-                }
-            } else {
-                diagnostics.push(Diagnostic::new(
-                    format!("unknown macro placeholder '{}'", name),
-                    span.clone(),
-                ));
-            }
         }
         index += 1;
     }
-
-    names
+    placeholders
 }

@@ -1,0 +1,50 @@
+struct Action:
+    kind: string
+    duration: int
+    profile: string
+    yaw: int
+end
+
+struct DialoguePage:
+    text: string
+    duration: int
+end
+
+struct NpcState:
+    actions: array<Action>
+    actions_copy: array<Action>
+    dialogues_copy: array<DialoguePage>
+end
+
+fn apply_action(action: Action) -> void
+    match action.kind:
+        "pathfind" => mcf "say pathfind $(action.duration)"
+        "idle" => mcf "say idle $(action.duration)"
+        "rotate" => mcf "say rotate $(action.yaw)"
+        else => mc "say unknown_action"
+    end
+end
+
+fn update_npc(npcs: dict<NpcState>, id: string) -> void
+    if not has_data(npcs[id].dialogues_copy[1]):
+        mc "say no_next_page"
+    end
+
+    if has_data(npcs[id].actions_copy[0]):
+        let action = npcs[id].actions_copy.remove_at(0)
+        apply_action(action)
+    end
+
+    if has_data(npcs[id].dialogues_copy[0]):
+        let page = npcs[id].dialogues_copy[0]
+        mcf "say $(page.text)"
+    end
+    return
+end
+
+fn main() -> void
+    let npc = NpcState{actions: [Action{kind: "pathfind", duration: 20, profile: "", yaw: 0}, Action{kind: "idle", duration: 40, profile: "", yaw: 0}, Action{kind: "rotate", duration: 0, profile: "", yaw: 180}], actions_copy: [Action{kind: "pathfind", duration: 20, profile: "", yaw: 0}, Action{kind: "idle", duration: 40, profile: "", yaw: 0}], dialogues_copy: [DialoguePage{text: "Hello there", duration: 40}]}
+    let npcs = {"guard": npc}
+    update_npc(npcs, "guard")
+    return
+end

@@ -84,7 +84,7 @@ end
         .unwrap();
 
     assert!(main.contains("say \"done\""));
-    assert!(macro_file.contains("$say $(a)"));
+    assert!(macro_file.contains("$say $(p1)"));
 }
 
 #[test]
@@ -115,7 +115,7 @@ end
         .files
         .get("data/mcfc/function/generated/main__d0__macro_1.mcfunction")
         .unwrap();
-    assert!(macro_file.contains("$xp add @a $(amount) levels"));
+    assert!(macro_file.contains("$xp add @a $(p1) levels"));
 }
 
 #[test]
@@ -600,6 +600,56 @@ end
 }
 
 #[test]
+fn compiles_array_remove_at() {
+    let source = r#"
+fn main() -> void
+    let values = [3, 5, 8]
+    let first = values.remove_at(0)
+    let second = values.remove_at(1)
+    mcf "say $(first)"
+    mcf "say $(second)"
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute store result storage mcfc:runtime"))
+    );
+}
+
+#[test]
+fn compiles_array_for_each() {
+    let source = r#"
+fn main() -> void
+    let values = [1, 2, 3]
+    for value in values:
+        mcf "say $(value)"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files: Vec<_> = result.artifacts.files.values().cloned().collect();
+    assert!(files.iter().any(|file| file.contains("for_each_cond")));
+    assert!(files.iter().any(|file| file.contains("for_each_step")));
+    assert!(
+        files
+            .iter()
+            .any(|file| file.contains("__for_each") && file.contains("internal_macro") || file.contains("[$(index)]"))
+    );
+}
+
+#[test]
 fn compiles_storage_backed_dictionaries() {
     let source = r#"
 fn main() -> void
@@ -637,10 +687,134 @@ end
 }
 
 #[test]
+fn compiles_has_data_with_dynamic_storage_nbt_paths() {
+    let source = r#"
+fn probe(store: dict<nbt>, key: string, index: int) -> bool
+    return has_data(store[key].items[index].name)
+end
+
+fn main() -> void
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute if data storage mcfc:runtime"))
+    );
+    assert!(files.values().any(|file| file.contains(".$(n1)") || file.contains(".$(k1)")));
+    assert!(files.values().any(|file| file.contains("[$(n") || file.contains("[$(i")));
+}
+
+#[test]
+fn compiles_string_match_dispatch() {
+    let source = r#"
+fn main() -> void
+    let action = "jump"
+    match action:
+        "pathfind" => mc "say move"
+        "jump" => mc "say leap"
+        "idle" => mc "say wait"
+        else => mc "say default"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("execute store success score $d0___cmp_"));
+    assert!(main.contains("scoreboard players set $d0_main___tmp1 mcfc 0"));
+    assert!(main.contains("matches 0 run scoreboard players set $d0_main___tmp1 mcfc 1"));
+    assert!(files.values().any(|file| file.contains("say default")));
+}
+
+#[test]
+fn compiles_struct_literals_and_field_access() {
+    let source = r#"
+struct Action:
+    action: string
+    duration: int
+end
+
+fn tick(action: Action) -> int
+    return action.duration
+end
+
+fn main() -> void
+    let action = Action{action: "idle", duration: 40}
+    let actions = [action]
+    let first = actions[0]
+    let duration = tick(first)
+    mcf "say $(duration)"
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("frames.d0.main.action set value {}"));
+    assert!(files.values().any(|file| file.contains(".duration")));
+}
+
+#[test]
+fn rejects_invalid_struct_usage() {
+    let source = r#"
+struct Action:
+    action: string
+    duration: int
+end
+
+fn main() -> void
+    let bad = Action{action: "idle"}
+    let wrong = Action{action: 1, duration: 5}
+    let also_bad = bad.missing
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("missing field 'Action.duration'"));
+    assert!(rendered.contains("field 'Action.action' expects 'string', found 'int'"));
+    assert!(rendered.contains("unknown field 'Action.missing'"));
+}
+
+#[test]
+fn compiles_anpc_pilot_slice() {
+    let source = include_str!("../ANPC/pilot/action_queue.mcf");
+    let result = compile_source(source, &CompileOptions::default()).expect("pilot should compile");
+    let files = result.artifacts.files;
+    assert!(files.values().any(|file| file.contains("data remove storage mcfc:runtime")));
+    assert!(files.values().any(|file| file.contains("execute if data storage mcfc:runtime")));
+    assert!(files.values().any(|file| file.contains("execute store success score $d")));
+    assert!(files.values().any(|file| file.contains("say pathfind")));
+    assert!(files.values().any(|file| file.contains("say no_next_page")));
+    let apply_action = files
+        .get("data/mcfc/function/generated/apply_action__d1__entry.mcfunction")
+        .unwrap();
+    assert!(apply_action.contains("scoreboard players set $d1_apply_action___tmp25 mcfc 0"));
+    assert!(apply_action.contains("matches 0 run scoreboard players set $d1_apply_action___tmp25 mcfc 1"));
+}
+
+#[test]
 fn rejects_invalid_collection_usage() {
     let source = r#"
 fn bad_param(xs: array<entity_ref>) -> void
     return
+end
+
+fn bad_has_data(player: entity_ref, key: int) -> bool
+    return has_data(player.nbt[key])
 end
 
 fn main() -> void
@@ -649,6 +823,7 @@ fn main() -> void
     let empty = []
     let bad_mix = [1, "two"]
     let bad_index = arr["x"]
+    let bad_remove = arr.remove_at("x")
     let bad_key = dict[1]
     let bad_refs = [selector("@a")]
     arr.push("bad")
@@ -663,8 +838,11 @@ end
     assert!(rendered.contains("array literals must contain values of one type"));
     assert!(rendered.contains("array index must have type 'int'"));
     assert!(rendered.contains("dictionary key must have type 'string'"));
+    assert!(rendered.contains("has_data(...) requires a storage-backed variable or path"));
     assert!(rendered.contains("push(...) value must be 'int', found 'string'"));
+    assert!(rendered.contains("remove_at(...) index must be 'int'"));
     assert!(rendered.contains("dictionary key 'bad-key' is not storage-path-safe"));
+    assert!(rendered.contains("dynamic nbt path indices require a storage-backed base"));
     assert!(rendered.contains("collection values may not have unsupported type 'entity_ref'"));
     assert!(rendered.contains("collection values may not have unsupported type 'entity_set'"));
 }
@@ -708,6 +886,9 @@ fn main() -> void
     for i in 0.."bad":
         return
     end
+    for item in 1:
+        return
+    end
     if 1 and true:
         return
     end
@@ -724,8 +905,28 @@ end
     assert!(rendered.contains("'continue' may only appear inside a loop"));
     assert!(rendered.contains("variable 'i' is already defined"));
     assert!(rendered.contains("for range end must have type 'int'"));
+    assert!(rendered.contains("for-each iteration requires an 'entity_set' or 'array'"));
     assert!(rendered.contains("logical operators require 'bool' operands"));
     assert!(rendered.contains("strings only support '==' and '!=' comparisons"));
+}
+
+#[test]
+fn rejects_invalid_match_usage() {
+    let source = r#"
+fn main() -> void
+    let bad = 1
+    match bad:
+        "a" => mc "say a"
+        "a" => mc "say b"
+    end
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("match value must have type 'string'"));
+    assert!(rendered.contains("duplicate match arm 'a'"));
 }
 
 #[test]
@@ -808,23 +1009,68 @@ fn rejects_invalid_macro_placeholders() {
     let source = r#"
 fn main() -> void
     let a = 1
+    let player = single(selector("@p"))
     if true:
         let inner = 2
     end
     mcf "say $(missing)"
     mcf "say $(inner)"
-    mcf "say $(a + 1)"
     mcf "say $("
+    mcf "say $(player.CustomName)"
     return
 end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
     let rendered = error.to_string();
-    assert!(rendered.contains("unknown macro placeholder 'missing'"));
-    assert!(rendered.contains("unknown macro placeholder 'inner'"));
-    assert!(rendered.contains("invalid macro placeholder character ' '"));
+    assert!(rendered.contains("undefined variable 'missing'"));
+    assert!(rendered.contains("undefined variable 'inner'"));
     assert!(rendered.contains("unterminated macro placeholder"));
+    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or 'player.mainhand'"));
+}
+
+#[test]
+fn compiles_expression_macro_placeholders() {
+    let source = r#"
+struct Action:
+    kind: string
+    duration: int
+end
+
+fn tick(action: Action) -> int
+    return action.duration + 1
+end
+
+fn main() -> void
+    let a = 2
+    let x = 3
+    let y = 3
+    let flag = true
+    let ready = false
+    let values = [10, 20]
+    let key = "npc"
+    let store = {"npc": {"value": 7}}
+    let action = Action{kind: "idle", duration: 40}
+    let player = single(selector("@p"))
+    mcf "say $(a + 1)"
+    mcf "say $(x == y)"
+    mcf "say $(flag and not ready)"
+    mcf "say $(tick(action))"
+    mcf "say $(values.remove_at(0))"
+    mcf "say $(store[key][\"value\"])"
+    mcf "say $(action.duration)"
+    mcf "say $(player.state.quest_complete)"
+    mcf "say $(player.team)"
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    assert!(files.values().any(|file| file.contains("$(p1)")));
+    assert!(files.values().any(|file| file.contains("arithmetic operators") || file.contains("scoreboard players operation") || file.contains("scoreboard players set")));
+    assert!(files.values().any(|file| file.contains("data remove storage mcfc:runtime")));
+    assert!(files.values().any(|file| file.contains("function mcfc:generated/")));
 }
 
 #[test]

@@ -102,14 +102,17 @@ Current `@book` restrictions:
 
 Supported statements:
 
+- `struct Name: field: type ... end`
 - `let name = expr`
 - `name = expr`
 - `if condition: ... end`
 - `if condition: ... else: ... end`
+- `match value: "a" => stmt else => stmt end`
 - `while condition: ... end`
 - `for name in start..end: ... end`
 - `for name in start..=end: ... end`
 - `for name in selector_expr: ... end`
+- `for name in array_expr: ... end`
 - `break`
 - `continue`
 - `return`
@@ -174,6 +177,7 @@ Built-in types:
 - `block_ref`
 - `nbt`
 - `void`
+- named `struct` types
 
 Type rules:
 
@@ -195,6 +199,7 @@ Minecraft query builtins:
 - `selector("...") -> entity_set`
 - `single(entity_set) -> entity_ref`
 - `exists(entity_ref) -> bool`
+- `has_data(storage_path) -> bool`
 - `block("...") -> block_ref`
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
 - `as(entity_set|entity_ref, entity_set|entity_ref|block_ref)`
@@ -205,16 +210,25 @@ Collection methods:
 - `array<T>.len() -> int`
 - `array<T>.push(value: T) -> void`
 - `array<T>.pop() -> T`
+- `array<T>.remove_at(index: int) -> T`
 - `dict<T>.has(key: string) -> bool`
 - `dict<T>.remove(key: string) -> void`
 
 Collection notes:
 
 - arrays are backed by Minecraft storage lists
+- array `for-each` iterates over a snapshot of the source array
 - dictionaries are backed by Minecraft storage compounds
 - dictionary keys are strings and use bracket syntax: `counts["wood"]` or `counts[key]`
 - dictionary key values must be storage-path-safe: letters, digits, and `_`, with a non-digit first character
 - empty collection literals currently require type context; otherwise they are rejected
+
+Struct notes:
+
+- structs are named storage-backed compounds
+- define them at top level with `struct Name: ... end`
+- construct them with `Name{field: value, ...}`
+- access fields with existing path syntax, for example `action.duration`
 
 Player-safe surfaces:
 
@@ -359,15 +373,15 @@ Use `mcf "..."` for runtime interpolation through Minecraft function macros.
 
 ```text
 let amount = 5
-mcf "xp add @a $(amount) levels"
+mcf "xp add @a $(amount + 1) levels"
 ```
 
 Rules:
 
-- placeholders use `$(name)` syntax
-- placeholders may reference in-scope local variables and parameters only
-- supported placeholder types are `int`, `bool`, and `string`
-- placeholders are not full expressions, so `$(a + 1)` is invalid
+- placeholders use `$(expr)` syntax
+- placeholders may use the current MCFC expression language, including paths, indexing, arithmetic, comparisons, logical operators, casts, function calls, and method calls
+- placeholders are type-checked using the same rules as ordinary expressions
+- supported interpolated result types are `int`, `bool`, `string`, `nbt`, `entity_set`, `entity_ref`, `block_ref`, `array`, `dict`, and `struct`
 - malformed placeholders are rejected during compilation
 
 Implementation model:
@@ -465,14 +479,16 @@ Not supported yet:
 
 - recursion
 - implicit conversions
-- placeholder expressions such as `$(a + 1)`
-- direct entity, block, or arbitrary storage-path placeholders in `mcf`
 - `@book` string arguments
 - `@book` function calls with non-`int` parameters or non-`void` return types
 - rich book parsing such as `fibb(8)`, quoted arguments, or multiple commands
 - arbitrary object/struct types beyond arrays, dictionaries, and raw `nbt`
-- pattern matching
 - modules/imports
 - optimization passes
+
+Notes:
+
+- `match` currently supports only `string` scrutinees
+- each `match` arm currently contains exactly one statement; use helper functions if an arm needs more work
 
 The backend is intentionally simple and prioritizes correctness, inspectable output, and deterministic code generation over optimization.

@@ -7,6 +7,11 @@ pub fn parse(source: &str) -> Result<Program, Diagnostics> {
     Parser::new(tokens).parse_program()
 }
 
+pub fn parse_expression(source: &str) -> Result<Expr, Diagnostics> {
+    let tokens = lex(source)?;
+    Parser::new(tokens).parse_expression_only()
+}
+
 struct Parser {
     tokens: TokenStream,
     diagnostics: Diagnostics,
@@ -21,20 +26,57 @@ impl Parser {
     }
 
     fn parse_program(mut self) -> Result<Program, Diagnostics> {
+        let mut structs = Vec::new();
         let mut functions = Vec::new();
         self.skip_newlines();
 
         while !self.at(&TokenKind::Eof) {
-            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+            if self.at(&TokenKind::Struct) {
+                structs.push(self.parse_struct());
+            } else if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
                 functions.push(self.parse_function());
             } else {
-                self.error_here("expected function definition");
+                self.error_here("expected struct or function definition");
                 self.recover_top_level();
             }
             self.skip_newlines();
         }
 
-        self.diagnostics.into_result(Program { functions })
+        self.diagnostics.into_result(Program { structs, functions })
+    }
+
+    fn parse_expression_only(mut self) -> Result<Expr, Diagnostics> {
+        self.skip_newlines();
+        let expr = self.parse_expr();
+        self.skip_newlines();
+        if !self.at(&TokenKind::Eof) {
+            self.error_here("expected end of placeholder expression");
+        }
+        self.diagnostics.into_result(expr)
+    }
+
+    fn parse_struct(&mut self) -> StructDef {
+        let start = self.expect(TokenKind::Struct, "expected 'struct'").span;
+        let name = self.expect_identifier("expected struct name");
+        self.expect(TokenKind::Colon, "expected ':' after struct name");
+        self.expect_statement_break("expected newline after struct name");
+        let mut fields = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+            let span = self.current_span();
+            let name = self.expect_identifier("expected field name");
+            self.expect(TokenKind::Colon, "expected ':' after field name");
+            let ty = self.parse_type();
+            self.expect_statement_break("expected newline after struct field");
+            fields.push(StructField { name, ty, span });
+            self.skip_newlines();
+        }
+        self.expect(TokenKind::End, "expected 'end'");
+        StructDef {
+            name,
+            fields,
+            span: start,
+        }
     }
 
     fn parse_function(&mut self) -> Function {
@@ -118,6 +160,10 @@ impl Parser {
                 let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
                 self.expect(TokenKind::End, "expected 'end'");
                 StmtKind::While { condition, body }
+            }
+            TokenKind::Match => {
+                self.bump();
+                self.parse_match_stmt(span.clone())
             }
             TokenKind::For => {
                 self.bump();
@@ -212,6 +258,42 @@ impl Parser {
         Stmt { kind, span }
     }
 
+    fn parse_match_stmt(&mut self, span: Span) -> StmtKind {
+        let value = self.parse_expr();
+        self.expect(TokenKind::Colon, "expected ':' after match value");
+        self.expect_statement_break("expected newline after match value");
+        self.skip_newlines();
+
+        let mut arms = Vec::new();
+        let mut else_body = Vec::new();
+        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+            if self.eat(&TokenKind::Else) {
+                self.expect(TokenKind::FatArrow, "expected '=>' after else");
+                let stmt = self.parse_stmt();
+                else_body.push(stmt);
+            } else {
+                let pattern = self.expect_string("expected string literal match arm");
+                self.expect(TokenKind::FatArrow, "expected '=>' after match arm");
+                let stmt = self.parse_stmt();
+                arms.push(MatchArm {
+                    pattern,
+                    body: vec![stmt],
+                });
+            }
+            self.skip_newlines();
+        }
+        self.expect(TokenKind::End, "expected 'end'");
+        if arms.is_empty() && else_body.is_empty() {
+            self.diagnostics
+                .push(Diagnostic::new("match requires at least one arm", span.clone()));
+        }
+        StmtKind::Match {
+            value,
+            arms,
+            else_body,
+        }
+    }
+
     fn parse_expr(&mut self) -> Expr {
         self.parse_expr_bp(0)
     }
@@ -287,6 +369,12 @@ impl Parser {
                             function: name,
                             args,
                         },
+                        span: token.span,
+                    }
+                } else if self.eat(&TokenKind::LeftBrace) {
+                    let fields = self.parse_struct_literal_fields();
+                    Expr {
+                        kind: ExprKind::StructLiteral { name, fields },
                         span: token.span,
                     }
                 } else {
@@ -419,6 +507,26 @@ impl Parser {
         }
     }
 
+    fn parse_struct_literal_fields(&mut self) -> Vec<(String, Expr)> {
+        let mut fields = Vec::new();
+        if !self.at(&TokenKind::RightBrace) {
+            loop {
+                let name = self.expect_identifier("expected field name in struct literal");
+                self.expect(TokenKind::Colon, "expected ':' after struct field");
+                let value = self.parse_expr_bp(0);
+                fields.push((name, value));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RightBrace) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightBrace, "expected '}' after struct literal");
+        fields
+    }
+
     fn parse_call_args(&mut self) -> Vec<Expr> {
         let mut args = Vec::new();
         if !self.at(&TokenKind::RightParen) {
@@ -522,13 +630,7 @@ impl Parser {
                     self.expect(TokenKind::Gt, "expected '>' after dictionary value type");
                     Type::Dict(Box::new(value))
                 }
-                _ => {
-                    self.diagnostics.push(Diagnostic::new(
-                        format!("unknown type '{}'", name),
-                        token.span,
-                    ));
-                    Type::Void
-                }
+                _ => Type::Struct(name),
             },
             _ => {
                 self.diagnostics

@@ -10,10 +10,12 @@ pub struct Token {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     Fn,
+    Struct,
     Let,
     Return,
     End,
     If,
+    Match,
     Else,
     While,
     For,
@@ -29,6 +31,7 @@ pub enum TokenKind {
     Or,
     Not,
     Arrow,
+    FatArrow,
     DotDot,
     DotDotEq,
     Colon,
@@ -166,6 +169,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                         &mut tokens,
                         &source_file,
                         TokenKind::EqEq,
+                        TextRange::new(start, cursor.position()),
+                    );
+                } else if cursor.peek() == Some('>') {
+                    cursor.bump();
+                    push_token(
+                        &mut tokens,
+                        &source_file,
+                        TokenKind::FatArrow,
                         TextRange::new(start, cursor.position()),
                     );
                 } else {
@@ -330,10 +341,12 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 let raw = &source[range.start..range.end];
                 let kind = match raw {
                     "fn" => TokenKind::Fn,
+                    "struct" => TokenKind::Struct,
                     "let" => TokenKind::Let,
                     "return" => TokenKind::Return,
                     "end" => TokenKind::End,
                     "if" => TokenKind::If,
+                    "match" => TokenKind::Match,
                     "else" => TokenKind::Else,
                     "while" => TokenKind::While,
                     "for" => TokenKind::For,

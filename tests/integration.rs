@@ -190,6 +190,44 @@ end
 }
 
 #[test]
+fn compiles_player_safe_api_surfaces() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    if exists(player):
+        let air = int(player.nbt.Air)
+        player.state.quest_stage = 3
+        let stage = int(player.state.quest_stage)
+        player.tags.infected = true
+        let infected = bool(player.tags.infected)
+        player.team = "red"
+        player.mainhand.name = "MCFC Blade"
+        player.mainhand.item = "minecraft:carrot_on_a_stick"
+        player.mainhand.count = 1
+        player.effect("speed", 10, 1)
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let setup = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/setup.mcfunction")
+        .unwrap();
+    assert!(setup.contains("scoreboard objectives add mcfs_quest_stage dummy"));
+    assert!(result.artifacts.files.values().any(|file| file.contains("data modify storage mcfc:runtime") && file.contains("set from entity $(selector) Air")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("scoreboard players operation $(selector) mcfs_quest_stage")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("tag $(selector) add infected")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("execute as $(selector) if entity @s[tag=infected]")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("team join $(team) $(selector)")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("item modify entity $(selector) weapon.mainhand")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("item replace entity $(selector) weapon.mainhand with $(item_id)")));
+    assert!(result.artifacts.files.values().any(|file| file.contains("effect give $(selector) $(effect) $(duration) $(amplifier) true")));
+}
+
+#[test]
 fn compiles_book_runtime_for_annotated_functions() {
     let source = r#"
 @book
@@ -391,6 +429,25 @@ end
     let rendered = error.to_string();
     assert!(rendered.contains("single(selector(...)) requires no limit or 'limit=1'"));
     assert!(rendered.contains("path assignment requires an 'entity_ref' or 'block_ref' base"));
+}
+
+#[test]
+fn rejects_unsafe_player_writes() {
+    let source = r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    player.CustomName = "Nope"
+    player.nbt.SelectedItem = "bad"
+    player.state.story = "hello"
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or 'player.mainhand'"));
+    assert!(rendered.contains("player.nbt.* is read-only"));
+    assert!(rendered.contains("player.state.* currently supports only 'int' and 'bool' values"));
 }
 
 #[test]

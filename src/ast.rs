@@ -142,6 +142,11 @@ pub enum ExprKind {
         function: String,
         args: Vec<Expr>,
     },
+    MethodCall {
+        receiver: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
     Path(PathExpr),
 }
 

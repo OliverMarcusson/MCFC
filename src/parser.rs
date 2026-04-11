@@ -267,20 +267,7 @@ impl Parser {
             },
             TokenKind::Identifier(name) => {
                 if self.eat(&TokenKind::LeftParen) {
-                    let mut args = Vec::new();
-                    if !self.at(&TokenKind::RightParen) {
-                        loop {
-                            args.push(self.parse_expr_bp(0));
-                            if !self.eat(&TokenKind::Comma) {
-                                break;
-                            }
-                            if self.at(&TokenKind::RightParen) {
-                                self.error_here("expected expression");
-                                break;
-                            }
-                        }
-                    }
-                    self.expect(TokenKind::RightParen, "expected ')' after call arguments");
+                    let args = self.parse_call_args();
                     Expr {
                         kind: ExprKind::Call {
                             function: name,
@@ -316,7 +303,44 @@ impl Parser {
 
     fn parse_postfix(&mut self, mut expr: Expr) -> Expr {
         loop {
-            if self.eat(&TokenKind::Dot) {
+            if self.at(&TokenKind::LeftParen) {
+                let span = self.current_span();
+                let (method, receiver) = match &expr.kind {
+                    ExprKind::Path(path) => {
+                        let mut path = path.clone();
+                        match path.segments.pop() {
+                        Some(PathSegment::Field(method)) => {
+                            let receiver = if path.segments.is_empty() {
+                                *path.base
+                            } else {
+                                Expr {
+                                    kind: ExprKind::Path(path),
+                                    span: expr.span.clone(),
+                                }
+                            };
+                            (method, receiver)
+                        }
+                        _ => {
+                            self.diagnostics.push(Diagnostic::new(
+                                "only member access may be called like a method",
+                                span.clone(),
+                            ));
+                            break;
+                        }
+                    }}
+                    _ => break,
+                };
+                self.bump();
+                let args = self.parse_call_args();
+                expr = Expr {
+                    kind: ExprKind::MethodCall {
+                        receiver: Box::new(receiver),
+                        method,
+                        args,
+                    },
+                    span,
+                };
+            } else if self.eat(&TokenKind::Dot) {
                 let span = self.current_span();
                 let field = self.expect_identifier("expected field name after '.'");
                 expr = self.append_path_segment(expr, PathSegment::Field(field), span);
@@ -341,6 +365,24 @@ impl Parser {
         }
 
         expr
+    }
+
+    fn parse_call_args(&mut self) -> Vec<Expr> {
+        let mut args = Vec::new();
+        if !self.at(&TokenKind::RightParen) {
+            loop {
+                args.push(self.parse_expr_bp(0));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RightParen) {
+                    self.error_here("expected expression");
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "expected ')' after call arguments");
+        args
     }
 
     fn append_path_segment(&mut self, expr: Expr, segment: PathSegment, span: Span) -> Expr {
@@ -603,7 +645,7 @@ fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::ast::{BinaryOp, ExprKind, ForKind, StmtKind, UnaryOp};
+    use crate::ast::{BinaryOp, Expr, ExprKind, ForKind, StmtKind, UnaryOp};
 
     #[test]
     fn parses_comments_and_function_annotations() {
@@ -762,5 +804,26 @@ end
         };
         assert!(matches!(kind, ForKind::Each { .. }));
         assert!(matches!(body[0].kind, StmtKind::Assign { .. }));
+    }
+
+    #[test]
+    fn parses_player_method_calls() {
+        let program = parse(
+            r#"
+fn main() -> void
+    let player = single(selector("@p"))
+    player.effect("speed", 10, 1)
+end
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            program.functions[0].body[1].kind,
+            StmtKind::Expr(Expr {
+                kind: ExprKind::MethodCall { .. },
+                ..
+            })
+        ));
     }
 }

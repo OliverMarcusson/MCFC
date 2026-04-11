@@ -5,7 +5,7 @@ use crate::ir::{
     IrAssignTarget, IrBookCommand, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
     IrPathExpr, IrProgram, IrStmt,
 };
-use crate::types::CastKind;
+use crate::types::{CastKind, RefKind};
 
 #[derive(Debug, Clone)]
 pub struct BuildArtifacts {
@@ -34,6 +34,7 @@ struct Backend {
     block_counter: usize,
     temp_counter: usize,
     macro_counter: usize,
+    player_state_objectives: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +133,7 @@ impl Backend {
             block_counter: 0,
             temp_counter: 0,
             macro_counter: 0,
+            player_state_objectives: collect_player_state_objectives(program),
         }
     }
 
@@ -185,6 +187,9 @@ impl Backend {
                 self.namespace
             ),
         ];
+        for objective in &self.player_state_objectives {
+            lines.push(format!("scoreboard objectives add {} dummy", objective));
+        }
 
         for depth in 0..=self.max_depth {
             for (function, info) in &self.functions {
@@ -722,14 +727,17 @@ impl Backend {
                     };
                     let cond_expr = IrExpr {
                         ty: Type::Bool,
+                        ref_kind: RefKind::Unknown,
                         kind: IrExprKind::Binary {
                             op: cmp_op,
                             left: Box::new(IrExpr {
                                 ty: Type::Int,
+                                ref_kind: RefKind::Unknown,
                                 kind: IrExprKind::Variable(name.clone()),
                             }),
                             right: Box::new(IrExpr {
                                 ty: Type::Int,
+                                ref_kind: RefKind::Unknown,
                                 kind: IrExprKind::Variable(end_name.clone()),
                             }),
                         },
@@ -1002,6 +1010,13 @@ impl Backend {
                     }
                 }
             }
+            IrExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
+                self.compile_method_call(function, depth, receiver, method, args, lines);
+            }
         }
     }
 
@@ -1020,6 +1035,20 @@ impl Backend {
         let value_name = self.new_temp();
         let value_slot = local_slot(depth, &function.name, &value_name, &Type::Nbt);
         self.compile_value_as_nbt(function, depth, value, &value_slot, lines);
+
+        if path.base.ref_kind == RefKind::Player {
+            if self.try_compile_player_path_assign(
+                function,
+                depth,
+                &base_slot,
+                path,
+                value,
+                &value_slot,
+                lines,
+            ) {
+                return;
+            }
+        }
 
         let path_text = render_path_segments(&path.segments);
         let storage_target = format!("{}:runtime {}", self.namespace, value_slot.storage_path());
@@ -1055,6 +1084,13 @@ impl Backend {
         let base_name = self.new_temp();
         let base_slot = local_slot(depth, &function.name, &base_name, &path.base.ty);
         self.compile_expr_into_slot(function, depth, &path.base, &base_slot, lines);
+
+        if path.base.ref_kind == RefKind::Player {
+            if self.try_compile_player_path_read(function, depth, &base_slot, path, target, lines) {
+                return;
+            }
+        }
+
         let path_text = render_path_segments(&path.segments);
         match path.base.ty {
             Type::EntityRef => lines.push(self.query_command(
@@ -1078,6 +1114,299 @@ impl Backend {
                 true,
             )),
             _ => {}
+        }
+    }
+
+    fn compile_method_call(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        receiver: &IrExpr,
+        method: &str,
+        args: &[IrExpr],
+        lines: &mut Vec<String>,
+    ) {
+        if method != "effect" {
+            return;
+        }
+        let receiver_name = self.new_temp();
+        let receiver_slot = local_slot(depth, &function.name, &receiver_name, &receiver.ty);
+        self.compile_expr_into_slot(function, depth, receiver, &receiver_slot, lines);
+
+        let effect_name = self.new_temp();
+        let duration_name = self.new_temp();
+        let amplifier_name = self.new_temp();
+        let effect_slot = local_slot(depth, &function.name, &effect_name, &Type::String);
+        let duration_slot = local_slot(depth, &function.name, &duration_name, &Type::Int);
+        let amplifier_slot = local_slot(depth, &function.name, &amplifier_name, &Type::Int);
+        if let Some(arg) = args.first() {
+            self.compile_expr_into_slot(function, depth, arg, &effect_slot, lines);
+        }
+        if let Some(arg) = args.get(1) {
+            self.compile_expr_into_slot(function, depth, arg, &duration_slot, lines);
+        }
+        if let Some(arg) = args.get(2) {
+            self.compile_expr_into_slot(function, depth, arg, &amplifier_slot, lines);
+        }
+
+        let composed_name = self.new_temp();
+        let composed_slot = local_slot(depth, &function.name, &composed_name, &Type::EntityRef);
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set from storage {}:runtime {}.prefix",
+            self.namespace,
+            composed_slot.storage_path(),
+            self.namespace,
+            receiver_slot.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.selector set from storage {}:runtime {}.selector",
+            self.namespace,
+            composed_slot.storage_path(),
+            self.namespace,
+            receiver_slot.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.effect set from storage {}:runtime {}",
+            self.namespace,
+            composed_slot.storage_path(),
+            self.namespace,
+            effect_slot.storage_path()
+        ));
+        lines.push(format!(
+            "execute store result storage {}:runtime {}.duration int 1 run scoreboard players get {} mcfc",
+            self.namespace,
+            composed_slot.storage_path(),
+            duration_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "execute store result storage {}:runtime {}.amplifier int 1 run scoreboard players get {} mcfc",
+            self.namespace,
+            composed_slot.storage_path(),
+            amplifier_slot.numeric_name()
+        ));
+        lines.push(self.query_command(
+            &composed_slot,
+            "effect give $(selector) $(effect) $(duration) $(amplifier) true".to_string(),
+            true,
+        ));
+    }
+
+    fn try_compile_player_path_assign(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        base_slot: &SlotRef,
+        path: &IrPathExpr,
+        value: &IrExpr,
+        value_slot: &SlotRef,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        let Some(PathSegment::Field(first)) = path.segments.first() else {
+            return false;
+        };
+        match first.as_str() {
+            "nbt" => true,
+            "state" => {
+                let objective = player_state_objective(&path.segments[1..]);
+                let temp_name = self.new_temp();
+                let temp_slot = local_slot(depth, &function.name, &temp_name, &Type::Int);
+                self.compile_expr_into_slot(function, depth, value, &temp_slot, lines);
+                lines.push(self.query_command(
+                    base_slot,
+                    format!(
+                        "scoreboard players operation $(selector) {} = {} mcfc",
+                        objective,
+                        temp_slot.numeric_name()
+                    ),
+                    true,
+                ));
+                true
+            }
+            "tags" => {
+                let tag = render_path_segments(&path.segments[1..]);
+                let temp_name = self.new_temp();
+                let temp_slot = local_slot(depth, &function.name, &temp_name, &Type::Bool);
+                self.compile_expr_into_slot(function, depth, value, &temp_slot, lines);
+                lines.push(self.query_command(
+                    base_slot,
+                    format!("execute if score {} mcfc matches 1 run tag $(selector) add {}", temp_slot.numeric_name(), tag),
+                    true,
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    format!("execute if score {} mcfc matches 0 run tag $(selector) remove {}", temp_slot.numeric_name(), tag),
+                    true,
+                ));
+                true
+            }
+            "team" => {
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.team set from storage {}:runtime {}",
+                    self.namespace,
+                    base_slot.storage_path(),
+                    self.namespace,
+                    value_slot.storage_path()
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    "team join $(team) $(selector)".to_string(),
+                    true,
+                ));
+                true
+            }
+            "mainhand" => self.compile_player_mainhand_assign(
+                function,
+                depth,
+                base_slot,
+                &path.segments[1..],
+                value,
+                lines,
+            ),
+            _ => false,
+        }
+    }
+
+    fn try_compile_player_path_read(
+        &mut self,
+        _function: &IrFunction,
+        _depth: usize,
+        base_slot: &SlotRef,
+        path: &IrPathExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        let Some(PathSegment::Field(first)) = path.segments.first() else {
+            return false;
+        };
+        match first.as_str() {
+            "nbt" => {
+                let path_text = render_path_segments(&path.segments[1..]);
+                lines.push(self.query_command(
+                    base_slot,
+                    format!(
+                        "data modify storage {}:runtime {} set from entity $(selector) {}",
+                        self.namespace,
+                        target.storage_path(),
+                        path_text
+                    ),
+                    true,
+                ));
+                true
+            }
+            "state" => {
+                let objective = player_state_objective(&path.segments[1..]);
+                lines.push(self.query_command(
+                    base_slot,
+                    format!(
+                        "execute store result storage {}:runtime {} int 1 run scoreboard players get $(selector) {}",
+                        self.namespace,
+                        target.storage_path(),
+                        objective
+                    ),
+                    true,
+                ));
+                true
+            }
+            "tags" => {
+                let tag = render_path_segments(&path.segments[1..]);
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set value 0",
+                    self.namespace,
+                    target.storage_path()
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    format!(
+                        "execute as $(selector) if entity @s[tag={}] run data modify storage {}:runtime {} set value 1",
+                        tag,
+                        self.namespace,
+                        target.storage_path()
+                    ),
+                    true,
+                ));
+                true
+            }
+            "team" => {
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime {}.team",
+                    self.namespace,
+                    target.storage_path(),
+                    self.namespace,
+                    base_slot.storage_path()
+                ));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn compile_player_mainhand_assign(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        base_slot: &SlotRef,
+        segments: &[PathSegment],
+        value: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        let Some(PathSegment::Field(field)) = segments.first() else {
+            return false;
+        };
+        match field.as_str() {
+            "name" => {
+                let name_temp = self.new_temp();
+                let name_slot = local_slot(depth, &function.name, &name_temp, &Type::String);
+                self.compile_expr_into_slot(function, depth, value, &name_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.item_name set from storage {}:runtime {}",
+                    self.namespace,
+                    base_slot.storage_path(),
+                    self.namespace,
+                    name_slot.storage_path()
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    "item modify entity $(selector) weapon.mainhand {\"function\":\"minecraft:set_name\",\"name\":\"$(item_name)\",\"target\":\"custom_name\"}".to_string(),
+                    true,
+                ));
+                true
+            }
+            "count" => {
+                let count_temp = self.new_temp();
+                let count_slot = local_slot(depth, &function.name, &count_temp, &Type::Int);
+                self.compile_expr_into_slot(function, depth, value, &count_slot, lines);
+                lines.push(format!(
+                    "execute store result storage {}:runtime {}.count int 1 run scoreboard players get {} mcfc",
+                    self.namespace,
+                    base_slot.storage_path(),
+                    count_slot.numeric_name()
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    "item modify entity $(selector) weapon.mainhand {\"function\":\"minecraft:set_count\",\"count\":{\"type\":\"minecraft:storage\",\"target\":\"$(count)\"}}".to_string(),
+                    true,
+                ));
+                true
+            }
+            "item" => {
+                let item_temp = self.new_temp();
+                let item_slot = local_slot(depth, &function.name, &item_temp, &Type::String);
+                self.compile_expr_into_slot(function, depth, value, &item_slot, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {}.item_id set from storage {}:runtime {}",
+                    self.namespace,
+                    base_slot.storage_path(),
+                    self.namespace,
+                    item_slot.storage_path()
+                ));
+                lines.push(self.query_command(
+                    base_slot,
+                    "item replace entity $(selector) weapon.mainhand with $(item_id)".to_string(),
+                    true,
+                ));
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1770,6 +2099,105 @@ fn render_path_segments(segments: &[PathSegment]) -> String {
         }
     }
     rendered
+}
+
+fn player_state_objective(segments: &[PathSegment]) -> String {
+    format!("mcfs_{}", sanitize(&render_path_segments(segments)))
+}
+
+fn collect_player_state_objectives(program: &IrProgram) -> Vec<String> {
+    let mut names = BTreeMap::<String, ()>::new();
+    for function in &program.functions {
+        collect_objectives_from_stmts(&function.body, &mut names);
+    }
+    names.into_keys().collect()
+}
+
+fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, ()>) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::Assign {
+                target: IrAssignTarget::Path(path),
+                ..
+            } => collect_objectives_from_path(path, names),
+            IrStmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_objectives_from_expr(condition, names);
+                collect_objectives_from_stmts(then_body, names);
+                collect_objectives_from_stmts(else_body, names);
+            }
+            IrStmt::While { condition, body } => {
+                collect_objectives_from_expr(condition, names);
+                collect_objectives_from_stmts(body, names);
+            }
+            IrStmt::For { kind, body, .. } => {
+                match kind {
+                    IrForKind::Range { start, end, .. } => {
+                        collect_objectives_from_expr(start, names);
+                        collect_objectives_from_expr(end, names);
+                    }
+                    IrForKind::Each { iterable } => collect_objectives_from_expr(iterable, names),
+                }
+                collect_objectives_from_stmts(body, names);
+            }
+            IrStmt::Let { value, .. }
+            | IrStmt::Return(Some(value))
+            | IrStmt::Expr(value) => collect_objectives_from_expr(value, names),
+            IrStmt::MacroCommand { .. }
+            | IrStmt::RawCommand(_)
+            | IrStmt::Break
+            | IrStmt::Continue
+            | IrStmt::Return(None)
+            | IrStmt::Assign { .. } => {}
+        }
+    }
+}
+
+fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, ()>) {
+    match &expr.kind {
+        IrExprKind::Path(path) => collect_objectives_from_path(path, names),
+        IrExprKind::Unary { expr, .. }
+        | IrExprKind::Single(expr)
+        | IrExprKind::Exists(expr)
+        | IrExprKind::Cast { expr, .. } => collect_objectives_from_expr(expr, names),
+        IrExprKind::Binary { left, right, .. } => {
+            collect_objectives_from_expr(left, names);
+            collect_objectives_from_expr(right, names);
+        }
+        IrExprKind::Call { args, .. } => {
+            for arg in args {
+                collect_objectives_from_expr(arg, names);
+            }
+        }
+        IrExprKind::MethodCall { receiver, args, .. } => {
+            collect_objectives_from_expr(receiver, names);
+            for arg in args {
+                collect_objectives_from_expr(arg, names);
+            }
+        }
+        IrExprKind::At { anchor, value } => {
+            collect_objectives_from_expr(anchor, names);
+            collect_objectives_from_expr(value, names);
+        }
+        IrExprKind::Int(_)
+        | IrExprKind::Bool(_)
+        | IrExprKind::String(_)
+        | IrExprKind::Variable(_)
+        | IrExprKind::Selector(_)
+        | IrExprKind::Block(_) => {}
+    }
+}
+
+fn collect_objectives_from_path(path: &IrPathExpr, names: &mut BTreeMap<String, ()>) {
+    if path.base.ref_kind == RefKind::Player
+        && matches!(path.segments.first(), Some(PathSegment::Field(name)) if name == "state")
+    {
+        names.insert(player_state_objective(&path.segments[1..]), ());
+    }
+    collect_objectives_from_expr(&path.base, names);
 }
 
 fn macro_storage_base(depth: usize, function: &str, macro_id: usize) -> String {

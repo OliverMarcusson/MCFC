@@ -191,6 +191,15 @@ Minecraft query builtins:
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
 - `int(nbt)`, `bool(nbt)`, `string(nbt)`
 
+Player-safe surfaces:
+
+- `player.nbt.*` reads vanilla player NBT
+- `player.state.*` stores MCFC-managed integer and boolean player state
+- `player.tags.*` reads and writes entity tags as booleans
+- `player.team = "name"` assigns a team
+- `player.mainhand.name`, `player.mainhand.item`, and `player.mainhand.count` modify the held item
+- `player.effect("name", duration, amplifier)` applies an effect
+
 String literal notes:
 
 - both double-quoted and single-quoted strings are supported

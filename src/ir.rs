@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, Type};
 use crate::types::{
-    BookCommand, CastKind, MacroPlaceholder, TypedAssignTarget, TypedExpr, TypedExprKind,
+    BookCommand, CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind,
     TypedForKind, TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
 };
 
@@ -98,6 +98,7 @@ pub struct IrMacroPlaceholder {
 #[derive(Debug, Clone)]
 pub struct IrExpr {
     pub ty: Type,
+    pub ref_kind: RefKind,
     pub kind: IrExprKind,
 }
 
@@ -126,6 +127,11 @@ pub enum IrExprKind {
     },
     Call {
         function: String,
+        args: Vec<IrExpr>,
+    },
+    MethodCall {
+        receiver: Box<IrExpr>,
+        method: String,
         args: Vec<IrExpr>,
     },
     Single(Box<IrExpr>),
@@ -263,6 +269,7 @@ fn lower_macro_placeholder(placeholder: &MacroPlaceholder) -> IrMacroPlaceholder
 fn lower_expr(expr: &TypedExpr) -> IrExpr {
     IrExpr {
         ty: expr.ty.clone(),
+        ref_kind: expr.ref_kind,
         kind: match &expr.kind {
             TypedExprKind::Int(value) => IrExprKind::Int(*value),
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
@@ -281,6 +288,15 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             },
             TypedExprKind::Call { function, args } => IrExprKind::Call {
                 function: function.clone(),
+                args: args.iter().map(lower_expr).collect(),
+            },
+            TypedExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+            } => IrExprKind::MethodCall {
+                receiver: Box::new(lower_expr(receiver)),
+                method: method.clone(),
                 args: args.iter().map(lower_expr).collect(),
             },
             TypedExprKind::Single(expr) => IrExprKind::Single(Box::new(lower_expr(expr))),

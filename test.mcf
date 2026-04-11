@@ -78,6 +78,25 @@ fn style_closest_pig() -> void
     return
 end
 
+fn player_api_demo() -> void
+    let player = single(selector("@p"))
+    if exists(player):
+        let air = int(player.nbt.Air)
+        player.state.quest_stage = 3
+        let stage = int(player.state.quest_stage)
+        player.tags.mcfc_demo = true
+        let tagged = bool(player.tags.mcfc_demo)
+        player.team = "red"
+        player.mainhand.item = "minecraft:carrot_on_a_stick"
+        player.mainhand.name = "MCFC Blade"
+        player.mainhand.count = 1
+        player.effect("speed", 10, 1)
+        mcf "tellraw @a \"player demo air=$(air) stage=$(stage) tagged=$(tagged)\""
+    end
+
+    return
+end
+
 fn main() -> void
     let version = 1
     mcf 'tellraw @a "MCFC version 0.$(version)"'
@@ -86,7 +105,7 @@ fn main() -> void
     let label = "done"
 
     while a < 4:
-        mcf "say a: $(a)"
+        # mcf "say a: $(a)"
         if a == 2:
             b = add(a, b)
         end
@@ -95,16 +114,17 @@ fn main() -> void
 
     let kind = classify(2)
     if kind == "many" and not false:
-        mcf "say class: $(kind)"
+        # mcf "say class: $(kind)"
     else:
-        mc "say unexpected class"
+        # mc "say unexpected class"
     end
 
     range_demo(3)
     loop_control_demo(6)
-    fibb(8)
+    # fibb(8)
     name_closest_pig()
     style_closest_pig()
+    player_api_demo()
     mc "say done"
     return
 end

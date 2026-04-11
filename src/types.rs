@@ -109,6 +109,14 @@ pub struct MacroPlaceholder {
 pub struct TypedExpr {
     pub kind: TypedExprKind,
     pub ty: Type,
+    pub ref_kind: RefKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefKind {
+    Unknown,
+    Player,
+    NonPlayer,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +144,11 @@ pub enum TypedExprKind {
     },
     Call {
         function: String,
+        args: Vec<TypedExpr>,
+    },
+    MethodCall {
+        receiver: Box<TypedExpr>,
+        method: String,
         args: Vec<TypedExpr>,
     },
     Single(Box<TypedExpr>),
@@ -187,6 +200,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     let mut book_commands = BTreeMap::new();
     for function in &program.functions {
         let mut env = HashMap::new();
+        let mut ref_env = HashMap::new();
         let mut locals = BTreeMap::new();
         let mut seen_params = HashSet::new();
         let mut params = Vec::new();
@@ -199,6 +213,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
                 ));
             }
             env.insert(param.name.clone(), param.ty.clone());
+            ref_env.insert(param.name.clone(), RefKind::Unknown);
             locals.insert(param.name.clone(), param.ty.clone());
             params.push(TypedParam {
                 name: param.name.clone(),
@@ -212,6 +227,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             &function.return_type,
             &signatures,
             &mut env,
+            &mut ref_env,
             &mut locals,
             &mut called_functions,
             0,
@@ -277,6 +293,7 @@ fn type_check_block(
     return_type: &Type,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &mut HashMap<String, Type>,
+    ref_env: &mut HashMap<String, RefKind>,
     locals: &mut BTreeMap<String, Type>,
     called_functions: &mut BTreeSet<String>,
     loop_depth: usize,
@@ -293,8 +310,10 @@ fn type_check_block(
                         statement.span.clone(),
                     ));
                 }
-                let value = type_check_expr(value, signatures, env, called_functions, diagnostics);
+                let value =
+                    type_check_expr(value, signatures, env, ref_env, called_functions, diagnostics);
                 env.insert(name.clone(), value.ty.clone());
+                ref_env.insert(name.clone(), value.ref_kind);
                 locals.insert(name.clone(), value.ty.clone());
                 TypedStmtKind::Let {
                     name: name.clone(),
@@ -303,7 +322,8 @@ fn type_check_block(
                 }
             }
             StmtKind::Assign { target, value } => {
-                let value = type_check_expr(value, signatures, env, called_functions, diagnostics);
+                let value =
+                    type_check_expr(value, signatures, env, ref_env, called_functions, diagnostics);
                 let target = match target {
                     AssignTarget::Variable(name) => {
                         let Some(existing) = env.get(name).cloned() else {
@@ -331,6 +351,7 @@ fn type_check_block(
                             path,
                             signatures,
                             env,
+                            ref_env,
                             called_functions,
                             diagnostics,
                             statement.span.clone(),
@@ -347,6 +368,7 @@ fn type_check_block(
                                 statement.span.clone(),
                             ));
                         }
+                        validate_player_path_write(&typed_path, &value, statement.span.clone(), diagnostics);
                         TypedAssignTarget::Path(typed_path)
                     }
                 };
@@ -358,7 +380,7 @@ fn type_check_block(
                 else_body,
             } => {
                 let condition =
-                    type_check_expr(condition, signatures, env, called_functions, diagnostics);
+                    type_check_expr(condition, signatures, env, ref_env, called_functions, diagnostics);
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
                         "if condition must have type 'bool'",
@@ -370,6 +392,7 @@ fn type_check_block(
                     return_type,
                     signatures,
                     &mut env.clone(),
+                    &mut ref_env.clone(),
                     locals,
                     called_functions,
                     loop_depth,
@@ -380,6 +403,7 @@ fn type_check_block(
                     return_type,
                     signatures,
                     &mut env.clone(),
+                    &mut ref_env.clone(),
                     locals,
                     called_functions,
                     loop_depth,
@@ -393,7 +417,7 @@ fn type_check_block(
             }
             StmtKind::While { condition, body } => {
                 let condition =
-                    type_check_expr(condition, signatures, env, called_functions, diagnostics);
+                    type_check_expr(condition, signatures, env, ref_env, called_functions, diagnostics);
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
                         "while condition must have type 'bool'",
@@ -405,6 +429,7 @@ fn type_check_block(
                     return_type,
                     signatures,
                     &mut env.clone(),
+                    &mut ref_env.clone(),
                     locals,
                     called_functions,
                     loop_depth + 1,
@@ -420,6 +445,7 @@ fn type_check_block(
                     ));
                 }
                 let mut loop_env = env.clone();
+                let mut loop_ref_env = ref_env.clone();
                 let kind = match kind {
                     ForKind::Range {
                         start,
@@ -427,9 +453,9 @@ fn type_check_block(
                         inclusive,
                     } => {
                         let start =
-                            type_check_expr(start, signatures, env, called_functions, diagnostics);
+                            type_check_expr(start, signatures, env, ref_env, called_functions, diagnostics);
                         let end =
-                            type_check_expr(end, signatures, env, called_functions, diagnostics);
+                            type_check_expr(end, signatures, env, ref_env, called_functions, diagnostics);
                         if start.ty != Type::Int {
                             diagnostics.push(Diagnostic::new(
                                 "for range start must have type 'int'",
@@ -443,6 +469,7 @@ fn type_check_block(
                             ));
                         }
                         loop_env.insert(name.clone(), Type::Int);
+                        loop_ref_env.insert(name.clone(), RefKind::Unknown);
                         locals.insert(name.clone(), Type::Int);
                         TypedForKind::Range {
                             start,
@@ -455,6 +482,7 @@ fn type_check_block(
                             iterable,
                             signatures,
                             env,
+                            ref_env,
                             called_functions,
                             diagnostics,
                         );
@@ -465,6 +493,7 @@ fn type_check_block(
                             ));
                         }
                         loop_env.insert(name.clone(), Type::EntityRef);
+                        loop_ref_env.insert(name.clone(), iterable.ref_kind);
                         locals.insert(name.clone(), Type::EntityRef);
                         TypedForKind::Each { iterable }
                     }
@@ -474,6 +503,7 @@ fn type_check_block(
                     return_type,
                     signatures,
                     &mut loop_env,
+                    &mut loop_ref_env,
                     locals,
                     called_functions,
                     loop_depth + 1,
@@ -501,7 +531,7 @@ fn type_check_block(
             }
             StmtKind::Return(value) => {
                 let value = value.as_ref().map(|expr| {
-                    type_check_expr(expr, signatures, env, called_functions, diagnostics)
+                    type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics)
                 });
                 match (return_type, &value) {
                     (Type::Void, None) => {}
@@ -550,8 +580,8 @@ fn type_check_block(
                 }
             }
             StmtKind::Expr(expr) => {
-                let expr = type_check_expr(expr, signatures, env, called_functions, diagnostics);
-                if !matches!(expr.kind, TypedExprKind::Call { .. }) {
+                let expr = type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics);
+                if !matches!(expr.kind, TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }) {
                     diagnostics.push(Diagnostic::new(
                         "only function calls may appear as bare expression statements",
                         statement.span.clone(),
@@ -571,6 +601,7 @@ fn type_check_expr(
     expr: &Expr,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> TypedExpr {
@@ -578,30 +609,36 @@ fn type_check_expr(
         ExprKind::Int(value) => TypedExpr {
             kind: TypedExprKind::Int(*value),
             ty: Type::Int,
+            ref_kind: RefKind::Unknown,
         },
         ExprKind::Bool(value) => TypedExpr {
             kind: TypedExprKind::Bool(*value),
             ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
         },
         ExprKind::String(value) => TypedExpr {
             kind: TypedExprKind::String(value.clone()),
             ty: Type::String,
+            ref_kind: RefKind::Unknown,
         },
         ExprKind::Path(path) => TypedExpr {
             kind: TypedExprKind::Path(type_check_path(
                 path,
                 signatures,
                 env,
+                ref_env,
                 called_functions,
                 diagnostics,
                 expr.span.clone(),
             )),
             ty: Type::Nbt,
+            ref_kind: RefKind::Unknown,
         },
         ExprKind::Variable(name) => match env.get(name) {
             Some(ty) => TypedExpr {
                 kind: TypedExprKind::Variable(name.clone()),
                 ty: ty.clone(),
+                ref_kind: ref_env.get(name).copied().unwrap_or(RefKind::Unknown),
             },
             None => {
                 diagnostics.push(Diagnostic::new(
@@ -611,11 +648,13 @@ fn type_check_expr(
                 TypedExpr {
                     kind: TypedExprKind::Variable(name.clone()),
                     ty: Type::Int,
+                    ref_kind: RefKind::Unknown,
                 }
             }
         },
         ExprKind::Unary { op, expr } => {
-            let operand = type_check_expr(expr, signatures, env, called_functions, diagnostics);
+            let operand =
+                type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics);
             let ty = match op {
                 UnaryOp::Not => {
                     if operand.ty != Type::Bool {
@@ -633,11 +672,12 @@ fn type_check_expr(
                     expr: Box::new(operand),
                 },
                 ty,
+                ref_kind: RefKind::Unknown,
             }
         }
         ExprKind::Binary { op, left, right } => {
-            let left = type_check_expr(left, signatures, env, called_functions, diagnostics);
-            let right = type_check_expr(right, signatures, env, called_functions, diagnostics);
+            let left = type_check_expr(left, signatures, env, ref_env, called_functions, diagnostics);
+            let right = type_check_expr(right, signatures, env, ref_env, called_functions, diagnostics);
             let ty = match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     if left.ty != Type::Int || right.ty != Type::Int {
@@ -703,11 +743,36 @@ fn type_check_expr(
                     right: Box::new(right),
                 },
                 ty,
+                ref_kind: RefKind::Unknown,
+            }
+        }
+        ExprKind::MethodCall { receiver, method, args } => {
+            if let Some(builtin) = type_check_method_call(
+                receiver,
+                method,
+                args,
+                expr,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            ) {
+                return builtin;
+            }
+            diagnostics.push(Diagnostic::new(
+                format!("unknown method '{}'", method),
+                expr.span.clone(),
+            ));
+            TypedExpr {
+                kind: TypedExprKind::Int(0),
+                ty: Type::Void,
+                ref_kind: RefKind::Unknown,
             }
         }
         ExprKind::Call { function, args } => {
             if let Some(builtin) =
-                type_check_builtin_call(function, args, expr, signatures, env, called_functions, diagnostics)
+                type_check_builtin_call(function, args, expr, signatures, env, ref_env, called_functions, diagnostics)
             {
                 return builtin;
             }
@@ -728,6 +793,7 @@ fn type_check_expr(
                                         arg,
                                         signatures,
                                         env,
+                                        ref_env,
                                         called_functions,
                                         diagnostics,
                                     )
@@ -735,6 +801,7 @@ fn type_check_expr(
                                 .collect(),
                         },
                         ty: Type::Void,
+                        ref_kind: RefKind::Unknown,
                     };
                 }
             };
@@ -753,7 +820,7 @@ fn type_check_expr(
 
             let args: Vec<_> = args
                 .iter()
-                .map(|arg| type_check_expr(arg, signatures, env, called_functions, diagnostics))
+                .map(|arg| type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics))
                 .collect();
             for (index, arg) in args.iter().enumerate() {
                 if let Some(expected) = signature.params.get(index) {
@@ -779,6 +846,7 @@ fn type_check_expr(
                     args,
                 },
                 ty: signature.return_type.clone(),
+                ref_kind: RefKind::Unknown,
             }
         }
     }
@@ -788,21 +856,24 @@ fn type_check_path(
     path: &PathExpr,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
     span: Span,
 ) -> TypedPathExpr {
-    let base = type_check_expr(&path.base, signatures, env, called_functions, diagnostics);
+    let base = type_check_expr(&path.base, signatures, env, ref_env, called_functions, diagnostics);
     if !matches!(base.ty, Type::EntityRef | Type::BlockRef) {
         diagnostics.push(Diagnostic::new(
             "path access requires an 'entity_ref' or 'block_ref' base",
-            span,
+            span.clone(),
         ));
     }
-    TypedPathExpr {
+    let typed = TypedPathExpr {
         base: Box::new(base),
         segments: path.segments.clone(),
-    }
+    };
+    validate_player_path_read(&typed, span, diagnostics);
+    typed
 }
 
 fn type_check_builtin_call(
@@ -811,12 +882,13 @@ fn type_check_builtin_call(
     expr: &Expr,
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
     match function {
         "selector" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first() {
                 if arg.ty != Type::String {
@@ -828,12 +900,13 @@ fn type_check_builtin_call(
             }
             let raw = extract_string_literal(args.first(), "selector", expr, diagnostics);
             Some(TypedExpr {
-                kind: TypedExprKind::Selector(raw),
+                kind: TypedExprKind::Selector(raw.clone()),
                 ty: Type::EntitySet,
+                ref_kind: detect_selector_ref_kind(&raw),
             })
         }
         "block" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first() {
                 if arg.ty != Type::String {
@@ -847,14 +920,16 @@ fn type_check_builtin_call(
             Some(TypedExpr {
                 kind: TypedExprKind::Block(raw),
                 ty: Type::BlockRef,
+                ref_kind: RefKind::Unknown,
             })
         }
         "single" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 1, expr, diagnostics);
             let mut arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Selector(String::new()),
                 ty: Type::EntitySet,
+                ref_kind: RefKind::Unknown,
             });
             if arg.ty != Type::EntitySet {
                 diagnostics.push(Diagnostic::new(
@@ -863,17 +938,20 @@ fn type_check_builtin_call(
                 ));
             }
             rewrite_single_limit(&mut arg, diagnostics, expr.span.clone());
+            let ref_kind = arg.ref_kind;
             Some(TypedExpr {
                 kind: TypedExprKind::Single(Box::new(arg)),
                 ty: Type::EntityRef,
+                ref_kind,
             })
         }
         "exists" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 1, expr, diagnostics);
             let arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Variable("_error".to_string()),
                 ty: Type::EntityRef,
+                ref_kind: RefKind::Unknown,
             });
             if arg.ty != Type::EntityRef {
                 diagnostics.push(Diagnostic::new(
@@ -884,19 +962,22 @@ fn type_check_builtin_call(
             Some(TypedExpr {
                 kind: TypedExprKind::Exists(Box::new(arg)),
                 ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
             })
         }
         "at" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 2, expr, diagnostics);
             let mut iter = args.into_iter();
             let anchor = iter.next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Variable("_error".to_string()),
                 ty: Type::EntityRef,
+                ref_kind: RefKind::Unknown,
             });
             let value = iter.next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Selector(String::new()),
                 ty: Type::EntitySet,
+                ref_kind: RefKind::Unknown,
             });
             if anchor.ty != Type::EntityRef {
                 diagnostics.push(Diagnostic::new(
@@ -916,14 +997,16 @@ fn type_check_builtin_call(
                     value: Box::new(value.clone()),
                 },
                 ty: value.ty,
+                ref_kind: value.ref_kind,
             })
         }
         "int" | "bool" | "string" => {
-            let args = type_check_args(args, signatures, env, called_functions, diagnostics);
+            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
             expect_arity(function, &args, 1, expr, diagnostics);
             let arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Variable("_error".to_string()),
                 ty: Type::Nbt,
+                ref_kind: RefKind::Unknown,
             });
             if arg.ty != Type::Nbt {
                 diagnostics.push(Diagnostic::new(
@@ -942,9 +1025,164 @@ fn type_check_builtin_call(
                     expr: Box::new(arg),
                 },
                 ty,
+                ref_kind: RefKind::Unknown,
             })
         }
         _ => None,
+    }
+}
+
+fn type_check_method_call(
+    receiver: &Expr,
+    method: &str,
+    args: &[Expr],
+    expr: &Expr,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> Option<TypedExpr> {
+    let receiver = type_check_expr(
+        receiver,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+    match method {
+        "effect" => {
+            if receiver.ref_kind != RefKind::Player || receiver.ty != Type::EntityRef {
+                diagnostics.push(Diagnostic::new(
+                    "player.effect(...) requires a player 'entity_ref' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 3, expr, diagnostics);
+            if let Some(arg) = args.first() {
+                if arg.ty != Type::String {
+                    diagnostics.push(Diagnostic::new(
+                        "player.effect(...) effect name must be 'string'",
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            if args.get(1).map(|arg| arg.ty.clone()) != Some(Type::Int) {
+                diagnostics.push(Diagnostic::new(
+                    "player.effect(...) duration must be 'int'",
+                    expr.span.clone(),
+                ));
+            }
+            if args.get(2).map(|arg| arg.ty.clone()) != Some(Type::Int) {
+                diagnostics.push(Diagnostic::new(
+                    "player.effect(...) amplifier must be 'int'",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: Type::Void,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn detect_selector_ref_kind(selector: &str) -> RefKind {
+    let trimmed = selector.trim().to_ascii_lowercase();
+    if trimmed.starts_with("@p")
+        || trimmed.starts_with("@a")
+        || trimmed.starts_with("@r")
+        || trimmed.starts_with("@s")
+        || trimmed.contains("type=player")
+    {
+        RefKind::Player
+    } else if trimmed.contains("type=") {
+        RefKind::NonPlayer
+    } else {
+        RefKind::Unknown
+    }
+}
+
+fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut Diagnostics) {
+    if path.base.ref_kind != RefKind::Player || path.base.ty != Type::EntityRef {
+        return;
+    }
+    let Some(first) = path.segments.first() else {
+        return;
+    };
+    let PathSegment::Field(first) = first else {
+        diagnostics.push(Diagnostic::new(
+            "player path access must start with a namespace such as 'nbt', 'state', 'tags', 'team', or 'mainhand'",
+            span,
+        ));
+        return;
+    };
+    if !matches!(first.as_str(), "nbt" | "state" | "tags" | "team" | "mainhand") {
+        diagnostics.push(Diagnostic::new(
+            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or 'player.mainhand'",
+            span,
+        ));
+    }
+}
+
+fn validate_player_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    if path.base.ref_kind != RefKind::Player || path.base.ty != Type::EntityRef {
+        return;
+    }
+    let Some(PathSegment::Field(first)) = path.segments.first() else {
+        diagnostics.push(Diagnostic::new(
+            "player writes must use a player-safe namespace",
+            span,
+        ));
+        return;
+    };
+    match first.as_str() {
+        "nbt" => diagnostics.push(Diagnostic::new(
+            "player.nbt.* is read-only; use player.state, player.tags, player.team, or player.mainhand instead",
+            span,
+        )),
+        "state" => {
+            if !matches!(value.ty, Type::Int | Type::Bool) {
+                diagnostics.push(Diagnostic::new(
+                    "player.state.* currently supports only 'int' and 'bool' values",
+                    span,
+                ));
+            }
+        }
+        "tags" => {
+            if value.ty != Type::Bool {
+                diagnostics.push(Diagnostic::new(
+                    "player.tags.* assignments require a 'bool' value",
+                    span,
+                ));
+            }
+        }
+        "team" => {
+            if value.ty != Type::String {
+                diagnostics.push(Diagnostic::new(
+                    "player.team requires a 'string' value",
+                    span,
+                ));
+            }
+        }
+        "mainhand" => {}
+        _ => diagnostics.push(Diagnostic::new(
+            "unsafe writable player path; use player.state, player.tags, player.team, or player.mainhand",
+            span,
+        )),
     }
 }
 
@@ -952,11 +1190,12 @@ fn type_check_args(
     args: &[Expr],
     signatures: &BTreeMap<String, FunctionSignature>,
     env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Vec<TypedExpr> {
     args.iter()
-        .map(|arg| type_check_expr(arg, signatures, env, called_functions, diagnostics))
+        .map(|arg| type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics))
         .collect()
 }
 

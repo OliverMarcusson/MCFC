@@ -1,0 +1,39 @@
+fn add(x: int, y: int) -> int
+    return x + y
+end
+
+fn fibb(n: int) -> void
+    let i = 0
+    let a = 0
+    let b = 1
+
+    while i < n:
+        mcf "tellraw @a \"$(b)\""
+        let next = a + b
+        a = b
+        b = next
+        i = i + 1
+    end
+
+    return
+end
+
+fn main() -> void
+    let version = 1
+    mcf 'tellraw @a "MCFC version 0.$(version)"'
+    let a = 1
+    let b = 2
+    let label = "done"
+
+    while a < 4:
+        mcf "say a: $(a)"
+        if a == 2:
+            b = add(a, b)
+        end
+        a = a + 1
+    end
+
+    fibb(8)
+    mc "say done"
+    return
+end

@@ -1,0 +1,513 @@
+use crate::ast::*;
+use crate::diagnostics::{Diagnostic, Diagnostics, Span};
+use crate::lexer::{lex, Token, TokenKind};
+
+pub fn parse(source: &str) -> Result<Program, Diagnostics> {
+    let tokens = lex(source)?;
+    Parser::new(tokens).parse_program()
+}
+
+struct Parser {
+    tokens: TokenStream,
+    diagnostics: Diagnostics,
+}
+
+impl Parser {
+    fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens: TokenStream::new(tokens),
+            diagnostics: Diagnostics::new(),
+        }
+    }
+
+    fn parse_program(mut self) -> Result<Program, Diagnostics> {
+        let mut functions = Vec::new();
+        self.skip_newlines();
+
+        while !self.at(&TokenKind::Eof) {
+            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+                functions.push(self.parse_function());
+            } else {
+                self.error_here("expected function definition");
+                self.recover_top_level();
+            }
+            self.skip_newlines();
+        }
+
+        self.diagnostics.into_result(Program { functions })
+    }
+
+    fn parse_function(&mut self) -> Function {
+        let book_exposed = self.eat(&TokenKind::BookAnnotation);
+        if book_exposed {
+            self.skip_newlines();
+        }
+
+        let start = self.expect(TokenKind::Fn, "expected 'fn'").span;
+        let name = self.expect_identifier("expected function name");
+        self.expect(TokenKind::LeftParen, "expected '(' after function name");
+
+        let mut params = Vec::new();
+        if !self.at(&TokenKind::RightParen) {
+            loop {
+                let span = self.current_span();
+                let name = self.expect_identifier("expected parameter name");
+                self.expect(TokenKind::Colon, "expected ':' after parameter name");
+                let ty = self.parse_type();
+                params.push(Param { name, ty, span });
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.expect(TokenKind::RightParen, "expected ')' after parameters");
+        self.expect(TokenKind::Arrow, "expected '->' before return type");
+        let return_type = self.parse_type();
+        self.expect_statement_break("expected newline after function signature");
+        let body = self.parse_block();
+
+        Function {
+            name,
+            params,
+            return_type,
+            body,
+            book_exposed,
+            span: start,
+        }
+    }
+
+    fn parse_block(&mut self) -> Vec<Stmt> {
+        let mut statements = Vec::new();
+        self.skip_newlines();
+
+        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+            statements.push(self.parse_stmt());
+            self.skip_newlines();
+        }
+
+        self.expect(TokenKind::End, "expected 'end'");
+        statements
+    }
+
+    fn parse_stmt(&mut self) -> Stmt {
+        let span = self.current_span();
+        let kind = match self.peek().kind.clone() {
+            TokenKind::Let => {
+                self.bump();
+                let name = self.expect_identifier("expected variable name after 'let'");
+                self.expect(TokenKind::Assign, "expected '=' after variable name");
+                let value = self.parse_expr();
+                self.expect_statement_break("expected newline after let binding");
+                StmtKind::Let { name, value }
+            }
+            TokenKind::If => {
+                self.bump();
+                let condition = self.parse_expr();
+                self.expect(TokenKind::Colon, "expected ':' after if condition");
+                self.expect_statement_break("expected newline after if condition");
+                let body = self.parse_block();
+                StmtKind::If { condition, body }
+            }
+            TokenKind::While => {
+                self.bump();
+                let condition = self.parse_expr();
+                self.expect(TokenKind::Colon, "expected ':' after while condition");
+                self.expect_statement_break("expected newline after while condition");
+                let body = self.parse_block();
+                StmtKind::While { condition, body }
+            }
+            TokenKind::Return => {
+                self.bump();
+                let value = if self.at(&TokenKind::Newline)
+                    || self.at(&TokenKind::End)
+                    || self.at(&TokenKind::Eof)
+                {
+                    None
+                } else {
+                    Some(self.parse_expr())
+                };
+                self.expect_statement_break("expected newline after return");
+                StmtKind::Return(value)
+            }
+            TokenKind::Mc => {
+                self.bump();
+                let value = self.expect_string("expected string literal after 'mc'");
+                self.expect_statement_break("expected newline after raw command");
+                StmtKind::RawCommand(value)
+            }
+            TokenKind::Mcf => {
+                self.bump();
+                let value = self.expect_string("expected string literal after 'mcf'");
+                self.expect_statement_break("expected newline after macro command");
+                StmtKind::MacroCommand(value)
+            }
+            TokenKind::Identifier(_) if self.peek_n_is(1, &TokenKind::Assign) => {
+                let name = self.expect_identifier("expected variable name");
+                self.expect(TokenKind::Assign, "expected '=' in assignment");
+                let value = self.parse_expr();
+                self.expect_statement_break("expected newline after assignment");
+                StmtKind::Assign { name, value }
+            }
+            _ => {
+                let expr = self.parse_expr();
+                self.expect_statement_break("expected newline after expression");
+                StmtKind::Expr(expr)
+            }
+        };
+
+        Stmt { kind, span }
+    }
+
+    fn parse_expr(&mut self) -> Expr {
+        self.parse_expr_bp(0)
+    }
+
+    fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
+        let mut left = self.parse_primary();
+
+        loop {
+            let Some((op, left_bp, right_bp)) = self.current_infix_binding_power() else {
+                break;
+            };
+            if left_bp < min_bp {
+                break;
+            }
+
+            let span = self.bump().span;
+            let right = self.parse_expr_bp(right_bp);
+            left = Expr {
+                kind: ExprKind::Binary {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+
+        left
+    }
+
+    fn parse_primary(&mut self) -> Expr {
+        let token = self.bump();
+        match token.kind {
+            TokenKind::Integer(value) => Expr {
+                kind: ExprKind::Int(value),
+                span: token.span,
+            },
+            TokenKind::True => Expr {
+                kind: ExprKind::Bool(true),
+                span: token.span,
+            },
+            TokenKind::False => Expr {
+                kind: ExprKind::Bool(false),
+                span: token.span,
+            },
+            TokenKind::String(value) => Expr {
+                kind: ExprKind::String(value),
+                span: token.span,
+            },
+            TokenKind::Identifier(name) => {
+                if self.eat(&TokenKind::LeftParen) {
+                    let mut args = Vec::new();
+                    if !self.at(&TokenKind::RightParen) {
+                        loop {
+                            args.push(self.parse_expr_bp(0));
+                            if !self.eat(&TokenKind::Comma) {
+                                break;
+                            }
+                            if self.at(&TokenKind::RightParen) {
+                                self.error_here("expected expression");
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(TokenKind::RightParen, "expected ')' after call arguments");
+                    Expr {
+                        kind: ExprKind::Call { function: name, args },
+                        span: token.span,
+                    }
+                } else {
+                    Expr {
+                        kind: ExprKind::Variable(name),
+                        span: token.span,
+                    }
+                }
+            }
+            TokenKind::LeftParen => {
+                let expr = self.parse_expr_bp(0);
+                self.expect(TokenKind::RightParen, "expected ')' after expression");
+                expr
+            }
+            _ => {
+                self.diagnostics.push(Diagnostic::new(
+                    "expected expression",
+                    token.span.clone(),
+                ));
+                self.recover_expression();
+                Expr {
+                    kind: ExprKind::Int(0),
+                    span: token.span,
+                }
+            }
+        }
+    }
+
+    fn current_infix_binding_power(&self) -> Option<(BinaryOp, u8, u8)> {
+        match self.peek().kind {
+            TokenKind::EqEq => Some((BinaryOp::Eq, 1, 2)),
+            TokenKind::BangEq => Some((BinaryOp::NotEq, 1, 2)),
+            TokenKind::Lt => Some((BinaryOp::Lt, 1, 2)),
+            TokenKind::Lte => Some((BinaryOp::Lte, 1, 2)),
+            TokenKind::Gt => Some((BinaryOp::Gt, 1, 2)),
+            TokenKind::Gte => Some((BinaryOp::Gte, 1, 2)),
+            TokenKind::Plus => Some((BinaryOp::Add, 3, 4)),
+            TokenKind::Minus => Some((BinaryOp::Sub, 3, 4)),
+            TokenKind::Star => Some((BinaryOp::Mul, 5, 6)),
+            TokenKind::Slash => Some((BinaryOp::Div, 5, 6)),
+            _ => None,
+        }
+    }
+
+    fn parse_type(&mut self) -> Type {
+        let token = self.bump();
+        match token.kind {
+            TokenKind::Identifier(name) => match name.as_str() {
+                "int" => Type::Int,
+                "bool" => Type::Bool,
+                "string" => Type::String,
+                "void" => Type::Void,
+                _ => {
+                    self.diagnostics.push(Diagnostic::new(
+                        format!("unknown type '{}'", name),
+                        token.span,
+                    ));
+                    Type::Void
+                }
+            },
+            _ => {
+                self.diagnostics
+                    .push(Diagnostic::new("expected type", token.span));
+                Type::Void
+            }
+        }
+    }
+
+    fn expect_statement_break(&mut self, message: &str) {
+        if self.at(&TokenKind::Newline) {
+            self.skip_newlines();
+        } else if !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+            self.error_here(message);
+            self.recover_statement();
+            self.skip_newlines();
+        }
+    }
+
+    fn expect_identifier(&mut self, message: &str) -> String {
+        let token = self.bump();
+        match token.kind {
+            TokenKind::Identifier(name) => name,
+            _ => {
+                self.diagnostics
+                    .push(Diagnostic::new(message, token.span.clone()));
+                "_error".to_string()
+            }
+        }
+    }
+
+    fn expect_string(&mut self, message: &str) -> String {
+        let token = self.bump();
+        match token.kind {
+            TokenKind::String(value) => value,
+            _ => {
+                self.diagnostics
+                    .push(Diagnostic::new(message, token.span.clone()));
+                String::new()
+            }
+        }
+    }
+
+    fn expect(&mut self, expected: TokenKind, message: &str) -> Token {
+        if self.at(&expected) {
+            self.bump()
+        } else {
+            self.error_here(message);
+            Token {
+                span: self.current_span(),
+                range: self.peek().range,
+                kind: expected,
+            }
+        }
+    }
+
+    fn eat(&mut self, expected: &TokenKind) -> bool {
+        if self.at(expected) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn at(&self, expected: &TokenKind) -> bool {
+        same_variant(&self.peek().kind, expected)
+    }
+
+    fn peek_n_is(&self, offset: usize, expected: &TokenKind) -> bool {
+        same_variant(&self.tokens.peek_n(offset).kind, expected)
+    }
+
+    fn peek(&self) -> &Token {
+        self.tokens.peek()
+    }
+
+    fn bump(&mut self) -> Token {
+        self.tokens.bump()
+    }
+
+    fn current_span(&self) -> Span {
+        self.peek().span.clone()
+    }
+
+    fn skip_newlines(&mut self) {
+        while self.eat(&TokenKind::Newline) {}
+    }
+
+    fn recover_top_level(&mut self) {
+        while !self.at(&TokenKind::Eof) {
+            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+                break;
+            }
+            self.bump();
+            if self.at(&TokenKind::Fn) || self.at(&TokenKind::BookAnnotation) {
+                break;
+            }
+        }
+    }
+
+    fn recover_statement(&mut self) {
+        while !self.at(&TokenKind::Eof)
+            && !self.at(&TokenKind::Newline)
+            && !self.at(&TokenKind::End)
+        {
+            self.bump();
+        }
+    }
+
+    fn recover_expression(&mut self) {
+        while !self.at(&TokenKind::Eof)
+            && !self.at(&TokenKind::Comma)
+            && !self.at(&TokenKind::RightParen)
+            && !self.at(&TokenKind::Newline)
+            && !self.at(&TokenKind::End)
+            && !self.at(&TokenKind::Colon)
+            && !self.at(&TokenKind::Let)
+            && !self.at(&TokenKind::If)
+            && !self.at(&TokenKind::While)
+            && !self.at(&TokenKind::Return)
+            && !self.at(&TokenKind::Mc)
+            && !self.at(&TokenKind::Mcf)
+        {
+            self.bump();
+        }
+    }
+
+    fn error_here(&mut self, message: &str) {
+        self.diagnostics
+            .push(Diagnostic::new(message, self.current_span()));
+    }
+}
+
+struct TokenStream {
+    tokens: Vec<Token>,
+    index: usize,
+}
+
+impl TokenStream {
+    fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, index: 0 }
+    }
+
+    fn peek(&self) -> &Token {
+        &self.tokens[self.index]
+    }
+
+    fn peek_n(&self, offset: usize) -> &Token {
+        let index = (self.index + offset).min(self.tokens.len().saturating_sub(1));
+        &self.tokens[index]
+    }
+
+    fn bump(&mut self) -> Token {
+        let token = self.peek().clone();
+        if !matches!(token.kind, TokenKind::Eof) {
+            self.index += 1;
+        }
+        token
+    }
+}
+
+fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::ast::{ExprKind, StmtKind};
+
+    #[test]
+    fn parses_comments_and_function_annotations() {
+        let program = parse(
+            r#"
+# leading
+@book
+fn fibb(n: int) -> void # trailing
+    return
+end
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(program.functions.len(), 1);
+        assert!(program.functions[0].book_exposed);
+    }
+
+    #[test]
+    fn preserves_expression_precedence() {
+        let program = parse(
+            r#"
+fn main() -> void
+    let value = 1 + 2 * 3
+    return
+end
+"#,
+        )
+        .unwrap();
+
+        let StmtKind::Let { value, .. } = &program.functions[0].body[0].kind else {
+            panic!("expected let statement");
+        };
+        let ExprKind::Binary { op, right, .. } = &value.kind else {
+            panic!("expected binary expression");
+        };
+        assert!(matches!(op, crate::ast::BinaryOp::Add));
+        assert!(matches!(right.kind, ExprKind::Binary { .. }));
+    }
+
+    #[test]
+    fn recovers_multiple_parser_errors() {
+        let error = parse(
+            r#"
+fn main() -> void
+    let x =
+    let y =
+end
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error.0.len() >= 2);
+        assert!(error.to_string().contains("expected expression"));
+    }
+}

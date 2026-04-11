@@ -402,9 +402,19 @@ fn static_completion_items(
             "at(${1:anchor}, ${2:value})",
         ),
         (
+            "at(…): … end",
+            "at(anchor): … end — run commands at an entity/block",
+            "at(${1:anchor}):\n\t$0\nend",
+        ),
+        (
             "as",
             "as(anchor: entity_set|entity_ref, value: entity_set|entity_ref|block_ref)",
             "as(${1:anchor}, ${2:value})",
+        ),
+        (
+            "as(…): … end",
+            "as(anchor): … end — run commands as an entity",
+            "as(${1:anchor}):\n\t$0\nend",
         ),
         ("int", "int(value: nbt) -> int", "int(${1:value})"),
         ("bool", "bool(value: nbt) -> bool", "bool(${1:value})"),
@@ -785,7 +795,8 @@ fn infer_expr_type(value: &str) -> Option<Type> {
 }
 
 fn opens_block(line: &str) -> bool {
-    (line.starts_with("if ") || line.starts_with("while ") || line.starts_with("for "))
+    (line.starts_with("if ") || line.starts_with("while ") || line.starts_with("for ")
+        || line.starts_with("as(") || line.starts_with("at("))
         && line.contains(':')
 }
 

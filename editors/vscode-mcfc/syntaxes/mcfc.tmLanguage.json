@@ -225,7 +225,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|exists|block|at)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|exists|block|at|as)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",

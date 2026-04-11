@@ -200,6 +200,13 @@ fn main() -> void
     style_closest_pig()
     player_api_demo()
     collections_demo()
+
+    let me = single(selector("@a"))
+    if exists(me):
+        me.mainhand.item = "minecraft:diamond"
+        me.mainhand.count = 32
+    end
+    
     mc "say done"
     return
 end

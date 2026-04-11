@@ -292,6 +292,16 @@ end
     assert!(result.artifacts.files.values().any(|file| {
         file.contains("effect give $(selector) $(effect) $(duration) $(amplifier) true")
     }));
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains(
+            "item modify entity $(selector) weapon.mainhand {\"function\":\"minecraft:set_count\",\"count\":$(count)}",
+        )
+    }));
+    assert!(!result.artifacts.files.values().any(|file| {
+        file.contains(
+            "\"function\":\"minecraft:set_count\",\"count\":{\"type\":\"minecraft:storage\"",
+        )
+    }));
 }
 
 #[test]

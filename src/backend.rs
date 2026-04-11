@@ -1944,7 +1944,7 @@ impl Backend {
                 ));
                 lines.push(self.query_command(
                     base_slot,
-                    "item modify entity $(selector) weapon.mainhand {\"function\":\"minecraft:set_count\",\"count\":{\"type\":\"minecraft:storage\",\"target\":\"$(count)\"}}".to_string(),
+                    "item modify entity $(selector) weapon.mainhand {\"function\":\"minecraft:set_count\",\"count\":$(count)}".to_string(),
                     true,
                 ));
                 true

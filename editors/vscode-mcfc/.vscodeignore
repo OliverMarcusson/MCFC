@@ -1,0 +1,9 @@
+**/*.map
+.gitignore
+src/**
+scripts/**
+tsconfig.json
+node_modules/@types/**
+node_modules/typescript/**
+syntaxes/test-cases/**
+*.vsix

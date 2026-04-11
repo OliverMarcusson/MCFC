@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod ast;
 pub mod backend;
 pub mod cli;
@@ -5,5 +6,6 @@ pub mod compiler;
 pub mod diagnostics;
 pub mod ir;
 pub mod lexer;
+pub mod lsp;
 pub mod parser;
 pub mod types;

@@ -1,15 +1,26 @@
 {
   "name": "mcfc-syntax",
-  "displayName": "MCFC Syntax Highlighting",
-  "description": "Syntax highlighting and editor basics for MCFC .mcf files.",
+  "displayName": "MCFC Language Support",
+  "description": "Syntax highlighting, editor basics, and language server support for MCFC .mcf files.",
   "version": "0.0.1",
   "publisher": "mcfc",
   "engines": {
     "vscode": "^1.85.0"
   },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:mcfc"
+  ],
   "categories": [
     "Programming Languages"
   ],
+  "scripts": {
+    "compile": "tsc -p ./",
+    "copy-server": "node ./scripts/copy-server.js",
+    "vscode:prepublish": "npm run compile && npm run copy-server",
+    "prepackage": "npm run compile && npm run copy-server",
+    "package": "vsce package"
+  },
   "contributes": {
     "languages": [
       {
@@ -31,5 +42,14 @@
         "path": "./syntaxes/mcfc.tmLanguage.json"
       }
     ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.15.0",
+    "typescript": "^5.4.5"
   }
 }

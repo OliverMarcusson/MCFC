@@ -265,6 +265,8 @@ impl Parser {
                 kind: ExprKind::String(value),
                 span: token.span,
             },
+            TokenKind::LeftBracket => self.parse_array_literal(token.span),
+            TokenKind::LeftBrace => self.parse_dict_literal(token.span),
             TokenKind::Identifier(name) => {
                 if self.eat(&TokenKind::LeftParen) {
                     let args = self.parse_call_args();
@@ -309,25 +311,26 @@ impl Parser {
                     ExprKind::Path(path) => {
                         let mut path = path.clone();
                         match path.segments.pop() {
-                        Some(PathSegment::Field(method)) => {
-                            let receiver = if path.segments.is_empty() {
-                                *path.base
-                            } else {
-                                Expr {
-                                    kind: ExprKind::Path(path),
-                                    span: expr.span.clone(),
-                                }
-                            };
-                            (method, receiver)
+                            Some(PathSegment::Field(method)) => {
+                                let receiver = if path.segments.is_empty() {
+                                    *path.base
+                                } else {
+                                    Expr {
+                                        kind: ExprKind::Path(path),
+                                        span: expr.span.clone(),
+                                    }
+                                };
+                                (method, receiver)
+                            }
+                            _ => {
+                                self.diagnostics.push(Diagnostic::new(
+                                    "only member access may be called like a method",
+                                    span.clone(),
+                                ));
+                                break;
+                            }
                         }
-                        _ => {
-                            self.diagnostics.push(Diagnostic::new(
-                                "only member access may be called like a method",
-                                span.clone(),
-                            ));
-                            break;
-                        }
-                    }}
+                    }
                     _ => break,
                 };
                 self.bump();
@@ -347,24 +350,61 @@ impl Parser {
             } else if self.eat(&TokenKind::LeftBracket) {
                 let span = self.current_span();
                 let index_expr = self.parse_expr_bp(0);
-                let index = match index_expr.kind {
-                    ExprKind::Int(value) => value,
-                    _ => {
-                        self.diagnostics.push(Diagnostic::new(
-                            "path indices must be integer literals",
-                            span.clone(),
-                        ));
-                        0
-                    }
-                };
                 self.expect(TokenKind::RightBracket, "expected ']' after index");
-                expr = self.append_path_segment(expr, PathSegment::Index(index), span);
+                expr =
+                    self.append_path_segment(expr, PathSegment::Index(Box::new(index_expr)), span);
             } else {
                 break;
             }
         }
 
         expr
+    }
+
+    fn parse_array_literal(&mut self, span: Span) -> Expr {
+        let mut values = Vec::new();
+        if !self.at(&TokenKind::RightBracket) {
+            loop {
+                values.push(self.parse_expr_bp(0));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RightBracket) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightBracket, "expected ']' after array literal");
+        Expr {
+            kind: ExprKind::ArrayLiteral(values),
+            span,
+        }
+    }
+
+    fn parse_dict_literal(&mut self, span: Span) -> Expr {
+        let mut entries = Vec::new();
+        if !self.at(&TokenKind::RightBrace) {
+            loop {
+                let key = self.expect_string("expected string key in dictionary literal");
+                self.expect(TokenKind::Colon, "expected ':' after dictionary key");
+                let value = self.parse_expr_bp(0);
+                entries.push((key, value));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RightBrace) {
+                    break;
+                }
+            }
+        }
+        self.expect(
+            TokenKind::RightBrace,
+            "expected '}' after dictionary literal",
+        );
+        Expr {
+            kind: ExprKind::DictLiteral(entries),
+            span,
+        }
     }
 
     fn parse_call_args(&mut self) -> Vec<Expr> {
@@ -458,6 +498,18 @@ impl Parser {
                 "block_ref" => Type::BlockRef,
                 "nbt" => Type::Nbt,
                 "void" => Type::Void,
+                "array" => {
+                    self.expect(TokenKind::Lt, "expected '<' after 'array'");
+                    let element = self.parse_type();
+                    self.expect(TokenKind::Gt, "expected '>' after array element type");
+                    Type::Array(Box::new(element))
+                }
+                "dict" => {
+                    self.expect(TokenKind::Lt, "expected '<' after 'dict'");
+                    let value = self.parse_type();
+                    self.expect(TokenKind::Gt, "expected '>' after dictionary value type");
+                    Type::Dict(Box::new(value))
+                }
                 _ => {
                     self.diagnostics.push(Diagnostic::new(
                         format!("unknown type '{}'", name),
@@ -576,6 +628,7 @@ impl Parser {
             && !self.at(&TokenKind::Comma)
             && !self.at(&TokenKind::RightParen)
             && !self.at(&TokenKind::RightBracket)
+            && !self.at(&TokenKind::RightBrace)
             && !self.at(&TokenKind::DotDot)
             && !self.at(&TokenKind::DotDotEq)
             && !self.at(&TokenKind::Newline)
@@ -606,10 +659,8 @@ impl Parser {
             ExprKind::Variable(name) => AssignTarget::Variable(name),
             ExprKind::Path(path) => AssignTarget::Path(path),
             _ => {
-                self.diagnostics.push(Diagnostic::new(
-                    "invalid assignment target",
-                    expr.span,
-                ));
+                self.diagnostics
+                    .push(Diagnostic::new("invalid assignment target", expr.span));
                 AssignTarget::Variable("_error".to_string())
             }
         }
@@ -705,8 +756,7 @@ end
         )
         .unwrap();
 
-        let StmtKind::For { kind, body, .. } = &program.functions[0].body[0].kind
-        else {
+        let StmtKind::For { kind, body, .. } = &program.functions[0].body[0].kind else {
             panic!("expected for statement");
         };
         assert!(matches!(

@@ -97,6 +97,80 @@ fn player_api_demo() -> void
     return
 end
 
+fn collection_pick(values: array<int>, index: int) -> int
+    return values[index]
+end
+
+fn collection_total(counts: dict<int>, key: string) -> int
+    return counts[key]
+end
+
+fn collections_demo() -> void
+    mcf "tellraw @a \"collections: start\""
+
+    let values = [1, 2, 3]
+    let index = 1
+    mcf "tellraw @a \"array init index=$(index)\""
+
+    let first = values[0]
+    let dynamic = values[index]
+    mcf "tellraw @a \"array read values[0]=$(first) values[index]=$(dynamic)\""
+
+    values[index] = first + dynamic
+    let after_set = values[index]
+    mcf "tellraw @a \"array write values[index]=$(after_set)\""
+
+    values.push(8)
+    let pushed = values[3]
+    mcf "tellraw @a \"array push values[3]=$(pushed)\""
+
+    let popped = values.pop()
+    mcf "tellraw @a \"array pop popped=$(popped)\""
+
+    let length = values.len()
+    mcf "tellraw @a \"array len length=$(length)\""
+
+    let picked = collection_pick(values, index)
+    mcf "tellraw @a \"array helper pick(values, index)=$(picked)\""
+
+    let labels = ["zero", "one", "two"]
+    let label = labels[index]
+    mcf "tellraw @a \"string array labels[index]=$(label)\""
+
+    let counts = {"wood": 12, "stone": 4}
+    let key = "wood"
+    let has_wood = counts.has(key)
+    let original_wood = counts[key]
+    mcf "tellraw @a \"dict init key=$(key) wood=$(original_wood) has=$(has_wood)\""
+
+    counts[key] = popped + length + picked
+    let updated_wood = counts[key]
+    mcf "tellraw @a \"dict write counts[key]=$(updated_wood)\""
+
+    counts.remove("stone")
+    let has_stone = counts.has("stone")
+    mcf "tellraw @a \"dict remove stone has_stone=$(has_stone)\""
+
+    let wood = collection_total(counts, key)
+    mcf "tellraw @a \"dict helper total(counts, key)=$(wood)\""
+
+    let nested = [{"score": 1}, {"score": 2}]
+    let nested_index = 1
+    let nested_key = "score"
+    let nested_before = nested[nested_index][nested_key]
+    mcf "tellraw @a \"nested before nested[1][score]=$(nested_before)\""
+
+    nested[nested_index][nested_key] = wood
+    let nested_score = nested[nested_index][nested_key]
+    mcf "tellraw @a \"nested write nested[1][score]=$(nested_score)\""
+
+    if has_wood:
+        mcf "tellraw @a \"collections label=$(label) wood=$(wood) nested=$(nested_score)\""
+    end
+
+    return
+end
+
 fn main() -> void
     let version = 1
     mcf 'tellraw @a "MCFC version 0.$(version)"'
@@ -125,6 +199,7 @@ fn main() -> void
     name_closest_pig()
     style_closest_pig()
     player_api_demo()
+    collections_demo()
     mc "say done"
     return
 end

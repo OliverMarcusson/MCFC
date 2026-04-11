@@ -14,6 +14,7 @@ The compiler is currently focused on a compact core language:
 - function calls
 - raw Minecraft commands
 - storage-backed strings
+- storage-backed arrays and dictionaries
 
 ## CLI Usage
 
@@ -134,6 +135,9 @@ Supported expressions:
 - variables
 - function calls
 - path access, for example `pig.CustomName` or `pig.HandItems[0]`
+- array literals, for example `[1, 2, 3]`
+- dictionary literals, for example `{"wood": 12, "stone": 4}`
+- collection indexing, for example `values[i]` or `counts["wood"]`
 - unary `not`
 - binary operators
 
@@ -161,6 +165,8 @@ Built-in types:
 - `int`
 - `bool`
 - `string`
+- `array<T>`
+- `dict<T>`
 - `entity_set`
 - `entity_ref`
 - `block_ref`
@@ -190,6 +196,22 @@ Minecraft query builtins:
 - `block("...") -> block_ref`
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
 - `int(nbt)`, `bool(nbt)`, `string(nbt)`
+
+Collection methods:
+
+- `array<T>.len() -> int`
+- `array<T>.push(value: T) -> void`
+- `array<T>.pop() -> T`
+- `dict<T>.has(key: string) -> bool`
+- `dict<T>.remove(key: string) -> void`
+
+Collection notes:
+
+- arrays are backed by Minecraft storage lists
+- dictionaries are backed by Minecraft storage compounds
+- dictionary keys are strings and use bracket syntax: `counts["wood"]` or `counts[key]`
+- dictionary key values must be storage-path-safe: letters, digits, and `_`, with a non-digit first character
+- empty collection literals currently require type context; otherwise they are rejected
 
 Player-safe surfaces:
 
@@ -363,6 +385,8 @@ The current backend maps values like this:
 - `int`: scoreboard-backed
 - `bool`: scoreboard-backed using `0` and `1`
 - `string`: Minecraft data storage-backed
+- `array<T>`: Minecraft data storage-backed
+- `dict<T>`: Minecraft data storage-backed
 
 Generated files are deterministic and use a reserved generated namespace layout.
 
@@ -423,7 +447,7 @@ Not supported yet:
 - `@book` string arguments
 - `@book` function calls with non-`int` parameters or non-`void` return types
 - rich book parsing such as `fibb(8)`, quoted arguments, or multiple commands
-- compound data types
+- arbitrary object/struct types beyond arrays, dictionaries, and raw `nbt`
 - pattern matching
 - modules/imports
 - optimization passes

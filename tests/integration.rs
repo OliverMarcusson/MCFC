@@ -137,7 +137,9 @@ end
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
         .unwrap();
     assert!(main.contains("selector set value \"@e[type=pig,limit=3]\""));
-    assert!(result.artifacts.files.values().any(|file| file.contains("execute as $(selector) run function mcfc:generated/main__d0__for_each_1")));
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("execute as $(selector) run function mcfc:generated/main__d0__for_each_1")
+    }));
     assert!(result.artifacts.files.values().any(|file| file.contains("data modify entity $(selector) CustomName set from storage")));
 }
 
@@ -163,8 +165,20 @@ end
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
         .unwrap();
     assert!(main.contains("@a[tag=hunter,limit=1]"));
-    assert!(result.artifacts.files.values().any(|file| file.contains("execute at ")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("@e[type=pig,sort=nearest,limit=1]")));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("execute at "))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("@e[type=pig,sort=nearest,limit=1]"))
+    );
 }
 
 #[test]
@@ -185,8 +199,20 @@ end
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
         .unwrap();
     assert!(main.contains("pos set value \"~ ~ ~\""));
-    assert!(result.artifacts.files.values().any(|file| file.contains("data modify block $(pos) CustomName set from storage")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("set from block $(pos) CustomName")));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("data modify block $(pos) CustomName set from storage"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("set from block $(pos) CustomName"))
+    );
 }
 
 #[test]
@@ -217,14 +243,55 @@ end
         .get("data/mcfc/function/generated/setup.mcfunction")
         .unwrap();
     assert!(setup.contains("scoreboard objectives add mcfs_quest_stage dummy"));
-    assert!(result.artifacts.files.values().any(|file| file.contains("data modify storage mcfc:runtime") && file.contains("set from entity $(selector) Air")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("scoreboard players operation $(selector) mcfs_quest_stage")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("tag $(selector) add infected")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("execute as $(selector) if entity @s[tag=infected]")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("team join $(team) $(selector)")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("item modify entity $(selector) weapon.mainhand")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("item replace entity $(selector) weapon.mainhand with $(item_id)")));
-    assert!(result.artifacts.files.values().any(|file| file.contains("effect give $(selector) $(effect) $(duration) $(amplifier) true")));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("data modify storage mcfc:runtime")
+                && file.contains("set from entity $(selector) Air"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("scoreboard players operation $(selector) mcfs_quest_stage"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tag $(selector) add infected"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("execute as $(selector) if entity @s[tag=infected]"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("team join $(team) $(selector)"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("item modify entity $(selector) weapon.mainhand"))
+    );
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("item replace entity $(selector) weapon.mainhand with $(item_id)")
+    }));
+    assert!(result.artifacts.files.values().any(|file| {
+        file.contains("effect give $(selector) $(effect) $(duration) $(amplifier) true")
+    }));
 }
 
 #[test]
@@ -353,6 +420,115 @@ end
         .unwrap();
     assert!(main.contains("execute store success score $d0___cmp_"));
     assert!(main.contains("data modify storage mcfc:runtime frames.__cmp__tmp"));
+}
+
+#[test]
+fn compiles_storage_backed_arrays() {
+    let source = r#"
+fn pick(xs: array<int>, index: int) -> int
+    return xs[index]
+end
+
+fn main() -> void
+    let values = [1, 2, 3]
+    let i = 1
+    values.push(4)
+    let popped = values.pop()
+    let size = values.len()
+    values[i] = popped + size
+    let selected = pick(values, i)
+    mcf "say $(selected)"
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("data modify storage mcfc:runtime frames.d0.main.values set value []"));
+    assert!(main.contains("append from storage mcfc:runtime"));
+    assert!(main.contains("data remove storage mcfc:runtime frames.d0.main.values[-1]"));
+    assert!(main.contains(
+        "execute store result score $d0_main_size mcfc run data get storage mcfc:runtime"
+    ));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("with storage mcfc:runtime frames.d0.main.__path"))
+    );
+    assert!(files.values().any(|file| file.contains("$(i1)")));
+}
+
+#[test]
+fn compiles_storage_backed_dictionaries() {
+    let source = r#"
+fn main() -> void
+    let counts = {"wood": 12, "stone": 4}
+    let key = "wood"
+    counts[key] = 13
+    let has_wood = counts.has(key)
+    counts.remove("stone")
+    let amount = counts[key]
+    if has_wood:
+        mcf "say $(amount)"
+    end
+    return
+end
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("data modify storage mcfc:runtime frames.d0.main.counts set value {}"));
+    assert!(main.contains("frames.d0.main.counts.wood"));
+    assert!(main.contains("data remove storage mcfc:runtime frames.d0.main.counts.stone"));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains(".$(k1)") || file.contains(".$(key)"))
+    );
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute if data storage mcfc:runtime"))
+    );
+}
+
+#[test]
+fn rejects_invalid_collection_usage() {
+    let source = r#"
+fn bad_param(xs: array<entity_ref>) -> void
+    return
+end
+
+fn main() -> void
+    let arr = [1, 2]
+    let dict = {"wood": 1}
+    let empty = []
+    let bad_mix = [1, "two"]
+    let bad_index = arr["x"]
+    let bad_key = dict[1]
+    let bad_refs = [selector("@a")]
+    arr.push("bad")
+    dict["bad-key"] = 2
+    return
+end
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("empty array literals require type context"));
+    assert!(rendered.contains("array literals must contain values of one type"));
+    assert!(rendered.contains("array index must have type 'int'"));
+    assert!(rendered.contains("dictionary key must have type 'string'"));
+    assert!(rendered.contains("push(...) value must be 'int', found 'string'"));
+    assert!(rendered.contains("dictionary key 'bad-key' is not storage-path-safe"));
+    assert!(rendered.contains("collection values may not have unsupported type 'entity_ref'"));
+    assert!(rendered.contains("collection values may not have unsupported type 'entity_set'"));
 }
 
 #[test]
@@ -587,7 +763,13 @@ end
     ]);
 
     assert_eq!(status, 0);
-    assert!(out.join("data").join("test-pack").join("function").join("main.mcfunction").exists());
+    assert!(
+        out.join("data")
+            .join("test-pack")
+            .join("function")
+            .join("main.mcfunction")
+            .exists()
+    );
 }
 
 #[test]
@@ -615,7 +797,13 @@ end
     ]);
 
     assert_eq!(status, 0);
-    assert!(out.join("data").join("custom_space").join("function").join("main.mcfunction").exists());
+    assert!(
+        out.join("data")
+            .join("custom_space")
+            .join("function")
+            .join("main.mcfunction")
+            .exists()
+    );
 }
 
 fn temp_path() -> PathBuf {

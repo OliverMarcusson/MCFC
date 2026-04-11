@@ -123,6 +123,7 @@ pub enum RefKind {
 pub struct TypedPathExpr {
     pub base: Box<TypedExpr>,
     pub segments: Vec<PathSegment>,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +131,8 @@ pub enum TypedExprKind {
     Int(i64),
     Bool(bool),
     String(String),
+    ArrayLiteral(Vec<TypedExpr>),
+    DictLiteral(Vec<(String, TypedExpr)>),
     Variable(String),
     Selector(String),
     Block(String),
@@ -176,6 +179,14 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     let mut signatures = BTreeMap::new();
 
     for function in &program.functions {
+        for param in &function.params {
+            validate_declared_type(&param.ty, param.span.clone(), &mut diagnostics);
+        }
+        validate_declared_type(
+            &function.return_type,
+            function.span.clone(),
+            &mut diagnostics,
+        );
         if signatures.contains_key(&function.name) {
             diagnostics.push(Diagnostic::new(
                 format!("duplicate function '{}'", function.name),
@@ -310,8 +321,14 @@ fn type_check_block(
                         statement.span.clone(),
                     ));
                 }
-                let value =
-                    type_check_expr(value, signatures, env, ref_env, called_functions, diagnostics);
+                let value = type_check_expr(
+                    value,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
                 env.insert(name.clone(), value.ty.clone());
                 ref_env.insert(name.clone(), value.ref_kind);
                 locals.insert(name.clone(), value.ty.clone());
@@ -322,8 +339,14 @@ fn type_check_block(
                 }
             }
             StmtKind::Assign { target, value } => {
-                let value =
-                    type_check_expr(value, signatures, env, ref_env, called_functions, diagnostics);
+                let value = type_check_expr(
+                    value,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
                 let target = match target {
                     AssignTarget::Variable(name) => {
                         let Some(existing) = env.get(name).cloned() else {
@@ -356,19 +379,48 @@ fn type_check_block(
                             diagnostics,
                             statement.span.clone(),
                         );
-                        if !matches!(typed_path.base.ty, Type::EntityRef | Type::BlockRef) {
+                        if matches!(typed_path.base.ty, Type::EntityRef | Type::BlockRef) {
+                            if !matches!(
+                                value.ty,
+                                Type::Int | Type::Bool | Type::String | Type::Nbt
+                            ) {
+                                diagnostics.push(Diagnostic::new(
+                                    "path assignment requires a value of type 'int', 'bool', 'string', or 'nbt'",
+                                    statement.span.clone(),
+                                ));
+                            }
+                            validate_player_path_write(
+                                &typed_path,
+                                &value,
+                                statement.span.clone(),
+                                diagnostics,
+                            );
+                        } else if matches!(
+                            typed_path.base.ty,
+                            Type::Array(_) | Type::Dict(_) | Type::Nbt
+                        ) {
+                            if !is_storage_lvalue_expr(&path.base) {
+                                diagnostics.push(Diagnostic::new(
+                                    "collection assignment requires a variable or collection element base",
+                                    statement.span.clone(),
+                                ));
+                            }
+                            if typed_path.ty != value.ty {
+                                diagnostics.push(Diagnostic::new(
+                                    format!(
+                                        "cannot assign '{}' to collection element of type '{}'",
+                                        value.ty.as_str(),
+                                        typed_path.ty.as_str()
+                                    ),
+                                    statement.span.clone(),
+                                ));
+                            }
+                        } else {
                             diagnostics.push(Diagnostic::new(
                                 "path assignment requires an 'entity_ref' or 'block_ref' base",
                                 statement.span.clone(),
                             ));
                         }
-                        if !matches!(value.ty, Type::Int | Type::Bool | Type::String | Type::Nbt) {
-                            diagnostics.push(Diagnostic::new(
-                                "path assignment requires a value of type 'int', 'bool', 'string', or 'nbt'",
-                                statement.span.clone(),
-                            ));
-                        }
-                        validate_player_path_write(&typed_path, &value, statement.span.clone(), diagnostics);
                         TypedAssignTarget::Path(typed_path)
                     }
                 };
@@ -379,8 +431,14 @@ fn type_check_block(
                 then_body,
                 else_body,
             } => {
-                let condition =
-                    type_check_expr(condition, signatures, env, ref_env, called_functions, diagnostics);
+                let condition = type_check_expr(
+                    condition,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
                         "if condition must have type 'bool'",
@@ -416,8 +474,14 @@ fn type_check_block(
                 }
             }
             StmtKind::While { condition, body } => {
-                let condition =
-                    type_check_expr(condition, signatures, env, ref_env, called_functions, diagnostics);
+                let condition = type_check_expr(
+                    condition,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
                         "while condition must have type 'bool'",
@@ -452,10 +516,22 @@ fn type_check_block(
                         end,
                         inclusive,
                     } => {
-                        let start =
-                            type_check_expr(start, signatures, env, ref_env, called_functions, diagnostics);
-                        let end =
-                            type_check_expr(end, signatures, env, ref_env, called_functions, diagnostics);
+                        let start = type_check_expr(
+                            start,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        );
+                        let end = type_check_expr(
+                            end,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        );
                         if start.ty != Type::Int {
                             diagnostics.push(Diagnostic::new(
                                 "for range start must have type 'int'",
@@ -509,7 +585,11 @@ fn type_check_block(
                     loop_depth + 1,
                     diagnostics,
                 );
-                TypedStmtKind::For { name: name.clone(), kind, body }
+                TypedStmtKind::For {
+                    name: name.clone(),
+                    kind,
+                    body,
+                }
             }
             StmtKind::Break => {
                 if loop_depth == 0 {
@@ -531,7 +611,14 @@ fn type_check_block(
             }
             StmtKind::Return(value) => {
                 let value = value.as_ref().map(|expr| {
-                    type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics)
+                    type_check_expr(
+                        expr,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    )
                 });
                 match (return_type, &value) {
                     (Type::Void, None) => {}
@@ -580,8 +667,18 @@ fn type_check_block(
                 }
             }
             StmtKind::Expr(expr) => {
-                let expr = type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics);
-                if !matches!(expr.kind, TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }) {
+                let expr = type_check_expr(
+                    expr,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if !matches!(
+                    expr.kind,
+                    TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
+                ) {
                     diagnostics.push(Diagnostic::new(
                         "only function calls may appear as bare expression statements",
                         statement.span.clone(),
@@ -621,8 +718,70 @@ fn type_check_expr(
             ty: Type::String,
             ref_kind: RefKind::Unknown,
         },
-        ExprKind::Path(path) => TypedExpr {
-            kind: TypedExprKind::Path(type_check_path(
+        ExprKind::ArrayLiteral(values) => {
+            let values: Vec<_> = values
+                .iter()
+                .map(|value| {
+                    type_check_expr(
+                        value,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    )
+                })
+                .collect();
+            let ty = infer_collection_type(
+                values.iter().map(|value| &value.ty),
+                "array literals must contain values of one type",
+                "empty array literals require type context",
+                expr.span.clone(),
+                diagnostics,
+            );
+            validate_collection_value_type(&ty, expr.span.clone(), diagnostics);
+            TypedExpr {
+                kind: TypedExprKind::ArrayLiteral(values),
+                ty: Type::Array(Box::new(ty)),
+                ref_kind: RefKind::Unknown,
+            }
+        }
+        ExprKind::DictLiteral(entries) => {
+            let entries: Vec<_> = entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        type_check_expr(
+                            value,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        ),
+                    )
+                })
+                .collect();
+            for (key, _) in &entries {
+                validate_dict_key_literal(key, expr.span.clone(), diagnostics);
+            }
+            let ty = infer_collection_type(
+                entries.iter().map(|(_, value)| &value.ty),
+                "dictionary literals must contain values of one type",
+                "empty dictionary literals require type context",
+                expr.span.clone(),
+                diagnostics,
+            );
+            validate_collection_value_type(&ty, expr.span.clone(), diagnostics);
+            TypedExpr {
+                kind: TypedExprKind::DictLiteral(entries),
+                ty: Type::Dict(Box::new(ty)),
+                ref_kind: RefKind::Unknown,
+            }
+        }
+        ExprKind::Path(path) => {
+            let path = type_check_path(
                 path,
                 signatures,
                 env,
@@ -630,10 +789,13 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
                 expr.span.clone(),
-            )),
-            ty: Type::Nbt,
-            ref_kind: RefKind::Unknown,
-        },
+            );
+            TypedExpr {
+                ty: path.ty.clone(),
+                kind: TypedExprKind::Path(path),
+                ref_kind: RefKind::Unknown,
+            }
+        }
         ExprKind::Variable(name) => match env.get(name) {
             Some(ty) => TypedExpr {
                 kind: TypedExprKind::Variable(name.clone()),
@@ -653,8 +815,14 @@ fn type_check_expr(
             }
         },
         ExprKind::Unary { op, expr } => {
-            let operand =
-                type_check_expr(expr, signatures, env, ref_env, called_functions, diagnostics);
+            let operand = type_check_expr(
+                expr,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             let ty = match op {
                 UnaryOp::Not => {
                     if operand.ty != Type::Bool {
@@ -676,8 +844,22 @@ fn type_check_expr(
             }
         }
         ExprKind::Binary { op, left, right } => {
-            let left = type_check_expr(left, signatures, env, ref_env, called_functions, diagnostics);
-            let right = type_check_expr(right, signatures, env, ref_env, called_functions, diagnostics);
+            let left = type_check_expr(
+                left,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            let right = type_check_expr(
+                right,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             let ty = match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     if left.ty != Type::Int || right.ty != Type::Int {
@@ -746,7 +928,11 @@ fn type_check_expr(
                 ref_kind: RefKind::Unknown,
             }
         }
-        ExprKind::MethodCall { receiver, method, args } => {
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             if let Some(builtin) = type_check_method_call(
                 receiver,
                 method,
@@ -771,9 +957,16 @@ fn type_check_expr(
             }
         }
         ExprKind::Call { function, args } => {
-            if let Some(builtin) =
-                type_check_builtin_call(function, args, expr, signatures, env, ref_env, called_functions, diagnostics)
-            {
+            if let Some(builtin) = type_check_builtin_call(
+                function,
+                args,
+                expr,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            ) {
                 return builtin;
             }
             let signature = match signatures.get(function) {
@@ -820,7 +1013,9 @@ fn type_check_expr(
 
             let args: Vec<_> = args
                 .iter()
-                .map(|arg| type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics))
+                .map(|arg| {
+                    type_check_expr(arg, signatures, env, ref_env, called_functions, diagnostics)
+                })
                 .collect();
             for (index, arg) in args.iter().enumerate() {
                 if let Some(expected) = signature.params.get(index) {
@@ -861,19 +1056,182 @@ fn type_check_path(
     diagnostics: &mut Diagnostics,
     span: Span,
 ) -> TypedPathExpr {
-    let base = type_check_expr(&path.base, signatures, env, ref_env, called_functions, diagnostics);
-    if !matches!(base.ty, Type::EntityRef | Type::BlockRef) {
-        diagnostics.push(Diagnostic::new(
-            "path access requires an 'entity_ref' or 'block_ref' base",
-            span.clone(),
-        ));
+    let base = type_check_expr(
+        &path.base,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    let mut current_ty = base.ty.clone();
+    let mut collection_mode = false;
+
+    for segment in &path.segments {
+        match (&current_ty, segment) {
+            (Type::EntityRef | Type::BlockRef, PathSegment::Field(_)) => {
+                current_ty = Type::Nbt;
+            }
+            (Type::EntityRef | Type::BlockRef, PathSegment::Index(index)) => {
+                if !matches!(index.kind, ExprKind::Int(_)) {
+                    diagnostics.push(Diagnostic::new(
+                        "entity and block path indices must be integer literals",
+                        span.clone(),
+                    ));
+                }
+                current_ty = Type::Nbt;
+            }
+            (Type::Nbt, PathSegment::Field(_)) => {
+                current_ty = Type::Nbt;
+            }
+            (Type::Nbt, PathSegment::Index(index)) => {
+                if !matches!(index.kind, ExprKind::Int(_)) {
+                    diagnostics.push(Diagnostic::new(
+                        "nbt path indices must be integer literals",
+                        span.clone(),
+                    ));
+                }
+                current_ty = Type::Nbt;
+            }
+            (Type::Array(element), PathSegment::Index(index)) => {
+                collection_mode = true;
+                let index = type_check_expr(
+                    index,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if index.ty != Type::Int {
+                    diagnostics.push(Diagnostic::new(
+                        "array index must have type 'int'",
+                        span.clone(),
+                    ));
+                }
+                current_ty = *element.clone();
+            }
+            (Type::Dict(value), PathSegment::Index(index)) => {
+                collection_mode = true;
+                let key = type_check_expr(
+                    index,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if key.ty != Type::String {
+                    diagnostics.push(Diagnostic::new(
+                        "dictionary key must have type 'string'",
+                        span.clone(),
+                    ));
+                }
+                if let ExprKind::String(key) = &index.kind {
+                    validate_dict_key_literal(key, span.clone(), diagnostics);
+                }
+                current_ty = *value.clone();
+            }
+            (Type::Array(_) | Type::Dict(_), PathSegment::Field(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "collection values must be accessed with '[...]'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
+            _ => {
+                diagnostics.push(Diagnostic::new(
+                    "path access requires an entity, block, nbt, array, or dictionary base",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
+        }
     }
     let typed = TypedPathExpr {
         base: Box::new(base),
         segments: path.segments.clone(),
+        ty: current_ty,
     };
-    validate_player_path_read(&typed, span, diagnostics);
+    if !collection_mode {
+        validate_player_path_read(&typed, span, diagnostics);
+    }
     typed
+}
+
+fn infer_collection_type<'a>(
+    mut values: impl Iterator<Item = &'a Type>,
+    mismatch: &str,
+    empty: &str,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> Type {
+    let Some(first) = values.next().cloned() else {
+        diagnostics.push(Diagnostic::new(empty, span));
+        return Type::Nbt;
+    };
+    for value in values {
+        if value != &first {
+            diagnostics.push(Diagnostic::new(mismatch, span.clone()));
+            break;
+        }
+    }
+    first
+}
+
+fn validate_dict_key_literal(key: &str, span: Span, diagnostics: &mut Diagnostics) {
+    let mut chars = key.chars();
+    let valid = chars
+        .next()
+        .map(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        .unwrap_or(false)
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !valid {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "dictionary key '{}' is not storage-path-safe; use letters, digits, and '_' with a non-digit first character",
+                key
+            ),
+            span,
+        ));
+    }
+}
+
+fn validate_declared_type(ty: &Type, span: Span, diagnostics: &mut Diagnostics) {
+    match ty {
+        Type::Array(element) => {
+            validate_collection_value_type(element, span.clone(), diagnostics);
+            validate_declared_type(element, span, diagnostics);
+        }
+        Type::Dict(value) => {
+            validate_collection_value_type(value, span.clone(), diagnostics);
+            validate_declared_type(value, span, diagnostics);
+        }
+        _ => {}
+    }
+}
+
+fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagnostics) {
+    if !matches!(
+        ty,
+        Type::Int | Type::Bool | Type::String | Type::Nbt | Type::Array(_) | Type::Dict(_)
+    ) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "collection values may not have unsupported type '{}'",
+                ty.as_str()
+            ),
+            span,
+        ));
+    }
+}
+
+fn is_storage_lvalue_expr(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Variable(_) => true,
+        ExprKind::Path(path) => is_storage_lvalue_expr(&path.base),
+        _ => false,
+    }
 }
 
 fn type_check_builtin_call(
@@ -888,7 +1246,14 @@ fn type_check_builtin_call(
 ) -> Option<TypedExpr> {
     match function {
         "selector" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first() {
                 if arg.ty != Type::String {
@@ -906,7 +1271,14 @@ fn type_check_builtin_call(
             })
         }
         "block" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first() {
                 if arg.ty != Type::String {
@@ -924,7 +1296,14 @@ fn type_check_builtin_call(
             })
         }
         "single" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 1, expr, diagnostics);
             let mut arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Selector(String::new()),
@@ -946,7 +1325,14 @@ fn type_check_builtin_call(
             })
         }
         "exists" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 1, expr, diagnostics);
             let arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Variable("_error".to_string()),
@@ -966,7 +1352,14 @@ fn type_check_builtin_call(
             })
         }
         "at" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 2, expr, diagnostics);
             let mut iter = args.into_iter();
             let anchor = iter.next().unwrap_or(TypedExpr {
@@ -1001,7 +1394,14 @@ fn type_check_builtin_call(
             })
         }
         "int" | "bool" | "string" => {
-            let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+            let args = type_check_args(
+                args,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
             expect_arity(function, &args, 1, expr, diagnostics);
             let arg = args.into_iter().next().unwrap_or(TypedExpr {
                 kind: TypedExprKind::Variable("_error".to_string()),
@@ -1043,16 +1443,164 @@ fn type_check_method_call(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
+    let receiver_expr = receiver;
     let receiver = type_check_expr(
-        receiver,
+        receiver_expr,
         signatures,
         env,
         ref_env,
         called_functions,
         diagnostics,
     );
-    let args = type_check_args(args, signatures, env, ref_env, called_functions, diagnostics);
+    let args = type_check_args(
+        args,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
     match method {
+        "len" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            if !matches!(receiver.ty, Type::Array(_)) {
+                diagnostics.push(Diagnostic::new(
+                    "len() requires an 'array' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: Type::Int,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "push" => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if !is_storage_lvalue_expr(receiver_expr) {
+                diagnostics.push(Diagnostic::new(
+                    "push(...) requires a variable or collection element receiver",
+                    expr.span.clone(),
+                ));
+            }
+            let expected = match &receiver.ty {
+                Type::Array(element) => Some(element.as_ref()),
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "push(...) requires an 'array' receiver",
+                        expr.span.clone(),
+                    ));
+                    None
+                }
+            };
+            if let (Some(expected), Some(arg)) = (expected, args.first()) {
+                if &arg.ty != expected {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "push(...) value must be '{}', found '{}'",
+                            expected.as_str(),
+                            arg.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: Type::Void,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "pop" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            if !is_storage_lvalue_expr(receiver_expr) {
+                diagnostics.push(Diagnostic::new(
+                    "pop() requires a variable or collection element receiver",
+                    expr.span.clone(),
+                ));
+            }
+            let ty = match &receiver.ty {
+                Type::Array(element) => *element.clone(),
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "pop() requires an 'array' receiver",
+                        expr.span.clone(),
+                    ));
+                    Type::Nbt
+                }
+            };
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "has" => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if !matches!(receiver.ty, Type::Dict(_)) {
+                diagnostics.push(Diagnostic::new(
+                    "has(...) requires a 'dict' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    "has(...) key must be 'string'",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "remove" => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if !is_storage_lvalue_expr(receiver_expr) {
+                diagnostics.push(Diagnostic::new(
+                    "remove(...) requires a variable or collection element receiver",
+                    expr.span.clone(),
+                ));
+            }
+            if !matches!(receiver.ty, Type::Dict(_)) {
+                diagnostics.push(Diagnostic::new(
+                    "remove(...) requires a 'dict' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    "remove(...) key must be 'string'",
+                    expr.span.clone(),
+                ));
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: method.to_string(),
+                    args,
+                },
+                ty: Type::Void,
+                ref_kind: RefKind::Unknown,
+            })
+        }
         "effect" => {
             if receiver.ref_kind != RefKind::Player || receiver.ty != Type::EntityRef {
                 diagnostics.push(Diagnostic::new(
@@ -1125,7 +1673,10 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
         ));
         return;
     };
-    if !matches!(first.as_str(), "nbt" | "state" | "tags" | "team" | "mainhand") {
+    if !matches!(
+        first.as_str(),
+        "nbt" | "state" | "tags" | "team" | "mainhand"
+    ) {
         diagnostics.push(Diagnostic::new(
             "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', or 'player.mainhand'",
             span,
@@ -1210,7 +1761,9 @@ fn expect_arity(
         diagnostics.push(Diagnostic::new(
             format!(
                 "wrong arity for '{}': expected {}, found {}",
-                function, expected, args.len()
+                function,
+                expected,
+                args.len()
             ),
             expr.span.clone(),
         ));
@@ -1249,7 +1802,10 @@ fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span)
     let lower = value.to_ascii_lowercase();
     if let Some(index) = lower.find("limit=") {
         let suffix = &lower[index + 6..];
-        let digits: String = suffix.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        let digits: String = suffix
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
         if digits == "1" {
             return value.to_string();
         }

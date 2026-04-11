@@ -106,6 +106,7 @@ pub struct IrExpr {
 pub struct IrPathExpr {
     pub base: Box<IrExpr>,
     pub segments: Vec<crate::ast::PathSegment>,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +114,8 @@ pub enum IrExprKind {
     Int(i64),
     Bool(bool),
     String(String),
+    ArrayLiteral(Vec<IrExpr>),
+    DictLiteral(Vec<(String, IrExpr)>),
     Variable(String),
     Selector(String),
     Block(String),
@@ -256,6 +259,7 @@ fn lower_path_expr(path: &TypedPathExpr) -> IrPathExpr {
     IrPathExpr {
         base: Box::new(lower_expr(&path.base)),
         segments: path.segments.clone(),
+        ty: path.ty.clone(),
     }
 }
 
@@ -274,6 +278,15 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Int(value) => IrExprKind::Int(*value),
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
             TypedExprKind::String(value) => IrExprKind::String(value.clone()),
+            TypedExprKind::ArrayLiteral(values) => {
+                IrExprKind::ArrayLiteral(values.iter().map(lower_expr).collect())
+            }
+            TypedExprKind::DictLiteral(entries) => IrExprKind::DictLiteral(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), lower_expr(value)))
+                    .collect(),
+            ),
             TypedExprKind::Variable(name) => IrExprKind::Variable(name.clone()),
             TypedExprKind::Selector(value) => IrExprKind::Selector(value.clone()),
             TypedExprKind::Block(value) => IrExprKind::Block(value.clone()),

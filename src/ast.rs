@@ -27,6 +27,8 @@ pub enum Type {
     Int,
     Bool,
     String,
+    Array(Box<Type>),
+    Dict(Box<Type>),
     EntitySet,
     EntityRef,
     BlockRef,
@@ -35,16 +37,18 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> String {
         match self {
-            Type::Int => "int",
-            Type::Bool => "bool",
-            Type::String => "string",
-            Type::EntitySet => "entity_set",
-            Type::EntityRef => "entity_ref",
-            Type::BlockRef => "block_ref",
-            Type::Nbt => "nbt",
-            Type::Void => "void",
+            Type::Int => "int".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "string".to_string(),
+            Type::Array(element) => format!("array<{}>", element.as_str()),
+            Type::Dict(value) => format!("dict<{}>", value.as_str()),
+            Type::EntitySet => "entity_set".to_string(),
+            Type::EntityRef => "entity_ref".to_string(),
+            Type::BlockRef => "block_ref".to_string(),
+            Type::Nbt => "nbt".to_string(),
+            Type::Void => "void".to_string(),
         }
     }
 }
@@ -120,7 +124,7 @@ pub struct PathExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSegment {
     Field(String),
-    Index(i64),
+    Index(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +132,8 @@ pub enum ExprKind {
     Int(i64),
     Bool(bool),
     String(String),
+    ArrayLiteral(Vec<Expr>),
+    DictLiteral(Vec<(String, Expr)>),
     Variable(String),
     Unary {
         op: UnaryOp,

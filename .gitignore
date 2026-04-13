@@ -1,3 +1,25 @@
 target/
 build/
 *.vsix
+
+# Taskplane runtime artifacts (machine-specific, do not commit)
+.pi/batch-state.json
+.pi/batch-history.json
+.pi/lane-state-*
+.pi/merge-result-*
+.pi/merge-request-*
+.pi/worker-conversation-*
+.pi/orch-logs/
+.pi/orch-abort-signal
+.pi/settings.json
+.pi/
+.pi-lens/
+.codex-out/
+AGENTS.md
+PLAN.md
+.worktrees/
+.taskplane-tasks/
+taskplane-tasks/
+
+# Pi project-local packages (if using pi install -l)
+.pi/npm/

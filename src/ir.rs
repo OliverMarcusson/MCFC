@@ -9,6 +9,7 @@ use crate::types::{
 #[derive(Debug, Clone)]
 pub struct IrProgram {
     pub struct_defs: BTreeMap<String, crate::types::StructTypeDef>,
+    pub player_states: Vec<crate::ast::PlayerStateDef>,
     pub functions: Vec<IrFunction>,
     pub call_depths: BTreeMap<String, usize>,
 }
@@ -20,6 +21,7 @@ pub struct IrFunction {
     pub return_type: Type,
     pub body: Vec<IrStmt>,
     pub locals: BTreeMap<String, Type>,
+    pub generated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +73,8 @@ pub enum IrStmt {
         placeholders: Vec<IrMacroPlaceholder>,
     },
     Sleep {
-        seconds: IrExpr,
+        duration: IrExpr,
+        unit: crate::ast::SleepUnit,
     },
     Expr(IrExpr),
 }
@@ -190,6 +193,7 @@ pub fn lower(program: &TypedProgram) -> IrProgram {
     functions.extend(ctx.async_functions);
     IrProgram {
         struct_defs: program.struct_defs.clone(),
+        player_states: program.player_states.clone(),
         functions,
         call_depths: program.call_depths.clone(),
     }
@@ -215,11 +219,15 @@ impl LowerCtx {
             return_type: function.return_type.clone(),
             body: self.lower_stmts(&function.body, &function.name),
             locals: function.locals.clone(),
+            generated: false,
         }
     }
 
     fn lower_stmts(&mut self, stmts: &[TypedStmt], owner: &str) -> Vec<IrStmt> {
-        stmts.iter().map(|stmt| self.lower_stmt(stmt, owner)).collect()
+        stmts
+            .iter()
+            .map(|stmt| self.lower_stmt(stmt, owner))
+            .collect()
     }
 
     fn lower_stmt(&mut self, stmt: &TypedStmt, owner: &str) -> IrStmt {
@@ -248,6 +256,7 @@ impl LowerCtx {
                     return_type: Type::Void,
                     body: self.lower_stmts(body, &async_owner),
                     locals: locals.clone(),
+                    generated: true,
                 };
                 self.async_functions.push(function.clone());
                 IrStmt::Async { function, captures }
@@ -302,8 +311,9 @@ fn lower_stmt_with_ctx(ctx: &mut LowerCtx, stmt: &TypedStmt, owner: &str) -> IrS
             template: template.clone(),
             placeholders: placeholders.iter().map(lower_macro_placeholder).collect(),
         },
-        TypedStmtKind::Sleep { seconds } => IrStmt::Sleep {
-            seconds: lower_expr(seconds),
+        TypedStmtKind::Sleep { duration, unit } => IrStmt::Sleep {
+            duration: lower_expr(duration),
+            unit: *unit,
         },
         TypedStmtKind::Expr(expr) => IrStmt::Expr(lower_expr(expr)),
         TypedStmtKind::Async { .. } => unreachable!("async is lowered in LowerCtx::lower_stmt"),

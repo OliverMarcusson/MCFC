@@ -196,7 +196,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|end|struct|async)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|async)\\b"
         },
         {
           "name": "storage.type.function.mcfc",
@@ -220,7 +220,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|block_ref|bossbar|nbt|void)\\b"
+          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|item_slot|bossbar|nbt|void)\\b"
         }
       ]
     },

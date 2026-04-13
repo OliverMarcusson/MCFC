@@ -7,6 +7,7 @@ pub mod diagnostics;
 pub mod ir;
 pub mod lexer;
 pub mod lsp;
+pub mod optimizer;
 pub mod parser;
 pub mod project;
 pub mod types;

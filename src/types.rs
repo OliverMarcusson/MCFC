@@ -6,6 +6,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
     pub struct_defs: BTreeMap<String, StructTypeDef>,
+    pub player_states: Vec<PlayerStateDef>,
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
     pub call_depths: BTreeMap<String, usize>,
@@ -90,7 +91,8 @@ pub enum TypedStmtKind {
         placeholders: Vec<MacroPlaceholder>,
     },
     Sleep {
-        seconds: TypedExpr,
+        duration: TypedExpr,
+        unit: SleepUnit,
     },
     Expr(TypedExpr),
 }
@@ -249,6 +251,33 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         }
     }
 
+    let mut player_state_names = HashSet::new();
+    for state in &program.player_states {
+        for segment in &state.path {
+            if !is_storage_path_safe_key(segment) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "player state path segment '{}' is not storage-path-safe",
+                        segment
+                    ),
+                    state.span.clone(),
+                ));
+            }
+        }
+        if !matches!(state.ty, Type::Int | Type::Bool) {
+            diagnostics.push(Diagnostic::new(
+                "player_state declarations currently support only 'int' and 'bool'",
+                state.span.clone(),
+            ));
+        }
+        if !player_state_names.insert(state.path.join(".")) {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate player_state '{}'", state.path.join(".")),
+                state.span.clone(),
+            ));
+        }
+    }
+
     for function in &program.functions {
         for param in &function.params {
             validate_declared_type(
@@ -300,7 +329,14 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
                 ));
             }
             env.insert(param.name.clone(), param.ty.clone());
-            ref_env.insert(param.name.clone(), RefKind::Unknown);
+            ref_env.insert(
+                param.name.clone(),
+                if param.ty == Type::PlayerRef {
+                    RefKind::Player
+                } else {
+                    RefKind::Unknown
+                },
+            );
             locals.insert(param.name.clone(), param.ty.clone());
             params.push(TypedParam {
                 name: param.name.clone(),
@@ -344,6 +380,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
         struct_defs,
         functions,
         function_signatures: signatures,
+        player_states: program.player_states.clone(),
         call_depths,
     })
 }
@@ -391,7 +428,7 @@ fn type_check_block(
                 }
             }
             StmtKind::Assign { target, value } => {
-                let value = type_check_expr(
+                let mut value = type_check_expr(
                     value,
                     struct_defs,
                     signatures,
@@ -409,6 +446,7 @@ fn type_check_block(
                             ));
                             continue;
                         };
+                        value = coerce_expr_to_expected_type(value, &existing);
                         if existing != value.ty {
                             diagnostics.push(Diagnostic::new(
                                 format!(
@@ -433,13 +471,50 @@ fn type_check_block(
                             diagnostics,
                             statement.span.clone(),
                         );
-                        if matches!(typed_path.base.ty, Type::EntityRef | Type::BlockRef) {
+                        let is_equipment_item_def_write = is_entity_ref_type(&typed_path.base.ty)
+                            && value.ty == Type::ItemDef
+                            && matches!(
+                                typed_path.segments.as_slice(),
+                                [PathSegment::Field(slot), PathSegment::Field(field), ..]
+                                    if matches!(
+                                        slot.as_str(),
+                                        "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet"
+                                    ) && field == "item"
+                            );
+                        if !is_equipment_item_def_write {
+                            value = coerce_expr_to_expected_type(value, &typed_path.ty);
+                        }
+                        if matches!(
+                            typed_path.base.ty,
+                            Type::EntityRef | Type::PlayerRef | Type::BlockRef
+                        ) {
+                            let is_player_slot_write = is_entity_ref_type(&typed_path.base.ty)
+                                && typed_path.base.ref_kind == RefKind::Player
+                                && matches!(
+                                    typed_path.segments.first(),
+                                    Some(PathSegment::Field(name))
+                                        if matches!(name.as_str(), "inventory" | "hotbar")
+                                );
+                            let is_equipment_item_write = is_entity_ref_type(&typed_path.base.ty)
+                                && matches!(
+                                    typed_path.segments.as_slice(),
+                                    [
+                                        PathSegment::Field(slot),
+                                        PathSegment::Field(field),
+                                        ..
+                                    ] if matches!(
+                                        slot.as_str(),
+                                        "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet"
+                                    ) && field == "item"
+                                );
                             if !matches!(
                                 value.ty,
                                 Type::Int | Type::Bool | Type::String | Type::Nbt
-                            ) {
+                            ) && !(is_player_slot_write && value.ty == Type::ItemDef)
+                                && !(is_equipment_item_write && value.ty == Type::ItemDef)
+                            {
                                 diagnostics.push(Diagnostic::new(
-                                    "path assignment requires a value of type 'int', 'bool', 'string', or 'nbt'",
+                                    "path assignment requires a value of type 'int', 'bool', 'string', 'nbt', or an item builder for inventory slots",
                                     statement.span.clone(),
                                 ));
                             }
@@ -451,7 +526,14 @@ fn type_check_block(
                             );
                         } else if matches!(
                             typed_path.base.ty,
-                            Type::Array(_) | Type::Dict(_) | Type::Struct(_) | Type::Nbt
+                            Type::Array(_)
+                                | Type::Dict(_)
+                                | Type::Struct(_)
+                                | Type::Nbt
+                                | Type::EntityDef
+                                | Type::BlockDef
+                                | Type::ItemDef
+                                | Type::ItemSlot
                         ) {
                             if !is_storage_lvalue_expr(&path.base) {
                                 diagnostics.push(Diagnostic::new(
@@ -459,16 +541,18 @@ fn type_check_block(
                                     statement.span.clone(),
                                 ));
                             }
-                            if typed_path.ty != value.ty {
+                            if !storage_path_accepts_value(&typed_path, &value) {
                                 diagnostics.push(Diagnostic::new(
-                                    format!(
-                                        "cannot assign '{}' to collection element of type '{}'",
-                                        value.ty.as_str(),
-                                        typed_path.ty.as_str()
-                                    ),
+                                    storage_path_assignment_message(&typed_path, &value),
                                     statement.span.clone(),
                                 ));
                             }
+                            validate_builder_path_write(
+                                &typed_path,
+                                &value,
+                                statement.span.clone(),
+                                diagnostics,
+                            );
                         } else if matches!(typed_path.base.ty, Type::Bossbar) {
                             validate_bossbar_path_write(
                                 &typed_path,
@@ -492,14 +576,17 @@ fn type_check_block(
                 then_body,
                 else_body,
             } => {
-                let condition = type_check_expr(
-                    condition,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
+                let condition = coerce_expr_to_expected_type(
+                    type_check_expr(
+                        condition,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    ),
+                    &Type::Bool,
                 );
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
@@ -540,14 +627,17 @@ fn type_check_block(
                 }
             }
             StmtKind::While { condition, body } => {
-                let condition = type_check_expr(
-                    condition,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
+                let condition = coerce_expr_to_expected_type(
+                    type_check_expr(
+                        condition,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    ),
+                    &Type::Bool,
                 );
                 if condition.ty != Type::Bool {
                     diagnostics.push(Diagnostic::new(
@@ -739,7 +829,10 @@ fn type_check_block(
                     called_functions,
                     diagnostics,
                 );
-                if !matches!(anchor.ty, Type::EntitySet | Type::EntityRef) {
+                if !matches!(
+                    anchor.ty,
+                    Type::EntitySet | Type::EntityRef | Type::PlayerRef
+                ) {
                     diagnostics.push(Diagnostic::new(
                         format!(
                             "{} context block requires an 'entity_set' or 'entity_ref' anchor",
@@ -837,7 +930,7 @@ fn type_check_block(
                     ));
                 }
                 let value = value.as_ref().map(|expr| {
-                    type_check_expr(
+                    let value = type_check_expr(
                         expr,
                         struct_defs,
                         signatures,
@@ -845,7 +938,8 @@ fn type_check_block(
                         ref_env,
                         called_functions,
                         diagnostics,
-                    )
+                    );
+                    coerce_expr_to_expected_type(value, return_type)
                 });
                 match (return_type, &value) {
                     (Type::Void, None) => {}
@@ -895,7 +989,7 @@ fn type_check_block(
             }
             StmtKind::Expr(expr) => {
                 if let ExprKind::Call { function, args } = &expr.kind {
-                    if function == "sleep" {
+                    if matches!(function.as_str(), "sleep" | "sleep_ticks") {
                         let args = type_check_args(
                             args,
                             struct_defs,
@@ -906,26 +1000,35 @@ fn type_check_block(
                             diagnostics,
                         );
                         expect_arity(function, &args, 1, expr, diagnostics);
-                        if let Some(seconds) = args.first() {
-                            if seconds.ty != Type::Int {
-                                diagnostics.push(Diagnostic::new(
-                                    "sleep(...) seconds must have type 'int'",
-                                    statement.span.clone(),
-                                ));
+                        if let Some(duration) = args.first() {
+                            if duration.ty != Type::Int {
+                                let message = if function == "sleep" {
+                                    "sleep(...) seconds must have type 'int'".to_string()
+                                } else {
+                                    "sleep_ticks(...) duration must have type 'int'".to_string()
+                                };
+                                diagnostics.push(Diagnostic::new(message, statement.span.clone()));
                             }
-                            if matches!(seconds.kind, TypedExprKind::Int(value) if value < 1) {
-                                diagnostics.push(Diagnostic::new(
-                                    "sleep(...) seconds must be at least 1",
-                                    statement.span.clone(),
-                                ));
+                            if matches!(duration.kind, TypedExprKind::Int(value) if value < 1) {
+                                let message = if function == "sleep" {
+                                    "sleep(...) seconds must be at least 1".to_string()
+                                } else {
+                                    "sleep_ticks(...) duration must be at least 1".to_string()
+                                };
+                                diagnostics.push(Diagnostic::new(message, statement.span.clone()));
                             }
                         }
-                        let seconds = args.into_iter().next().unwrap_or(TypedExpr {
+                        let duration = args.into_iter().next().unwrap_or(TypedExpr {
                             kind: TypedExprKind::Int(1),
                             ty: Type::Int,
                             ref_kind: RefKind::Unknown,
                         });
-                        TypedStmtKind::Sleep { seconds }
+                        let unit = if function == "sleep_ticks" {
+                            SleepUnit::Ticks
+                        } else {
+                            SleepUnit::Seconds
+                        };
+                        TypedStmtKind::Sleep { duration, unit }
                     } else {
                         let expr = type_check_expr(
                             expr,
@@ -1115,6 +1218,10 @@ fn type_check_expr(
                     called_functions,
                     diagnostics,
                 );
+                let value = match def.fields.get(field_name) {
+                    Some(expected) => coerce_expr_to_expected_type(value, expected),
+                    None => value,
+                };
                 match def.fields.get(field_name) {
                     Some(expected) if expected != &value.ty => diagnostics.push(Diagnostic::new(
                         format!(
@@ -1187,14 +1294,17 @@ fn type_check_expr(
             }
         },
         ExprKind::Unary { op, expr } => {
-            let operand = type_check_expr(
-                expr,
-                struct_defs,
-                signatures,
-                env,
-                ref_env,
-                called_functions,
-                diagnostics,
+            let operand = coerce_expr_to_expected_type(
+                type_check_expr(
+                    expr,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                ),
+                &Type::Bool,
             );
             let ty = match op {
                 UnaryOp::Not => {
@@ -1217,7 +1327,7 @@ fn type_check_expr(
             }
         }
         ExprKind::Binary { op, left, right } => {
-            let left = type_check_expr(
+            let mut left = type_check_expr(
                 left,
                 struct_defs,
                 signatures,
@@ -1226,7 +1336,7 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
             );
-            let right = type_check_expr(
+            let mut right = type_check_expr(
                 right,
                 struct_defs,
                 signatures,
@@ -1237,6 +1347,8 @@ fn type_check_expr(
             );
             let ty = match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    left = coerce_expr_to_expected_type(left, &Type::Int);
+                    right = coerce_expr_to_expected_type(right, &Type::Int);
                     if left.ty != Type::Int || right.ty != Type::Int {
                         diagnostics.push(Diagnostic::new(
                             "arithmetic operators require 'int' operands",
@@ -1246,6 +1358,8 @@ fn type_check_expr(
                     Type::Int
                 }
                 BinaryOp::And | BinaryOp::Or => {
+                    left = coerce_expr_to_expected_type(left, &Type::Bool);
+                    right = coerce_expr_to_expected_type(right, &Type::Bool);
                     if left.ty != Type::Bool || right.ty != Type::Bool {
                         diagnostics.push(Diagnostic::new(
                             "logical operators require 'bool' operands",
@@ -1260,6 +1374,8 @@ fn type_check_expr(
                 | BinaryOp::Lte
                 | BinaryOp::Gt
                 | BinaryOp::Gte => {
+                    left = coerce_expr_to_expected_type(left, &right.ty);
+                    right = coerce_expr_to_expected_type(right, &left.ty);
                     if left.ty != right.ty {
                         diagnostics.push(Diagnostic::new(
                             "comparison operands must have matching types",
@@ -1391,8 +1507,9 @@ fn type_check_expr(
 
             let args: Vec<_> = args
                 .iter()
-                .map(|arg| {
-                    type_check_expr(
+                .enumerate()
+                .map(|(index, arg)| {
+                    let typed = type_check_expr(
                         arg,
                         struct_defs,
                         signatures,
@@ -1400,7 +1517,11 @@ fn type_check_expr(
                         ref_env,
                         called_functions,
                         diagnostics,
-                    )
+                    );
+                    match signature.params.get(index) {
+                        Some(expected) => coerce_expr_to_expected_type(typed, expected),
+                        None => typed,
+                    }
                 })
                 .collect();
             for (index, arg) in args.iter().enumerate() {
@@ -1452,25 +1573,128 @@ fn type_check_path(
         called_functions,
         diagnostics,
     );
+    let segments =
+        normalize_builder_path_segments(&base.ty, &path.segments, span.clone(), diagnostics);
     let mut current_ty = base.ty.clone();
     let mut collection_mode = false;
     let mut segment_types = Vec::new();
-
-    for segment in &path.segments {
+    let mut player_slot_namespace: Option<String> = None;
+    for segment in &segments {
         match (&current_ty, segment) {
-            (Type::EntityRef, PathSegment::Field(field)) if field == "position" => {
+            (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
+                if field == "position" =>
+            {
                 current_ty = Type::BlockRef;
             }
-            (Type::EntityRef | Type::BlockRef, PathSegment::Field(_)) => {
+            (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
+                if matches!(field.as_str(), "inventory" | "hotbar") =>
+            {
+                if base.ref_kind != RefKind::Player {
+                    diagnostics.push(Diagnostic::new(
+                        "inventory and hotbar are only supported on known player refs; use 'player_ref' to assert a player",
+                        span.clone(),
+                    ));
+                    current_ty = Type::Nbt;
+                } else {
+                    current_ty = Type::Array(Box::new(Type::ItemSlot));
+                    player_slot_namespace = Some(field.clone());
+                }
+            }
+            (Type::EntityRef | Type::PlayerRef | Type::BlockRef, PathSegment::Field(_)) => {
                 current_ty = Type::Nbt;
             }
-            (Type::EntityRef | Type::BlockRef, PathSegment::Index(index)) => {
+            (Type::EntityRef | Type::PlayerRef | Type::BlockRef, PathSegment::Index(index)) => {
                 if !matches!(index.kind, ExprKind::Int(_)) {
                     diagnostics.push(Diagnostic::new(
                         "entity and block path indices must be integer literals",
                         span.clone(),
                     ));
                 }
+                current_ty = Type::Nbt;
+            }
+            (Type::EntityDef, PathSegment::Field(field)) => {
+                current_ty = match field.as_str() {
+                    "id" => Type::String,
+                    "nbt" => Type::Nbt,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "entity builder path access must use 'id', 'nbt', or a supported alias such as 'name'",
+                            span.clone(),
+                        ));
+                        Type::Nbt
+                    }
+                };
+            }
+            (Type::EntityDef, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "entity builder values must be accessed with '.field'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
+            (Type::BlockDef, PathSegment::Field(field)) => {
+                current_ty = match field.as_str() {
+                    "id" => Type::String,
+                    "states" | "nbt" => Type::Nbt,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "block builder path access must use 'id', 'states', 'nbt', or a supported alias such as 'name'",
+                            span.clone(),
+                        ));
+                        Type::Nbt
+                    }
+                };
+            }
+            (Type::BlockDef, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "block builder values must be accessed with '.field'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
+            (Type::ItemDef, PathSegment::Field(field)) => {
+                current_ty = match field.as_str() {
+                    "id" => Type::String,
+                    "count" => Type::Int,
+                    "nbt" => Type::Nbt,
+                    "name" => Type::Nbt,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "item builder path access must use 'id', 'count', 'nbt', or a supported alias such as 'name'",
+                            span.clone(),
+                        ));
+                        Type::Nbt
+                    }
+                };
+            }
+            (Type::ItemDef, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "item builder values must be accessed with '.field'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
+            (Type::ItemSlot, PathSegment::Field(field)) => {
+                current_ty = match field.as_str() {
+                    "exists" => Type::Bool,
+                    "id" => Type::String,
+                    "count" => Type::Int,
+                    "nbt" => Type::Nbt,
+                    "name" => Type::String,
+                    _ => {
+                        diagnostics.push(Diagnostic::new(
+                            "item slot access must use 'exists', 'id', 'count', 'nbt', or the alias 'name'",
+                            span.clone(),
+                        ));
+                        Type::Nbt
+                    }
+                };
+            }
+            (Type::ItemSlot, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "item slots must be accessed with '.field'",
+                    span.clone(),
+                ));
                 current_ty = Type::Nbt;
             }
             (Type::Nbt, PathSegment::Field(_)) => {
@@ -1504,20 +1728,50 @@ fn type_check_path(
             }
             (Type::Array(element), PathSegment::Index(index)) => {
                 collection_mode = true;
-                let index = type_check_expr(
-                    index,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
-                );
-                if index.ty != Type::Int {
-                    diagnostics.push(Diagnostic::new(
-                        "array index must have type 'int'",
-                        span.clone(),
-                    ));
+                if let Some(namespace) = player_slot_namespace.take() {
+                    let typed_index = type_check_expr(
+                        index,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                    if typed_index.ty != Type::Int {
+                        diagnostics.push(Diagnostic::new(
+                            format!("player.{}[...] slot index must have type 'int'", namespace),
+                            span.clone(),
+                        ));
+                    }
+                    if let ExprKind::Int(value) = &index.kind {
+                        let max = if namespace == "hotbar" { 8 } else { 26 };
+                        if *value < 0 || *value > max {
+                            diagnostics.push(Diagnostic::new(
+                                format!(
+                                    "player.{}[...] slot index must be between 0 and {}",
+                                    namespace, max
+                                ),
+                                span.clone(),
+                            ));
+                        }
+                    }
+                } else {
+                    let index = type_check_expr(
+                        index,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                    if index.ty != Type::Int {
+                        diagnostics.push(Diagnostic::new(
+                            "array index must have type 'int'",
+                            span.clone(),
+                        ));
+                    }
                 }
                 current_ty = *element.clone();
             }
@@ -1597,7 +1851,7 @@ fn type_check_path(
             }
             _ => {
                 diagnostics.push(Diagnostic::new(
-                    "path access requires an entity, block, bossbar, nbt, array, or dictionary base",
+                    "path access requires an entity, block, bossbar, item slot, nbt, array, or dictionary base",
                     span.clone(),
                 ));
                 current_ty = Type::Nbt;
@@ -1607,7 +1861,7 @@ fn type_check_path(
     }
     let typed = TypedPathExpr {
         base: Box::new(base),
-        segments: path.segments.clone(),
+        segments,
         segment_types,
         ty: current_ty,
     };
@@ -1615,6 +1869,57 @@ fn type_check_path(
         validate_player_path_read(&typed, span, diagnostics);
     }
     typed
+}
+
+fn normalize_builder_path_segments(
+    base_ty: &Type,
+    segments: &[PathSegment],
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> Vec<PathSegment> {
+    let Some(first) = segments.first() else {
+        return Vec::new();
+    };
+    let PathSegment::Field(first_name) = first else {
+        if matches!(base_ty, Type::EntityDef | Type::BlockDef | Type::ItemDef) {
+            diagnostics.push(Diagnostic::new(
+                "builder path access must start with a field such as '.nbt', '.states', or '.count'",
+                span,
+            ));
+        }
+        return segments.to_vec();
+    };
+    let rewritten = match base_ty {
+        Type::EntityDef => match first_name.as_str() {
+            "name" => Some(vec!["nbt", "CustomName"]),
+            "name_visible" => Some(vec!["nbt", "CustomNameVisible"]),
+            "no_ai" => Some(vec!["nbt", "NoAI"]),
+            "silent" => Some(vec!["nbt", "Silent"]),
+            "glowing" => Some(vec!["nbt", "Glowing"]),
+            "tags" => Some(vec!["nbt", "Tags"]),
+            _ => None,
+        },
+        Type::BlockDef => match first_name.as_str() {
+            "name" => Some(vec!["nbt", "CustomName"]),
+            "lock" => Some(vec!["nbt", "Lock"]),
+            "loot_table" => Some(vec!["nbt", "LootTable"]),
+            "loot_seed" => Some(vec!["nbt", "LootTableSeed"]),
+            _ => None,
+        },
+        Type::ItemDef => match first_name.as_str() {
+            "name" => Some(vec!["nbt", "display", "Name"]),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(rewritten) = rewritten else {
+        return segments.to_vec();
+    };
+    rewritten
+        .into_iter()
+        .map(|segment| PathSegment::Field(segment.to_string()))
+        .chain(segments.iter().skip(1).cloned())
+        .collect()
 }
 
 fn infer_collection_type<'a>(
@@ -1638,13 +1943,7 @@ fn infer_collection_type<'a>(
 }
 
 fn validate_dict_key_literal(key: &str, span: Span, diagnostics: &mut Diagnostics) {
-    let mut chars = key.chars();
-    let valid = chars
-        .next()
-        .map(|ch| ch.is_ascii_alphabetic() || ch == '_')
-        .unwrap_or(false)
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    if !valid {
+    if !is_storage_path_safe_key(key) {
         diagnostics.push(Diagnostic::new(
             format!(
                 "dictionary key '{}' is not storage-path-safe; use letters, digits, and '_' with a non-digit first character",
@@ -1653,6 +1952,15 @@ fn validate_dict_key_literal(key: &str, span: Span, diagnostics: &mut Diagnostic
             span,
         ));
     }
+}
+
+fn is_storage_path_safe_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    chars
+        .next()
+        .map(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        .unwrap_or(false)
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn validate_declared_type(
@@ -1687,6 +1995,10 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
             | Type::Array(_)
             | Type::Dict(_)
             | Type::Struct(_)
+            | Type::EntityDef
+            | Type::BlockDef
+            | Type::ItemDef
+            | Type::ItemSlot
             | Type::Bossbar
     ) {
         diagnostics.push(Diagnostic::new(
@@ -1711,7 +2023,12 @@ fn is_storage_data_expr(expr: &TypedExpr) -> bool {
     match &expr.kind {
         TypedExprKind::Variable(_) => !matches!(
             expr.ty,
-            Type::Int | Type::Bool | Type::EntitySet | Type::EntityRef | Type::BlockRef
+            Type::Int
+                | Type::Bool
+                | Type::EntitySet
+                | Type::EntityRef
+                | Type::PlayerRef
+                | Type::BlockRef
         ),
         TypedExprKind::Path(path) => is_storage_data_expr(&path.base),
         _ => false,
@@ -1731,6 +2048,36 @@ fn type_check_builtin_call(
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
     match function {
+        "entity" => Some(type_check_entity_constructor(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "block_type" => Some(type_check_block_type_constructor(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "item" => Some(type_check_item_constructor(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
         "summon" => Some(type_check_summon_builtin(
             args,
             expr,
@@ -1741,7 +2088,7 @@ fn type_check_builtin_call(
             called_functions,
             diagnostics,
         )),
-        "sleep" => {
+        "sleep" | "sleep_ticks" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -1752,10 +2099,13 @@ fn type_check_builtin_call(
                 diagnostics,
             );
             diagnostics.push(Diagnostic::new(
-                "sleep(...) may only appear as a standalone statement",
+                format!(
+                    "{}(...) may only appear as a standalone statement",
+                    function
+                ),
                 expr.span.clone(),
             ));
-            Some(builtin_call_expr("sleep", args, Type::Void))
+            Some(builtin_call_expr(function, args, Type::Void))
         }
         "random" => Some(type_check_random_builtin(
             args,
@@ -1778,10 +2128,10 @@ fn type_check_builtin_call(
             diagnostics,
         )),
         "teleport" | "damage" | "heal" | "give" | "clear" | "loot_give" | "loot_insert"
-        | "loot_spawn" | "tellraw" | "title" | "actionbar" | "debug_marker"
-        | "debug_entity" | "bossbar_add" | "bossbar_remove" | "bossbar_name"
-        | "bossbar_value" | "bossbar_max" | "bossbar_visible" | "bossbar_players"
-        | "playsound" | "stopsound" | "particle" | "setblock" | "fill" => {
+        | "loot_spawn" | "tellraw" | "title" | "actionbar" | "debug_marker" | "debug_entity"
+        | "bossbar_add" | "bossbar_remove" | "bossbar_name" | "bossbar_value" | "bossbar_max"
+        | "bossbar_visible" | "bossbar_players" | "playsound" | "stopsound" | "particle"
+        | "setblock" | "fill" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -2191,6 +2541,38 @@ fn type_check_builtin_call(
                 ref_kind,
             })
         }
+        "player_ref" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 1, expr, diagnostics);
+            let mut arg = args.into_iter().next().unwrap_or(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::EntityRef,
+                ref_kind: RefKind::Unknown,
+            });
+            if !is_entity_ref_type(&arg.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "player_ref(...) requires an 'entity_ref' argument",
+                    expr.span.clone(),
+                ));
+            }
+            if arg.ref_kind == RefKind::NonPlayer {
+                diagnostics.push(Diagnostic::new(
+                    "player_ref(...) cannot assert a known non-player entity",
+                    expr.span.clone(),
+                ));
+            }
+            arg.ty = Type::PlayerRef;
+            arg.ref_kind = RefKind::Player;
+            Some(arg)
+        }
         "exists" => {
             let args = type_check_args(
                 args,
@@ -2207,7 +2589,7 @@ fn type_check_builtin_call(
                 ty: Type::EntityRef,
                 ref_kind: RefKind::Unknown,
             });
-            if arg.ty != Type::EntityRef {
+            if !is_entity_ref_type(&arg.ty) {
                 diagnostics.push(Diagnostic::new(
                     "exists(...) requires an 'entity_ref' argument",
                     expr.span.clone(),
@@ -2230,11 +2612,15 @@ fn type_check_builtin_call(
                 diagnostics,
             );
             expect_arity(function, &args, 1, expr, diagnostics);
-            let arg = args.into_iter().next().unwrap_or(TypedExpr {
-                kind: TypedExprKind::Variable("_error".to_string()),
-                ty: Type::Nbt,
-                ref_kind: RefKind::Unknown,
-            });
+            let arg = args
+                .into_iter()
+                .next()
+                .map(coerce_expr_to_nbt)
+                .unwrap_or(TypedExpr {
+                    kind: TypedExprKind::Variable("_error".to_string()),
+                    ty: Type::Nbt,
+                    ref_kind: RefKind::Unknown,
+                });
             if !is_storage_data_expr(&arg) {
                 diagnostics.push(Diagnostic::new(
                     "has_data(...) requires a storage-backed variable or path",
@@ -2269,13 +2655,16 @@ fn type_check_builtin_call(
                 ty: Type::EntitySet,
                 ref_kind: RefKind::Unknown,
             });
-            if anchor.ty != Type::EntityRef {
+            if !is_entity_ref_type(&anchor.ty) {
                 diagnostics.push(Diagnostic::new(
                     "at(...) requires an 'entity_ref' anchor",
                     expr.span.clone(),
                 ));
             }
-            if !matches!(value.ty, Type::EntitySet | Type::EntityRef | Type::BlockRef) {
+            if !matches!(
+                value.ty,
+                Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+            ) {
                 diagnostics.push(Diagnostic::new(
                     "at(...) requires an 'entity_set', 'entity_ref', or 'block_ref' value",
                     expr.span.clone(),
@@ -2312,13 +2701,19 @@ fn type_check_builtin_call(
                 ty: Type::EntitySet,
                 ref_kind: RefKind::Unknown,
             });
-            if !matches!(anchor.ty, Type::EntitySet | Type::EntityRef) {
+            if !matches!(
+                anchor.ty,
+                Type::EntitySet | Type::EntityRef | Type::PlayerRef
+            ) {
                 diagnostics.push(Diagnostic::new(
                     "as(...) requires an 'entity_set' or 'entity_ref' anchor",
                     expr.span.clone(),
                 ));
             }
-            if !matches!(value.ty, Type::EntitySet | Type::EntityRef | Type::BlockRef) {
+            if !matches!(
+                value.ty,
+                Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+            ) {
                 diagnostics.push(Diagnostic::new(
                     "as(...) requires an 'entity_set', 'entity_ref', or 'block_ref' value",
                     expr.span.clone(),
@@ -2395,7 +2790,7 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
-    let args = type_check_args(
+    let mut args = type_check_args(
         args,
         struct_defs,
         signatures,
@@ -2405,6 +2800,19 @@ fn type_check_method_call(
         diagnostics,
     );
     match method {
+        "as_nbt" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            if !matches!(
+                receiver.ty,
+                Type::EntityDef | Type::BlockDef | Type::ItemDef
+            ) {
+                diagnostics.push(Diagnostic::new(
+                    "as_nbt() requires an 'entity_def', 'block_def', or 'item_def' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::Nbt))
+        }
         "len" => {
             expect_arity(method, &args, 0, expr, diagnostics);
             if !matches!(receiver.ty, Type::Array(_)) {
@@ -2441,6 +2849,11 @@ fn type_check_method_call(
                     None
                 }
             };
+            if let (Some(expected), Some(arg)) = (expected, args.first_mut()) {
+                if *expected == Type::Nbt {
+                    *arg = coerce_expr_to_nbt(arg.clone());
+                }
+            }
             if let (Some(expected), Some(arg)) = (expected, args.first()) {
                 if &arg.ty != expected {
                     diagnostics.push(Diagnostic::new(
@@ -2598,7 +3011,7 @@ fn type_check_method_call(
                 method,
                 &args,
                 0,
-                |ty| matches!(ty, Type::EntityRef | Type::BlockRef),
+                |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::BlockRef),
                 "an 'entity_ref' or 'block_ref'",
                 "destination",
                 expr,
@@ -2613,7 +3026,7 @@ fn type_check_method_call(
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "heal" => {
-            if receiver.ty != Type::EntityRef {
+            if !is_entity_ref_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
                     "heal(...) requires an 'entity_ref' receiver",
                     expr.span.clone(),
@@ -2634,7 +3047,22 @@ fn type_check_method_call(
             expect_arg_type(method, &args, 0, Type::Int, "amount", expr, diagnostics);
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
-        "give" | "clear" => {
+        "clear" if receiver.ty == Type::ItemSlot => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "give" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            if args.len() == 1 {
+                expect_arg_type(method, &args, 0, Type::ItemDef, "stack", expr, diagnostics);
+            } else {
+                expect_arity(method, &args, 2, expr, diagnostics);
+                expect_arg_type(method, &args, 0, Type::String, "item id", expr, diagnostics);
+                expect_arg_type(method, &args, 1, Type::Int, "count", expr, diagnostics);
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "clear" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 2, expr, diagnostics);
             expect_arg_type(method, &args, 0, Type::String, "item id", expr, diagnostics);
@@ -2644,7 +3072,15 @@ fn type_check_method_call(
         "loot_give" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 1, expr, diagnostics);
-            expect_arg_type(method, &args, 0, Type::String, "loot table", expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::String,
+                "loot table",
+                expr,
+                diagnostics,
+            );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "tellraw" | "title" | "actionbar" => {
@@ -2656,15 +3092,47 @@ fn type_check_method_call(
         "playsound" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 2, expr, diagnostics);
-            expect_arg_type(method, &args, 0, Type::String, "sound id", expr, diagnostics);
-            expect_arg_type(method, &args, 1, Type::String, "category", expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::String,
+                "sound id",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                method,
+                &args,
+                1,
+                Type::String,
+                "category",
+                expr,
+                diagnostics,
+            );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "stopsound" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 2, expr, diagnostics);
-            expect_arg_type(method, &args, 0, Type::String, "category", expr, diagnostics);
-            expect_arg_type(method, &args, 1, Type::String, "sound id", expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::String,
+                "category",
+                expr,
+                diagnostics,
+            );
+            expect_arg_type(
+                method,
+                &args,
+                1,
+                Type::String,
+                "sound id",
+                expr,
+                diagnostics,
+            );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "debug_entity" => {
@@ -2676,19 +3144,100 @@ fn type_check_method_call(
         "loot_insert" | "loot_spawn" | "setblock" => {
             expect_block_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 1, expr, diagnostics);
-            let label = if method == "setblock" {
-                "block id"
+            if method == "setblock" {
+                expect_arg_matches(
+                    method,
+                    &args,
+                    0,
+                    |ty| matches!(ty, Type::String | Type::BlockDef),
+                    "'string' or 'block_def'",
+                    "block",
+                    expr,
+                    diagnostics,
+                );
             } else {
-                "loot table"
-            };
-            expect_arg_type(method, &args, 0, Type::String, label, expr, diagnostics);
+                expect_arg_type(
+                    method,
+                    &args,
+                    0,
+                    Type::String,
+                    "loot table",
+                    expr,
+                    diagnostics,
+                );
+            }
             Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "is" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::String,
+                "block id",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, method, args, Type::Bool))
+        }
+        "summon" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            if !(args.len() == 1 || args.len() == 2) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected 1 or 2, found {}",
+                        method,
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            match args.first().map(|arg| &arg.ty) {
+                Some(Type::String | Type::EntityDef) => {}
+                _ => diagnostics.push(Diagnostic::new(
+                    "block.summon(...) entity id must be 'string' or 'entity_def'",
+                    expr.span.clone(),
+                )),
+            }
+            if args.len() == 2 && args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    "block.summon(entity_id, data) requires a 'string' entity id",
+                    expr.span.clone(),
+                ));
+            }
+            if let Some(arg) = args.get_mut(1) {
+                *arg = coerce_expr_to_nbt(arg.clone());
+            }
+            if args.len() >= 2 && args.get(1).map(|arg| &arg.ty) != Some(&Type::Nbt) {
+                diagnostics.push(Diagnostic::new(
+                    "block.summon(..., data) requires 'nbt' summon data",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::EntityRef))
+        }
+        "spawn_item" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::ItemDef, "stack", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::EntityRef))
         }
         "fill" => {
             expect_block_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 2, expr, diagnostics);
             expect_arg_type(method, &args, 0, Type::BlockRef, "to", expr, diagnostics);
-            expect_arg_type(method, &args, 1, Type::String, "block id", expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                1,
+                |ty| matches!(ty, Type::String | Type::BlockDef),
+                "'string' or 'block_def'",
+                "block",
+                expr,
+                diagnostics,
+            );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "debug_marker" => {
@@ -2705,7 +3254,15 @@ fn type_check_method_call(
             }
             expect_arg_type(method, &args, 0, Type::String, "label", expr, diagnostics);
             if args.len() >= 2 {
-                expect_arg_type(method, &args, 1, Type::String, "marker block id", expr, diagnostics);
+                expect_arg_type(
+                    method,
+                    &args,
+                    1,
+                    Type::String,
+                    "marker block id",
+                    expr,
+                    diagnostics,
+                );
             }
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
@@ -2721,7 +3278,15 @@ fn type_check_method_call(
                     expr.span.clone(),
                 ));
             }
-            expect_arg_type(method, &args, 0, Type::String, "particle id", expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::String,
+                "particle id",
+                expr,
+                diagnostics,
+            );
             if args.len() >= 2 {
                 expect_arg_type(method, &args, 1, Type::Int, "count", expr, diagnostics);
             }
@@ -2731,7 +3296,7 @@ fn type_check_method_call(
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "add_tag" | "remove_tag" | "has_tag" => {
-            if receiver.ty != Type::EntityRef {
+            if !is_entity_ref_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "{}.{}(...) requires an 'entity_ref' receiver",
@@ -2762,7 +3327,7 @@ fn type_check_method_call(
             })
         }
         "effect" => {
-            if receiver.ty != Type::EntityRef {
+            if !is_entity_ref_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
                     "effect(...) requires an 'entity_ref' receiver",
                     expr.span.clone(),
@@ -2843,7 +3408,7 @@ fn type_check_summon_builtin(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> TypedExpr {
-    let args = type_check_args(
+    let mut args = type_check_args(
         args,
         struct_defs,
         signatures,
@@ -2852,6 +3417,9 @@ fn type_check_summon_builtin(
         called_functions,
         diagnostics,
     );
+    if let Some(arg) = args.get_mut(1) {
+        *arg = coerce_expr_to_nbt(arg.clone());
+    }
     if !(args.len() == 1 || args.len() == 2) {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -2861,9 +3429,16 @@ fn type_check_summon_builtin(
             expr.span.clone(),
         ));
     }
-    if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+    match args.first().map(|arg| &arg.ty) {
+        Some(Type::String | Type::EntityDef) => {}
+        _ => diagnostics.push(Diagnostic::new(
+            "summon(...) entity id must be 'string' or 'entity_def'",
+            expr.span.clone(),
+        )),
+    }
+    if args.len() == 2 && args.first().map(|arg| &arg.ty) != Some(&Type::String) {
         diagnostics.push(Diagnostic::new(
-            "summon(...) entity id must be 'string'",
+            "summon(entity_id, data) requires a 'string' entity id",
             expr.span.clone(),
         ));
     }
@@ -2881,6 +3456,86 @@ fn type_check_summon_builtin(
         ty: Type::EntityRef,
         ref_kind: RefKind::NonPlayer,
     }
+}
+
+fn type_check_entity_constructor(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    expect_arity("entity", &args, 1, expr, diagnostics);
+    expect_arg_type("entity", &args, 0, Type::String, "id", expr, diagnostics);
+    builtin_call_expr("entity", args, Type::EntityDef)
+}
+
+fn type_check_block_type_constructor(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    expect_arity("block_type", &args, 1, expr, diagnostics);
+    expect_arg_type(
+        "block_type",
+        &args,
+        0,
+        Type::String,
+        "id",
+        expr,
+        diagnostics,
+    );
+    builtin_call_expr("block_type", args, Type::BlockDef)
+}
+
+fn type_check_item_constructor(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    expect_arity("item", &args, 1, expr, diagnostics);
+    expect_arg_type("item", &args, 0, Type::String, "id", expr, diagnostics);
+    builtin_call_expr("item", args, Type::ItemDef)
 }
 
 fn type_check_random_builtin(
@@ -3015,7 +3670,7 @@ fn type_check_gameplay_call(
                 function,
                 &args,
                 1,
-                |ty| matches!(ty, Type::EntityRef | Type::BlockRef),
+                |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::BlockRef),
                 "an 'entity_ref' or 'block_ref'",
                 "destination",
                 expr,
@@ -3031,11 +3686,12 @@ fn type_check_gameplay_call(
         }
         GameplayBuiltinKind::Heal => {
             expect_arity(function, &args, 2, expr, diagnostics);
-            expect_arg_type(
+            expect_arg_matches(
                 function,
                 &args,
                 0,
-                Type::EntityRef,
+                is_entity_ref_type,
+                "an 'entity_ref'",
                 "target",
                 expr,
                 diagnostics,
@@ -3347,12 +4003,13 @@ fn type_check_gameplay_call(
                 expr,
                 diagnostics,
             );
-            expect_arg_type(
+            expect_arg_matches(
                 function,
                 &args,
                 1,
-                Type::String,
-                "block id",
+                |ty| matches!(ty, Type::String | Type::BlockDef),
+                "'string' or 'block_def'",
+                "block",
                 expr,
                 diagnostics,
             );
@@ -3370,12 +4027,13 @@ fn type_check_gameplay_call(
                 diagnostics,
             );
             expect_arg_type(function, &args, 1, Type::BlockRef, "to", expr, diagnostics);
-            expect_arg_type(
+            expect_arg_matches(
                 function,
                 &args,
                 2,
-                Type::String,
-                "block id",
+                |ty| matches!(ty, Type::String | Type::BlockDef),
+                "'string' or 'block_def'",
+                "block",
                 expr,
                 diagnostics,
             );
@@ -3412,18 +4070,83 @@ fn method_call_expr(
     }
 }
 
+fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
+    if matches!(expected, Type::Int | Type::Bool)
+        && expr.ty == Type::Nbt
+        && is_entity_state_path_expr(&expr)
+    {
+        return TypedExpr {
+            kind: TypedExprKind::Cast {
+                kind: match expected {
+                    Type::Int => CastKind::Int,
+                    Type::Bool => CastKind::Bool,
+                    _ => unreachable!(),
+                },
+                expr: Box::new(expr),
+            },
+            ty: expected.clone(),
+            ref_kind: RefKind::Unknown,
+        };
+    }
+    if *expected == Type::Nbt {
+        return coerce_expr_to_nbt(expr);
+    }
+    if *expected == Type::PlayerRef && is_entity_ref_type(&expr.ty) {
+        let mut expr = expr;
+        expr.ty = Type::PlayerRef;
+        expr.ref_kind = RefKind::Player;
+        return expr;
+    }
+    if *expected == Type::EntityRef && expr.ty == Type::PlayerRef {
+        let mut expr = expr;
+        expr.ty = Type::EntityRef;
+        expr.ref_kind = RefKind::Player;
+        return expr;
+    }
+    expr
+}
+
+fn is_entity_state_path_expr(expr: &TypedExpr) -> bool {
+    matches!(
+        &expr.kind,
+        TypedExprKind::Path(path)
+            if is_entity_ref_type(&path.base.ty)
+                && path.segments.len() > 1
+                && matches!(path.segments.first(), Some(PathSegment::Field(name)) if name == "state")
+    )
+}
+
+fn coerce_expr_to_nbt(expr: TypedExpr) -> TypedExpr {
+    match expr.ty {
+        Type::EntityDef | Type::BlockDef | Type::ItemDef => {
+            method_call_expr(expr, "as_nbt", Vec::new(), Type::Nbt)
+        }
+        _ => expr,
+    }
+}
+
 fn expect_entity_receiver(
     method: &str,
     receiver: &TypedExpr,
     expr: &Expr,
     diagnostics: &mut Diagnostics,
 ) {
-    if !matches!(receiver.ty, Type::EntityRef | Type::EntitySet) {
+    if !matches!(
+        receiver.ty,
+        Type::EntityRef | Type::PlayerRef | Type::EntitySet
+    ) {
         diagnostics.push(Diagnostic::new(
-            format!("{}(...) requires an 'entity_ref' or 'entity_set' receiver", method),
+            format!(
+                "{}(...) requires an 'entity_ref' or 'entity_set' receiver",
+                method
+            ),
             expr.span.clone(),
         ));
     }
+}
+
+fn is_entity_ref_type(ty: &Type) -> bool {
+    matches!(ty, Type::EntityRef | Type::PlayerRef)
 }
 
 fn expect_block_receiver(
@@ -3451,7 +4174,7 @@ fn expect_entity_target_arg(
         function,
         args,
         index,
-        |ty| matches!(ty, Type::EntityRef | Type::EntitySet),
+        |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::EntitySet),
         "an 'entity_ref' or 'entity_set'",
         "target",
         expr,
@@ -3507,6 +4230,9 @@ fn expect_arg_matches(
 }
 
 fn detect_selector_ref_kind(selector: &str) -> RefKind {
+    if is_plain_player_name_target(selector) {
+        return RefKind::Player;
+    }
     let trimmed = selector.trim().to_ascii_lowercase();
     if trimmed.starts_with("@p")
         || trimmed.starts_with("@a")
@@ -3523,7 +4249,7 @@ fn detect_selector_ref_kind(selector: &str) -> RefKind {
 }
 
 fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut Diagnostics) {
-    if path.base.ref_kind != RefKind::Player || path.base.ty != Type::EntityRef {
+    if path.base.ref_kind != RefKind::Player || !is_entity_ref_type(&path.base.ty) {
         return;
     }
     let Some(first) = path.segments.first() else {
@@ -3531,7 +4257,7 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
     };
     let PathSegment::Field(first) = first else {
         diagnostics.push(Diagnostic::new(
-            "player path access must start with a namespace such as 'nbt', 'state', 'tags', 'team', or 'mainhand'",
+            "player path access must start with a namespace such as 'nbt', 'state', 'tags', 'team', 'inventory', 'hotbar', or 'mainhand'",
             span,
         ));
         return;
@@ -3542,6 +4268,8 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
             | "state"
             | "tags"
             | "team"
+            | "inventory"
+            | "hotbar"
             | "mainhand"
             | "offhand"
             | "head"
@@ -3551,9 +4279,175 @@ fn validate_player_path_read(path: &TypedPathExpr, span: Span, diagnostics: &mut
             | "position"
     ) {
         diagnostics.push(Diagnostic::new(
-            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', or an equipment namespace such as 'mainhand'",
+            "player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', 'player.inventory[index]', 'player.hotbar[index]', or an equipment namespace such as 'mainhand'",
             span,
         ));
+    }
+}
+
+fn storage_path_accepts_value(path: &TypedPathExpr, value: &TypedExpr) -> bool {
+    if path.ty == value.ty {
+        return true;
+    }
+    if path.ty == Type::Nbt {
+        return is_nbt_compatible_type(&value.ty);
+    }
+    false
+}
+
+fn storage_path_assignment_message(path: &TypedPathExpr, value: &TypedExpr) -> String {
+    if path.ty == Type::Nbt {
+        return format!(
+            "cannot assign '{}' to NBT path; expected an NBT-compatible value",
+            value.ty.as_str()
+        );
+    }
+    format!(
+        "cannot assign '{}' to collection element of type '{}'",
+        value.ty.as_str(),
+        path.ty.as_str()
+    )
+}
+
+fn is_nbt_compatible_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Int
+            | Type::Bool
+            | Type::String
+            | Type::Nbt
+            | Type::Array(_)
+            | Type::Dict(_)
+            | Type::Struct(_)
+            | Type::ItemDef
+            | Type::Bossbar
+    )
+}
+
+fn validate_builder_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    match path.base.ty {
+        Type::EntityDef => validate_entity_builder_path_write(path, value, span, diagnostics),
+        Type::BlockDef => validate_block_builder_path_write(path, value, span, diagnostics),
+        Type::ItemDef => validate_item_builder_path_write(path, value, span, diagnostics),
+        _ => {}
+    }
+}
+
+fn validate_entity_builder_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(PathSegment::Field(first)) = path.segments.first() else {
+        diagnostics.push(Diagnostic::new(
+            "entity builder writes must use 'nbt' or a supported alias such as 'name'",
+            span,
+        ));
+        return;
+    };
+    match first.as_str() {
+        "id" => diagnostics.push(Diagnostic::new("entity builder id is read-only", span)),
+        "nbt" => {
+            if !is_nbt_compatible_type(&value.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "entity builder NBT requires an NBT-compatible value",
+                    span,
+                ));
+            }
+        }
+        _ => diagnostics.push(Diagnostic::new(
+            "entity builder writes must use 'nbt' or a supported alias such as 'name'",
+            span,
+        )),
+    }
+}
+
+fn validate_block_builder_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(PathSegment::Field(first)) = path.segments.first() else {
+        diagnostics.push(Diagnostic::new(
+            "block builder writes must use 'states', 'nbt', or a supported alias such as 'name'",
+            span,
+        ));
+        return;
+    };
+    match first.as_str() {
+        "id" => diagnostics.push(Diagnostic::new("block builder id is read-only", span)),
+        "states" => {
+            if path.segments.len() == 1 {
+                diagnostics.push(Diagnostic::new(
+                    "block builder state writes must target a field such as 'states.facing'",
+                    span,
+                ));
+                return;
+            }
+            if !matches!(value.ty, Type::Int | Type::Bool | Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    "block builder states require an 'int', 'bool', or 'string' value",
+                    span,
+                ));
+            }
+        }
+        "nbt" => {
+            if !is_nbt_compatible_type(&value.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "block builder NBT requires an NBT-compatible value",
+                    span,
+                ));
+            }
+        }
+        _ => diagnostics.push(Diagnostic::new(
+            "block builder writes must use 'states', 'nbt', or a supported alias such as 'name'",
+            span,
+        )),
+    }
+}
+
+fn validate_item_builder_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(PathSegment::Field(first)) = path.segments.first() else {
+        diagnostics.push(Diagnostic::new(
+            "item builder writes must use 'count', 'nbt', or a supported alias such as 'name'",
+            span,
+        ));
+        return;
+    };
+    match first.as_str() {
+        "id" => diagnostics.push(Diagnostic::new("item builder id is read-only", span)),
+        "count" => {
+            if value.ty != Type::Int {
+                diagnostics.push(Diagnostic::new(
+                    "item builder count requires an 'int' value",
+                    span,
+                ));
+            }
+        }
+        "nbt" | "name" => {
+            if !is_nbt_compatible_type(&value.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "item builder NBT requires an NBT-compatible value",
+                    span,
+                ));
+            }
+        }
+        _ => diagnostics.push(Diagnostic::new(
+            "item builder writes must use 'count', 'nbt', or a supported alias such as 'name'",
+            span,
+        )),
     }
 }
 
@@ -3563,7 +4457,7 @@ fn validate_player_path_write(
     span: Span,
     diagnostics: &mut Diagnostics,
 ) {
-    if path.base.ty != Type::EntityRef {
+    if !is_entity_ref_type(&path.base.ty) {
         return;
     }
     let Some(PathSegment::Field(first)) = path.segments.first() else {
@@ -3583,9 +4477,13 @@ fn validate_player_path_write(
             span,
         )),
         "state" => {
-            if path.base.ref_kind == RefKind::Player && !matches!(value.ty, Type::Int | Type::Bool) {
+            if !matches!(value.ty, Type::Int | Type::Bool) {
                 diagnostics.push(Diagnostic::new(
-                    "player.state.* currently supports only 'int' and 'bool' values",
+                    if path.base.ref_kind == RefKind::Player {
+                        "player.state.* currently supports only 'int' and 'bool' values"
+                    } else {
+                        "entity.state.* currently supports only 'int' and 'bool' values"
+                    },
                     span,
                 ));
             }
@@ -3606,11 +4504,21 @@ fn validate_player_path_write(
                 ));
             }
         }
+        "inventory" | "hotbar" => {
+            if path.base.ref_kind != RefKind::Player {
+                diagnostics.push(Diagnostic::new(
+                    "inventory and hotbar are only supported on known player refs; use 'player_ref' to assert a player",
+                    span,
+                ));
+            } else {
+                validate_player_inventory_path_write(path, value, span, diagnostics);
+            }
+        }
         "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" => {
             validate_equipment_path_write(path, value, span, diagnostics);
         }
         _ if path.base.ref_kind == RefKind::Player => diagnostics.push(Diagnostic::new(
-            "unsafe writable player path; use player.state, player.tags, player.team, or equipment namespaces",
+            "unsafe writable player path; use player.state, player.tags, player.team, player.inventory, player.hotbar, or equipment namespaces",
             span,
         )),
         _ => {}
@@ -3634,7 +4542,10 @@ fn validate_bossbar_path_write(
         "name" => value.ty == Type::String,
         "value" | "max" => value.ty == Type::Int,
         "visible" => value.ty == Type::Bool,
-        "players" => matches!(value.ty, Type::EntityRef | Type::EntitySet),
+        "players" => matches!(
+            value.ty,
+            Type::EntityRef | Type::PlayerRef | Type::EntitySet
+        ),
         _ => {
             diagnostics.push(Diagnostic::new(
                 format!("unknown bossbar property '{}'", field),
@@ -3670,9 +4581,20 @@ fn validate_equipment_path_write(
     };
     match field.as_str() {
         "item" | "name" => {
+            if field == "item" && value.ty == Type::ItemDef {
+                return;
+            }
             if value.ty != Type::String {
                 diagnostics.push(Diagnostic::new(
-                    format!("equipment.{} requires a 'string' value", field),
+                    format!(
+                        "equipment.{} requires a 'string'{} value",
+                        field,
+                        if field == "item" {
+                            " or 'item_def'"
+                        } else {
+                            ""
+                        }
+                    ),
                     span,
                 ));
             }
@@ -3687,6 +4609,71 @@ fn validate_equipment_path_write(
         }
         _ => diagnostics.push(Diagnostic::new(
             "equipment writes must target '.item', '.name', or '.count'",
+            span,
+        )),
+    }
+}
+
+fn validate_player_inventory_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    if path.segments.len() < 2 {
+        diagnostics.push(Diagnostic::new(
+            "inventory and hotbar writes must target a slot such as 'player.inventory[0]'",
+            span,
+        ));
+        return;
+    }
+    if path.segments.len() == 2 {
+        if value.ty != Type::ItemDef {
+            diagnostics.push(Diagnostic::new(
+                "whole-slot inventory assignment requires an 'item_def' value",
+                span,
+            ));
+        }
+        return;
+    }
+    let Some(PathSegment::Field(field)) = path.segments.get(2) else {
+        diagnostics.push(Diagnostic::new(
+            "item slot writes must target '.count', '.nbt', or the alias '.name'",
+            span,
+        ));
+        return;
+    };
+    match field.as_str() {
+        "exists" | "id" => diagnostics.push(Diagnostic::new(
+            format!("item slot.{} is read-only", field),
+            span,
+        )),
+        "count" => {
+            if value.ty != Type::Int {
+                diagnostics.push(Diagnostic::new(
+                    "item slot.count requires an 'int' value",
+                    span,
+                ));
+            }
+        }
+        "name" => {
+            if value.ty != Type::String {
+                diagnostics.push(Diagnostic::new(
+                    "item slot.name requires a 'string' value",
+                    span,
+                ));
+            }
+        }
+        "nbt" => {
+            if !is_nbt_compatible_type(&value.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "item slot NBT requires an NBT-compatible value",
+                    span,
+                ));
+            }
+        }
+        _ => diagnostics.push(Diagnostic::new(
+            "item slot writes must target '.count', '.nbt', or the alias '.name'",
             span,
         )),
     }
@@ -3817,6 +4804,9 @@ fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, spa
 }
 
 fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span) -> String {
+    if is_plain_player_name_target(value) {
+        return value.to_string();
+    }
     let lower = value.to_ascii_lowercase();
     if let Some(index) = lower.find("limit=") {
         let suffix = &lower[index + 6..];
@@ -3841,6 +4831,16 @@ fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span)
     } else {
         format!("{}[limit=1]", value)
     }
+}
+
+fn is_plain_player_name_target(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && !trimmed.starts_with('@')
+        && trimmed.len() <= 16
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn detect_recursion(functions: &[TypedFunction], diagnostics: &mut Diagnostics) {
@@ -4001,6 +5001,7 @@ fn collect_macro_placeholders(
                 | Type::String
                 | Type::EntitySet
                 | Type::EntityRef
+                | Type::PlayerRef
                 | Type::BlockRef
                 | Type::Nbt
                 | Type::Array(_)

@@ -16,6 +16,20 @@ The bundled `mcfc-lsp` server provides:
 - hovers for functions, locals, built-ins, and methods
 - completions for keywords, types, built-ins, functions, locals, and common
   member-access surfaces
+- indentation-based block syntax with `:` headers, including `player_state`
+  declarations
+
+That includes the builder-oriented gameplay surface, such as:
+
+- `entity("minecraft:pig")`, `block_type("minecraft:chest")`, and `item("minecraft:apple")`
+- `summon(entity_def)` plus explicit-position `block("~ ~ ~").summon(...)`
+- `entity_def.as_nbt()`, `block_def.as_nbt()`, and `item_def.as_nbt()`
+- implicit builder-to-`nbt` coercion in NBT contexts such as
+  `pig.nbt.Passengers[0] = chicken`
+- player inventory completions for `player.inventory[0].*`, `player.hotbar[0].*`,
+  and explicit `player_ref` values
+- member completions for `entity_def.nbt.*`, `block_def.states.*`, `item_def.nbt.*`,
+  and curated aliases like `name`, `no_ai`, `lock`, and `loot_table`
 
 ## Local Testing
 

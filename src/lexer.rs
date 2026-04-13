@@ -11,6 +11,7 @@ pub struct Token {
 pub enum TokenKind {
     Fn,
     Struct,
+    PlayerState,
     Let,
     Return,
     End,
@@ -58,6 +59,8 @@ pub enum TokenKind {
     Integer(i64),
     String(String),
     Newline,
+    Indent,
+    Dedent,
     Eof,
 }
 
@@ -66,10 +69,105 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
     let mut cursor = Cursor::new(source);
     let mut diagnostics = Diagnostics::new();
     let mut tokens = Vec::new();
+    let mut indents = vec![0usize];
+    let mut at_line_start = true;
 
-    while let Some(ch) = cursor.peek() {
+    while cursor.peek().is_some() {
+        if at_line_start {
+            let line_start = cursor.position();
+            let mut indent = 0usize;
+            while let Some(next) = cursor.peek() {
+                match next {
+                    ' ' => {
+                        indent += 1;
+                        cursor.bump();
+                    }
+                    '\t' => {
+                        let start = cursor.position();
+                        cursor.bump();
+                        diagnostics.push(Diagnostic::new(
+                            "tabs are not allowed for indentation; use spaces",
+                            Span::from_range(
+                                &source_file,
+                                TextRange::new(start, cursor.position()),
+                            ),
+                        ));
+                        indent += 4;
+                    }
+                    '\r' => {
+                        cursor.bump();
+                    }
+                    _ => break,
+                }
+            }
+
+            match cursor.peek() {
+                Some('\n') => {
+                    let start = cursor.position();
+                    cursor.bump();
+                    push_token(
+                        &mut tokens,
+                        &source_file,
+                        TokenKind::Newline,
+                        TextRange::new(start, cursor.position()),
+                    );
+                    at_line_start = true;
+                    continue;
+                }
+                Some('#') => {
+                    cursor.skip_comment();
+                    at_line_start = true;
+                    continue;
+                }
+                None => break,
+                _ => {
+                    let current = *indents.last().unwrap();
+                    if indent > current {
+                        indents.push(indent);
+                        push_token(
+                            &mut tokens,
+                            &source_file,
+                            TokenKind::Indent,
+                            TextRange::new(line_start, cursor.position()),
+                        );
+                    } else if indent < current {
+                        while indent < *indents.last().unwrap() {
+                            indents.pop();
+                            push_token(
+                                &mut tokens,
+                                &source_file,
+                                TokenKind::Dedent,
+                                TextRange::new(line_start, cursor.position()),
+                            );
+                        }
+                        if indent != *indents.last().unwrap() {
+                            diagnostics.push(Diagnostic::new(
+                                "inconsistent indentation",
+                                Span::from_range(
+                                    &source_file,
+                                    TextRange::new(line_start, cursor.position()),
+                                ),
+                            ));
+                        }
+                    }
+                    at_line_start = false;
+                }
+            }
+        }
+        let Some(ch) = cursor.peek() else {
+            break;
+        };
         match ch {
             ' ' | '\t' | '\r' => {
+                if ch == '\t' {
+                    let start = cursor.position();
+                    cursor.bump();
+                    diagnostics.push(Diagnostic::new(
+                        "tabs are not allowed; use spaces",
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                    ));
+                    continue;
+                }
                 cursor.bump();
             }
             '#' => cursor.skip_comment(),
@@ -82,6 +180,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                     TokenKind::Newline,
                     TextRange::new(start, cursor.position()),
                 );
+                at_line_start = true;
             }
             '(' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::LeftParen),
             ')' => push_simple(
@@ -338,6 +437,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 let kind = match raw {
                     "fn" => TokenKind::Fn,
                     "struct" => TokenKind::Struct,
+                    "player_state" => TokenKind::PlayerState,
                     "let" => TokenKind::Let,
                     "return" => TokenKind::Return,
                     "end" => TokenKind::End,
@@ -372,6 +472,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
         }
     }
 
+    if !matches!(
+        tokens.last().map(|token| &token.kind),
+        Some(TokenKind::Newline) | None
+    ) {
+        let newline_range = TextRange::new(cursor.position(), cursor.position());
+        push_token(&mut tokens, &source_file, TokenKind::Newline, newline_range);
+    }
+    while indents.len() > 1 {
+        indents.pop();
+        let range = TextRange::new(cursor.position(), cursor.position());
+        push_token(&mut tokens, &source_file, TokenKind::Dedent, range);
+    }
     let eof_range = TextRange::new(cursor.position(), cursor.position());
     push_token(&mut tokens, &source_file, TokenKind::Eof, eof_range);
     diagnostics.into_result(tokens)

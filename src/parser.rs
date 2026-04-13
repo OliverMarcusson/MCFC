@@ -27,22 +27,32 @@ impl Parser {
 
     fn parse_program(mut self) -> Result<Program, Diagnostics> {
         let mut structs = Vec::new();
+        let mut player_states = Vec::new();
         let mut functions = Vec::new();
         self.skip_newlines();
 
         while !self.at(&TokenKind::Eof) {
             if self.at(&TokenKind::Struct) {
                 structs.push(self.parse_struct());
+            } else if self.at(&TokenKind::PlayerState) {
+                player_states.push(self.parse_player_state());
             } else if self.at(&TokenKind::Fn) {
                 functions.push(self.parse_function());
+            } else if self.at(&TokenKind::End) {
+                self.error_here("'end' is no longer used; close blocks with indentation");
+                self.bump();
             } else {
-                self.error_here("expected struct or function definition");
+                self.error_here("expected player_state, struct, or function definition");
                 self.recover_top_level();
             }
             self.skip_newlines();
         }
 
-        self.diagnostics.into_result(Program { structs, functions })
+        self.diagnostics.into_result(Program {
+            structs,
+            player_states,
+            functions,
+        })
     }
 
     fn parse_expression_only(mut self) -> Result<Expr, Diagnostics> {
@@ -62,7 +72,9 @@ impl Parser {
         self.expect_statement_break("expected newline after struct name");
         let mut fields = Vec::new();
         self.skip_newlines();
-        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+        self.expect(TokenKind::Indent, "expected indented struct body");
+        self.skip_newlines();
+        while !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
             let span = self.current_span();
             let name = self.expect_identifier("expected field name");
             self.expect(TokenKind::Colon, "expected ':' after field name");
@@ -71,10 +83,35 @@ impl Parser {
             fields.push(StructField { name, ty, span });
             self.skip_newlines();
         }
-        self.expect(TokenKind::End, "expected 'end'");
+        self.expect(TokenKind::Dedent, "expected dedent after struct body");
         StructDef {
             name,
             fields,
+            span: start,
+        }
+    }
+
+    fn parse_player_state(&mut self) -> PlayerStateDef {
+        let start = self
+            .expect(TokenKind::PlayerState, "expected 'player_state'")
+            .span;
+        let mut path = Vec::new();
+        path.push(self.expect_identifier("expected player state name"));
+        while self.eat(&TokenKind::Dot) {
+            path.push(self.expect_identifier("expected player state path segment"));
+        }
+        self.expect(TokenKind::Colon, "expected ':' after player state name");
+        let ty = self.parse_type();
+        self.expect(
+            TokenKind::Assign,
+            "expected '=' before player state display name",
+        );
+        let display_name = self.expect_string("expected string display name");
+        self.expect_statement_break("expected newline after player state declaration");
+        PlayerStateDef {
+            path,
+            ty,
+            display_name,
             span: start,
         }
     }
@@ -101,9 +138,9 @@ impl Parser {
         self.expect(TokenKind::RightParen, "expected ')' after parameters");
         self.expect(TokenKind::Arrow, "expected '->' before return type");
         let return_type = self.parse_type();
+        self.expect(TokenKind::Colon, "expected ':' after function signature");
         self.expect_statement_break("expected newline after function signature");
-        let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
-        self.expect(TokenKind::End, "expected 'end'");
+        let body = self.parse_indented_block("expected indented function body");
 
         Function {
             name,
@@ -114,14 +151,19 @@ impl Parser {
         }
     }
 
-    fn parse_block_until(&mut self, terminator: impl Fn(&TokenKind) -> bool) -> Vec<Stmt> {
+    fn parse_indented_block(&mut self, indent_message: &str) -> Vec<Stmt> {
+        if !self.eat(&TokenKind::Indent) {
+            self.error_here(indent_message);
+            return Vec::new();
+        }
         let mut statements = Vec::new();
         self.skip_newlines();
 
-        while !terminator(&self.peek().kind) && !self.at(&TokenKind::Eof) {
+        while !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
             statements.push(self.parse_stmt());
             self.skip_newlines();
         }
+        self.expect(TokenKind::Dedent, "expected dedent after block");
         statements
     }
 
@@ -139,7 +181,6 @@ impl Parser {
             TokenKind::If => {
                 self.bump();
                 let (condition, then_body, else_body) = self.parse_if_parts(span.clone());
-                self.expect(TokenKind::End, "expected 'end'");
                 StmtKind::If {
                     condition,
                     then_body,
@@ -151,8 +192,7 @@ impl Parser {
                 let condition = self.parse_expr();
                 self.expect(TokenKind::Colon, "expected ':' after while condition");
                 self.expect_statement_break("expected newline after while condition");
-                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
-                self.expect(TokenKind::End, "expected 'end'");
+                let body = self.parse_indented_block("expected indented while body");
                 StmtKind::While { condition, body }
             }
             TokenKind::Match => {
@@ -163,8 +203,7 @@ impl Parser {
                 self.bump();
                 self.expect(TokenKind::Colon, "expected ':' after async");
                 self.expect_statement_break("expected newline after async");
-                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
-                self.expect(TokenKind::End, "expected 'end'");
+                let body = self.parse_indented_block("expected indented async body");
                 StmtKind::Async { body }
             }
             TokenKind::For => {
@@ -191,8 +230,7 @@ impl Parser {
                 };
                 self.expect(TokenKind::Colon, "expected ':' after for range");
                 self.expect_statement_break("expected newline after for range");
-                let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
-                self.expect(TokenKind::End, "expected 'end'");
+                let body = self.parse_indented_block("expected indented for body");
                 StmtKind::For { name, kind, body }
             }
             TokenKind::Break => {
@@ -208,7 +246,7 @@ impl Parser {
             TokenKind::Return => {
                 self.bump();
                 let value = if self.at(&TokenKind::Newline)
-                    || self.at(&TokenKind::End)
+                    || self.at(&TokenKind::Dedent)
                     || self.at(&TokenKind::Else)
                     || self.at(&TokenKind::Eof)
                 {
@@ -218,6 +256,14 @@ impl Parser {
                 };
                 self.expect_statement_break("expected newline after return");
                 StmtKind::Return(value)
+            }
+            TokenKind::End => {
+                self.error_here("'end' is no longer used; close blocks with indentation");
+                self.bump();
+                StmtKind::Expr(Expr {
+                    kind: ExprKind::Variable("_error".to_string()),
+                    span: span.clone(),
+                })
             }
             TokenKind::Mc => {
                 self.bump();
@@ -241,8 +287,7 @@ impl Parser {
                 } else if self.eat(&TokenKind::Colon) {
                     let context = self.into_context_header(expr);
                     self.expect_statement_break("expected newline after context header");
-                    let body = self.parse_block_until(|kind| matches!(kind, TokenKind::End));
-                    self.expect(TokenKind::End, "expected 'end'");
+                    let body = self.parse_indented_block("expected indented context body");
                     match context {
                         Some((kind, anchor)) => StmtKind::Context { kind, anchor, body },
                         None => StmtKind::Expr(Expr {
@@ -264,11 +309,12 @@ impl Parser {
         let value = self.parse_expr();
         self.expect(TokenKind::Colon, "expected ':' after match value");
         self.expect_statement_break("expected newline after match value");
+        self.expect(TokenKind::Indent, "expected indented match body");
         self.skip_newlines();
 
         let mut arms = Vec::new();
         let mut else_body = Vec::new();
-        while !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+        while !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
             if self.eat(&TokenKind::Else) {
                 self.expect(TokenKind::FatArrow, "expected '=>' after else");
                 let stmt = self.parse_stmt();
@@ -284,7 +330,7 @@ impl Parser {
             }
             self.skip_newlines();
         }
-        self.expect(TokenKind::End, "expected 'end'");
+        self.expect(TokenKind::Dedent, "expected dedent after match body");
         if arms.is_empty() && else_body.is_empty() {
             self.diagnostics.push(Diagnostic::new(
                 "match requires at least one arm",
@@ -586,8 +632,7 @@ impl Parser {
         let condition = self.parse_expr();
         self.expect(TokenKind::Colon, "expected ':' after if condition");
         self.expect_statement_break("expected newline after if condition");
-        let then_body =
-            self.parse_block_until(|kind| matches!(kind, TokenKind::Else | TokenKind::End));
+        let then_body = self.parse_indented_block("expected indented if body");
         let else_body = if self.eat(&TokenKind::Else) {
             if self.eat(&TokenKind::If) {
                 let (condition, then_body, else_body) = self.parse_if_parts(span.clone());
@@ -602,7 +647,7 @@ impl Parser {
             } else {
                 self.expect(TokenKind::Colon, "expected ':' after else");
                 self.expect_statement_break("expected newline after else");
-                self.parse_block_until(|kind| matches!(kind, TokenKind::End))
+                self.parse_indented_block("expected indented else body")
             }
         } else {
             Vec::new()
@@ -619,7 +664,12 @@ impl Parser {
                 "string" => Type::String,
                 "entity_set" => Type::EntitySet,
                 "entity_ref" => Type::EntityRef,
+                "player_ref" => Type::PlayerRef,
                 "block_ref" => Type::BlockRef,
+                "entity_def" => Type::EntityDef,
+                "block_def" => Type::BlockDef,
+                "item_def" => Type::ItemDef,
+                "item_slot" => Type::ItemSlot,
                 "nbt" => Type::Nbt,
                 "void" => Type::Void,
                 "array" => {
@@ -648,7 +698,7 @@ impl Parser {
     fn expect_statement_break(&mut self, message: &str) {
         if self.at(&TokenKind::Newline) {
             self.skip_newlines();
-        } else if !self.at(&TokenKind::End) && !self.at(&TokenKind::Eof) {
+        } else if !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
             self.error_here(message);
             self.recover_statement();
             self.skip_newlines();
@@ -723,11 +773,17 @@ impl Parser {
 
     fn recover_top_level(&mut self) {
         while !self.at(&TokenKind::Eof) {
-            if self.at(&TokenKind::Fn) {
+            if self.at(&TokenKind::Fn)
+                || self.at(&TokenKind::Struct)
+                || self.at(&TokenKind::PlayerState)
+            {
                 break;
             }
             self.bump();
-            if self.at(&TokenKind::Fn) {
+            if self.at(&TokenKind::Fn)
+                || self.at(&TokenKind::Struct)
+                || self.at(&TokenKind::PlayerState)
+            {
                 break;
             }
         }
@@ -736,7 +792,7 @@ impl Parser {
     fn recover_statement(&mut self) {
         while !self.at(&TokenKind::Eof)
             && !self.at(&TokenKind::Newline)
-            && !self.at(&TokenKind::End)
+            && !self.at(&TokenKind::Dedent)
         {
             self.bump();
         }
@@ -751,7 +807,7 @@ impl Parser {
             && !self.at(&TokenKind::DotDot)
             && !self.at(&TokenKind::DotDotEq)
             && !self.at(&TokenKind::Newline)
-            && !self.at(&TokenKind::End)
+            && !self.at(&TokenKind::Dedent)
             && !self.at(&TokenKind::Else)
             && !self.at(&TokenKind::Colon)
             && !self.at(&TokenKind::Let)
@@ -850,27 +906,27 @@ mod tests {
         let program = parse(
             r#"
 # leading
-fn fibb(n: int) -> void # trailing
+fn fibb(n: int) -> void: # trailing
     async:
         return
-    end
-end
 "#,
         )
         .unwrap();
 
         assert_eq!(program.functions.len(), 1);
-        assert!(matches!(program.functions[0].body[0].kind, StmtKind::Async { .. }));
+        assert!(matches!(
+            program.functions[0].body[0].kind,
+            StmtKind::Async { .. }
+        ));
     }
 
     #[test]
     fn preserves_expression_precedence() {
         let program = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     let value = 1 + 2 * 3
     return
-end
 "#,
         )
         .unwrap();
@@ -889,7 +945,7 @@ end
     fn parses_else_if_for_and_logic() {
         let program = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     for i in 0..=10:
         if true and not false:
             return
@@ -897,9 +953,6 @@ fn main() -> void
             continue
         else:
             break
-        end
-    end
-end
 "#,
         )
         .unwrap();
@@ -948,10 +1001,9 @@ end
     fn recovers_multiple_parser_errors() {
         let error = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     let x =
     let y =
-end
 "#,
         )
         .unwrap_err();
@@ -964,16 +1016,13 @@ end
     fn rejects_malformed_else_and_for() {
         let error = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     if true:
         return
     else
         return
-    end
     for i in 0 10:
         return
-    end
-end
 "#,
         )
         .unwrap_err();
@@ -987,12 +1036,10 @@ end
     fn parses_for_each_and_path_assignment() {
         let program = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     let pigs = selector("@e[type=pig]")
     for pig in pigs:
         pig.CustomName = "Hello"
-    end
-end
 "#,
         )
         .unwrap();
@@ -1008,10 +1055,9 @@ end
     fn parses_player_method_calls() {
         let program = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     player.effect("speed", 10, 1)
-end
 "#,
         )
         .unwrap();
@@ -1029,7 +1075,7 @@ end
     fn parses_gameplay_builtins_and_equipment_paths() {
         let program = parse(
             r#"
-fn main() -> void
+fn main() -> void:
     let pig = summon("minecraft:pig")
     pig.add_tag("elite")
     pig.offhand.item = "minecraft:shield"
@@ -1038,7 +1084,6 @@ fn main() -> void
     debug_marker(block("~ ~1 ~"), "marker")
     debug_entity(pig, "pig")
     fill(block("~ ~ ~"), block("~1 ~1 ~1"), "minecraft:stone")
-end
 "#,
         )
         .unwrap();
@@ -1068,6 +1113,58 @@ end
             program.functions[0].body[3].kind,
             StmtKind::Expr(Expr {
                 kind: ExprKind::Call { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_entity_and_block_builders() {
+        let program = parse(
+            r#"
+fn main() -> void:
+    let pig = entity("minecraft:pig")
+    pig.name = "Boss"
+    let chest = block_type("minecraft:chest")
+    chest.states.facing = "north"
+    let spawned = summon(pig)
+    block("~ ~ ~").setblock(chest)
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            program.functions[0].body[0].kind,
+            StmtKind::Let {
+                value: Expr {
+                    kind: ExprKind::Call { .. },
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            program.functions[0].body[1].kind,
+            StmtKind::Assign { .. }
+        ));
+        assert!(matches!(
+            program.functions[0].body[3].kind,
+            StmtKind::Assign { .. }
+        ));
+        assert!(matches!(
+            program.functions[0].body[4].kind,
+            StmtKind::Let {
+                value: Expr {
+                    kind: ExprKind::Call { .. },
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            program.functions[0].body[5].kind,
+            StmtKind::Expr(Expr {
+                kind: ExprKind::MethodCall { .. },
                 ..
             })
         ));

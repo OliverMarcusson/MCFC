@@ -176,19 +176,25 @@ fn collect_function_info(
         .map(|token| token.range.end)
         .unwrap_or(function.span.range.end);
     let mut index = fn_index + 1;
+    while index < tokens.len() && !matches!(tokens[index].kind, TokenKind::Indent | TokenKind::Eof)
+    {
+        index += 1;
+    }
     let mut block_depth = 0usize;
+    let mut last_body_end = end;
     while index < tokens.len() {
         match tokens[index].kind {
-            TokenKind::If if !previous_significant_is_else(tokens, index) => block_depth += 1,
-            TokenKind::While | TokenKind::For | TokenKind::Async => block_depth += 1,
-            TokenKind::End if block_depth == 0 => {
-                end = tokens[index].range.end;
-                index += 1;
-                break;
+            TokenKind::Indent => block_depth += 1,
+            TokenKind::Dedent => {
+                block_depth = block_depth.saturating_sub(1);
+                if block_depth == 0 {
+                    end = last_body_end;
+                    index += 1;
+                    break;
+                }
             }
-            TokenKind::End => block_depth = block_depth.saturating_sub(1),
             TokenKind::Eof => break,
-            _ => {}
+            _ => last_body_end = tokens[index].range.end,
         }
         index += 1;
     }
@@ -207,14 +213,6 @@ fn collect_function_info(
         },
         next_cursor: index,
     }
-}
-
-fn previous_significant_is_else(tokens: &[Token], index: usize) -> bool {
-    tokens[..index]
-        .iter()
-        .rev()
-        .find(|token| !matches!(token.kind, TokenKind::Newline))
-        .is_some_and(|token| matches!(token.kind, TokenKind::Else))
 }
 
 pub fn function_at_offset<'a>(
@@ -321,9 +319,8 @@ mod tests {
     fn reports_type_diagnostics_and_keeps_symbols() {
         let analysis = analyze_source(
             r#"
-fn main() -> void
+fn main() -> void:
     missing()
-end
 "#,
         );
 
@@ -339,10 +336,9 @@ end
     #[test]
     fn collects_functions_and_locals_for_valid_source() {
         let source = r#"
-fn launch(level: int) -> void
+fn launch(level: int) -> void:
     let amount = level
     return
-end
 "#;
 
         let analysis = analyze_source(source);

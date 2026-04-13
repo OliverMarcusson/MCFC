@@ -1,9 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::ast::{Function, Program, Type};
 use crate::backend::{self, BackendOptions, BuildArtifacts, ExportedFunction};
+use crate::diagnostics::Diagnostic;
 use crate::diagnostics::Diagnostics;
 use crate::ir::{self, IrProgram};
+use crate::optimizer;
 use crate::parser;
 use crate::project::{collect_asset_files, collect_source_files, load_manifest};
 use crate::types::{self, TypedProgram};
@@ -17,6 +20,7 @@ pub struct CompileOptions {
     pub load_tag_values: Option<Vec<String>>,
     pub tick_tag_values: Option<Vec<String>>,
     pub exports: Vec<ExportedFunction>,
+    pub optimize: bool,
 }
 
 impl Default for CompileOptions {
@@ -29,6 +33,7 @@ impl Default for CompileOptions {
             load_tag_values: None,
             tick_tag_values: None,
             exports: Vec::new(),
+            optimize: true,
         }
     }
 }
@@ -45,8 +50,14 @@ pub fn compile_source(
     options: &CompileOptions,
 ) -> Result<CompileResult, Diagnostics> {
     let ast = parser::parse(source)?;
+    let ast = normalize_special_functions(ast)?;
     let typed_program = types::type_check(&ast)?;
     let ir_program = ir::lower(&typed_program);
+    let ir_program = if options.optimize {
+        optimizer::optimize(ir_program)
+    } else {
+        ir_program
+    };
     let artifacts = backend::generate(
         &ir_program,
         &BackendOptions {
@@ -61,6 +72,74 @@ pub fn compile_source(
         ir_program,
         artifacts,
     })
+}
+
+fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnostics> {
+    let mut diagnostics = Diagnostics::new();
+    let tick_indices = program
+        .functions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, function)| {
+            if function.name == "tick" {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let tick_void_indices = tick_indices
+        .iter()
+        .copied()
+        .filter(|index| {
+            let function = &program.functions[*index];
+            function.params.is_empty() && function.return_type == Type::Void
+        })
+        .collect::<Vec<_>>();
+
+    if !tick_void_indices.is_empty() {
+        for index in tick_indices.iter().copied() {
+            if !tick_void_indices.contains(&index) {
+                diagnostics.push(Diagnostic::new(
+                    "tick() is reserved for the datapack tick function when a zero-argument tick function is present",
+                    program.functions[index].span.clone(),
+                ));
+            }
+        }
+        let first_index = tick_void_indices[0];
+        let mut merged = Function {
+            name: "tick".to_string(),
+            params: Vec::new(),
+            return_type: Type::Void,
+            body: Vec::new(),
+            span: program.functions[first_index].span.clone(),
+        };
+        for index in &tick_void_indices {
+            merged.body.extend(program.functions[*index].body.clone());
+        }
+        let mut next_functions = Vec::with_capacity(program.functions.len());
+        for (index, function) in program.functions.into_iter().enumerate() {
+            if index == first_index {
+                next_functions.push(merged.clone());
+            } else if !tick_void_indices.contains(&index) {
+                next_functions.push(function);
+            }
+        }
+        program.functions = next_functions;
+    } else {
+        for index in tick_indices {
+            let function = &program.functions[index];
+            if function.params.is_empty() && function.return_type != Type::Void {
+                diagnostics.push(Diagnostic::new(
+                    "tick() must return 'void'",
+                    function.span.clone(),
+                ));
+            }
+        }
+    }
+
+    diagnostics.into_result(program)
 }
 
 pub fn compile_file(
@@ -216,7 +295,7 @@ mod tests {
     #[test]
     fn compiles_gameplay_entity_and_inventory_builtins() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let pig = summon("minecraft:pig")
     pig.add_tag("elite")
     let tagged = pig.has_tag("elite")
@@ -234,7 +313,6 @@ fn main() -> void
     pig.clear("minecraft:apple", 1)
     pig.loot_give("minecraft:chests/simple_dungeon")
     return
-end
 "#;
 
         let result =
@@ -273,7 +351,7 @@ end
     #[test]
     fn compiles_ui_audio_particle_and_world_builtins() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let pig = single(selector("@e[type=pig,limit=1]"))
     let pos = block("~ ~ ~")
     pig.tellraw("hello @s")
@@ -294,7 +372,6 @@ fn main() -> void
     pos.setblock("minecraft:stone")
     pos.fill(block("~1 ~1 ~1"), "minecraft:glass")
     return
-end
 "#;
 
         let result =
@@ -325,13 +402,47 @@ end
     }
 
     #[test]
+    fn compiles_entity_and_block_builders() {
+        let source = r#"
+fn main() -> void:
+    let pig = entity("minecraft:pig")
+    pig.name = "Builder Pig"
+    pig.no_ai = true
+    let spawned = summon(pig)
+    let chest = block_type("minecraft:chest")
+    chest.states.facing = "north"
+    chest.name = "Loot"
+    let pos = block("~ ~ ~")
+    pos.setblock(chest)
+    pos.fill(block("~1 ~1 ~1"), chest)
+    return
+"#;
+
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(files.contains(".id set from storage"));
+        assert!(files.contains(".nbt.CustomName set from storage"));
+        assert!(files.contains(".nbt.NoAI set from storage"));
+        assert!(files.contains("summon $(entity) ~ ~ ~ $(data)"));
+        assert!(files.contains("setblock $(pos) $(block)"));
+        assert!(files.contains("data merge block $(pos) $(data)"));
+        assert!(files.contains("$(id)[facing=$(s1)]"));
+        assert!(files.contains("fill $(from) $(to) $(block)"));
+    }
+
+    #[test]
     fn compiles_random_builtin_forms() {
         let source = r#"
-fn roll() -> int
+fn roll() -> int:
     return random()
-end
-
-fn main() -> void
+fn main() -> void:
     let any = random()
     let bounded = random(6)
     let between = random(1, 20)
@@ -339,7 +450,6 @@ fn main() -> void
     let combined = random() + roll()
     mcf "say $(random(1, 3))"
     return
-end
 "#;
 
         let result =
@@ -361,12 +471,11 @@ end
     #[test]
     fn compiles_interpolated_string_literals() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let demo_title = "MCFC Demo $(random(100))"
     let player = single(selector("@p"))
     player.tellraw(demo_title)
     return
-end
 "#;
 
         let result =
@@ -387,7 +496,7 @@ end
     #[test]
     fn compiles_sleep_continuations() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     let flag = true
 
@@ -397,28 +506,20 @@ fn main() -> void
     if flag:
         sleep(1)
         mc "say after if sleep"
-    end
     mc "say after if"
 
     at(player):
         sleep(1)
         mc "say after context sleep"
-    end
-
     let i = 0
     while i < 2:
         sleep(1)
         i = i + 1
-    end
-
     for n in 0..2:
         sleep(1)
         mc "say after for sleep"
-    end
-
     mc "say done"
     return
-end
 "#;
 
         let result =
@@ -446,7 +547,7 @@ end
     #[test]
     fn compiles_async_blocks_and_entity_position() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     let bb = bossbar("mcfc:demo", "MCFC Bossbar")
     let count = 5
@@ -459,11 +560,9 @@ fn main() -> void
         sleep(5)
         bb.remove()
         player.position.setblock("minecraft:gold_block")
-    end
     count = 7
     player.tellraw("caller continues")
     return
-end
 "#;
 
         let result =
@@ -480,8 +579,12 @@ end
         assert!(joined.contains("bossbar set $(id) visible $(visible)"));
         assert!(joined.contains("bossbar set $(id) players $(selector)"));
         assert!(joined.contains("bossbar remove $(id)"));
-        assert!(joined.contains("schedule function mcfc:generated/main__async_1__d0__sleep_resume_"));
-        assert!(joined.contains("prefix append value \"execute at \""));
+        assert!(
+            joined.contains("schedule function mcfc:generated/main__async_1__d0__sleep_resume_")
+        );
+        assert!(joined.contains(
+            "prefix set value \"$(__anchor_prefix)execute at $(__anchor_selector) run \""
+        ));
         assert!(joined.contains("setblock $(pos) $(block)"));
         assert!(entry.contains("function mcfc:generated/main__async_1__d0__entry"));
         assert!(joined.contains("caller continues"));
@@ -491,11 +594,9 @@ end
     fn rejects_async_return_old_builtins_and_book_annotation() {
         let async_error = compile_source(
             r#"
-fn main() -> void
+fn main() -> void:
     async:
         return
-    end
-end
 "#,
             &CompileOptions::default(),
         )
@@ -505,10 +606,9 @@ end
 
         let legacy_error = compile_source(
             r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     tellraw(player, "old")
-end
 "#,
             &CompileOptions::default(),
         )
@@ -519,9 +619,8 @@ end
         let book_error = compile_source(
             r#"
 @book
-fn main() -> void
+fn main() -> void:
     return
-end
 "#,
             &CompileOptions::default(),
         )
@@ -533,7 +632,7 @@ end
     #[test]
     fn rejects_invalid_random_and_sleep_usage() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let bad_sleep = sleep(1)
     random(sleep(1))
     mcf "say $(sleep(1))"
@@ -542,7 +641,6 @@ fn main() -> void
     let bad_random = random("bad")
     let too_many = random(1, 2, 3)
     return
-end
 "#;
 
         let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -555,10 +653,9 @@ end
 
         let string_error = compile_source(
             r#"
-fn main() -> void
+fn main() -> void:
     let bad = "value $(sleep(1))"
     return
-end
 "#,
             &CompileOptions::default(),
         )
@@ -570,7 +667,7 @@ end
     #[test]
     fn compiles_debug_builtins() {
         let source = r#"
-fn main() -> void
+fn main() -> void:
     let pig = single(selector("@e[type=pig,limit=1]"))
     let pos = block("~ ~1 ~")
     debug("checkpoint")
@@ -578,7 +675,6 @@ fn main() -> void
     pos.debug_marker("block marker", "minecraft:gold_block")
     pig.debug_entity("nearest pig")
     return
-end
 "#;
 
         let result =
@@ -603,10 +699,9 @@ end
     fn heal_rejects_player_and_ambiguous_targets() {
         let player_error = compile_source(
             r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     player.heal(1)
-end
 "#,
             &CompileOptions::default(),
         )
@@ -616,10 +711,9 @@ end
 
         let ambiguous_error = compile_source(
             r#"
-fn main() -> void
+fn main() -> void:
     let target = single(selector("@e"))
     target.heal(1)
-end
 "#,
             &CompileOptions::default(),
         )

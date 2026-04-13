@@ -7,14 +7,13 @@ use mcfc::compiler::{CompileOptions, compile_project, compile_source};
 #[test]
 fn compiles_straight_line_program() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let a = 5
     let b = 7
     let text = "done"
     b = a + b
     mc "say done"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -43,12 +42,11 @@ end
 fn compiles_program_with_comments() {
     let source = r#"
 # top-level comment
-fn main() -> void # signature comment
+fn main() -> void: # signature comment:
     let a = 1 # inline comment
     # inside block
     mc "say done"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -63,12 +61,11 @@ end
 #[test]
 fn compiles_single_quoted_strings() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let a = 'done'
     mc 'say "done"'
     mcf 'say $(a)'
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -90,14 +87,13 @@ end
 #[test]
 fn compiles_macro_command_with_storage_call() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let amount = 5
     let label = "hello"
     mcf "xp add @a $(amount) levels"
     mcf "say $(label)"
     mc "say $(amount)"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -121,13 +117,11 @@ end
 #[test]
 fn compiles_entity_queries_and_iteration() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let pigs = selector("@e[type=pig,limit=3]")
     for pig in pigs:
         pig.CustomName = "Hello"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -140,22 +134,23 @@ end
     assert!(result.artifacts.files.values().any(|file| {
         file.contains("execute as $(selector) run function mcfc:generated/main__d0__for_each_1")
     }));
-    assert!(result.artifacts.files.values().any(|file| file.contains("data modify entity $(selector) CustomName set from storage")));
+    assert!(result
+        .artifacts
+        .files
+        .values()
+        .any(|file| file.contains("data modify entity $(selector) CustomName set from storage")));
 }
 
 #[test]
 fn compiles_single_exists_and_context_composition() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@a[tag=hunter]"))
     if exists(player):
         let nearest = single(at(player, selector("@e[type=pig,sort=nearest]")))
         if exists(nearest):
             nearest.CustomName = "Target"
-        end
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -182,16 +177,59 @@ end
 }
 
 #[test]
+fn single_plain_player_name_stays_a_player_target() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("FaithlessMC"))
+    player.tellraw("hi")
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("selector set value \"FaithlessMC\""));
+    assert!(!joined.contains("FaithlessMC[limit=1]"));
+    assert!(joined.contains("tellraw $(selector)"));
+    assert!(joined.contains("hi"));
+}
+
+#[test]
+fn object_display_methods_expand_message_at_s_to_the_target_selector() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@a"))
+    player.tellraw("*@s* Expression test: $(32)")
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("{\"selector\":\"$(selector)\"}"));
+    assert!(!joined.contains("{\"selector\":\"@s\"}"));
+    assert!(joined.contains("Expression test: $(p1)"));
+}
+
+#[test]
 fn compiles_as_value_context_composition() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     if exists(player):
         let self_ref = single(as(player, selector("@s")))
         self_ref.tags.welcomed = true
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -214,18 +252,15 @@ end
 #[test]
 fn compiles_as_and_at_context_blocks() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     as(player):
         mcf 'tellraw @s "welcome @s"'
         mc 'title @s actionbar "title @s"'
         mc "say hello @s"
-    end
     at(player):
         mc "say here"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -282,15 +317,12 @@ end
 #[test]
 fn compiles_nested_context_blocks() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     at(player):
         as(selector("@e[type=pig,limit=1]")):
             mc "say @s"
-        end
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -312,12 +344,11 @@ end
 #[test]
 fn compiles_block_paths_and_nbt_casts() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let chest = block("~ ~ ~")
     chest.CustomName = "Loot"
     let name = string(chest.CustomName)
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -344,9 +375,42 @@ end
 }
 
 #[test]
+fn compiles_entity_and_block_builder_paths() {
+    let source = r#"
+fn main() -> void:
+    let pig = entity("minecraft:pig")
+    pig.name = "Boss"
+    pig.glowing = true
+    let spawned = summon(pig)
+    let chest = block_type("minecraft:chest")
+    chest.states.facing = "north"
+    chest.name = "Loot"
+    let pos = block("~ ~ ~")
+    pos.setblock(chest)
+    pos.fill(block("~1 ~1 ~1"), chest)
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains(".nbt.CustomName set from storage"));
+    assert!(joined.contains(".nbt.Glowing set from storage"));
+    assert!(joined.contains("summon $(entity) ~ ~ ~ $(data)"));
+    assert!(joined.contains("$(id)[facing=$(s1)]"));
+    assert!(joined.contains("data merge block $(pos) $(data)"));
+    assert!(joined.contains("fill $(from) $(to) $(block)"));
+}
+
+#[test]
 fn compiles_player_safe_api_surfaces() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     if exists(player):
         let air = int(player.nbt.Air)
@@ -359,9 +423,7 @@ fn main() -> void
         player.mainhand.item = "minecraft:carrot_on_a_stick"
         player.mainhand.count = 1
         player.effect("speed", 10, 1)
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -433,9 +495,357 @@ end
 }
 
 #[test]
+fn compiles_generic_entity_state_reads_and_writes() {
+    let source = r#"
+fn main() -> void:
+    let marker = single(selector("@e[type=minecraft:marker,limit=1]"))
+    marker.state.decay = 0
+    marker.state.decay = marker.state.decay + 1
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let setup = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/setup.mcfunction")
+        .unwrap();
+    assert!(setup.contains("scoreboard objectives add mcfe_decay dummy"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("scoreboard players operation $(selector) mcfe_decay"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("scoreboard players get $(selector) mcfe_decay"))
+    );
+}
+
+#[test]
+fn compiles_generic_entity_bool_state_conditions() {
+    let source = r#"
+fn main() -> void:
+    let mob = single(selector("@e[type=minecraft:pig,limit=1]"))
+    mob.state.alert = true
+    if mob.state.alert:
+        mob.tellraw("x")
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let setup = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/setup.mcfunction")
+        .unwrap();
+    assert!(setup.contains("scoreboard objectives add mcfe_alert dummy"));
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("scoreboard players operation $(selector) mcfe_alert"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("scoreboard players get $(selector) mcfe_alert"))
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("tellraw $(selector)"))
+    );
+}
+
+#[test]
+fn compiles_item_builders_and_player_inventory_slots() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let sword = item("minecraft:diamond_sword")
+    let idx = 7
+    sword.count = 2
+    sword.name = "Blade"
+    sword.nbt.CustomModelData = 7
+
+    let payload = sword.as_nbt()
+    player.give(sword)
+    player.hotbar[0] = item("minecraft:stick")
+    player.hotbar[idx] = sword
+    player.inventory[5] = sword
+    player.inventory[5].count = 16
+    player.inventory[idx].count = 4
+    player.inventory[5].name = "Stored"
+
+    let exists = player.inventory[3].exists
+    let item_id = player.inventory[3].id
+    let count = player.inventory[3].count
+    let item_data = player.inventory[3].nbt
+
+    player.hotbar[2].clear()
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("set value \"minecraft:diamond_sword\""));
+    assert!(joined.contains(".count set value 1"));
+    assert!(joined.contains(".nbt.display.Name set from storage"));
+    assert!(joined.contains(".nbt.CustomModelData set from storage"));
+    assert!(joined.contains(
+        "give $(selector) $(item)[minecraft:custom_name='\"$(item_name)\"',minecraft:custom_data=$(data)] $(count)"
+    ));
+    assert!(joined.contains("give $(selector) $(item)[minecraft:custom_data=$(data)] $(count)"));
+    assert!(joined.contains("Inventory[{Slot:$(slot)b}]"));
+    assert!(joined.contains(".slot set value 14"));
+    assert!(joined.contains(".slot set value 2"));
+    assert!(joined.contains(".command_slot set value \"hotbar.0\""));
+    assert!(joined.contains(".command_slot set value \"inventory.5\""));
+    assert!(joined.contains(".logical_slot"));
+    assert!(joined.contains("scoreboard players add"));
+    assert!(joined.contains("set value \"hotbar.$(logical_slot)\""));
+    assert!(joined.contains(
+        "item replace entity $(selector) $(command_slot) with $(id)[minecraft:custom_name='\"$(item_name)\"',minecraft:custom_data=$(nbt)] $(count)"
+    ));
+    assert!(joined.contains(
+        "item replace entity $(selector) $(command_slot) with $(id)[minecraft:custom_data=$(nbt)] $(count)"
+    ));
+    assert!(joined.contains(".exists set value 0"));
+}
+
+#[test]
+fn compiles_player_ref_inventory_assertions_and_params() {
+    let source = r#"
+fn equip(player: player_ref, idx: int, stack: item_def) -> void:
+    player.hotbar[idx] = stack
+    player.inventory[idx].count = 3
+    return
+fn main() -> void:
+    let target = single(selector("@e[limit=1]"))
+    let stack = item("minecraft:book")
+    let player = player_ref(target)
+    equip(target, 7, stack)
+    player.hotbar[1] = stack
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("Inventory[{Slot:$(slot)b}]"));
+    assert!(joined.contains("set value \"inventory.$(logical_slot)\""));
+    assert!(joined.contains(".command_slot set value \"hotbar.1\""));
+}
+
+#[test]
+fn compiles_position_owned_summons_and_spawned_items() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let pig = block("1 64 1").summon(entity("minecraft:pig"))
+    let inline = entity("minecraft:pig")
+    inline.name = "Inline"
+    let pig_with_data = block("~ ~ ~").summon("minecraft:pig", inline.as_nbt())
+    let rel = at(player, block("~1 ~ ~"))
+    let pig_relative = rel.summon("minecraft:pig")
+    let pig_above = at(player, block("~ ~10 ~")).summon("minecraft:pig")
+    let drop = block("~ ~ ~").spawn_item(item("minecraft:apple"))
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("pos set value \"1 64 1\""));
+    assert!(joined.contains("pos set value \"~1 ~ ~\""));
+    assert!(joined.contains("pos set value \"~ ~10 ~\""));
+    assert!(joined.contains("prefix set value \"$(__anchor_prefix)execute at $(__anchor_selector) run $(__value_prefix)\""));
+    assert!(!joined.contains(".prefix append value \"execute at \""));
+    assert!(joined.contains("summon $(entity) $(pos) $(data)"));
+    assert!(joined.contains("minecraft:item"));
+    assert!(joined.contains(".Item set from storage"));
+    assert!(joined.contains("execute at "));
+}
+
+#[test]
+fn compiles_entity_builder_as_nbt_in_nbt_contexts() {
+    let source = r#"
+fn echo(value: nbt) -> nbt:
+    return value
+fn make_passenger() -> nbt:
+    let chicken = entity("minecraft:chicken")
+    chicken.name = "Marcusson"
+    return chicken
+fn main() -> void:
+    let pig = entity("minecraft:pig")
+    pig.name = "Ljungan"
+    pig.glowing = true
+
+    let chicken = entity("minecraft:chicken")
+    chicken.name = "Marcusson"
+    chicken.tags = ["cooler-tag"]
+
+    pig.nbt.Passengers[0] = chicken
+    pig.nbt.Passengers = [chicken]
+    pig.nbt.Debug = {"passenger": chicken}
+
+    let payload = pig.nbt
+    payload = chicken
+
+    let echoed = echo(chicken)
+    let returned = make_passenger()
+    let explicit = chicken.as_nbt()
+    let spawned = summon("minecraft:pig", chicken)
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("Passengers set value []"));
+    assert!(joined.contains("Passengers[0] set from storage"));
+    assert!(joined.contains("Passengers insert 0 from storage"));
+    assert!(joined.contains(".passenger set from storage"));
+    assert!(joined.contains("data merge storage mcfc:runtime"));
+    assert!(joined.contains("summon $(entity) ~ ~ ~ $(data)"));
+}
+
+#[test]
+fn compiles_nested_entity_builder_passengers() {
+    let source = r#"
+fn main() -> void:
+    let pig = entity("minecraft:pig")
+    pig.name = "Dinnerbone"
+    pig.glowing = true
+    pig.tags = ["cool-tag"]
+
+    let chicken = entity("minecraft:chicken")
+    chicken.name = "Marcusson"
+    chicken.tags = ["cooler-tag"]
+
+    let villager = entity("minecraft:villager")
+
+    chicken.nbt.Passengers[0] = villager
+    pig.nbt.Passengers[0] = chicken
+
+    summon(pig)
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("chicken.nbt.Passengers set value []"));
+    assert!(joined.contains("chicken.nbt.Passengers insert 0 from storage"));
+    assert!(joined.contains("pig.nbt.Passengers set value []"));
+    assert!(joined.contains("pig.nbt.Passengers insert 0 from storage"));
+    assert!(joined.contains("data merge storage mcfc:runtime"));
+    assert!(joined.contains("summon $(entity) ~ ~ ~ $(data)"));
+}
+
+#[test]
+fn compiles_block_builder_as_nbt_payload_only() {
+    let source = r#"
+fn echo(value: nbt) -> nbt:
+    return value
+fn main() -> void:
+    let chest = block_type("minecraft:chest")
+    chest.states.facing = "north"
+    chest.name = "Loot"
+    chest.lock = "secret"
+
+    let payload = chest.nbt
+    payload = chest
+
+    let echoed = echo(chest)
+    let explicit = chest.as_nbt()
+
+    let holder = entity("minecraft:armor_stand")
+    holder.nbt.DisplayState = chest
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains(".nbt.Lock set from storage"));
+    assert!(joined.contains("DisplayState set from storage"));
+    assert!(!joined.contains("DisplayState.id"));
+    assert!(!joined.contains("DisplayState.states"));
+}
+
+#[test]
+fn compiles_block_ref_is_checks() {
+    let source = r#"
+fn main() -> void:
+    let below = block("~ ~-1 ~")
+    let absolute = block("10 64 10")
+    if below.is("minecraft:air"):
+        below.setblock("minecraft:purple_concrete")
+    if absolute.is("minecraft:stone"):
+        absolute.setblock("minecraft:gold_block")
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("execute if block $(pos) $(block) run scoreboard players set"));
+    assert!(joined.contains("set value \"minecraft:air\""));
+    assert!(joined.contains("set value \"minecraft:stone\""));
+    assert!(joined.contains("setblock $(pos) $(block)"));
+}
+
+#[test]
 fn compiles_async_bossbars_without_default_tick_tag() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     let bb = bossbar("mcfc:test", "Boss")
     bb.value = 5
@@ -445,8 +855,6 @@ fn main() -> void
         sleep(5)
         bb.remove()
         player.position.setblock("minecraft:gold_block")
-    end
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -467,27 +875,154 @@ end
     assert!(joined.contains("bossbar set $(id) value $(value)"));
     assert!(joined.contains("bossbar set $(id) players $(selector)"));
     assert!(joined.contains("bossbar remove $(id)"));
-    assert!(joined.contains("prefix append value \"execute at \""));
+    assert!(
+        joined.contains(
+            "prefix set value \"$(__anchor_prefix)execute at $(__anchor_selector) run \""
+        )
+    );
     assert!(joined.contains("setblock $(pos) $(block)"));
+}
+
+#[test]
+fn exposes_no_arg_void_functions_and_special_tick() {
+    let source = r#"
+fn reset() -> void:
+    mc "say reset"
+
+fn helper(value: int) -> void:
+    mc "say helper"
+
+fn answer() -> int:
+    return 42
+
+fn tick() -> void:
+    mc "say first"
+
+fn tick() -> void:
+    mc "say second"
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    assert!(
+        result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/reset.mcfunction")
+    );
+    assert!(
+        !result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/helper.mcfunction")
+    );
+    assert!(
+        !result
+            .artifacts
+            .files
+            .contains_key("data/mcfc/function/answer.mcfunction")
+    );
+    let tick = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/tick__d0__entry.mcfunction")
+        .unwrap();
+    assert!(tick.contains("say first"));
+    assert!(tick.contains("say second"));
+    let tick_tag = result
+        .artifacts
+        .files
+        .get("data/minecraft/tags/function/tick.json")
+        .unwrap();
+    assert!(tick_tag.contains("\"mcfc:tick\""));
+}
+
+#[test]
+fn compiles_tick_sleep_player_state_display_and_equipment_item_defs() {
+    let source = r#"
+player_state money: int = "Money"
+
+fn main() -> void:
+    let player = single(selector("@p"))
+    let helmet = item("minecraft:golden_helmet")
+    helmet.count = 1
+    helmet.name = "Crown"
+    player.head.item = helmet
+    player.state.money = 5
+    sleep_ticks(5)
+    mc "say done"
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let setup = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/setup.mcfunction")
+        .unwrap();
+    assert!(setup.contains("scoreboard objectives add mcfs_money dummy \"Money\""));
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("schedule function mcfc:"));
+    assert!(joined.contains("$(ticks)t"));
+    assert!(joined.contains("armor.head"));
+    assert!(joined.contains("minecraft:custom_name"));
+}
+
+#[test]
+fn optimizer_folds_literal_branches_and_can_be_disabled() {
+    let source = r#"
+fn main() -> void:
+    let value = 1 + 2 * 3
+    if false:
+        mc "say hidden"
+    else:
+        mc "say shown"
+"#;
+
+    let optimized =
+        compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let unoptimized = compile_source(
+        source,
+        &CompileOptions {
+            optimize: false,
+            ..CompileOptions::default()
+        },
+    )
+    .expect("source should compile");
+    let optimized_main = optimized
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    let unoptimized_joined = unoptimized
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(optimized_main.contains("scoreboard players set $d0_main_value mcfc 7"));
+    assert!(optimized_main.contains("say shown"));
+    assert!(!optimized_main.contains("say hidden"));
+    assert!(unoptimized_joined.contains("say hidden"));
 }
 
 #[test]
 fn compiles_if_and_while_blocks() {
     let source = r#"
-fn inc(x: int) -> int
+fn inc(x: int) -> int:
     return x + 1
-end
-
-fn main() -> void
+fn main() -> void:
     let a = 0
     while a < 3:
         if a == 1:
             a = inc(a)
-        end
         a = a + 1
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -506,7 +1041,7 @@ end
 #[test]
 fn compiles_else_for_logic_and_loop_control() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     for i in 0..=5:
         if i == 0 or not false:
             continue
@@ -514,10 +1049,7 @@ fn main() -> void
             break
         else:
             mc "say loop"
-        end
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -535,17 +1067,14 @@ end
 #[test]
 fn compiles_string_equality() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let a = "done"
     let b = "done"
     if a == b:
         mc "say equal"
-    end
     if a != "other":
         mc "say diff"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -561,11 +1090,9 @@ end
 #[test]
 fn compiles_storage_backed_arrays() {
     let source = r#"
-fn pick(xs: array<int>, index: int) -> int
+fn pick(xs: array<int>, index: int) -> int:
     return xs[index]
-end
-
-fn main() -> void
+fn main() -> void:
     let values = [1, 2, 3]
     let i = 1
     values.push(4)
@@ -575,7 +1102,6 @@ fn main() -> void
     let selected = pick(values, i)
     mcf "say $(selected)"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -600,14 +1126,13 @@ end
 #[test]
 fn compiles_array_remove_at() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let values = [3, 5, 8]
     let first = values.remove_at(0)
     let second = values.remove_at(1)
     mcf "say $(first)"
     mcf "say $(second)"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -625,13 +1150,11 @@ end
 #[test]
 fn compiles_array_for_each() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let values = [1, 2, 3]
     for value in values:
         mcf "say $(value)"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -646,7 +1169,7 @@ end
 #[test]
 fn compiles_storage_backed_dictionaries() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let counts = {"wood": 12, "stone": 4}
     let key = "wood"
     counts[key] = 13
@@ -655,9 +1178,7 @@ fn main() -> void
     let amount = counts[key]
     if has_wood:
         mcf "say $(amount)"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -683,13 +1204,10 @@ end
 #[test]
 fn compiles_has_data_with_dynamic_storage_nbt_paths() {
     let source = r#"
-fn probe(store: dict<nbt>, key: string, index: int) -> bool
+fn probe(store: dict<nbt>, key: string, index: int) -> bool:
     return has_data(store[key].items[index].name)
-end
-
-fn main() -> void
+fn main() -> void:
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -714,16 +1232,14 @@ end
 #[test]
 fn compiles_string_match_dispatch() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let action = "jump"
     match action:
         "pathfind" => mc "say move"
         "jump" => mc "say leap"
         "idle" => mc "say wait"
         else => mc "say default"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -743,20 +1259,15 @@ fn compiles_struct_literals_and_field_access() {
 struct Action:
     action: string
     duration: int
-end
-
-fn tick(action: Action) -> int
+fn tick(action: Action) -> int:
     return action.duration
-end
-
-fn main() -> void
+fn main() -> void:
     let action = Action{action: "idle", duration: 40}
     let actions = [action]
     let first = actions[0]
     let duration = tick(first)
     mcf "say $(duration)"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -774,14 +1285,11 @@ fn rejects_invalid_struct_usage() {
 struct Action:
     action: string
     duration: int
-end
-
-fn main() -> void
+fn main() -> void:
     let bad = Action{action: "idle"}
     let wrong = Action{action: 1, duration: 5}
     let also_bad = bad.missing
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -800,8 +1308,7 @@ fn compiles_anpc_pilot_slice() {
     let Ok(source) = fs::read_to_string(&path) else {
         return;
     };
-    let result =
-        compile_source(&source, &CompileOptions::default()).expect("pilot should compile");
+    let result = compile_source(&source, &CompileOptions::default()).expect("pilot should compile");
     let files = result.artifacts.files;
     assert!(
         files
@@ -833,15 +1340,11 @@ fn compiles_anpc_pilot_slice() {
 #[test]
 fn rejects_invalid_collection_usage() {
     let source = r#"
-fn bad_param(xs: array<entity_ref>) -> void
+fn bad_param(xs: array<entity_ref>) -> void:
     return
-end
-
-fn bad_has_data(player: entity_ref, key: int) -> bool
+fn bad_has_data(player: entity_ref, key: int) -> bool:
     return has_data(player.nbt[key])
-end
-
-fn main() -> void
+fn main() -> void:
     let arr = [1, 2]
     let dict = {"wood": 1}
     let empty = []
@@ -853,7 +1356,6 @@ fn main() -> void
     arr.push("bad")
     dict["bad-key"] = 2
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -874,20 +1376,14 @@ end
 #[test]
 fn for_bounds_are_evaluated_once() {
     let source = r#"
-fn start() -> int
+fn start() -> int:
     return 1
-end
-
-fn finish() -> int
+fn finish() -> int:
     return 3
-end
-
-fn main() -> void
+fn main() -> void:
     for i in start()..=finish():
         mc "say loop"
-    end
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -903,24 +1399,19 @@ end
 #[test]
 fn rejects_invalid_loop_control_logic_and_for_usage() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     break
     continue
     let i = 0
     for i in 0.."bad":
         return
-    end
     for item in 1:
         return
-    end
     if 1 and true:
         return
-    end
     if "a" < "b":
         return
-    end
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -937,14 +1428,12 @@ end
 #[test]
 fn rejects_invalid_match_usage() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let bad = 1
     match bad:
         "a" => mc "say a"
         "a" => mc "say b"
-    end
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -956,12 +1445,11 @@ end
 #[test]
 fn rejects_invalid_query_usage() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let bad = single(selector("@e[type=pig,limit=2]"))
     let also_bad = selector("@e[type=pig]")
     also_bad.CustomName = "Nope"
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -975,34 +1463,77 @@ end
 #[test]
 fn rejects_unsafe_player_writes() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     player.CustomName = "Nope"
     player.nbt.SelectedItem = "bad"
     player.state.story = "hello"
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
     let rendered = error.to_string();
-    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', or an equipment namespace such as 'mainhand'"));
+    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', 'player.inventory[index]', 'player.hotbar[index]', or an equipment namespace such as 'mainhand'"));
     assert!(rendered.contains("player.nbt.* is read-only"));
     assert!(rendered.contains("player.state.* currently supports only 'int' and 'bool' values"));
 }
 
 #[test]
+fn rejects_invalid_entity_state_writes() {
+    let source = r#"
+fn main() -> void:
+    let marker = single(selector("@e[type=minecraft:marker,limit=1]"))
+    marker.state.name = "bad"
+    marker.state.payload = item("minecraft:stick")
+    return
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("entity.state.* currently supports only 'int' and 'bool' values"));
+}
+
+#[test]
+fn rejects_invalid_inventory_slot_usage() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    pig.inventory[0].count = 1
+    player.hotbar["bad"].count = 1
+    player.hotbar[9].count = 1
+    player.inventory[27].count = 1
+    player.hotbar[0] = "bad"
+    player.inventory[0].exists = true
+    player.hotbar[0].id = "minecraft:stick"
+    return
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains(
+            "inventory and hotbar are only supported on known player refs; use 'player_ref' to assert a player"
+        )
+    );
+    assert!(rendered.contains("player.hotbar[...] slot index must have type 'int'"));
+    assert!(rendered.contains("player.hotbar[...] slot index must be between 0 and 8"));
+    assert!(rendered.contains("player.inventory[...] slot index must be between 0 and 26"));
+    assert!(rendered.contains("whole-slot inventory assignment requires an 'item_def' value"));
+    assert!(rendered.contains("item slot.exists is read-only"));
+    assert!(rendered.contains("item slot.id is read-only"));
+}
+
+#[test]
 fn guards_later_statements_after_nested_return() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     if true:
         return
     else:
         mc "say no"
-    end
     mc "say after"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -1017,13 +1548,10 @@ end
 #[test]
 fn rejects_recursion() {
     let source = r#"
-fn a(x: int) -> int
+fn a(x: int) -> int:
     return b(x)
-end
-
-fn b(x: int) -> int
+fn b(x: int) -> int:
     return a(x)
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -1033,18 +1561,16 @@ end
 #[test]
 fn rejects_invalid_macro_placeholders() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let a = 1
     let player = single(selector("@p"))
     if true:
         let inner = 2
-    end
     mcf "say $(missing)"
     mcf "say $(inner)"
     mcf "say $("
     mcf "say $(player.CustomName)"
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -1052,7 +1578,7 @@ end
     assert!(rendered.contains("undefined variable 'missing'"));
     assert!(rendered.contains("undefined variable 'inner'"));
     assert!(rendered.contains("unterminated macro placeholder"));
-    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', or an equipment namespace such as 'mainhand'"));
+    assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', 'player.inventory[index]', 'player.hotbar[index]', or an equipment namespace such as 'mainhand'"));
 }
 
 #[test]
@@ -1061,13 +1587,9 @@ fn compiles_expression_macro_placeholders() {
 struct Action:
     kind: string
     duration: int
-end
-
-fn tick(action: Action) -> int
+fn tick(action: Action) -> int:
     return action.duration + 1
-end
-
-fn main() -> void
+fn main() -> void:
     let a = 2
     let x = 3
     let y = 3
@@ -1088,7 +1610,6 @@ fn main() -> void
     mcf "say $(player.state.quest_complete)"
     mcf "say $(player.team)"
     return
-end
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -1116,17 +1637,14 @@ end
 #[test]
 fn rejects_invalid_as_and_at_contexts() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     as(block("~ ~ ~")):
         mc "say bad"
-    end
     at(block("~ ~ ~")):
         mc "say bad"
-    end
     let bad = as(player, 1)
     return
-end
 "#;
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
@@ -1142,20 +1660,22 @@ end
 fn rejects_removed_book_annotations_and_legacy_gameplay_builtins() {
     let book_source = r#"
 @book
-fn old() -> void
+fn old() -> void:
     return
-end
 "#;
 
     let book_error = compile_source(book_source, &CompileOptions::default()).unwrap_err();
-    assert!(book_error.to_string().contains("unknown annotation '@book'"));
+    assert!(
+        book_error
+            .to_string()
+            .contains("unknown annotation '@book'")
+    );
 
     let legacy_source = r#"
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     tellraw(player, "old")
     return
-end
 "#;
 
     let legacy_error = compile_source(legacy_source, &CompileOptions::default()).unwrap_err();
@@ -1165,11 +1685,10 @@ end
 #[test]
 fn cli_writes_output_tree() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     let a = 1
     a = a + 2
     return
-end
 "#;
 
     let base = temp_path();
@@ -1196,9 +1715,8 @@ end
 #[test]
 fn cli_infers_namespace_from_input_filename() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     return
-end
 "#;
 
     let base = temp_path();
@@ -1228,9 +1746,8 @@ end
 #[test]
 fn cli_explicit_namespace_overrides_filename_inference() {
     let source = r#"
-fn main() -> void
+fn main() -> void:
     return
-end
 "#;
 
     let base = temp_path();
@@ -1301,15 +1818,12 @@ function = "api_create"
     fs::write(
         src_dir.join("bootstrap.mcf"),
         r#"
-fn bootstrap_load() -> void
+fn bootstrap_load() -> void:
     mc "say load"
     return
-end
-
-fn bootstrap_tick() -> void
+fn bootstrap_tick() -> void:
     mc "say tick"
     return
-end
 "#,
     )
     .unwrap();
@@ -1317,10 +1831,9 @@ end
     fs::write(
         src_dir.join("api").join("create.mcf"),
         r#"
-fn api_create() -> void
+fn api_create() -> void:
     mc "say create"
     return
-end
 "#,
     )
     .unwrap();
@@ -1415,10 +1928,9 @@ function = "bootstrap_load"
     fs::write(
         src_dir.join("bootstrap.mcf"),
         r#"
-fn bootstrap_load() -> void
+fn bootstrap_load() -> void:
     mc "say hello"
     return
-end
 "#,
     )
     .unwrap();

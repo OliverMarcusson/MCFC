@@ -1,8 +1,6 @@
-fn add(x: int, y: int) -> int
+fn add(x: int, y: int) -> int:
     return x + y
-end
-
-fn fibb(n: int) -> void
+fn fibb(n: int) -> void:
     let i = 0
     let a = 0
     let b = 1
@@ -13,34 +11,22 @@ fn fibb(n: int) -> void
         a = b
         b = next
         i = i + 1
-    end
-
     return
-end
-
-fn classify(value: int) -> string
+fn classify(value: int) -> string:
     if value == 0:
         return "zero"
     else if value == 1:
         return "one"
     else:
         return "many"
-    end
-end
-
-fn range_demo(limit: int) -> void
+fn range_demo(limit: int) -> void:
     debug("range demo: start")
     for i in 0..=limit:
         if i == 1 or not false:
             mcf "say range i: $(i)"
-        end
-    end
-
     debug("range demo: end")
     return
-end
-
-fn loop_control_demo(limit: int) -> void
+fn loop_control_demo(limit: int) -> void:
     debug("loop-control demo: start")
     for i in 0..limit:
         if i == 1:
@@ -51,14 +37,9 @@ fn loop_control_demo(limit: int) -> void
             break
         else:
             mcf "say loop i: $(i)"
-        end
-    end
-
     debug("loop-control demo: end")
     return
-end
-
-fn name_closest_pig() -> void
+fn name_closest_pig() -> void:
     debug("name closest pig: start")
     let player = single(selector("@p"))
     if exists(player):
@@ -68,14 +49,9 @@ fn name_closest_pig() -> void
             pig.debug_entity("nearest pig before naming")
             pig.CustomName = "MCFC"
             pig.debug_entity("nearest pig after naming")
-        end
-    end
-
     debug("name closest pig: end")
     return
-end
-
-fn style_closest_pig() -> void
+fn style_closest_pig() -> void:
     debug("style closest pig: start")
     let player = single(selector("@p"))
     if exists(player):
@@ -87,14 +63,9 @@ fn style_closest_pig() -> void
             pig.Variant = "minecraft:cold"
             pig.Age = 0 - 24000
             pig.debug_entity("nearest pig after styling")
-        end
-    end
-
     debug("style closest pig: end")
     return
-end
-
-fn execution_context_demo() -> void
+fn execution_context_demo() -> void:
     debug("execution-context demo: start")
 
     let players = selector("@a[limit=1]")
@@ -103,21 +74,14 @@ fn execution_context_demo() -> void
         mcf 'tellraw @s "as-block: welcome @s"'
         mc "say this raw command is executing as @s"
         mc 'title @s actionbar "actionbar: hello @s"'
-    end
-
     at(players):
         mc "particle minecraft:happy_villager ~ ~1 ~ 0.25 0.25 0.25 0 8"
         block("~ ~1 ~").debug_marker("at-block position marker")
         mcf 'tellraw @a "at-block: sparkles at the player"'
-    end
-
     at(players):
         as(selector("@e[type=pig,sort=nearest,limit=1]")):
             mc "say nested context: nearest pig speaks at the player"
             single(selector("@s")).debug_entity("nested as-at pig")
-        end
-    end
-
     let player = single(players)
     if exists(player):
         player.debug_entity("single context demo player")
@@ -126,21 +90,15 @@ fn execution_context_demo() -> void
             self_ref.tags.mcfc_as_demo = true
             mcf 'tellraw @a "value-as: tagged the executing player via @s"'
             self_ref.debug_entity("value-as self ref")
-        end
-    end
-
     debug("execution-context demo: end")
     return
-end
-
-fn player_api_demo() -> void
+fn player_api_demo() -> void:
     debug("player api demo: start")
     let player = single(selector("@p"))
     if exists(player):
         player.debug_entity("player api target")
         at(player):
             block("~ ~1 ~").debug_marker("player api marker above player")
-        end
         let air = int(player.nbt.Air)
         player.state.quest_stage = 3
         let stage = int(player.state.quest_stage)
@@ -152,13 +110,9 @@ fn player_api_demo() -> void
         player.mainhand.count = 1
         player.effect("speed", 10, 1)
         mcf "tellraw @a \"player demo air=$(air) stage=$(stage) tagged=$(tagged)\""
-    end
-
     debug("player api demo: end")
     return
-end
-
-fn gameplay_builtin_demo() -> void
+fn gameplay_builtin_demo() -> void:
     debug("gameplay builtins: start")
 
     let pig = summon("minecraft:pig")
@@ -184,18 +138,13 @@ fn gameplay_builtin_demo() -> void
         sleep(2)
         at(pig):
             block("~ ~-1 ~").setblock("minecraft:gold_block")
-        end
         pig.debug_entity("gameplay pig after async marker")
-    end
-
     pig.remove_tag("mcfc_gameplay_demo")
 
     mcf 'tellraw @a "gameplay builtins tagged-before-remove=$(tagged)"'
     debug("gameplay builtins: end")
     return
-end
-
-fn ui_world_builtin_demo() -> void
+fn ui_world_builtin_demo() -> void:
     debug("ui/world builtins: start")
 
     let player = single(selector("@p"))
@@ -225,8 +174,6 @@ fn ui_world_builtin_demo() -> void
             spark.particle("minecraft:end_rod", 30, player)
             feet.loot_insert("minecraft:chests/simple_dungeon")
             spark.loot_spawn("minecraft:chests/simple_dungeon")
-        end
-
         async:
             sleep(2)
             player.stopsound("master", "minecraft:entity.experience_orb.pickup")
@@ -235,30 +182,19 @@ fn ui_world_builtin_demo() -> void
             player.position.particle("minecraft:happy_villager", 20, player)
             at(player):
                 block("~ ~-1 ~").setblock("minecraft:gold_block")
-            end
             bb.value = 10
             bb.name = "MCFC Bossbar Complete"
             sleep(3)
             at(player):
                 player.teleport(single(selector("@e[type=pig,sort=nearest]")))
-            end
             bb.remove()
-        end
-    end
-
     debug("ui/world builtins: end")
     return
-end
-
-fn collection_pick(values: array<int>, index: int) -> int
+fn collection_pick(values: array<int>, index: int) -> int:
     return values[index]
-end
-
-fn collection_total(counts: dict<int>, key: string) -> int
+fn collection_total(counts: dict<int>, key: string) -> int:
     return counts[key]
-end
-
-fn collections_demo() -> void
+fn collections_demo() -> void:
     debug("collections demo: start")
 
     let values = [1, 2, 3]
@@ -320,33 +256,77 @@ fn collections_demo() -> void
     if has_wood:
         debug("collections demo: has wood branch reached")
         mcf "tellraw @a \"collections label=$(label) wood=$(wood) nested=$(nested_score)\""
-    end
-
     debug("collections demo: end")
     return
-end
 
-fn exp(n: int, k: int) -> int
+fn exp(n: int, k: int) -> int:
     let temp = n
     for _ in 0..k-1:
         n = n * temp
-    end
     return n
-end
 
-fn main() -> void
-    let version = 1
-    mcf 'tellraw @a "MCFC version 0.0.$(version)"'
-    mcf 'tellraw @a "Expression test: $(1 + 2)"'
-    
-    let a = 2
-    let b = 2
-    mcf 'tellraw @a "Expression test: $(a + b)"'
+fn hotbar_animation(player: player_ref, item: item_def) -> void:
+    let neg1 = 0 - 1
+    let modifier = 1
+    let idx = 0
 
-    let player = single(selector("@a"))
-    as(player):
-        mcf 'tellraw @s "*@s* Expression test: $(exp(2, 5))"'
-    end
+    for _ in 0..50:
+        # If at hotbar ends switch direction.
+        if idx < 0 or idx > 8:
+            modifier = modifier * 0 - 1
+        player.hotbar[idx] = item
+
+        # Clear slot behind current idx
+        if idx != 0 and idx != 8:
+            player.hotbar[idx - modifier].clear()
+        idx = idx + modifier
+        sleep(1)
+# fn recur_test(start: int) -> int
+#     if start != 100:
+#         recur_test(start + 10)
+#     end
+#     return start
+# end
+
+fn main() -> void:
+    let version = "0.3.0"
+    mcf 'tellraw @a "MCFC version $(version)"'
+
+    let player = player_ref(single(selector("FaithlessMC")))
+    player.tellraw("*@s* Expression test: $(exp(2, 5))")
+
+    let pig = entity("minecraft:pig")
+    pig.name = "Dinnerbone"
+    pig.glowing = true
+    pig.tags = ["cool-tag"]
+
+    let chicken = entity("minecraft:chicken")
+    chicken.name = "Marcusson"
+    chicken.tags = ["cooler-tag"]
+
+    let villager = entity("minecraft:villager")
+    villager.name = "Dinnerbone"
+
+    chicken.nbt.Passengers[0] = villager
+    pig.nbt.Passengers[0] = chicken
+
+    let v2 = entity("minecraft:villager")
+    v2.glowing = true
+    v2.nbt.Passengers[0] = entity("minecraft:villager")
+
+    let bible = item("minecraft:book")
+    bible.name = "The Holy Bible"
+
+    player.head.item = "minecraft:book"
+    player.give(bible)
+
+    player.state.coins = 10
+
+    at(player):
+        block("~ ~10 ~").summon(pig)
+    at(player, block("~10 ~10 ~")).summon(pig)
+
+    hotbar_animation(player, bible)
 
     # let kind = classify(2)
     # range_demo(3)
@@ -356,9 +336,8 @@ fn main() -> void
     # style_closest_pig()
     # execution_context_demo()
     # player_api_demo()
-    gameplay_builtin_demo()
-    ui_world_builtin_demo()
+    # gameplay_builtin_demo()
+    # ui_world_builtin_demo()
     # collections_demo()
 
     return
-end

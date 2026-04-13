@@ -60,6 +60,7 @@ fn build_command(args: &[String]) -> Result<(), String> {
             }
             "--emit-ast" => options.emit_ast = true,
             "--emit-ir" => options.emit_ir = true,
+            "--no-optimize" => options.optimize = false,
             "--clean" => options.clean = true,
             flag => return Err(format!("unknown flag '{}'", flag)),
         }
@@ -90,7 +91,7 @@ fn build_command(args: &[String]) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage:\n  mcfc build <input-file|project-dir|manifest> --out <directory> [--namespace <name>] [--emit-ast] [--emit-ir] [--clean]".to_string()
+    "Usage:\n  mcfc build <input-file|project-dir|manifest> --out <directory> [--namespace <name>] [--emit-ast] [--emit-ir] [--no-optimize] [--clean]".to_string()
 }
 
 fn infer_namespace(input: &std::path::Path) -> String {

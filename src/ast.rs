@@ -3,6 +3,7 @@ use crate::diagnostics::Span;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub structs: Vec<StructDef>,
+    pub player_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
 }
 
@@ -17,6 +18,14 @@ pub struct StructDef {
 pub struct StructField {
     pub name: String,
     pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerStateDef {
+    pub path: Vec<String>,
+    pub ty: Type,
+    pub display_name: String,
     pub span: Span,
 }
 
@@ -47,7 +56,12 @@ pub enum Type {
     Bossbar,
     EntitySet,
     EntityRef,
+    PlayerRef,
     BlockRef,
+    EntityDef,
+    BlockDef,
+    ItemDef,
+    ItemSlot,
     Nbt,
     Void,
 }
@@ -64,7 +78,12 @@ impl Type {
             Type::Bossbar => "bossbar".to_string(),
             Type::EntitySet => "entity_set".to_string(),
             Type::EntityRef => "entity_ref".to_string(),
+            Type::PlayerRef => "player_ref".to_string(),
             Type::BlockRef => "block_ref".to_string(),
+            Type::EntityDef => "entity_def".to_string(),
+            Type::BlockDef => "block_def".to_string(),
+            Type::ItemDef => "item_def".to_string(),
+            Type::ItemSlot => "item_slot".to_string(),
             Type::Nbt => "nbt".to_string(),
             Type::Void => "void".to_string(),
         }
@@ -126,6 +145,12 @@ pub enum StmtKind {
 pub enum ContextKind {
     As,
     At,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepUnit {
+    Seconds,
+    Ticks,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

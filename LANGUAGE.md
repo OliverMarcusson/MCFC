@@ -25,6 +25,7 @@ Available flags:
 - `--namespace <name>`: override the generated namespace. Default: `mcfc`
 - `--emit-ast`: write a typed-program dump to `debug/typed_program.txt`
 - `--emit-ir`: write a lowered IR dump to `debug/ir.txt`
+- `--no-optimize`: disable the conservative IR optimisation pass
 - `--clean`: remove the output directory before writing new output
 
 The compiler writes:
@@ -34,11 +35,14 @@ The compiler writes:
 - generated helper functions under `data/<namespace>/function/generated/`
 
 `main.mcfunction` runs setup and then calls the generated `main` entrypoint if a `main` function exists.
+Every zero-argument `void` function except `main` and special `tick` also gets
+a public wrapper at `data/<namespace>/function/<name>.mcfunction`, so it can be
+run with `/function <namespace>:<name>`.
 
 ## Example Program
 
 ```text
-fn main() -> void
+fn main() -> void:
     let player = single(selector("@p"))
     let bb = bossbar("mcfc:demo", "MCFC Bossbar")
 
@@ -54,22 +58,19 @@ fn main() -> void
         sleep(5)
         bb.remove()
         player.position.setblock("minecraft:gold_block")
-    end
-
     player.tellraw("Bossbar will disappear soon")
-end
 ```
 
 ## Syntax
 
 ### Functions
 
-Functions begin with `fn` and end with `end`.
+Functions begin with `fn`, use `:` after the signature, and use indentation for
+their body.
 
 ```text
-fn name(param: type, other: type) -> return_type
+fn name(param: type, other: type) -> return_type:
     ...
-end
 ```
 
 Rules:
@@ -80,30 +81,41 @@ Rules:
 - duplicate parameter names are rejected
 - `#` starts a line comment and may also appear after code on a line
 
+Special functions:
+
+- `fn tick() -> void:` maps to the datapack tick function and runs once every
+  game tick.
+- if multiple source files define `tick() -> void`, their bodies are merged in
+  deterministic source order.
+- parameterized functions named `tick`, such as `fn tick(action: Action) -> int:`,
+  remain ordinary helpers unless a zero-argument `tick() -> void` is also
+  present.
+
 ### Statements
 
 Supported statements:
 
-- `struct Name: field: type ... end`
+- `player_state name: int|bool = "Display Name"`
+- `struct Name:` followed by indented fields
 - `let name = expr`
 - `name = expr`
-- `if condition: ... end`
-- `if condition: ... else: ... end`
-- `match value: "a" => stmt else => stmt end`
-- `while condition: ... end`
-- `for name in start..end: ... end`
-- `for name in start..=end: ... end`
-- `for name in selector_expr: ... end`
-- `for name in array_expr: ... end`
-- `async: ... end`
+- `if condition:` followed by an indented body
+- `if condition:` / `else:` with indented bodies
+- `match value:` with indented `"a" => stmt` and `else => stmt` arms
+- `while condition:` followed by an indented body
+- `for name in start..end:` followed by an indented body
+- `for name in start..=end:` followed by an indented body
+- `for name in selector_expr:` followed by an indented body
+- `for name in array_expr:` followed by an indented body
+- `async:` followed by an indented body
 - `break`
 - `continue`
 - `return`
 - `return expr`
 - `mc "raw minecraft command"`
 - `mcf "macro command with $(placeholders)"`
-- `as(entity): ... end`
-- `at(entity): ... end`
+- `as(entity):` followed by an indented body
+- `at(entity):` followed by an indented body
 - a bare function call as a statement, for example `do_work()`
 
 Notes:
@@ -112,6 +124,7 @@ Notes:
 - block bodies are scoped for new `let` bindings
 - loop variables are local to the loop body
 - `mc` is literal-only; `mcf` performs runtime interpolation
+- tabs are rejected for indentation; use spaces
 
 ### `async`
 
@@ -121,7 +134,6 @@ Notes:
 async:
     sleep(5)
     debug("later")
-end
 ```
 
 Rules:
@@ -177,7 +189,12 @@ Built-in types:
 - `dict<T>`
 - `entity_set`
 - `entity_ref`
+- `player_ref`
 - `block_ref`
+- `entity_def`
+- `block_def`
+- `item_def`
+- `item_slot`
 - `bossbar`
 - `nbt`
 - `void`
@@ -189,7 +206,10 @@ Type rules:
 - assignments must keep the original variable type
 - function arguments must match declared parameter types
 - return expressions must match the declared return type
-- there is no implicit conversion between types
+- there is no implicit conversion between types, except `entity_def` and `block_def`
+  automatically coerce to `nbt` in NBT contexts
+- `item_def` also automatically coerces to `nbt` in NBT contexts through
+  `item_def.as_nbt()`
 
 Current operator support:
 
@@ -208,13 +228,18 @@ These remain ordinary functions:
 - `single(entity_set) -> entity_ref`
 - `exists(entity_ref) -> bool`
 - `has_data(storage_path) -> bool`
+- `entity(entity_id: string) -> entity_def`
+- `item(item_id: string) -> item_def`
 - `block("...") -> block_ref`
+- `block_type(block_id: string) -> block_def`
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
 - `as(entity_set|entity_ref, entity_set|entity_ref|block_ref)`
 - `summon(entity_id: string) -> entity_ref`
 - `summon(entity_id: string, data: nbt) -> entity_ref`
+- `summon(spec: entity_def) -> entity_ref`
 - `debug(message: string) -> void`
 - `sleep(seconds: int) -> void`
+- `sleep_ticks(ticks: int) -> void`
 - `random() -> int`
 - `random(max: int) -> int`
 - `random(min: int, max: int) -> int`
@@ -229,6 +254,7 @@ These remain ordinary functions:
 - `entity.damage(amount: int) -> void`
 - `entity.heal(amount: int) -> void`
 - `entity.give(item_id: string, count: int) -> void`
+- `entity.give(stack: item_def) -> void`
 - `entity.clear(item_id: string, count: int) -> void`
 - `entity.loot_give(table: string) -> void`
 - `entity.tellraw(message: string) -> void`
@@ -244,6 +270,7 @@ These remain ordinary functions:
 
 ### Block methods
 
+- `block.is(block_id: string) -> bool`
 - `block.loot_insert(table: string) -> void`
 - `block.loot_spawn(table: string) -> void`
 - `block.debug_marker(label: string) -> void`
@@ -251,8 +278,79 @@ These remain ordinary functions:
 - `block.particle(name: string) -> void`
 - `block.particle(name: string, count: int) -> void`
 - `block.particle(name: string, count: int, viewers: entity_ref|entity_set) -> void`
-- `block.setblock(block_id: string) -> void`
-- `block.fill(to: block_ref, block_id: string) -> void`
+- `block.setblock(block_id: string|block_def) -> void`
+- `block.fill(to: block_ref, block_id: string|block_def) -> void`
+- `block.summon(entity_id: string) -> entity_ref`
+- `block.summon(entity_id: string, data: nbt) -> entity_ref`
+- `block.summon(spec: entity_def) -> entity_ref`
+- `block.spawn_item(stack: item_def) -> entity_ref`
+
+### Builder handles
+
+Create an entity builder with `entity(id)` and mutate it before summoning:
+
+- `entity_def.id` is a read-only `string`
+- `entity_def.nbt.*` reads and writes summon NBT
+- `entity_def.name` is shorthand for `entity_def.nbt.CustomName`
+- `entity_def.name_visible` is shorthand for `entity_def.nbt.CustomNameVisible`
+- `entity_def.no_ai` is shorthand for `entity_def.nbt.NoAI`
+- `entity_def.silent` is shorthand for `entity_def.nbt.Silent`
+- `entity_def.glowing` is shorthand for `entity_def.nbt.Glowing`
+- `entity_def.tags` is shorthand for `entity_def.nbt.Tags`
+- `entity_def.as_nbt() -> nbt` returns a flattened entity compound suitable for
+  passengers and summon payloads
+
+Create a block builder with `block_type(id)` and mutate it before placement:
+
+- `block_def.id` is a read-only `string`
+- `block_def.states.*` writes block-state values as `string`, `bool`, or `int`
+- `block_def.nbt.*` reads and writes block-entity NBT
+- `block_def.name` is shorthand for `block_def.nbt.CustomName`
+- `block_def.lock` is shorthand for `block_def.nbt.Lock`
+- `block_def.loot_table` is shorthand for `block_def.nbt.LootTable`
+- `block_def.loot_seed` is shorthand for `block_def.nbt.LootTableSeed`
+- `block_def.as_nbt() -> nbt` returns the block-entity payload, equivalent to
+  `block_def.nbt`
+
+Create an item builder with `item(id)` and mutate it before giving, storing, or
+spawning it:
+
+- `item_def.id` is a read-only `string`
+- `item_def.count` reads and writes the stack size
+- `item_def.nbt.*` reads and writes item NBT
+- `item_def.name` is shorthand for `item_def.nbt.display.Name`
+- `item_def.as_nbt() -> nbt` returns an item-stack payload compound
+
+`setblock(block_def)` places the block id and states, then merges `block_def.nbt`.
+`fill(..., block_def)` uses only the block id and states.
+When `nbt` is expected, assigning an `entity_def`, `block_def`, or `item_def`
+is shorthand for calling `.as_nbt()`.
+
+Example:
+
+```text
+let pig = entity("minecraft:pig")
+pig.name = "MCFC"
+pig.no_ai = true
+let chicken = entity("minecraft:chicken")
+chicken.name = "Passenger"
+pig.nbt.Passengers[0] = chicken
+let spawned = summon(pig)
+let payload = summon("minecraft:pig", chicken.as_nbt())
+
+let chest = block_type("minecraft:chest")
+chest.states.facing = "north"
+chest.name = "Loot"
+let chest_payload = chest.as_nbt()
+block("~ ~ ~").setblock(chest)
+
+let player = single(selector("@p"))
+let sword = item("minecraft:diamond_sword")
+sword.count = 1
+sword.name = "Quest Blade"
+sword.nbt.CustomModelData = 7
+player.give(sword)
+```
 
 ### Bossbar handles
 
@@ -276,6 +374,14 @@ player.position.particle("minecraft:happy_villager", 8, player)
 player.position.setblock("minecraft:gold_block")
 ```
 
+You can also test a block at any position:
+
+```text
+let below = block("~ ~-1 ~")
+if below.is("minecraft:air"):
+    below.setblock("minecraft:purple_concrete")
+```
+
 `entity_set.position` is not supported. Iterate the set and use each `entity_ref.position`.
 
 ### Collections
@@ -291,20 +397,106 @@ player.position.setblock("minecraft:gold_block")
 
 - `player.nbt.*` reads vanilla player NBT
 - `player.state.*` stores MCFC-managed integer and boolean player state
+- `entity.state.*` stores MCFC-managed integer and boolean state on any `entity_ref`
 - `player.tags.*` reads and writes player tags as booleans
 - `entity.team = "name"` assigns a team for any `entity_ref`
+- `player.hotbar[0..8] -> item_slot` reads and writes live player hotbar slots
+- `player.inventory[0..26] -> item_slot` reads and writes the main inventory
+- `player_ref(entity)` asserts that an `entity_ref` is a player so player-only surfaces are available
 - `entity.mainhand.*`, `entity.offhand.*`, `entity.head.*`, `entity.chest.*`, `entity.legs.*`, and `entity.feet.*` modify equipped items
 - `heal(...)` is currently limited to known non-player `entity_ref` targets
+
+`entity.state.*` and `player.state.*` currently support only `int` and `bool`
+values. MCFC creates the scoreboard objectives automatically when a state path is
+used. Player state uses the internal `mcfs_*` objective prefix and generic
+entity state uses `mcfe_*`.
+
+Example:
+
+```text
+fn tick() -> void:
+    for marker in selector("@e[type=minecraft:marker,tag=skyrunner_decay]"):
+        marker.state.decay = marker.state.decay + 1
+        if marker.state.decay >= 20:
+            as(marker):
+                mc "kill @s"
+```
+
+Declare player state display metadata at the top level when you want a clean
+scoreboard display name:
+
+```text
+player_state money: int = "Money"
+
+fn main() -> void:
+    let player = single(selector("@p"))
+    player.state.money = 10
+```
+
+The generated objective remains MCFC-managed internally, but the sidebar label
+uses the declared display name. Undeclared `player.state.*` and `entity.state.*`
+paths still work and use generated objective names.
+
+Equipment `.item` assignments accept either a string item id or an `item_def`:
+
+```text
+let crown = item("minecraft:golden_helmet")
+crown.name = "Crown"
+player.head.item = crown
+```
+
+`item_slot` exposes:
+
+- `exists: bool` read-only
+- `id: string` read-only
+- `count: int` read and write
+- `nbt.*` read and write
+- `name` as shorthand for the live display name
+- `clear() -> void`
+
+Examples:
+
+```text
+player.hotbar[0] = item("minecraft:stick")
+
+let sword = item("minecraft:diamond_sword")
+sword.name = "Blade"
+player.inventory[5] = sword
+player.inventory[5].count = 16
+
+let idx = 7
+player.hotbar[idx] = sword
+
+let known_player = player_ref(single(selector("@e[limit=1]")))
+known_player.inventory[idx] = sword
+
+if player.inventory[3].exists:
+    player.tellraw(player.inventory[3].id)
+player.hotbar[2].clear()
+```
+
+Position-aware summon APIs live on `block_ref` and keep the global `summon(...)`
+shorthand unchanged:
+
+```text
+block("1 64 1").summon(entity("minecraft:pig"))
+block("~ ~ ~").spawn_item(item("minecraft:apple"))
+
+let player = single(selector("@p"))
+let rel = at(player, block("~1 ~ ~"))
+rel.summon("minecraft:pig")
+```
 
 ## Timing and Randomness
 
 `sleep(seconds)` pauses the current execution path and resumes it later with Minecraft `schedule function`.
+`sleep_ticks(ticks)` does the same thing with Minecraft tick units.
 
 That means:
 
 - a plain `sleep(...)` in normal code pauses the current path
 - a `sleep(...)` inside `async:` pauses only that async branch
-- `sleep(...)` is statement-only and cannot be used as a value
+- `sleep(...)` and `sleep_ticks(...)` are statement-only and cannot be used as values
 
 `random()` helpers return inclusive integer ranges because they map directly to Minecraft `random value`.
 
@@ -377,8 +569,8 @@ Rules:
 
 ## Execution Context
 
-Use `as(anchor): ... end` to run commands as an entity set or entity ref.
-Use `at(anchor): ... end` to run commands at an entity set, entity ref, or block ref.
+Use `as(anchor):` with an indented body to run commands as an entity set or entity ref.
+Use `at(anchor):` with an indented body to run commands at an entity set, entity ref, or block ref.
 
 The value-level forms `as(anchor, value)` and `at(anchor, value)` compose execution context onto entity and block reference values.
 
@@ -394,6 +586,15 @@ The current backend maps values like this:
 - `bossbar`: Minecraft data storage-backed handle containing the bossbar id
 
 Generated files are deterministic and use a reserved generated namespace layout.
+
+## Optimisation
+
+By default, MCFC runs a conservative IR optimisation pass before backend
+generation. The pass folds pure literal expressions, removes simple no-op
+self-assignments, drops `while false:` bodies, and simplifies literal `if`
+branches only when doing so cannot change later control-flow guarding.
+
+Use `--no-optimize` to inspect the unoptimised lowered output.
 
 ## Diagnostics
 
@@ -421,11 +622,10 @@ Not supported yet:
 - modules/imports
 - `entity_set.position`
 - richer object systems beyond structs plus the built-in handle types
-- optimization passes
 
 Notes:
 
 - `match` currently supports only `string` scrutinees
 - each `match` arm currently contains exactly one statement; use helper functions if an arm needs more work
 
-The backend prioritizes correctness, inspectable output, and deterministic code generation over optimization.
+The backend prioritizes correctness, inspectable output, and deterministic code generation over aggressive optimization.

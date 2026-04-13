@@ -1,7 +1,13 @@
-# MCFC
+<p align="center">
+  <img src="MCFC-icon.png" alt="MCFC icon" width="180">
+</p>
 
-MCFC is a compiler and language server for the MCFC language, a statically
-typed language that compiles `.mcf` source files into Minecraft datapacks.
+<h1 align="center">MCFC</h1>
+
+<p align="center">
+  A statically typed language, compiler, and language server for building
+  Minecraft datapacks from <code>.mcf</code> source files.
+</p>
 
 The project currently provides:
 

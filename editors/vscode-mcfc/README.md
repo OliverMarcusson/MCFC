@@ -55,3 +55,17 @@ platform-specific server directory before creating the VSIX:
 
 - Windows: `server/win32-x64/mcfc-lsp.exe`
 - Linux: `server/linux-x64/mcfc-lsp`
+
+## Install in VSCodium
+
+On Linux, you can build and install the extension in one command:
+
+```bash
+./scripts/install-vscodium-extension.sh
+```
+
+That script:
+
+1. runs `npm install`
+2. runs `npm run package`
+3. installs the generated VSIX with `codium --install-extension`

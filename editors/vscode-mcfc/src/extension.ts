@@ -48,29 +48,43 @@ export function deactivate(): Thenable<void> | undefined {
 }
 
 function resolveServerPath(extensionPath: string): string {
-  const packagedServer = path.join(
-    extensionPath,
-    "server",
-    "win32-x64",
-    "mcfc-lsp.exe",
-  );
-  if (fs.existsSync(packagedServer)) {
-    return packagedServer;
+  const platformTargets =
+    process.platform === "win32"
+      ? [{ dir: "win32-x64", binary: "mcfc-lsp.exe" }]
+      : process.platform === "linux"
+        ? [{ dir: "linux-x64", binary: "mcfc-lsp" }]
+        : [];
+
+  for (const target of platformTargets) {
+    const packagedServer = path.join(
+      extensionPath,
+      "server",
+      target.dir,
+      target.binary,
+    );
+    if (fs.existsSync(packagedServer)) {
+      return packagedServer;
+    }
   }
 
+  const devBinary = process.platform === "win32" ? "mcfc-lsp.exe" : "mcfc-lsp";
   const devServer = path.resolve(
     extensionPath,
     "..",
     "..",
     "target",
     "debug",
-    "mcfc-lsp.exe",
+    devBinary,
   );
   if (fs.existsSync(devServer)) {
     return devServer;
   }
 
+  const expectedPackagedServers = platformTargets
+    .map((target) => path.join(extensionPath, "server", target.dir, target.binary))
+    .join(", ");
+
   throw new Error(
-    `Unable to find mcfc-lsp. Expected packaged server at ${packagedServer} or development server at ${devServer}.`,
+    `Unable to find mcfc-lsp. Expected packaged server at one of [${expectedPackagedServers}] or development server at ${devServer}.`,
   );
 }

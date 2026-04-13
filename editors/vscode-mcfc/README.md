@@ -50,6 +50,8 @@ Run:
 npm run package
 ```
 
-The packaging script builds `mcfc-lsp.exe` in release mode and copies it to
-`server/win32-x64` before creating the VSIX. The initial packaged server target
-is Windows only.
+The packaging script builds `mcfc-lsp` in release mode and copies it to a
+platform-specific server directory before creating the VSIX:
+
+- Windows: `server/win32-x64/mcfc-lsp.exe`
+- Linux: `server/linux-x64/mcfc-lsp`

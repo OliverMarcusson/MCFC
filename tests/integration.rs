@@ -342,6 +342,43 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_text_def_display_components() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@a"))
+    let msg = text("Hello")
+    msg.color = "gold"
+    msg.bold = true
+    msg.hover_event.action = "show_text"
+    msg.hover_event.value = text("Hover!")
+    msg.extra = [text(" world")]
+    player.tellraw(msg)
+    let bb = bossbar("mcfc:test", msg)
+    bb.name = msg
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(joined.contains(".text set from storage"));
+    assert!(joined.contains(".color set from storage"));
+    assert!(joined.contains(".bold set from storage"));
+    assert!(joined.contains(".hover_event.action set from storage"));
+    assert!(joined.contains(".hover_event.value set from storage"));
+    assert!(joined.contains(".extra set from storage"));
+    assert!(joined.contains("tellraw $(selector) $(message)"));
+    assert!(joined.contains("bossbar add $(id) $(name)"));
+    assert!(joined.contains("bossbar set $(id) name $(name)"));
+}
+
+#[test]
 fn compiles_block_paths_and_nbt_casts() {
     let source = r#"
 fn main() -> void:

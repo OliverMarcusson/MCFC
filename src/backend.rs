@@ -1397,6 +1397,7 @@ impl Backend {
                 | Type::EntityDef
                 | Type::BlockDef
                 | Type::ItemDef
+                | Type::TextDef
                 | Type::ItemSlot
                 | Type::Bossbar => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
@@ -1536,6 +1537,7 @@ impl Backend {
                         | Type::EntityDef
                         | Type::BlockDef
                         | Type::ItemDef
+                        | Type::TextDef
                         | Type::ItemSlot
                         | Type::Bossbar => lines.push(format!(
                             "data modify storage {}:runtime {} set from storage {}:runtime {}",
@@ -1609,6 +1611,7 @@ impl Backend {
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::ItemDef
+                | Type::TextDef
                 | Type::BlockDef
                 | Type::Nbt
         ) {
@@ -1713,6 +1716,22 @@ impl Backend {
                     lines.push(self.inline_macro_command(
                         macro_slot.storage_path(),
                         format!("bossbar set $(id) name {}", component),
+                    ));
+                    return;
+                }
+                if value.ty == Type::TextDef {
+                    let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+                    self.compile_expr_into_slot(function, depth, value, &name_slot, lines);
+                    lines.push(format!(
+                        "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
+                        self.namespace,
+                        macro_slot.storage_path(),
+                        self.namespace,
+                        name_slot.storage_path()
+                    ));
+                    lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        "bossbar set $(id) name $(name)".to_string(),
                     ));
                     return;
                 }
@@ -3277,6 +3296,22 @@ impl Backend {
                     ));
                     return true;
                 }
+                if args[1].ty == Type::TextDef {
+                    let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+                    self.compile_expr_into_slot(function, depth, &args[1], &name_slot, lines);
+                    lines.push(format!(
+                        "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
+                        self.namespace,
+                        macro_slot.storage_path(),
+                        self.namespace,
+                        name_slot.storage_path()
+                    ));
+                    lines.push(self.inline_macro_command(
+                        macro_slot.storage_path(),
+                        "bossbar add $(id) $(name)".to_string(),
+                    ));
+                    return true;
+                }
                 let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
                 self.compile_expr_into_slot(function, depth, &args[1], &name_slot, lines);
                 lines.push(format!(
@@ -3366,6 +3401,25 @@ impl Backend {
                     self.namespace,
                     target.storage_path()
                 ));
+                true
+            }
+            "text" => {
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set value {{}}",
+                    self.namespace,
+                    target.storage_path()
+                ));
+                if let Some(arg) = args.first() {
+                    let text_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                    self.compile_expr_into_slot(function, depth, arg, &text_slot, lines);
+                    lines.push(format!(
+                        "data modify storage {}:runtime {}.text set from storage {}:runtime {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        text_slot.storage_path()
+                    ));
+                }
                 true
             }
             "summon" => {
@@ -3905,6 +3959,24 @@ impl Backend {
             lines.push(self.query_command(&target_slot, command, true));
             return;
         }
+        if args[1].ty == Type::TextDef {
+            let message_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+            self.compile_expr_into_slot(function, depth, &args[1], &message_slot, lines);
+            lines.push(format!(
+                "data modify storage {}:runtime {}.message set from storage {}:runtime {}",
+                self.namespace,
+                target_slot.storage_path(),
+                self.namespace,
+                message_slot.storage_path()
+            ));
+            let command = match callee {
+                "tellraw" => "tellraw $(selector) $(message)".to_string(),
+                "title" => "title $(selector) title $(message)".to_string(),
+                _ => "title $(selector) actionbar $(message)".to_string(),
+            };
+            lines.push(self.query_command(&target_slot, command, true));
+            return;
+        }
         if let IrExprKind::InterpolatedString {
             template,
             placeholders,
@@ -4125,6 +4197,24 @@ impl Backend {
                 format!("bossbar add $(id) {}", component)
             } else {
                 format!("bossbar set $(id) name {}", component)
+            };
+            lines.push(self.inline_macro_command(macro_slot.storage_path(), command));
+            return;
+        }
+        if args[1].ty == Type::TextDef {
+            let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+            self.compile_expr_into_slot(function, depth, &args[1], &name_slot, lines);
+            lines.push(format!(
+                "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
+                self.namespace,
+                macro_slot.storage_path(),
+                self.namespace,
+                name_slot.storage_path()
+            ));
+            let command = if callee == "bossbar_add" {
+                "bossbar add $(id) $(name)".to_string()
+            } else {
+                "bossbar set $(id) name $(name)".to_string()
             };
             lines.push(self.inline_macro_command(macro_slot.storage_path(), command));
             return;
@@ -5078,7 +5168,9 @@ impl Backend {
         lines: &mut Vec<String>,
     ) {
         match expr.ty {
-            Type::Nbt => self.compile_expr_into_slot(function, depth, expr, target, lines),
+            Type::Nbt | Type::TextDef => {
+                self.compile_expr_into_slot(function, depth, expr, target, lines)
+            }
             Type::EntityDef => {
                 let spec_slot =
                     local_slot(depth, &function.name, &self.new_temp(), &Type::EntityDef);
@@ -5605,7 +5697,7 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Nbt => lines.push(format!(
+                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -5716,14 +5808,14 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Nbt => lines.push(format!(
+                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
                     self.namespace,
                     source_slot.storage_path()
                 )),
-            Type::EntitySet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
+                Type::EntitySet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}.selector",
                     self.namespace,
                     target_path,
@@ -5821,6 +5913,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
         | Type::EntityDef
         | Type::BlockDef
         | Type::ItemDef
+        | Type::TextDef
         | Type::ItemSlot
         | Type::Bossbar
         | Type::EntitySet
@@ -5848,6 +5941,7 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
         | Type::EntityDef
         | Type::BlockDef
         | Type::ItemDef
+        | Type::TextDef
         | Type::ItemSlot
         | Type::Bossbar
         | Type::EntitySet

@@ -194,6 +194,7 @@ Built-in types:
 - `entity_def`
 - `block_def`
 - `item_def`
+- `text_def`
 - `item_slot`
 - `bossbar`
 - `nbt`
@@ -210,6 +211,8 @@ Type rules:
   automatically coerce to `nbt` in NBT contexts
 - `item_def` also automatically coerces to `nbt` in NBT contexts through
   `item_def.as_nbt()`
+- `text_def` is storage-backed and can be assigned anywhere an `nbt` text component
+  payload is expected
 
 Current operator support:
 
@@ -230,6 +233,8 @@ These remain ordinary functions:
 - `has_data(storage_path) -> bool`
 - `entity(entity_id: string) -> entity_def`
 - `item(item_id: string) -> item_def`
+- `text() -> text_def`
+- `text(value: string) -> text_def`
 - `block("...") -> block_ref`
 - `block_type(block_id: string) -> block_def`
 - `at(entity_ref, entity_set|entity_ref|block_ref)`
@@ -246,7 +251,7 @@ These remain ordinary functions:
 - `int(nbt) -> int`
 - `bool(nbt) -> bool`
 - `string(nbt) -> string`
-- `bossbar(id: string, name: string) -> bossbar`
+- `bossbar(id: string, name: string|text_def) -> bossbar`
 
 ### Entity methods
 
@@ -257,9 +262,9 @@ These remain ordinary functions:
 - `entity.give(stack: item_def) -> void`
 - `entity.clear(item_id: string, count: int) -> void`
 - `entity.loot_give(table: string) -> void`
-- `entity.tellraw(message: string) -> void`
-- `entity.title(message: string) -> void`
-- `entity.actionbar(message: string) -> void`
+- `entity.tellraw(message: string|text_def) -> void`
+- `entity.title(message: string|text_def) -> void`
+- `entity.actionbar(message: string|text_def) -> void`
 - `entity.playsound(sound: string, category: string) -> void`
 - `entity.stopsound(category: string, sound: string) -> void`
 - `entity.debug_entity(label: string) -> void`
@@ -320,6 +325,16 @@ spawning it:
 - `item_def.nbt.*` reads and writes item NBT
 - `item_def.name` is shorthand for `item_def.nbt.display.Name`
 - `item_def.as_nbt() -> nbt` returns an item-stack payload compound
+
+Create a text component builder with `text()` or `text("...")` and mutate any
+text component field path before sending it to display APIs:
+
+- `text_def.*` supports arbitrary nested text-component content, formatting,
+  interactivity, and child fields such as `.color`, `.bold`, `.extra`,
+  `.hover_event.*`, `.click_event.*`, `.with`, `.score.*`, `.separator`, and
+  `.nbt` source fields
+- assigning a `text_def` into a nested text-component field stores the nested
+  component object directly
 
 `setblock(block_def)` places the block id and states, then merges `block_def.nbt`.
 `fill(..., block_def)` uses only the block id and states.

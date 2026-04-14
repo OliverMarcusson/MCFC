@@ -669,6 +669,7 @@ impl Parser {
                 "entity_def" => Type::EntityDef,
                 "block_def" => Type::BlockDef,
                 "item_def" => Type::ItemDef,
+                "text_def" => Type::TextDef,
                 "item_slot" => Type::ItemSlot,
                 "nbt" => Type::Nbt,
                 "void" => Type::Void,

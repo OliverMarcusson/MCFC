@@ -697,6 +697,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "has_data" => Some("```mcfc\nhas_data(value: storage_path) -> bool\n```"),
         "entity" => Some("```mcfc\nentity(id: string) -> entity_def\n```"),
         "item" => Some("```mcfc\nitem(id: string) -> item_def\n```"),
+        "text" => Some("```mcfc\ntext() -> text_def\ntext(value: string) -> text_def\n```"),
         "block" => Some("```mcfc\nblock(position: string) -> block_ref\n```"),
         "block_type" => Some("```mcfc\nblock_type(id: string) -> block_def\n```"),
         "at" => Some(
@@ -714,7 +715,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "summon" => Some(
             "```mcfc\nsummon(entity_id: string) -> entity_ref\nsummon(entity_id: string, data: nbt) -> entity_ref\nsummon(spec: entity_def) -> entity_ref\nblock.summon(entity_id: string) -> entity_ref\nblock.summon(entity_id: string, data: nbt) -> entity_ref\nblock.summon(spec: entity_def) -> entity_ref\n```",
         ),
-        "bossbar" => Some("```mcfc\nbossbar(id: string, name: string) -> bossbar\n```"),
+        "bossbar" => Some("```mcfc\nbossbar(id: string, name: string|text_def) -> bossbar\n```"),
         "teleport" => {
             Some("```mcfc\nentity.teleport(destination: entity_ref|block_ref) -> void\n```")
         }
@@ -728,9 +729,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "loot_insert" => Some("```mcfc\nblock.loot_insert(table: string) -> void\n```"),
         "loot_spawn" => Some("```mcfc\nblock.loot_spawn(table: string) -> void\n```"),
         "spawn_item" => Some("```mcfc\nblock.spawn_item(stack: item_def) -> entity_ref\n```"),
-        "tellraw" => Some("```mcfc\nentity.tellraw(message: string) -> void\n```"),
-        "title" => Some("```mcfc\nentity.title(message: string) -> void\n```"),
-        "actionbar" => Some("```mcfc\nentity.actionbar(message: string) -> void\n```"),
+        "tellraw" => Some("```mcfc\nentity.tellraw(message: string|text_def) -> void\n```"),
+        "title" => Some("```mcfc\nentity.title(message: string|text_def) -> void\n```"),
+        "actionbar" => Some("```mcfc\nentity.actionbar(message: string|text_def) -> void\n```"),
         "debug" => Some("```mcfc\ndebug(message: string) -> void\n```"),
         "debug_marker" => Some(
             "```mcfc\nblock.debug_marker(label: string) -> void\nblock.debug_marker(label: string, marker_block: string) -> void\n```",
@@ -768,6 +769,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         ),
         "item_def" => Some(
             "```mcfc\nitem_def\n- id: string (read-only)\n- count: int\n- nbt.*\n- as_nbt() -> nbt\n```",
+        ),
+        "text_def" => Some(
+            "```mcfc\ntext_def\n- storage-backed text component builder\n- supports arbitrary .field / [index] writes for text component content, styling, events, and nested children\n```",
         ),
         "item_slot" => Some(
             "```mcfc\nitem_slot\n- exists: bool (read-only)\n- id: string (read-only)\n- count: int\n- nbt.*\n- clear() -> void\n```",
@@ -986,6 +990,7 @@ fn static_completion_items(
         ("entity_def", "entity_def"),
         ("block_def", "block_def"),
         ("item_def", "item_def"),
+        ("text_def", "text_def"),
         ("item_slot", "item_slot"),
         ("bossbar", "bossbar"),
         ("nbt", "nbt"),
@@ -1029,6 +1034,11 @@ fn static_completion_items(
             "item",
             "item(id: string) -> item_def",
             "item(${1:\"minecraft:apple\"})",
+        ),
+        (
+            "text",
+            "text() -> text_def / text(value: string) -> text_def",
+            "text(${1:\"hello\"})",
         ),
         ("sleep", "sleep(seconds: int) -> void", "sleep(${1:1})"),
         (
@@ -1107,7 +1117,7 @@ fn static_completion_items(
         ),
         (
             "bossbar",
-            "bossbar(id: string, name: string) -> bossbar",
+            "bossbar(id: string, name: string|text_def) -> bossbar",
             "bossbar(${1:\"mcfc:boss\"}, ${2:\"Boss\"})",
         ),
         ("async:", "Spawn a non-blocking async block", "async:\n\t$0"),
@@ -1330,6 +1340,7 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
         Some(CompletionReceiver::EntityDef) => entity_def_items(),
         Some(CompletionReceiver::ItemDef) => item_def_items(),
+        Some(CompletionReceiver::TextDef) => Vec::new(),
         Some(CompletionReceiver::BlockDef) => block_def_items(),
         Some(CompletionReceiver::ItemSlot) => item_slot_items(),
         Some(CompletionReceiver::Bossbar) => bossbar_root_items(),
@@ -2013,6 +2024,7 @@ enum CompletionReceiver {
     PlayerEntityRef,
     EntityDef,
     ItemDef,
+    TextDef,
     BlockDef,
     ItemSlot,
     Bossbar,
@@ -2106,6 +2118,7 @@ fn receiver_from_type(
             "as_nbt" => return None,
             _ => return None,
         },
+        Type::TextDef => Type::Nbt,
         Type::BlockDef => match segment.as_str() {
             "id" => Type::String,
             "states" | "nbt" => Type::Nbt,
@@ -2151,6 +2164,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
         Type::PlayerRef => Some(CompletionReceiver::PlayerEntityRef),
         Type::EntityDef => Some(CompletionReceiver::EntityDef),
         Type::ItemDef => Some(CompletionReceiver::ItemDef),
+        Type::TextDef => Some(CompletionReceiver::TextDef),
         Type::BlockDef => Some(CompletionReceiver::BlockDef),
         Type::ItemSlot => Some(CompletionReceiver::ItemSlot),
         Type::Bossbar => Some(CompletionReceiver::Bossbar),
@@ -2336,6 +2350,7 @@ fn parse_type_name(name: &str) -> Option<Type> {
         "entity_def" => Some(Type::EntityDef),
         "block_def" => Some(Type::BlockDef),
         "item_def" => Some(Type::ItemDef),
+        "text_def" => Some(Type::TextDef),
         "item_slot" => Some(Type::ItemSlot),
         "bossbar" => Some(Type::Bossbar),
         "nbt" => Some(Type::Nbt),
@@ -2355,6 +2370,8 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::EntityDef)
     } else if value.starts_with("item(") {
         Some(Type::ItemDef)
+    } else if value.starts_with("text(") {
+        Some(Type::TextDef)
     } else if value.starts_with("block(") {
         Some(Type::BlockRef)
     } else if value.starts_with("block_type(") {

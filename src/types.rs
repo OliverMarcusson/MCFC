@@ -509,7 +509,7 @@ fn type_check_block(
                                 );
                             if !matches!(
                                 value.ty,
-                                Type::Int | Type::Bool | Type::String | Type::Nbt
+                                Type::Int | Type::Bool | Type::String | Type::Nbt | Type::TextDef
                             ) && !(is_player_slot_write && value.ty == Type::ItemDef)
                                 && !(is_equipment_item_write && value.ty == Type::ItemDef)
                             {
@@ -533,6 +533,7 @@ fn type_check_block(
                                 | Type::EntityDef
                                 | Type::BlockDef
                                 | Type::ItemDef
+                                | Type::TextDef
                                 | Type::ItemSlot
                         ) {
                             if !is_storage_lvalue_expr(&path.base) {
@@ -1674,6 +1675,16 @@ fn type_check_path(
                 ));
                 current_ty = Type::Nbt;
             }
+            (Type::TextDef, PathSegment::Field(_)) => {
+                current_ty = Type::Nbt;
+            }
+            (Type::TextDef, PathSegment::Index(_)) => {
+                diagnostics.push(Diagnostic::new(
+                    "text builder values must be accessed with '.field'",
+                    span.clone(),
+                ));
+                current_ty = Type::Nbt;
+            }
             (Type::ItemSlot, PathSegment::Field(field)) => {
                 current_ty = match field.as_str() {
                     "exists" => Type::Bool,
@@ -1881,7 +1892,7 @@ fn normalize_builder_path_segments(
         return Vec::new();
     };
     let PathSegment::Field(first_name) = first else {
-        if matches!(base_ty, Type::EntityDef | Type::BlockDef | Type::ItemDef) {
+        if matches!(base_ty, Type::EntityDef | Type::BlockDef | Type::ItemDef | Type::TextDef) {
             diagnostics.push(Diagnostic::new(
                 "builder path access must start with a field such as '.nbt', '.states', or '.count'",
                 span,
@@ -1910,6 +1921,7 @@ fn normalize_builder_path_segments(
             "name" => Some(vec!["nbt", "display", "Name"]),
             _ => None,
         },
+        Type::TextDef => None,
         _ => None,
     };
     let Some(rewritten) = rewritten else {
@@ -1998,6 +2010,7 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
             | Type::EntityDef
             | Type::BlockDef
             | Type::ItemDef
+            | Type::TextDef
             | Type::ItemSlot
             | Type::Bossbar
     ) {
@@ -2069,6 +2082,16 @@ fn type_check_builtin_call(
             diagnostics,
         )),
         "item" => Some(type_check_item_constructor(
+            args,
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )),
+        "text" => Some(type_check_text_constructor(
             args,
             expr,
             struct_defs,
@@ -3086,7 +3109,16 @@ fn type_check_method_call(
         "tellraw" | "title" | "actionbar" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 1, expr, diagnostics);
-            expect_arg_type(method, &args, 0, Type::String, "message", expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::String | Type::TextDef),
+                "'string' or 'text_def'",
+                "message",
+                expr,
+                diagnostics,
+            );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "playsound" => {
@@ -3538,6 +3570,42 @@ fn type_check_item_constructor(
     builtin_call_expr("item", args, Type::ItemDef)
 }
 
+fn type_check_text_constructor(
+    args: &[Expr],
+    expr: &Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let args = type_check_args(
+        args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+    if !(args.len() == 0 || args.len() == 1) {
+        diagnostics.push(Diagnostic::new(
+            format!("wrong arity for 'text': expected 0 or 1, found {}", args.len()),
+            expr.span.clone(),
+        ));
+    }
+    if let Some(arg) = args.first() {
+        if arg.ty != Type::String {
+            diagnostics.push(Diagnostic::new(
+                format!("argument 1 for 'text' must be 'string', found '{}'", arg.ty.as_str()),
+                expr.span.clone(),
+            ));
+        }
+    }
+    builtin_call_expr("text", args, Type::TextDef)
+}
+
 fn type_check_random_builtin(
     args: &[Expr],
     expr: &Expr,
@@ -3602,7 +3670,16 @@ fn type_check_bossbar_constructor(
     );
     expect_arity("bossbar", &args, 2, expr, diagnostics);
     expect_arg_type("bossbar", &args, 0, Type::String, "id", expr, diagnostics);
-    expect_arg_type("bossbar", &args, 1, Type::String, "name", expr, diagnostics);
+    expect_arg_matches(
+        "bossbar",
+        &args,
+        1,
+        |ty| matches!(ty, Type::String | Type::TextDef),
+        "'string' or 'text_def'",
+        "name",
+        expr,
+        diagnostics,
+    );
     builtin_call_expr("bossbar", args, Type::Bossbar)
 }
 
@@ -3768,15 +3845,18 @@ fn type_check_gameplay_call(
         | GameplayBuiltinKind::Actionbar => {
             expect_arity(function, &args, 2, expr, diagnostics);
             expect_entity_target_arg(function, &args, 0, expr, diagnostics);
-            expect_arg_type(
-                function,
-                &args,
-                1,
-                Type::String,
-                "message",
-                expr,
-                diagnostics,
-            );
+            if let Some(message) = args.get(1) {
+                if !matches!(message.ty, Type::String | Type::TextDef) {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
+                            function,
+                            message.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
+            }
             builtin_call_expr(function, args, Type::Void)
         }
         GameplayBuiltinKind::Debug => {
@@ -3843,15 +3923,18 @@ fn type_check_gameplay_call(
                 expr,
                 diagnostics,
             );
-            expect_arg_type(
-                function,
-                &args,
-                1,
-                Type::String,
-                "bossbar name",
-                expr,
-                diagnostics,
-            );
+            if let Some(name) = args.get(1) {
+                if !matches!(name.ty, Type::String | Type::TextDef) {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
+                            function,
+                            name.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
+            }
             builtin_call_expr(function, args, Type::Void)
         }
         GameplayBuiltinKind::BossbarRemove => {
@@ -4121,6 +4204,11 @@ fn coerce_expr_to_nbt(expr: TypedExpr) -> TypedExpr {
         Type::EntityDef | Type::BlockDef | Type::ItemDef => {
             method_call_expr(expr, "as_nbt", Vec::new(), Type::Nbt)
         }
+        Type::TextDef => TypedExpr {
+            kind: expr.kind,
+            ty: Type::Nbt,
+            ref_kind: expr.ref_kind,
+        },
         _ => expr,
     }
 }
@@ -4320,6 +4408,7 @@ fn is_nbt_compatible_type(ty: &Type) -> bool {
             | Type::Dict(_)
             | Type::Struct(_)
             | Type::ItemDef
+            | Type::TextDef
             | Type::Bossbar
     )
 }
@@ -4334,6 +4423,7 @@ fn validate_builder_path_write(
         Type::EntityDef => validate_entity_builder_path_write(path, value, span, diagnostics),
         Type::BlockDef => validate_block_builder_path_write(path, value, span, diagnostics),
         Type::ItemDef => validate_item_builder_path_write(path, value, span, diagnostics),
+        Type::TextDef => validate_text_builder_path_write(path, value, span, diagnostics),
         _ => {}
     }
 }
@@ -4451,6 +4541,27 @@ fn validate_item_builder_path_write(
     }
 }
 
+fn validate_text_builder_path_write(
+    path: &TypedPathExpr,
+    value: &TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(PathSegment::Field(_)) = path.segments.first() else {
+        diagnostics.push(Diagnostic::new(
+            "text builder writes must use '.field' access",
+            span,
+        ));
+        return;
+    };
+    if !is_nbt_compatible_type(&value.ty) {
+        diagnostics.push(Diagnostic::new(
+            "text builder fields require an NBT-compatible value",
+            span,
+        ));
+    }
+}
+
 fn validate_player_path_write(
     path: &TypedPathExpr,
     value: &TypedExpr,
@@ -4539,7 +4650,7 @@ fn validate_bossbar_path_write(
         return;
     };
     let valid = match field.as_str() {
-        "name" => value.ty == Type::String,
+        "name" => matches!(value.ty, Type::String | Type::TextDef),
         "value" | "max" => value.ty == Type::Int,
         "visible" => value.ty == Type::Bool,
         "players" => matches!(
@@ -5004,6 +5115,7 @@ fn collect_macro_placeholders(
                 | Type::PlayerRef
                 | Type::BlockRef
                 | Type::Nbt
+                | Type::TextDef
                 | Type::Array(_)
                 | Type::Dict(_)
                 | Type::Struct(_)

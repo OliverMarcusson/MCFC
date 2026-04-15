@@ -44,13 +44,15 @@ That includes the builder-oriented gameplay surface, such as:
 
 ## Packaging
 
-Run:
+Run one of:
 
 ```bash
 npm run package
+npm run package:linux-x64
+npm run package:win32-x64
 ```
 
-The packaging script builds `mcfc-lsp` in release mode, clears any previously
+The packaging flow builds `mcfc-lsp` in release mode, clears any previously
 staged server payload, and copies exactly one native server binary into a
 platform-specific server directory before creating the VSIX.
 
@@ -62,9 +64,10 @@ Current packaged targets:
 Important packaging/runtime expectations:
 
 - VSIX artifacts are **platform-specific**.
-- Build the VSIX on the same target platform you intend to install it on.
-- A Linux-built VSIX contains only the Linux server; a Windows-built VSIX
-  contains only the Windows server.
+- `npm run package` packages for the current host by default.
+- `npm run package:linux-x64` and `npm run package:win32-x64` force a specific
+  target and can be used for cross-packaging when the matching Rust target
+  toolchain is installed.
 - macOS is not currently supported.
 - If you install a mismatched VSIX, activation now fails with an explicit error
   instead of silently missing the language server binary.

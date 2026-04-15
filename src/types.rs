@@ -3008,27 +3008,57 @@ fn type_check_method_call(
                     expr.span.clone(),
                 ));
             }
-            if !matches!(receiver.ty, Type::Dict(_)) {
-                diagnostics.push(Diagnostic::new(
-                    "remove(...) requires a 'dict' receiver",
-                    expr.span.clone(),
-                ));
+            match receiver.ty.clone() {
+                Type::Array(element) => {
+                    if args.first().map(|arg| &arg.ty) != Some(&Type::Int) {
+                        diagnostics.push(Diagnostic::new(
+                            "remove(...) index must be 'int'",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Some(TypedExpr {
+                        kind: TypedExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: method.to_string(),
+                            args,
+                        },
+                        ty: *element,
+                        ref_kind: RefKind::Unknown,
+                    })
+                }
+                Type::Dict(_) => {
+                    if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
+                        diagnostics.push(Diagnostic::new(
+                            "remove(...) key must be 'string'",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Some(TypedExpr {
+                        kind: TypedExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: method.to_string(),
+                            args,
+                        },
+                        ty: Type::Void,
+                        ref_kind: RefKind::Unknown,
+                    })
+                }
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        "remove(...) requires an 'array', 'dict', or 'bossbar' receiver",
+                        expr.span.clone(),
+                    ));
+                    Some(TypedExpr {
+                        kind: TypedExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: method.to_string(),
+                            args,
+                        },
+                        ty: Type::Void,
+                        ref_kind: RefKind::Unknown,
+                    })
+                }
             }
-            if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
-                diagnostics.push(Diagnostic::new(
-                    "remove(...) key must be 'string'",
-                    expr.span.clone(),
-                ));
-            }
-            Some(TypedExpr {
-                kind: TypedExprKind::MethodCall {
-                    receiver: Box::new(receiver),
-                    method: method.to_string(),
-                    args,
-                },
-                ty: Type::Void,
-                ref_kind: RefKind::Unknown,
-            })
         }
         "teleport" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);

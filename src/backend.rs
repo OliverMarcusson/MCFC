@@ -1639,7 +1639,10 @@ impl Backend {
                     let pos_slot =
                         local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
                     self.compose_entity_position_slot(&base_slot, &pos_slot, lines);
-                    let path_text = render_path_segments(&path.segments[1..]);
+                    let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
+                        &Type::BlockRef,
+                        &path.segments[1..],
+                    ));
                     let storage_target =
                         format!("{}:runtime {}", self.namespace, value_slot.storage_path());
                     lines.push(self.block_command(
@@ -1666,7 +1669,10 @@ impl Backend {
             }
         }
 
-        let path_text = render_path_segments(&path.segments);
+        let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
+            &path.base.ty,
+            &path.segments,
+        ));
         let storage_target = format!("{}:runtime {}", self.namespace, value_slot.storage_path());
         match path.base.ty {
             Type::EntityRef | Type::PlayerRef => lines.push(self.query_command(
@@ -1851,7 +1857,10 @@ impl Backend {
             }
         }
 
-        let path_text = render_path_segments(&path.segments);
+        let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
+            &path.base.ty,
+            &path.segments,
+        ));
         match path.base.ty {
             Type::EntityRef | Type::PlayerRef => lines.push(self.query_command(
                 &base_slot,
@@ -2172,8 +2181,7 @@ impl Backend {
                             rendered.push_str(&format!("[{}]", value));
                         }
                         crate::ast::ExprKind::String(value) => {
-                            rendered.push('.');
-                            rendered.push_str(value);
+                            push_quoted_path_name(&mut rendered, value);
                         }
                         _ => {
                             placeholder_index += 1;
@@ -2195,7 +2203,7 @@ impl Backend {
                             );
                             match ty {
                                 Type::Int => rendered.push_str(&format!("[$({})]", name)),
-                                _ => rendered.push_str(&format!(".$({})", name)),
+                                _ => push_quoted_macro_path_name(&mut rendered, &name),
                             }
                         }
                     }
@@ -2699,6 +2707,53 @@ impl Backend {
                         macro_slot.storage_path(),
                         "bossbar remove $(id)".to_string(),
                     ));
+                    return;
+                }
+                if matches!(receiver.ty, Type::Array(_)) {
+                    if let Some(rendered) =
+                        self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
+                    {
+                        let element_ty = match &receiver.ty {
+                            Type::Array(element) => element.as_ref(),
+                            _ => &Type::Nbt,
+                        };
+                        if let Some(index) = args.first() {
+                            let macro_storage =
+                                rendered.macro_storage.clone().unwrap_or_else(|| {
+                                    format!(
+                                        "frames.d{}.{}.__path{}",
+                                        depth,
+                                        sanitize(&function.name),
+                                        self.new_temp()
+                                    )
+                                });
+                            let index_slot =
+                                local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                            self.compile_expr_into_slot(function, depth, index, &index_slot, lines);
+                            lines.push(format!(
+                                "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
+                                self.namespace,
+                                macro_storage,
+                                index_slot.numeric_name()
+                            ));
+                            self.compile_storage_read_from_path(
+                                RenderedStoragePath {
+                                    path: format!("{}[$(index)]", rendered.path),
+                                    macro_storage: Some(macro_storage.clone()),
+                                },
+                                element_ty,
+                                target,
+                                lines,
+                            );
+                            lines.push(self.storage_path_command(
+                                format!(
+                                    "data remove storage {}:runtime {}[$(index)]",
+                                    self.namespace, rendered.path
+                                ),
+                                Some(macro_storage),
+                            ));
+                        }
+                    }
                     return;
                 }
                 if let Some(key) = args.first() {
@@ -4482,7 +4537,10 @@ impl Backend {
                         pos_slot.storage_path()
                     ));
                 } else {
-                    let path_text = render_path_segments(&path.segments[1..]);
+                    let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
+                        &Type::BlockRef,
+                        &path.segments[1..],
+                    ));
                     lines.push(self.block_command(
                         &pos_slot,
                         format!(
@@ -4500,7 +4558,7 @@ impl Backend {
                 if path.base.ref_kind != RefKind::Player {
                     return false;
                 }
-                let path_text = render_path_segments(&path.segments[1..]);
+                let path_text = render_nbt_path_segments(&path.segments[1..]);
                 lines.push(self.query_command(
                     base_slot,
                     format!(
@@ -6196,12 +6254,7 @@ fn render_path_segments(segments: &[PathSegment]) -> String {
     let mut rendered = String::new();
     for segment in segments {
         match segment {
-            PathSegment::Field(name) => {
-                if !rendered.is_empty() {
-                    rendered.push('.');
-                }
-                rendered.push_str(name);
-            }
+            PathSegment::Field(name) => push_path_name(&mut rendered, name),
             PathSegment::Index(index) => {
                 let value = match &index.kind {
                     crate::ast::ExprKind::Int(value) => *value,
@@ -6212,6 +6265,58 @@ fn render_path_segments(segments: &[PathSegment]) -> String {
         }
     }
     rendered
+}
+
+fn render_nbt_path_segments(segments: &[PathSegment]) -> String {
+    let mut rendered = String::new();
+    for segment in segments {
+        match segment {
+            PathSegment::Field(name) => push_path_name(&mut rendered, name),
+            PathSegment::Index(index) => match &index.kind {
+                crate::ast::ExprKind::Int(value) => rendered.push_str(&format!("[{}]", value)),
+                crate::ast::ExprKind::String(value) => push_quoted_path_name(&mut rendered, value),
+                _ => rendered.push_str("[0]"),
+            },
+        }
+    }
+    rendered
+}
+
+fn push_path_name(rendered: &mut String, name: &str) {
+    if !rendered.is_empty() {
+        rendered.push('.');
+    }
+    rendered.push_str(name);
+}
+
+fn push_quoted_path_name(rendered: &mut String, name: &str) {
+    if !rendered.is_empty() {
+        rendered.push('.');
+    }
+    rendered.push_str(&quoted(name));
+}
+
+fn push_quoted_macro_path_name(rendered: &mut String, placeholder: &str) {
+    if !rendered.is_empty() {
+        rendered.push('.');
+    }
+    rendered.push('"');
+    rendered.push_str(&format!("$({})", placeholder));
+    rendered.push('"');
+}
+
+fn normalize_runtime_nbt_segments<'a>(
+    base_ty: &Type,
+    segments: &'a [PathSegment],
+) -> &'a [PathSegment] {
+    if matches!(base_ty, Type::EntityRef | Type::PlayerRef | Type::BlockRef)
+        && segments.len() > 1
+        && matches!(segments.first(), Some(PathSegment::Field(field)) if field == "nbt")
+    {
+        &segments[1..]
+    } else {
+        segments
+    }
 }
 
 fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) -> Option<Type> {

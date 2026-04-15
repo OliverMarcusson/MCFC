@@ -24,7 +24,9 @@
     "copy-server": "node ./scripts/copy-server.js",
     "vscode:prepublish": "npm run compile && npm run copy-server",
     "prepackage": "npm run compile && npm run copy-server",
-    "package": "vsce package"
+    "package": "vsce package",
+    "package:linux-x64": "node ./scripts/package-vsix.js linux-x64",
+    "package:win32-x64": "node ./scripts/package-vsix.js win32-x64"
   },
   "contributes": {
     "languages": [

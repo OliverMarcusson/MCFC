@@ -412,6 +412,97 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_explicit_runtime_entity_and_block_nbt_paths() {
+    let source = r#"
+fn main() -> void:
+    let ent1 = single(selector("@e[type=pig,limit=1]"))
+    let ent2 = single(selector("@e[type=cow,limit=1]"))
+    let chest = block("~ ~ ~")
+    ent1.nbt.Rotation = ent2.nbt.Rotation
+    let rot = ent1.nbt.Rotation
+    chest.nbt.CustomName = "Loot"
+    let name = string(chest.nbt.CustomName)
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("data modify entity $(selector) Rotation set from storage"));
+    assert!(joined.contains("set from entity $(selector) Rotation"));
+    assert!(joined.contains("data modify block $(pos) CustomName set from storage"));
+    assert!(joined.contains("set from block $(pos) CustomName"));
+    assert!(!joined.contains("data modify entity $(selector) nbt.Rotation set from storage"));
+    assert!(!joined.contains("set from entity $(selector) nbt.Rotation"));
+    assert!(!joined.contains("data modify block $(pos) nbt.CustomName set from storage"));
+    assert!(!joined.contains("set from block $(pos) nbt.CustomName"));
+}
+
+#[test]
+fn quotes_string_index_nbt_segments_in_runtime_and_storage_paths() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let chest = block("~ ~ ~")
+    let page = string(player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw)
+    let weird = string(player.inventory[0].nbt.foo["A [crazy name]!"].baz)
+    chest.nbt.Items[1].components["minecraft:written_book_content"].author = page
+    chest.nbt.foo["A [crazy name]!"].value = weird
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains(
+        "set from entity $(selector) SelectedItem.components.\"minecraft:writable_book_content\".pages[0].raw"
+    ));
+    assert!(joined.contains(
+        "data modify block $(pos) Items[1].components.\"minecraft:written_book_content\".author set from storage"
+    ));
+    assert!(joined.contains(".nbt.foo.\"A [crazy name]!\".baz"));
+    assert!(
+        joined.contains("data modify block $(pos) foo.\"A [crazy name]!\".value set from storage")
+    );
+    assert!(!joined.contains("SelectedItem.components[0].pages[0].raw"));
+    assert!(!joined.contains("Items[1].components[0].author"));
+}
+
+#[test]
+fn quotes_dynamic_string_index_nbt_segments_on_storage_backed_paths() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let payload = player.inventory[0].nbt
+    let key = "A [crazy name]!"
+    let value = string(payload.foo[key].bar)
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("foo.\"$(n1)\".bar"));
+    assert!(joined.contains("key set value \"A [crazy name]!\""));
+    assert!(!joined.contains("foo.$(n1).bar"));
+}
+
+#[test]
 fn compiles_entity_and_block_builder_paths() {
     let source = r#"
 fn main() -> void:
@@ -665,6 +756,35 @@ fn main() -> void:
         "item replace entity $(selector) $(command_slot) with $(id)[minecraft:custom_data=$(nbt)] $(count)"
     ));
     assert!(joined.contains(".exists set value 0"));
+}
+
+#[test]
+fn compiles_runtime_item_slot_nbt_reads_and_writes() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    player.inventory[1].nbt = player.inventory[0].nbt
+    player.inventory[1].nbt.CustomModelData = player.inventory[0].nbt.CustomModelData
+    let payload = player.inventory[1].nbt
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains(".command_slot set value \"inventory.1\""));
+    assert!(joined.contains(".command_slot set value \"inventory.0\""));
+    assert!(joined.contains("Inventory[{Slot:$(slot)b}]"));
+    assert!(joined.contains(".nbt set from storage"));
+    assert!(joined.contains(".nbt.CustomModelData set from storage"));
+    assert!(joined.contains(
+        "item replace entity $(selector) $(command_slot) with $(id)[minecraft:custom_data=$(nbt)] $(count)"
+    ));
 }
 
 #[test]
@@ -1161,6 +1281,30 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_array_remove() {
+    let source = r#"
+fn main() -> void:
+    let values = [3, 5, 8]
+    let first = values.remove(0)
+    let second = values.remove(1)
+    mcf "say $(first)"
+    mcf "say $(second)"
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = result.artifacts.files;
+    assert!(files.values().any(|file| {
+        file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]")
+    }));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("execute store result storage mcfc:runtime"))
+    );
+}
+
+#[test]
 fn compiles_array_remove_at() {
     let source = r#"
 fn main() -> void:
@@ -1350,6 +1494,7 @@ fn main() -> void:
     let bad_mix = [1, "two"]
     let bad_index = arr["x"]
     let bad_remove = arr.remove_at("x")
+    let bad_remove_alias = arr.remove("x")
     let bad_key = dict[1]
     let bad_refs = [selector("@a")]
     arr.push("bad")
@@ -1366,6 +1511,7 @@ fn main() -> void:
     assert!(rendered.contains("has_data(...) requires a storage-backed variable or path"));
     assert!(rendered.contains("push(...) value must be 'int', found 'string'"));
     assert!(rendered.contains("remove_at(...) index must be 'int'"));
+    assert!(rendered.contains("remove(...) index must be 'int'"));
     assert!(rendered.contains("dictionary key 'bad-key' is not storage-path-safe"));
     assert!(rendered.contains("dynamic nbt path indices require a storage-backed base"));
     assert!(rendered.contains("collection values may not have unsupported type 'entity_ref'"));
@@ -1603,6 +1749,7 @@ fn main() -> void:
     mcf "say $(x == y)"
     mcf "say $(flag and not ready)"
     mcf "say $(tick(action))"
+    mcf "say $(values.remove(0))"
     mcf "say $(values.remove_at(0))"
     mcf "say $(store[key][\"value\"])"
     mcf "say $(action.duration)"

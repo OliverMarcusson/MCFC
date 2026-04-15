@@ -404,12 +404,15 @@ if below.is("minecraft:air"):
 - `array<T>.len() -> int`
 - `array<T>.push(value: T) -> void`
 - `array<T>.pop() -> T`
-- `array<T>.remove_at(index: int) -> T`
+- `array<T>.remove(index: int) -> T`
+- `array<T>.remove_at(index: int) -> T` compatibility alias for `remove(index)`
 - `dict<T>.has(key: string) -> bool`
 - `dict<T>.remove(key: string) -> void`
 
 ## Player and Entity Surfaces
 
+- `entity.nbt.*` reads and writes runtime entity NBT
+- `block.nbt.*` reads and writes runtime block-entity NBT
 - `player.nbt.*` reads vanilla player NBT
 - `player.state.*` stores MCFC-managed integer and boolean player state
 - `entity.state.*` stores MCFC-managed integer and boolean state on any `entity_ref`
@@ -420,6 +423,10 @@ if below.is("minecraft:air"):
 - `player_ref(entity)` asserts that an `entity_ref` is a player so player-only surfaces are available
 - `entity.mainhand.*`, `entity.offhand.*`, `entity.head.*`, `entity.chest.*`, `entity.legs.*`, and `entity.feet.*` modify equipped items
 - `heal(...)` is currently limited to known non-player `entity_ref` targets
+
+For runtime entities and blocks, `.nbt.*` is the explicit NBT namespace. Raw
+paths such as `pig.CustomName` and `block("~ ~ ~").CustomName` still work as a
+compatibility shorthand for root NBT fields.
 
 `entity.state.*` and `player.state.*` currently support only `int` and `bool`
 values. MCFC creates the scoreboard objectives automatically when a state path is
@@ -481,6 +488,8 @@ player.inventory[5].count = 16
 
 let idx = 7
 player.hotbar[idx] = sword
+player.inventory[0].nbt.CustomModelData = 7
+player.inventory[1].nbt = player.inventory[0].nbt
 
 let known_player = player_ref(single(selector("@e[limit=1]")))
 known_player.inventory[idx] = sword
@@ -488,6 +497,17 @@ known_player.inventory[idx] = sword
 if player.inventory[3].exists:
     player.tellraw(player.inventory[3].id)
 player.hotbar[2].clear()
+```
+
+Runtime entity and block NBT can be accessed the same way:
+
+```text
+let ent1 = single(selector("@e[type=pig,limit=1]"))
+let ent2 = single(selector("@e[type=cow,limit=1]"))
+ent1.nbt.Rotation = ent2.nbt.Rotation
+
+let chest = block("~ ~ ~")
+chest.nbt.CustomName = "Loot"
 ```
 
 Position-aware summon APIs live on `block_ref` and keep the global `summon(...)`

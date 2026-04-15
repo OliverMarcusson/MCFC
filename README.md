@@ -56,6 +56,12 @@ Build a project from a manifest or project directory:
 cargo run -- build path/to/mcfc.toml --out build/pack --clean
 ```
 
+Watch a source file or project and rebuild on every save:
+
+```powershell
+cargo run -- watch path/to/project --out build/pack --clean
+```
+
 Common flags:
 
 - `--namespace <name>`: override the generated datapack namespace
@@ -63,6 +69,9 @@ Common flags:
 - `--emit-ir`: write the lowered IR dump to `debug/ir.txt`
 - `--no-optimize`: disable the conservative IR optimization pass
 - `--clean`: remove the output directory before writing generated files
+
+The `watch` command keeps running, recompiles after `.mcf` saves, and prints
+compiler diagnostics without exiting so you can fix errors and continue.
 
 The compiler emits `pack.mcmeta`, generated functions under
 `data/<namespace>/function/`, and load/tick tags when needed.

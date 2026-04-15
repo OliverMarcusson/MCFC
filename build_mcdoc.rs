@@ -93,12 +93,14 @@ fn read_mcdoc_files_from_tarball(tarball: &[u8]) -> Result<BTreeMap<String, Stri
         let Some(relative) = path.split_once('/') else {
             continue;
         };
-        let include = relative.1.starts_with("java/world/") || relative.1 == "java/util/avatar.mcdoc";
+        let include =
+            relative.1.starts_with("java/world/") || relative.1 == "java/util/avatar.mcdoc";
         if !include {
             continue;
         }
         let mut content = String::new();
-        entry.read_to_string(&mut content)
+        entry
+            .read_to_string(&mut content)
             .map_err(|error| error.to_string())?;
         files.insert(relative.1.to_string(), content);
     }
@@ -130,7 +132,6 @@ impl Metadata {
         }
         true
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -356,8 +357,10 @@ impl<'a> Lexer<'a> {
                 });
                 continue;
             }
-            if matches!(ch, '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | '=' | '|' | '@')
-                || (ch == ':' && !self.starts_with("::"))
+            if matches!(
+                ch,
+                '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | '=' | '|' | '@'
+            ) || (ch == ':' && !self.starts_with("::"))
             {
                 self.index += ch.len_utf8();
                 tokens.push(Token {
@@ -402,7 +405,10 @@ impl<'a> Lexer<'a> {
         let start = self.index;
         while let Some(ch) = self.peek_char() {
             if ch.is_whitespace()
-                || matches!(ch, '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | '=' | '|' | '@')
+                || matches!(
+                    ch,
+                    '{' | '}' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | '=' | '|' | '@'
+                )
                 || (ch == ':' && !self.starts_with("::") && !self.colon_belongs_to_word())
                 || (ch == '?' && self.starts_with("?:"))
                 || (ch == '#' && self.starts_with("#["))
@@ -575,7 +581,7 @@ impl<'a> FileParser<'a> {
                                 return Err(format!(
                                     "unexpected attribute value token {:?} in {}",
                                     other, self.path
-                                ))
+                                ));
                             }
                         }
                     } else {
@@ -663,7 +669,12 @@ impl<'a> FileParser<'a> {
         let mut variants = Vec::new();
         loop {
             let meta = self.parse_metadata()?;
-            if matches!(self.peek(), Some(TokenKind::Symbol(')')) | Some(TokenKind::Symbol('}')) | Some(TokenKind::Symbol(']'))) {
+            if matches!(
+                self.peek(),
+                Some(TokenKind::Symbol(')'))
+                    | Some(TokenKind::Symbol('}'))
+                    | Some(TokenKind::Symbol(']'))
+            ) {
                 break;
             }
             let ty = self.parse_type_atom()?;
@@ -672,7 +683,12 @@ impl<'a> FileParser<'a> {
             if !self.eat_symbol('|') {
                 break;
             }
-            if matches!(self.peek(), Some(TokenKind::Symbol(')')) | Some(TokenKind::Symbol('}')) | Some(TokenKind::Symbol(']'))) {
+            if matches!(
+                self.peek(),
+                Some(TokenKind::Symbol(')'))
+                    | Some(TokenKind::Symbol('}'))
+                    | Some(TokenKind::Symbol(']'))
+            ) {
                 break;
             }
         }
@@ -740,7 +756,7 @@ impl<'a> FileParser<'a> {
                 return Err(format!(
                     "unexpected token {:?} while parsing type in {}",
                     other, self.path
-                ))
+                ));
             }
         };
 
@@ -777,7 +793,7 @@ impl<'a> FileParser<'a> {
                             return Err(format!(
                                 "unexpected dispatch key token {:?} in {}",
                                 other, self.path
-                            ))
+                            ));
                         }
                     }
                     if self.eat_symbol(',') {
@@ -811,7 +827,7 @@ impl<'a> FileParser<'a> {
                     return Err(format!(
                         "unexpected dispatch key token {:?} in {}",
                         other, self.path
-                    ))
+                    ));
                 }
             }
             if self.eat_symbol(',') {
@@ -1052,20 +1068,22 @@ impl<'a> FileParser<'a> {
     }
 
     fn eat_optional_colon(&mut self) -> bool {
-        matches!(self.next_if(|kind| matches!(kind, TokenKind::OptionalColon)), Some(_))
+        matches!(
+            self.next_if(|kind| matches!(kind, TokenKind::OptionalColon)),
+            Some(_)
+        )
     }
 
     fn eat_spread(&mut self) -> bool {
-        matches!(self.next_if(|kind| matches!(kind, TokenKind::Spread)), Some(_))
+        matches!(
+            self.next_if(|kind| matches!(kind, TokenKind::Spread)),
+            Some(_)
+        )
     }
 
     fn next_if(&mut self, predicate: impl FnOnce(&TokenKind) -> bool) -> Option<TokenKind> {
         let should_take = self.peek().is_some_and(predicate);
-        if should_take {
-            self.next()
-        } else {
-            None
-        }
+        if should_take { self.next() } else { None }
     }
 }
 
@@ -1090,7 +1108,11 @@ impl SchemaReducer {
         }
     }
 
-    fn schema_for_dispatch(&self, dispatcher: &str, key_with_namespace: &str) -> Option<SchemaNode> {
+    fn schema_for_dispatch(
+        &self,
+        dispatcher: &str,
+        key_with_namespace: &str,
+    ) -> Option<SchemaNode> {
         let key = key_with_namespace
             .strip_prefix("minecraft:")
             .unwrap_or(key_with_namespace);
@@ -1178,13 +1200,16 @@ impl SchemaReducer {
             }
         });
         self.resolving_symbols.remove(symbol);
-        self.symbol_cache.insert(symbol.to_string(), reduced.clone());
+        self.symbol_cache
+            .insert(symbol.to_string(), reduced.clone());
         reduced
     }
 
     fn reduce_type(&mut self, ty: &TypeExpr, context: &DefinitionContext) -> Option<SchemaNode> {
         match ty {
-            TypeExpr::Struct(definition) => Some(self.reduce_struct(definition, context, &Metadata::default())),
+            TypeExpr::Struct(definition) => {
+                Some(self.reduce_struct(definition, context, &Metadata::default()))
+            }
             TypeExpr::Reference(raw) => self.reduce_symbol(&self.resolve_reference(raw, context)),
             TypeExpr::DispatchRef(reference) => match &reference.key {
                 DispatchRefKey::Literal(keys) => {
@@ -1248,7 +1273,9 @@ impl SchemaReducer {
                         }
                     }
                 }
-                StructEntry::Dynamic { meta: entry_meta, .. } if entry_meta.is_active(&self.version) => {}
+                StructEntry::Dynamic {
+                    meta: entry_meta, ..
+                } if entry_meta.is_active(&self.version) => {}
                 _ => {}
             }
         }
@@ -1268,9 +1295,10 @@ impl SchemaReducer {
         context: &DefinitionContext,
     ) -> Option<SchemaNode> {
         match ty {
-            TypeExpr::Struct(_) | TypeExpr::Reference(_) | TypeExpr::DispatchRef(_) | TypeExpr::Union(_) => {
-                self.reduce_type(ty, context)
-            }
+            TypeExpr::Struct(_)
+            | TypeExpr::Reference(_)
+            | TypeExpr::DispatchRef(_)
+            | TypeExpr::Union(_) => self.reduce_type(ty, context),
             _ => None,
         }
     }
@@ -1298,7 +1326,10 @@ impl SchemaReducer {
             }
             TypeExpr::DispatchRef(reference) => match &reference.key {
                 DispatchRefKey::Literal(keys) => {
-                    if keys.iter().any(|key| self.reduce_dispatch(&reference.dispatcher, key).is_some()) {
+                    if keys
+                        .iter()
+                        .any(|key| self.reduce_dispatch(&reference.dispatcher, key).is_some())
+                    {
                         "compound".to_string()
                     } else {
                         tail_name(&reference.dispatcher)
@@ -1381,7 +1412,10 @@ fn merge_schema_nodes(nodes: Vec<(Metadata, SchemaNode)>) -> Option<SchemaNode> 
 }
 
 fn push_or_replace_field(fields: &mut Vec<SchemaField>, field: SchemaField) {
-    if let Some(index) = fields.iter().position(|existing| existing.name == field.name) {
+    if let Some(index) = fields
+        .iter()
+        .position(|existing| existing.name == field.name)
+    {
         fields[index] = merge_fields(fields[index].clone(), field);
     } else {
         fields.push(field);

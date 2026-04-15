@@ -7,12 +7,12 @@ use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    CompletionTextEdit, Diagnostic as LspDiagnostic, DiagnosticSeverity, Documentation,
+    CompletionTextEdit, Diagnostic as LspDiagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Hover,
-    HoverContents, HoverParams, InitializeParams, InitializeResult, InitializedParams,
-    MarkedString, OneOf, Position, Range, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Url,
+    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    Documentation, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
+    InitializedParams, MarkedString, OneOf, Position, Range, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -794,7 +794,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "pop" => Some("```mcfc\narray<T>.pop() -> T\n```"),
         "remove_at" => Some("```mcfc\narray<T>.remove_at(index: int) -> T\n```"),
         "has" => Some("```mcfc\ndict<T>.has(key: string) -> bool\n```"),
-        "remove" => Some("```mcfc\ndict<T>.remove(key: string) -> void\n```"),
+        "remove" => Some(
+            "```mcfc\narray<T>.remove(index: int) -> T\ndict<T>.remove(key: string) -> void\nbossbar.remove() -> void\n```",
+        ),
         "effect" => {
             Some("```mcfc\nentity.effect(name: string, duration: int, amplifier: int) -> void\n```")
         }
@@ -1318,6 +1320,11 @@ fn static_completion_items(
             ),
             ("pop", "array<T>.pop() -> T", "pop()"),
             (
+                "remove",
+                "array<T>.remove(index: int) -> T",
+                "remove(${1:index})",
+            ),
+            (
                 "remove_at",
                 "array<T>.remove_at(index: int) -> T",
                 "remove_at(${1:index})",
@@ -1375,7 +1382,11 @@ fn static_completion_items(
             ("visible", "bossbar.visible writable bool", "visible"),
             ("players", "bossbar.players writable entity target", "players"),
             ("position", "entity.position -> block_ref", "position"),
-            ("nbt", "player.nbt.* read namespace", "nbt"),
+            (
+                "nbt",
+                "entity.nbt.* / block.nbt.* runtime namespace",
+                "nbt",
+            ),
             ("state", "entity.state.* / player.state.* read/write namespace", "state"),
             ("tags", "player.tags.* read/write namespace", "tags"),
             ("inventory", "player.inventory[index] -> item_slot", "inventory"),
@@ -1776,6 +1787,9 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
+    if let Some(items) = text_member_completion_items(source, analysis, offset, chain) {
+        return items;
+    }
     if let Some(items) = nbt_member_completion_items(source, analysis, offset, chain) {
         return items;
     }
@@ -1800,7 +1814,7 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
         Some(CompletionReceiver::EntityDef) => entity_def_items(),
         Some(CompletionReceiver::ItemDef) => item_def_items(),
-        Some(CompletionReceiver::TextDef) => Vec::new(),
+        Some(CompletionReceiver::TextDef) => text_def_items(),
         Some(CompletionReceiver::BlockDef) => block_def_items(),
         Some(CompletionReceiver::ItemSlot) => item_slot_items(),
         Some(CompletionReceiver::Bossbar) => bossbar_root_items(),
@@ -1814,6 +1828,84 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::BlockRef) => block_ref_items(),
         None => broad_member_items(),
     }
+}
+
+fn text_member_completion_items(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    chain: &[String],
+) -> Option<Vec<CompletionItem>> {
+    let Some((base_name, rest)) = chain.split_first() else {
+        return None;
+    };
+
+    let segments = if local_type_at_offset(source, analysis, offset, base_name)
+        .is_some_and(|(ty, _)| ty == Type::TextDef)
+    {
+        rest
+    } else if inline_member_chain_base_type(source, offset, chain)
+        .is_some_and(|(ty, _)| ty == Type::TextDef)
+    {
+        chain
+    } else {
+        return None;
+    };
+
+    Some(text_completion_items_for_segments(segments))
+}
+
+fn text_completion_items_for_segments(segments: &[String]) -> Vec<CompletionItem> {
+    let mut context = TextCompletionContext::Root;
+    for segment in segments {
+        context = match (context, segment.as_str()) {
+            (TextCompletionContext::Root, "hover_event") => TextCompletionContext::HoverEvent,
+            (TextCompletionContext::Root, "click_event") => TextCompletionContext::ClickEvent,
+            (TextCompletionContext::Root, "score") => TextCompletionContext::Score,
+            (TextCompletionContext::Root, "extra" | "with" | "separator") => {
+                TextCompletionContext::Root
+            }
+            (
+                TextCompletionContext::Root,
+                "text" | "translate" | "keybind" | "selector" | "color" | "font" | "insertion"
+                | "nbt" | "block" | "entity" | "storage",
+            ) => TextCompletionContext::Scalar,
+            (
+                TextCompletionContext::Root,
+                "bold" | "italic" | "underlined" | "strikethrough" | "obfuscated" | "interpret",
+            ) => TextCompletionContext::Scalar,
+            (TextCompletionContext::HoverEvent, "contents" | "value") => {
+                TextCompletionContext::Root
+            }
+            (TextCompletionContext::HoverEvent, "action") => TextCompletionContext::Scalar,
+            (TextCompletionContext::ClickEvent, "action" | "value") => {
+                TextCompletionContext::Scalar
+            }
+            (TextCompletionContext::Score, "name" | "objective" | "value") => {
+                TextCompletionContext::Scalar
+            }
+            (TextCompletionContext::Scalar, _) => return Vec::new(),
+            (TextCompletionContext::Root, _) => TextCompletionContext::Root,
+            _ => return Vec::new(),
+        };
+    }
+
+    match context {
+        TextCompletionContext::Root => text_def_items(),
+        TextCompletionContext::HoverEvent => text_hover_event_items(),
+        TextCompletionContext::ClickEvent => text_click_event_items(),
+        TextCompletionContext::Score => text_score_items(),
+        TextCompletionContext::Scalar => Vec::new(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextCompletionContext {
+    Root,
+    HoverEvent,
+    ClickEvent,
+    Score,
+    Scalar,
 }
 
 fn nbt_member_completion_items(
@@ -1846,7 +1938,10 @@ fn inline_nbt_completion_origin(
     chain: &[String],
 ) -> Option<NbtCompletionOrigin> {
     let base_expr = inline_member_chain_base_expr(source, offset, chain)?;
-    infer_nbt_completion_origin(base_expr)
+    infer_nbt_completion_origin(base_expr).or_else(|| {
+        let (base_ty, _) = inline_member_chain_base_type(source, offset, chain)?;
+        nbt_origin_for_type(&base_ty)
+    })
 }
 
 fn nbt_schema_field_completion_items(
@@ -1885,6 +1980,7 @@ fn broad_member_items() -> Vec<CompletionItem> {
         player_entity_root_items(),
         entity_def_items(),
         item_def_items(),
+        text_def_items(),
         block_def_items(),
         item_slot_items(),
         block_ref_items(),
@@ -1902,6 +1998,11 @@ fn array_method_items() -> Vec<CompletionItem> {
             "push(${1:value})",
         ),
         ("pop", "array<T>.pop() -> T", "pop()"),
+        (
+            "remove",
+            "array<T>.remove(index: int) -> T",
+            "remove(${1:index})",
+        ),
         (
             "remove_at",
             "array<T>.remove_at(index: int) -> T",
@@ -2042,6 +2143,12 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             CompletionItemKind::FIELD,
         ),
         (
+            "nbt",
+            "entity.nbt.* read/write namespace",
+            "nbt",
+            CompletionItemKind::FIELD,
+        ),
+        (
             "state",
             "entity.state.* read/write namespace",
             "state",
@@ -2091,10 +2198,15 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
 
 fn player_entity_root_items() -> Vec<CompletionItem> {
     let mut items = generic_entity_root_items();
+    for item in &mut items {
+        match item.label.as_str() {
+            "nbt" => item.detail = Some("player.nbt.* read namespace".to_string()),
+            "state" => item.detail = Some("player.state.* read/write namespace".to_string()),
+            _ => {}
+        }
+    }
     items.extend(
         [
-            ("nbt", "player.nbt.* read namespace", "nbt"),
-            ("state", "player.state.* read/write namespace", "state"),
             ("tags", "player.tags.* read/write namespace", "tags"),
             (
                 "inventory",
@@ -2112,7 +2224,7 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
 }
 
 fn block_ref_items() -> Vec<CompletionItem> {
-    [
+    let mut items = [
         (
             "loot_insert",
             "block.loot_insert(table: string) -> void",
@@ -2158,7 +2270,14 @@ fn block_ref_items() -> Vec<CompletionItem> {
     .map(|(label, detail, insert_text)| {
         snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
     })
-    .collect()
+    .collect::<Vec<_>>();
+    items.push(snippet_item(
+        "nbt",
+        CompletionItemKind::FIELD,
+        "block.nbt.* read/write namespace",
+        "nbt",
+    ));
+    items
 }
 
 fn entity_def_items() -> Vec<CompletionItem> {
@@ -2256,6 +2375,81 @@ fn block_def_items() -> Vec<CompletionItem> {
         }),
     );
     items
+}
+
+fn text_def_items() -> Vec<CompletionItem> {
+    [
+        ("text", "text_def.text writable string"),
+        ("translate", "text_def.translate writable string"),
+        ("keybind", "text_def.keybind writable string"),
+        ("selector", "text_def.selector writable string"),
+        ("color", "text_def.color writable string"),
+        ("font", "text_def.font writable string"),
+        ("insertion", "text_def.insertion writable string"),
+        ("bold", "text_def.bold writable bool"),
+        ("italic", "text_def.italic writable bool"),
+        ("underlined", "text_def.underlined writable bool"),
+        ("strikethrough", "text_def.strikethrough writable bool"),
+        ("obfuscated", "text_def.obfuscated writable bool"),
+        ("extra", "text_def.extra writable child component list"),
+        (
+            "hover_event",
+            "text_def.hover_event.* writable hover event fields",
+        ),
+        (
+            "click_event",
+            "text_def.click_event.* writable click event fields",
+        ),
+        ("with", "text_def.with writable translation argument list"),
+        ("score", "text_def.score.* writable score component fields"),
+        ("separator", "text_def.separator writable text component"),
+        ("nbt", "text_def.nbt writable source path string"),
+        ("block", "text_def.block writable source block string"),
+        ("entity", "text_def.entity writable source selector string"),
+        ("storage", "text_def.storage writable source storage string"),
+        ("interpret", "text_def.interpret writable bool"),
+    ]
+    .into_iter()
+    .map(|(label, detail)| snippet_item(label, CompletionItemKind::FIELD, detail, label))
+    .collect()
+}
+
+fn text_hover_event_items() -> Vec<CompletionItem> {
+    [
+        ("action", "text_def.hover_event.action writable string"),
+        (
+            "value",
+            "text_def.hover_event.value writable legacy hover payload",
+        ),
+        (
+            "contents",
+            "text_def.hover_event.contents writable nested hover payload",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, detail)| snippet_item(label, CompletionItemKind::FIELD, detail, label))
+    .collect()
+}
+
+fn text_click_event_items() -> Vec<CompletionItem> {
+    [
+        ("action", "text_def.click_event.action writable string"),
+        ("value", "text_def.click_event.value writable string"),
+    ]
+    .into_iter()
+    .map(|(label, detail)| snippet_item(label, CompletionItemKind::FIELD, detail, label))
+    .collect()
+}
+
+fn text_score_items() -> Vec<CompletionItem> {
+    [
+        ("name", "text_def.score.name writable string"),
+        ("objective", "text_def.score.objective writable string"),
+        ("value", "text_def.score.value writable string"),
+    ]
+    .into_iter()
+    .map(|(label, detail)| snippet_item(label, CompletionItemKind::FIELD, detail, label))
+    .collect()
 }
 
 fn item_slot_items() -> Vec<CompletionItem> {
@@ -2583,21 +2777,21 @@ fn local_nbt_origin_at_offset(
             return Some(origin);
         }
         if let Some(ty) = local.ty {
-            if let Some(origin) = builder_origin_for_type(&ty) {
+            if let Some(origin) = nbt_origin_for_type(&ty) {
                 return Some(origin);
             }
         }
     }
 
     local_type_at_offset(source, analysis, offset, name)
-        .and_then(|(ty, _)| builder_origin_for_type(&ty))
+        .and_then(|(ty, _)| nbt_origin_for_type(&ty))
 }
 
-fn builder_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
+fn nbt_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
     let category = match ty {
-        Type::EntityDef => NbtSchemaCategory::Entity,
-        Type::BlockDef => NbtSchemaCategory::Block,
-        Type::ItemDef => NbtSchemaCategory::Item,
+        Type::EntityDef | Type::EntityRef | Type::PlayerRef => NbtSchemaCategory::Entity,
+        Type::BlockDef | Type::BlockRef => NbtSchemaCategory::Block,
+        Type::ItemDef | Type::ItemSlot => NbtSchemaCategory::Item,
         _ => return None,
     };
     Some(NbtCompletionOrigin { category, id: None })
@@ -2730,7 +2924,14 @@ fn receiver_from_type(
                     None
                 };
             }
-            "tags" | "nbt" => {
+            "nbt" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::Nbt)
+                } else {
+                    None
+                };
+            }
+            "tags" => {
                 if !current_is_player_ref && current_ref_kind != RefKind::Player {
                     return None;
                 }
@@ -2788,6 +2989,13 @@ fn receiver_from_type(
             _ => return None,
         },
         Type::BlockRef => match segment.as_str() {
+            "nbt" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::Nbt)
+                } else {
+                    None
+                };
+            }
             "loot_insert" | "loot_spawn" | "debug_marker" | "particle" | "setblock" | "fill"
             | "summon" | "spawn_item" | "is" => return None,
             _ => return None,
@@ -2922,8 +3130,13 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
         }
 
         if let Some((name, value)) = parse_let_binding(trimmed) {
-            let ty = infer_expr_type(value)
-                .or_else(|| locals.iter().rev().find(|local| local.name == value).and_then(|local| local.ty.clone()));
+            let ty = infer_expr_type(value).or_else(|| {
+                locals
+                    .iter()
+                    .rev()
+                    .find(|local| local.name == value)
+                    .and_then(|local| local.ty.clone())
+            });
             let nbt_origin = infer_nbt_completion_origin_from_value(value, &locals);
             upsert_completion_local(
                 &mut locals,
@@ -2956,7 +3169,10 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
 }
 
 fn upsert_completion_local(locals: &mut Vec<CompletionLocal>, local: CompletionLocal) {
-    if let Some(index) = locals.iter().position(|existing| existing.name == local.name) {
+    if let Some(index) = locals
+        .iter()
+        .position(|existing| existing.name == local.name)
+    {
         locals.remove(index);
     }
     locals.push(local);
@@ -3099,11 +3315,11 @@ fn infer_nbt_completion_origin_from_value(
 
 fn infer_nbt_completion_origin(value: &str) -> Option<NbtCompletionOrigin> {
     let value = value.trim();
-    if let Some(origin) = infer_constructor_nbt_origin(value, "entity", NbtSchemaCategory::Entity)
-    {
+    if let Some(origin) = infer_constructor_nbt_origin(value, "entity", NbtSchemaCategory::Entity) {
         return Some(origin);
     }
-    if let Some(origin) = infer_constructor_nbt_origin(value, "block_type", NbtSchemaCategory::Block)
+    if let Some(origin) =
+        infer_constructor_nbt_origin(value, "block_type", NbtSchemaCategory::Block)
     {
         return Some(origin);
     }
@@ -3248,9 +3464,9 @@ mod tests {
     use tower_lsp::lsp_types::{CompletionTextEdit, Position};
 
     use super::{
-        ProjectConfig, build_project_snapshot, builtin_hover, completion_items,
-        offset_to_position, position_to_offset, project_diagnostics_for_segment,
-        project_document_symbols, range_from_text_range, resolve_project_config_for_path,
+        ProjectConfig, build_project_snapshot, builtin_hover, completion_items, offset_to_position,
+        position_to_offset, project_diagnostics_for_segment, project_document_symbols,
+        range_from_text_range, resolve_project_config_for_path,
     };
     use crate::analysis::analyze_source;
     use crate::diagnostics::TextRange;
@@ -3349,6 +3565,7 @@ fn main() -> void:
         let analysis = analyze_source(source);
         let values_items = completion_items(source, &analysis, source.find("values.").unwrap() + 7);
         assert!(values_items.iter().any(|item| item.label == "push"));
+        assert!(values_items.iter().any(|item| item.label == "remove"));
         assert!(values_items.iter().any(|item| item.label == "remove_at"));
         assert!(!values_items.iter().any(|item| item.label == "team"));
 
@@ -3484,6 +3701,7 @@ fn main() -> void:
         assert!(pig_items.iter().any(|item| item.label == "offhand"));
         assert!(pig_items.iter().any(|item| item.label == "team"));
         assert!(pig_items.iter().any(|item| item.label == "state"));
+        assert!(pig_items.iter().any(|item| item.label == "nbt"));
 
         let sleep_hover = builtin_hover("sleep").expect("sleep hover");
         assert!(sleep_hover.contains("sleep(seconds: int) -> void"));
@@ -3568,10 +3786,13 @@ fn main() -> void:
     let pig = entity("minecraft:pig")
     let chest = block_type("minecraft:chest")
     let stack = item("minecraft:apple")
+    let msg = text("Hello")
     pig.
     chest.
     stack.
+    msg.
     item("minecraft:apple").
+    text("Hello").
     block("~ ~ ~").
 "#;
         let analysis = analyze_source(source);
@@ -3601,6 +3822,11 @@ fn main() -> void:
         assert!(stack_items.iter().any(|item| item.label == "count"));
         assert!(stack_items.iter().any(|item| item.label == "name"));
 
+        let msg_items = completion_items(source, &analysis, source.find("msg.").unwrap() + 4);
+        assert!(msg_items.iter().any(|item| item.label == "color"));
+        assert!(msg_items.iter().any(|item| item.label == "hover_event"));
+        assert!(msg_items.iter().any(|item| item.label == "score"));
+
         let inline_item_items = completion_items(
             source,
             &analysis,
@@ -3608,6 +3834,18 @@ fn main() -> void:
         );
         assert!(inline_item_items.iter().any(|item| item.label == "as_nbt"));
         assert!(inline_item_items.iter().any(|item| item.label == "count"));
+
+        let inline_text_items = completion_items(
+            source,
+            &analysis,
+            source.find("text(\"Hello\").").unwrap() + "text(\"Hello\").".len(),
+        );
+        assert!(inline_text_items.iter().any(|item| item.label == "text"));
+        assert!(
+            inline_text_items
+                .iter()
+                .any(|item| item.label == "click_event")
+        );
 
         let inline_block_items = completion_items(
             source,
@@ -3620,6 +3858,7 @@ fn main() -> void:
                 .iter()
                 .any(|item| item.label == "spawn_item")
         );
+        assert!(inline_block_items.iter().any(|item| item.label == "nbt"));
 
         let summon_hover = builtin_hover("summon").expect("summon hover");
         assert!(summon_hover.contains("summon(spec: entity_def) -> entity_ref"));
@@ -3638,6 +3877,62 @@ fn main() -> void:
         assert!(give_hover.contains("entity.give(stack: item_def) -> void"));
         let spawn_item_hover = builtin_hover("spawn_item").expect("spawn_item hover");
         assert!(spawn_item_hover.contains("block.spawn_item(stack: item_def) -> entity_ref"));
+        let text_def_hover = builtin_hover("text_def").expect("text_def hover");
+        assert!(text_def_hover.contains("storage-backed text component builder"));
+    }
+
+    #[test]
+    fn completes_text_def_nested_members() {
+        let source = r#"
+fn main() -> void:
+    let msg = text("Hello")
+    msg.hover_event.
+    msg.click_event.
+    msg.score.
+    msg.extra[0].
+    text("Hello").hover_event.
+"#;
+        let analysis = analyze_source(source);
+
+        let hover_items = completion_items(
+            source,
+            &analysis,
+            source.find("msg.hover_event.").unwrap() + "msg.hover_event.".len(),
+        );
+        assert!(hover_items.iter().any(|item| item.label == "action"));
+        assert!(hover_items.iter().any(|item| item.label == "contents"));
+
+        let click_items = completion_items(
+            source,
+            &analysis,
+            source.find("msg.click_event.").unwrap() + "msg.click_event.".len(),
+        );
+        assert!(click_items.iter().any(|item| item.label == "action"));
+        assert!(click_items.iter().any(|item| item.label == "value"));
+
+        let score_items = completion_items(
+            source,
+            &analysis,
+            source.find("msg.score.").unwrap() + "msg.score.".len(),
+        );
+        assert!(score_items.iter().any(|item| item.label == "name"));
+        assert!(score_items.iter().any(|item| item.label == "objective"));
+
+        let extra_items = completion_items(
+            source,
+            &analysis,
+            source.find("msg.extra[0].").unwrap() + "msg.extra[0].".len(),
+        );
+        assert!(extra_items.iter().any(|item| item.label == "color"));
+        assert!(extra_items.iter().any(|item| item.label == "hover_event"));
+
+        let inline_hover_items = completion_items(
+            source,
+            &analysis,
+            source.find("text(\"Hello\").hover_event.").unwrap()
+                + "text(\"Hello\").hover_event.".len(),
+        );
+        assert!(inline_hover_items.iter().any(|item| item.label == "action"));
     }
 
     #[test]
@@ -3660,7 +3955,11 @@ fn main() -> void:
             source.find("entity(\"minecraft:mannequin\").nbt.").unwrap()
                 + "entity(\"minecraft:mannequin\").nbt.".len(),
         );
-        assert!(entity_root_items.iter().any(|item| item.label == "CustomName"));
+        assert!(
+            entity_root_items
+                .iter()
+                .any(|item| item.label == "CustomName")
+        );
         assert!(entity_root_items.iter().any(|item| item.label == "profile"));
 
         let entity_nested_items = completion_items(
@@ -3685,7 +3984,9 @@ fn main() -> void:
         let block_items = completion_items(
             source,
             &analysis,
-            source.find("block_type(\"minecraft:player_head\").nbt.").unwrap()
+            source
+                .find("block_type(\"minecraft:player_head\").nbt.")
+                .unwrap()
                 + "block_type(\"minecraft:player_head\").nbt.".len(),
         );
         assert!(block_items.iter().any(|item| item.label == "profile"));
@@ -3702,6 +4003,64 @@ fn main() -> void:
     }
 
     #[test]
+    fn completes_schema_backed_nbt_fields_for_runtime_refs() {
+        let source = r#"
+fn main() -> void:
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    let player = player_ref(single(selector("@a[limit=1]")))
+    let chest = block("~ ~ ~")
+    pig.nbt.
+    single(selector("@e[type=pig,limit=1]")).nbt.
+    player.nbt.
+    chest.nbt.
+    block("~ ~ ~").nbt.
+"#;
+        let analysis = analyze_source(source);
+
+        let pig_items = completion_items(
+            source,
+            &analysis,
+            source.find("pig.nbt.").unwrap() + "pig.nbt.".len(),
+        );
+        assert!(pig_items.iter().any(|item| item.label == "CustomName"));
+
+        let inline_entity_items = completion_items(
+            source,
+            &analysis,
+            source
+                .find("single(selector(\"@e[type=pig,limit=1]\")).nbt.")
+                .unwrap()
+                + "single(selector(\"@e[type=pig,limit=1]\")).nbt.".len(),
+        );
+        assert!(
+            inline_entity_items
+                .iter()
+                .any(|item| item.label == "CustomName")
+        );
+
+        let player_items = completion_items(
+            source,
+            &analysis,
+            source.find("player.nbt.").unwrap() + "player.nbt.".len(),
+        );
+        assert!(player_items.iter().any(|item| item.label == "Air"));
+
+        let chest_items = completion_items(
+            source,
+            &analysis,
+            source.find("chest.nbt.").unwrap() + "chest.nbt.".len(),
+        );
+        assert!(chest_items.iter().any(|item| item.label == "lock"));
+
+        let inline_block_items = completion_items(
+            source,
+            &analysis,
+            source.find("block(\"~ ~ ~\").nbt.").unwrap() + "block(\"~ ~ ~\").nbt.".len(),
+        );
+        assert!(inline_block_items.iter().any(|item| item.label == "lock"));
+    }
+
+    #[test]
     fn completes_full_upstream_nbt_for_additional_exact_ids() {
         let source = r#"
 fn main() -> void:
@@ -3713,16 +4072,28 @@ fn main() -> void:
         let armor_stand_items = completion_items(
             source,
             &analysis,
-            source.find("entity(\"minecraft:armor_stand\").nbt.").unwrap()
+            source
+                .find("entity(\"minecraft:armor_stand\").nbt.")
+                .unwrap()
                 + "entity(\"minecraft:armor_stand\").nbt.".len(),
         );
-        assert!(armor_stand_items.iter().any(|item| item.label == "equipment"));
-        assert!(armor_stand_items.iter().any(|item| item.label == "ShowArms"));
+        assert!(
+            armor_stand_items
+                .iter()
+                .any(|item| item.label == "equipment")
+        );
+        assert!(
+            armor_stand_items
+                .iter()
+                .any(|item| item.label == "ShowArms")
+        );
 
         let sword_items = completion_items(
             source,
             &analysis,
-            source.find("item(\"minecraft:diamond_sword\").nbt.").unwrap()
+            source
+                .find("item(\"minecraft:diamond_sword\").nbt.")
+                .unwrap()
                 + "item(\"minecraft:diamond_sword\").nbt.".len(),
         );
         assert!(sword_items.iter().any(|item| item.label == "Damage"));

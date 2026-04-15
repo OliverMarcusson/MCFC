@@ -4,29 +4,37 @@ fn main() -> void:
     let npc_path = entity("minecraft:wandering_trader")
     npc_path.name_visible = false
     npc_path.silent = true
-    npc_path.glowing = true
     npc_path.tags = ["trader_fucka"]
 
     let npc = entity("minecraft:mannequin")
-    npc.name = "En NPC"
     npc.name_visible = false
     npc.tags = ["npc"]
-    npc.nbt.profile.name = "FaithlessMC"
+    npc.nbt.profile.name = "7ks"
+
+    let npc_name = text("Faithless")
+    npc_name.color = "purple"
 
     let stick = item("minecraft:stick")
     stick.nbt.Enchantments = '{"minecraft:sharpness": 10}'
 
-    at(player):
-        let trader_ref = summon(npc_path)
+    # player.give(stick)
+
+    # at(player):
+    #     let trader_ref = summon(npc_path)
         
-        trader_ref.effect("minecraft:invisibility", 3600, 0)
-        summon(npc)
+    #     trader_ref.effect("minecraft:invisibility", 3600, 0)
+    #     summon(npc)
     return
 
 fn tick() -> void:
+    let player = single(selector("@a"))
+    let book_content = string(player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw)
+    player.tellraw(book_content)
     let traders = selector('@e[tag=trader_fucka]')
     for trader in traders:
         trader.mainhand.item = "minecraft:air"
         at(trader):
-            single(selector("@e[type=minecraft:mannequin]")).teleport(block("~ ~ ~"))
+            let npc = single(selector("@e[type=minecraft:mannequin]"))
+            npc.teleport(block("~ ~ ~"))
+            npc.nbt.Rotation = trader.nbt.Rotation
     return

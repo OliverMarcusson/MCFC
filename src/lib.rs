@@ -7,6 +7,8 @@ pub mod diagnostics;
 pub mod ir;
 pub mod lexer;
 pub mod lsp;
+pub mod minecraft_ids;
+pub mod minecraft_nbt_schema;
 pub mod optimizer;
 pub mod parser;
 pub mod project;

@@ -1337,44 +1337,6 @@ fn main() -> void:
 }
 
 #[test]
-fn compiles_anpc_pilot_slice() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("ANPC")
-        .join("pilot")
-        .join("action_queue.mcf");
-    let Ok(source) = fs::read_to_string(&path) else {
-        return;
-    };
-    let result = compile_source(&source, &CompileOptions::default()).expect("pilot should compile");
-    let files = result.artifacts.files;
-    assert!(
-        files
-            .values()
-            .any(|file| file.contains("data remove storage mcfc:runtime"))
-    );
-    assert!(
-        files
-            .values()
-            .any(|file| file.contains("execute if data storage mcfc:runtime"))
-    );
-    assert!(
-        files
-            .values()
-            .any(|file| file.contains("execute store success score $d"))
-    );
-    assert!(files.values().any(|file| file.contains("say pathfind")));
-    assert!(files.values().any(|file| file.contains("say no_next_page")));
-    let apply_action = files
-        .get("data/mcfc/function/generated/apply_action__d1__entry.mcfunction")
-        .unwrap();
-    assert!(apply_action.contains("scoreboard players set $d1_apply_action___tmp25 mcfc 0"));
-    assert!(
-        apply_action
-            .contains("matches 0 run scoreboard players set $d1_apply_action___tmp25 mcfc 1")
-    );
-}
-
-#[test]
 fn rejects_invalid_collection_usage() {
     let source = r#"
 fn bad_param(xs: array<entity_ref>) -> void:

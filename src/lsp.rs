@@ -7,17 +7,20 @@ use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    Diagnostic as LspDiagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Hover, HoverContents,
-    HoverParams, InitializeParams, InitializeResult, InitializedParams, MarkedString, OneOf,
-    Position, Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    CompletionTextEdit, Diagnostic as LspDiagnostic, DiagnosticSeverity, Documentation,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Hover,
+    HoverContents, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+    MarkedString, OneOf, Position, Range, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
 use crate::analysis::{AnalysisResult, analyze_source, function_at_offset, word_at_offset};
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
+use crate::minecraft_ids::{MinecraftIdCategory, ids_for_category};
+use crate::minecraft_nbt_schema::{self, NbtSchemaCategory, NbtSchemaNode};
 use crate::project::{collect_source_files, find_manifest_in_ancestors, load_manifest};
 use crate::types::{RefKind, StructTypeDef};
 
@@ -273,7 +276,13 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(tower_lsp::lsp_types::HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string()]),
+                    trigger_characters: Some(vec![
+                        ".".to_string(),
+                        "\"".to_string(),
+                        "'".to_string(),
+                        ":".to_string(),
+                        "/".to_string(),
+                    ]),
                     ..CompletionOptions::default()
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -797,6 +806,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
 }
 
 fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> Vec<CompletionItem> {
+    if let Some(items) = minecraft_id_completion_items(source, offset) {
+        return items;
+    }
     if let Some(chain) = member_chain_before_cursor(source, offset) {
         return member_completion_items(source, analysis, offset, &chain);
     }
@@ -849,6 +861,447 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
     }
 
     items
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StringLiteralContext {
+    quote_start: usize,
+    content_range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CallContext {
+    name: String,
+    is_method: bool,
+    arg_index: usize,
+}
+
+fn minecraft_id_completion_items(source: &str, offset: usize) -> Option<Vec<CompletionItem>> {
+    let string_context = string_literal_context_at_offset(source, offset)?;
+
+    if let Some(replace_range) = selector_entity_id_range(source, &string_context, offset) {
+        return Some(minecraft_id_completion_items_for_range(
+            source,
+            MinecraftIdCategory::Entity,
+            replace_range,
+            offset,
+        ));
+    }
+
+    let category = minecraft_id_category_at_offset(source, string_context.quote_start)?;
+    Some(minecraft_id_completion_items_for_range(
+        source,
+        category,
+        string_context.content_range,
+        offset,
+    ))
+}
+
+fn minecraft_id_completion_items_for_range(
+    source: &str,
+    category: MinecraftIdCategory,
+    replace_range: TextRange,
+    offset: usize,
+) -> Vec<CompletionItem> {
+    let prefix_end = offset.min(replace_range.end);
+    let prefix = source[replace_range.start..prefix_end].to_ascii_lowercase();
+    let filter_text_uses_suffix = !prefix.is_empty() && !prefix.contains(':');
+    let edit_range = exact_range_from_offsets(source, replace_range.start, replace_range.end);
+    let detail = minecraft_id_detail(category).to_string();
+
+    ids_for_category(category)
+        .iter()
+        .copied()
+        .filter(|id| minecraft_id_matches_prefix(id, &prefix))
+        .map(|id| {
+            let filter_text = if filter_text_uses_suffix {
+                id.trim_start_matches("minecraft:").to_string()
+            } else {
+                id.to_string()
+            };
+            CompletionItem {
+                label: id.to_string(),
+                kind: Some(CompletionItemKind::CONSTANT),
+                detail: Some(detail.clone()),
+                filter_text: Some(filter_text),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: edit_range,
+                    new_text: id.to_string(),
+                })),
+                ..CompletionItem::default()
+            }
+        })
+        .collect()
+}
+
+fn selector_entity_id_range(
+    source: &str,
+    string_context: &StringLiteralContext,
+    offset: usize,
+) -> Option<TextRange> {
+    let call = call_context_before_offset(source, string_context.quote_start)?;
+    if call.name != "selector" || call.is_method || call.arg_index != 0 {
+        return None;
+    }
+
+    let content_start = string_context.content_range.start;
+    let content_end = string_context.content_range.end;
+    let cursor = offset.min(content_end);
+    let mut value_start = cursor;
+
+    while value_start > content_start {
+        let ch = previous_char(source, value_start)?;
+        if !is_resource_location_char(ch) {
+            break;
+        }
+        value_start -= ch.len_utf8();
+    }
+
+    let mut marker_start = value_start;
+    if marker_start > content_start && previous_char(source, marker_start) == Some('!') {
+        marker_start -= 1;
+    }
+
+    let type_marker = "type=";
+    if marker_start < content_start + type_marker.len()
+        || &source[marker_start - type_marker.len()..marker_start] != type_marker
+    {
+        return None;
+    }
+
+    let mut value_end = value_start;
+    while value_end < content_end {
+        let ch = source[value_end..].chars().next()?;
+        if !is_resource_location_char(ch) {
+            break;
+        }
+        value_end += ch.len_utf8();
+    }
+
+    if value_end < content_end {
+        let ch = source[value_end..].chars().next()?;
+        if !matches!(ch, ',' | ']' | ' ' | '\t' | '\n' | '\r') {
+            return None;
+        }
+    }
+
+    Some(TextRange::new(value_start, value_end))
+}
+
+fn is_resource_location_char(ch: char) -> bool {
+    ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '-' | '.' | ':' | '/')
+}
+
+fn minecraft_id_matches_prefix(id: &str, prefix: &str) -> bool {
+    prefix.is_empty()
+        || id.starts_with(prefix)
+        || id.trim_start_matches("minecraft:").starts_with(prefix)
+}
+
+fn minecraft_id_detail(category: MinecraftIdCategory) -> &'static str {
+    match category {
+        MinecraftIdCategory::Block => "Minecraft block id",
+        MinecraftIdCategory::Item => "Minecraft item id",
+        MinecraftIdCategory::Entity => "Minecraft entity id",
+        MinecraftIdCategory::LootTable => "Minecraft loot table id",
+        MinecraftIdCategory::Particle => "Minecraft particle id",
+        MinecraftIdCategory::SoundEvent => "Minecraft sound id",
+        MinecraftIdCategory::Effect => "Minecraft effect id",
+    }
+}
+
+fn minecraft_id_category_at_offset(
+    source: &str,
+    quote_start: usize,
+) -> Option<MinecraftIdCategory> {
+    call_context_before_offset(source, quote_start)
+        .and_then(|call| minecraft_id_category_for_call(&call))
+        .or_else(|| minecraft_id_category_from_assignment(source, quote_start))
+}
+
+fn minecraft_id_category_for_call(call: &CallContext) -> Option<MinecraftIdCategory> {
+    match (call.name.as_str(), call.is_method, call.arg_index) {
+        ("entity", false, 0) | ("summon", _, 0) => Some(MinecraftIdCategory::Entity),
+        ("item", false, 0)
+        | ("give", true, 0)
+        | ("give", false, 1)
+        | ("clear", true, 0)
+        | ("clear", false, 1) => Some(MinecraftIdCategory::Item),
+        ("block_type", false, 0)
+        | ("setblock", true, 0)
+        | ("setblock", false, 1)
+        | ("is", true, 0)
+        | ("fill", true, 1)
+        | ("fill", false, 2)
+        | ("debug_marker", true, 1)
+        | ("debug_marker", false, 2) => Some(MinecraftIdCategory::Block),
+        ("loot_give", true, 0)
+        | ("loot_give", false, 1)
+        | ("loot_insert", true, 0)
+        | ("loot_insert", false, 1)
+        | ("loot_spawn", true, 0)
+        | ("loot_spawn", false, 1) => Some(MinecraftIdCategory::LootTable),
+        ("particle", true, 0) | ("particle", false, 0) => Some(MinecraftIdCategory::Particle),
+        ("playsound", true, 0)
+        | ("playsound", false, 0)
+        | ("stopsound", true, 1)
+        | ("stopsound", false, 2) => Some(MinecraftIdCategory::SoundEvent),
+        ("effect", true, 0) => Some(MinecraftIdCategory::Effect),
+        _ => None,
+    }
+}
+
+fn minecraft_id_category_from_assignment(
+    source: &str,
+    quote_start: usize,
+) -> Option<MinecraftIdCategory> {
+    let line_start = source[..quote_start]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line = &source[line_start..quote_start];
+    let equals = top_level_assignment_index(line)?;
+    let lhs = line[..equals].trim_end();
+
+    is_equipment_item_assignment(lhs).then_some(MinecraftIdCategory::Item)
+}
+
+fn is_equipment_item_assignment(lhs: &str) -> bool {
+    lhs.ends_with(".item")
+        && [".mainhand", ".offhand", ".head", ".chest", ".legs", ".feet"]
+            .iter()
+            .any(|segment| lhs.contains(segment))
+}
+
+fn top_level_assignment_index(line: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = None;
+    let mut escaped = false;
+    let mut last_equals = None;
+
+    for (index, ch) in line.char_indices() {
+        if let Some(delimiter) = in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                value if value == delimiter => in_string = None,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => in_string = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => {
+                let previous = line[..index].chars().next_back();
+                let next = line[index + 1..].chars().next();
+                if previous != Some('=')
+                    && previous != Some('!')
+                    && previous != Some('<')
+                    && previous != Some('>')
+                    && next != Some('=')
+                    && next != Some('>')
+                {
+                    last_equals = Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    last_equals
+}
+
+fn call_context_before_offset(source: &str, target_offset: usize) -> Option<CallContext> {
+    let open_paren = innermost_open_paren_before(source, target_offset)?;
+    let (name, is_method) = call_name_before_paren(source, open_paren)?;
+    Some(CallContext {
+        name,
+        is_method,
+        arg_index: call_arg_index(source, open_paren, target_offset),
+    })
+}
+
+fn innermost_open_paren_before(source: &str, target_offset: usize) -> Option<usize> {
+    let mut stack: Vec<(char, usize)> = Vec::new();
+    let mut in_string = None;
+    let mut escaped = false;
+
+    for (index, ch) in source.char_indices() {
+        if index >= target_offset {
+            break;
+        }
+        if let Some(delimiter) = in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                value if value == delimiter => in_string = None,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => in_string = Some(ch),
+            '(' | '[' | '{' => stack.push((ch, index)),
+            ')' => pop_matching_delimiter(&mut stack, '('),
+            ']' => pop_matching_delimiter(&mut stack, '['),
+            '}' => pop_matching_delimiter(&mut stack, '{'),
+            _ => {}
+        }
+    }
+
+    stack
+        .iter()
+        .rev()
+        .find(|(delimiter, _)| *delimiter == '(')
+        .map(|(_, index)| *index)
+}
+
+fn pop_matching_delimiter(stack: &mut Vec<(char, usize)>, expected: char) {
+    if let Some(position) = stack
+        .iter()
+        .rposition(|(delimiter, _)| *delimiter == expected)
+    {
+        stack.remove(position);
+    }
+}
+
+fn call_name_before_paren(source: &str, open_paren: usize) -> Option<(String, bool)> {
+    let mut end = open_paren;
+    while end > 0 {
+        let ch = previous_char(source, end)?;
+        if !ch.is_whitespace() {
+            break;
+        }
+        end -= ch.len_utf8();
+    }
+
+    let mut start = end;
+    while start > 0 {
+        let ch = previous_char(source, start)?;
+        if !is_member_word_char(ch) {
+            break;
+        }
+        start -= ch.len_utf8();
+    }
+    if start == end {
+        return None;
+    }
+
+    let mut cursor = start;
+    while cursor > 0 {
+        let ch = previous_char(source, cursor)?;
+        if !ch.is_whitespace() {
+            return Some((source[start..end].to_string(), ch == '.'));
+        }
+        cursor -= ch.len_utf8();
+    }
+
+    Some((source[start..end].to_string(), false))
+}
+
+fn call_arg_index(source: &str, open_paren: usize, target_offset: usize) -> usize {
+    let mut arg_index = 0usize;
+    let mut depth = 0usize;
+    let mut in_string = None;
+    let mut escaped = false;
+
+    for ch in source[open_paren + 1..target_offset.min(source.len())].chars() {
+        if let Some(delimiter) = in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                value if value == delimiter => in_string = None,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => in_string = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => arg_index += 1,
+            _ => {}
+        }
+    }
+
+    arg_index
+}
+
+fn string_literal_context_at_offset(source: &str, offset: usize) -> Option<StringLiteralContext> {
+    let mut in_string = None;
+    let mut escaped = false;
+    let offset = offset.min(source.len());
+
+    for (index, ch) in source.char_indices() {
+        if index >= offset {
+            break;
+        }
+        if let Some((delimiter, _)) = in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                value if value == delimiter => in_string = None,
+                _ => {}
+            }
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' {
+            in_string = Some((ch, index));
+            escaped = false;
+        }
+    }
+
+    let (delimiter, quote_start) = in_string?;
+    let content_start = quote_start + delimiter.len_utf8();
+    let content_end = string_literal_end(source, quote_start, delimiter).unwrap_or(source.len());
+    Some(StringLiteralContext {
+        quote_start,
+        content_range: TextRange::new(content_start, content_end),
+    })
+}
+
+fn string_literal_end(source: &str, quote_start: usize, delimiter: char) -> Option<usize> {
+    let start = quote_start + delimiter.len_utf8();
+    let mut escaped = false;
+
+    for (relative_index, ch) in source[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            value if value == delimiter => return Some(start + relative_index),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn exact_range_from_offsets(source: &str, start: usize, end: usize) -> Range {
+    Range {
+        start: offset_to_position(source, start),
+        end: offset_to_position(source, end),
+    }
 }
 
 fn static_completion_items(
@@ -1323,9 +1776,12 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
-    let receiver = resolve_receiver_kind(source, analysis, offset, chain).or_else(|| {
-        inline_member_chain_receiver(source, analysis, offset, chain)
-    });
+    if let Some(items) = nbt_member_completion_items(source, analysis, offset, chain) {
+        return items;
+    }
+
+    let receiver = resolve_receiver_kind(source, analysis, offset, chain)
+        .or_else(|| inline_member_chain_receiver(source, analysis, offset, chain));
     if receiver.is_none() && chain.len() > 1 {
         Vec::new()
     } else {
@@ -1358,6 +1814,68 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::BlockRef) => block_ref_items(),
         None => broad_member_items(),
     }
+}
+
+fn nbt_member_completion_items(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    chain: &[String],
+) -> Option<Vec<CompletionItem>> {
+    let nbt_index = chain.iter().position(|segment| segment == "nbt")?;
+    let origin = if nbt_index == 0 {
+        inline_nbt_completion_origin(source, offset, chain)?
+    } else {
+        local_nbt_origin_at_offset(source, analysis, offset, &chain[0])?
+    };
+
+    let mut node = minecraft_nbt_schema::root_node(origin.category, origin.id.as_deref())?;
+    for segment in &chain[nbt_index + 1..] {
+        node = match minecraft_nbt_schema::child_node(node, segment) {
+            Some(child) => child,
+            None => return Some(Vec::new()),
+        };
+    }
+
+    Some(nbt_schema_field_completion_items(source, offset, node))
+}
+
+fn inline_nbt_completion_origin(
+    source: &str,
+    offset: usize,
+    chain: &[String],
+) -> Option<NbtCompletionOrigin> {
+    let base_expr = inline_member_chain_base_expr(source, offset, chain)?;
+    infer_nbt_completion_origin(base_expr)
+}
+
+fn nbt_schema_field_completion_items(
+    source: &str,
+    offset: usize,
+    node: &NbtSchemaNode,
+) -> Vec<CompletionItem> {
+    let (replace_start, replace_end) = member_identifier_offsets(source, offset);
+    let prefix_end = offset.min(replace_end);
+    let prefix = source[replace_start..prefix_end].to_ascii_lowercase();
+    let edit_range = exact_range_from_offsets(source, replace_start, replace_end);
+
+    node.fields
+        .iter()
+        .filter(|field| prefix.is_empty() || field.name.to_ascii_lowercase().starts_with(&prefix))
+        .map(|field| CompletionItem {
+            label: field.name.to_string(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(field.detail.to_string()),
+            documentation: (!field.documentation.is_empty())
+                .then(|| Documentation::String(field.documentation.to_string())),
+            filter_text: Some(field.name.to_string()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range: edit_range,
+                new_text: field.name.to_string(),
+            })),
+            ..CompletionItem::default()
+        })
+        .collect()
 }
 
 fn broad_member_items() -> Vec<CompletionItem> {
@@ -1909,6 +2427,32 @@ fn move_back_over_word(source: &str, mut index: usize) -> usize {
     index
 }
 
+fn member_identifier_offsets(source: &str, offset: usize) -> (usize, usize) {
+    let mut start = offset.min(source.len());
+    while start > 0 {
+        let Some(ch) = previous_char(source, start) else {
+            break;
+        };
+        if !is_member_word_char(ch) {
+            break;
+        }
+        start -= ch.len_utf8();
+    }
+
+    let mut end = offset.min(source.len());
+    while end < source.len() {
+        let Some(ch) = source[end..].chars().next() else {
+            break;
+        };
+        if !is_member_word_char(ch) {
+            break;
+        }
+        end += ch.len_utf8();
+    }
+
+    (start, end)
+}
+
 fn move_back_over_call_suffix(source: &str, mut index: usize) -> usize {
     if previous_char(source, index) != Some(')') {
         return index;
@@ -1982,10 +2526,17 @@ fn is_member_word_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NbtCompletionOrigin {
+    category: NbtSchemaCategory,
+    id: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct CompletionLocal {
     name: String,
     ty: Option<Type>,
+    nbt_origin: Option<NbtCompletionOrigin>,
 }
 
 fn local_type_at_offset(
@@ -2006,6 +2557,7 @@ fn local_type_at_offset(
 
     syntactic_locals_at_offset(source, offset)
         .into_iter()
+        .rev()
         .find(|local| local.name == name)
         .and_then(|local| {
             local.ty.map(|ty| {
@@ -2017,6 +2569,38 @@ fn local_type_at_offset(
                 (ty, ref_kind)
             })
         })
+}
+
+fn local_nbt_origin_at_offset(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    name: &str,
+) -> Option<NbtCompletionOrigin> {
+    let syntactic = syntactic_locals_at_offset(source, offset);
+    if let Some(local) = syntactic.into_iter().rev().find(|local| local.name == name) {
+        if let Some(origin) = local.nbt_origin {
+            return Some(origin);
+        }
+        if let Some(ty) = local.ty {
+            if let Some(origin) = builder_origin_for_type(&ty) {
+                return Some(origin);
+            }
+        }
+    }
+
+    local_type_at_offset(source, analysis, offset, name)
+        .and_then(|(ty, _)| builder_origin_for_type(&ty))
+}
+
+fn builder_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
+    let category = match ty {
+        Type::EntityDef => NbtSchemaCategory::Entity,
+        Type::BlockDef => NbtSchemaCategory::Block,
+        Type::ItemDef => NbtSchemaCategory::Item,
+        _ => return None,
+    };
+    Some(NbtCompletionOrigin { category, id: None })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2067,6 +2651,20 @@ fn inline_member_chain_base_type(
     offset: usize,
     chain: &[String],
 ) -> Option<(Type, RefKind)> {
+    let ty = infer_expr_type(inline_member_chain_base_expr(source, offset, chain)?)?;
+    let ref_kind = if ty == Type::PlayerRef {
+        RefKind::Player
+    } else {
+        RefKind::Unknown
+    };
+    Some((ty, ref_kind))
+}
+
+fn inline_member_chain_base_expr<'a>(
+    source: &'a str,
+    offset: usize,
+    chain: &[String],
+) -> Option<&'a str> {
     let mut index = offset.min(source.len());
     index = move_back_over_word(source, index);
     if previous_char(source, index)? != '.' {
@@ -2095,13 +2693,7 @@ fn inline_member_chain_base_type(
         return None;
     }
 
-    let ty = infer_expr_type(source[start..index].trim())?;
-    let ref_kind = if ty == Type::PlayerRef {
-        RefKind::Player
-    } else {
-        RefKind::Unknown
-    };
-    Some((ty, ref_kind))
+    Some(source[start..index].trim())
 }
 
 fn receiver_from_type(
@@ -2329,10 +2921,24 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
             continue;
         }
 
-        if let Some(local) = parse_let(trimmed) {
-            locals.push(local);
+        if let Some((name, value)) = parse_let_binding(trimmed) {
+            let ty = infer_expr_type(value)
+                .or_else(|| locals.iter().rev().find(|local| local.name == value).and_then(|local| local.ty.clone()));
+            let nbt_origin = infer_nbt_completion_origin_from_value(value, &locals);
+            upsert_completion_local(
+                &mut locals,
+                CompletionLocal {
+                    name,
+                    ty,
+                    nbt_origin,
+                },
+            );
         } else if let Some(local) = parse_for_local(trimmed) {
-            locals.push(local);
+            upsert_completion_local(&mut locals, local);
+        } else if let Some(name) = assigned_local_name(trimmed) {
+            if let Some(local) = locals.iter_mut().rev().find(|local| local.name == name) {
+                local.nbt_origin = None;
+            }
         }
 
         if opens_block(trimmed) {
@@ -2347,6 +2953,13 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
     }
 
     locals
+}
+
+fn upsert_completion_local(locals: &mut Vec<CompletionLocal>, local: CompletionLocal) {
+    if let Some(index) = locals.iter().position(|existing| existing.name == local.name) {
+        locals.remove(index);
+    }
+    locals.push(local);
 }
 
 fn parse_params(line: &str) -> Vec<CompletionLocal> {
@@ -2364,23 +2977,21 @@ fn parse_params(line: &str) -> Vec<CompletionLocal> {
             Some(CompletionLocal {
                 name: name.trim().to_string(),
                 ty: parse_type_name(ty.trim()),
+                nbt_origin: None,
             })
         })
         .filter(|local| !local.name.is_empty())
         .collect()
 }
 
-fn parse_let(line: &str) -> Option<CompletionLocal> {
+fn parse_let_binding(line: &str) -> Option<(String, &str)> {
     let rest = line.strip_prefix("let ")?;
     let (name, value) = rest.split_once('=')?;
     let name = name.trim();
     if name.is_empty() {
         return None;
     }
-    Some(CompletionLocal {
-        name: name.to_string(),
-        ty: infer_expr_type(value.trim()),
-    })
+    Some((name.to_string(), value.trim()))
 }
 
 fn parse_for_local(line: &str) -> Option<CompletionLocal> {
@@ -2398,7 +3009,24 @@ fn parse_for_local(line: &str) -> Option<CompletionLocal> {
     Some(CompletionLocal {
         name: name.to_string(),
         ty,
+        nbt_origin: None,
     })
+}
+
+fn assigned_local_name(line: &str) -> Option<&str> {
+    if line.starts_with("let ") || !line.contains('=') {
+        return None;
+    }
+    let (lhs, _) = line.split_once('=')?;
+    let name = lhs.trim();
+    if name.is_empty()
+        || name.contains('.')
+        || name.contains('[')
+        || !name.chars().all(is_member_word_char)
+    {
+        return None;
+    }
+    Some(name)
 }
 
 fn parse_type_name(name: &str) -> Option<Type> {
@@ -2454,6 +3082,80 @@ fn infer_expr_type(value: &str) -> Option<Type> {
     } else {
         None
     }
+}
+
+fn infer_nbt_completion_origin_from_value(
+    value: &str,
+    locals: &[CompletionLocal],
+) -> Option<NbtCompletionOrigin> {
+    infer_nbt_completion_origin(value).or_else(|| {
+        locals
+            .iter()
+            .rev()
+            .find(|local| local.name == value)
+            .and_then(|local| local.nbt_origin.clone())
+    })
+}
+
+fn infer_nbt_completion_origin(value: &str) -> Option<NbtCompletionOrigin> {
+    let value = value.trim();
+    if let Some(origin) = infer_constructor_nbt_origin(value, "entity", NbtSchemaCategory::Entity)
+    {
+        return Some(origin);
+    }
+    if let Some(origin) = infer_constructor_nbt_origin(value, "block_type", NbtSchemaCategory::Block)
+    {
+        return Some(origin);
+    }
+    if let Some(origin) = infer_constructor_nbt_origin(value, "item", NbtSchemaCategory::Item) {
+        return Some(origin);
+    }
+    value
+        .strip_suffix(".as_nbt()")
+        .and_then(infer_nbt_completion_origin)
+}
+
+fn infer_constructor_nbt_origin(
+    value: &str,
+    constructor: &str,
+    category: NbtSchemaCategory,
+) -> Option<NbtCompletionOrigin> {
+    value.strip_prefix(&format!("{constructor}("))?;
+    Some(NbtCompletionOrigin {
+        category,
+        id: parse_leading_string_literal(
+            value
+                .rsplit_once(')')
+                .map(|(prefix, _)| prefix)
+                .unwrap_or(value)
+                .trim_start_matches(&format!("{constructor}(")),
+        ),
+    })
+}
+
+fn parse_leading_string_literal(value: &str) -> Option<String> {
+    let mut chars = value.trim_start().chars();
+    let quote = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let mut escaped = false;
+    let mut parsed = String::new();
+    for ch in chars {
+        if escaped {
+            parsed.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            value if value == quote => return Some(parsed),
+            _ => parsed.push(ch),
+        }
+    }
+
+    None
 }
 
 fn opens_block(line: &str) -> bool {
@@ -2543,14 +3245,13 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp::lsp_types::{CompletionTextEdit, Position};
 
     use super::{
         ProjectConfig, build_project_snapshot, builtin_hover, completion_items,
-        project_diagnostics_for_segment, project_document_symbols, range_from_text_range,
-        resolve_project_config_for_path,
+        offset_to_position, position_to_offset, project_diagnostics_for_segment,
+        project_document_symbols, range_from_text_range, resolve_project_config_for_path,
     };
-    use super::{offset_to_position, position_to_offset};
     use crate::analysis::analyze_source;
     use crate::diagnostics::TextRange;
 
@@ -2825,7 +3526,8 @@ fn main() -> void:
         let inline_entity_state_items = completion_items(
             source,
             &analysis,
-            source.find("single(selector(\"@e[type=pig,limit=1]\")).state.")
+            source
+                .find("single(selector(\"@e[type=pig,limit=1]\")).state.")
                 .unwrap()
                 + "single(selector(\"@e[type=pig,limit=1]\")).state.".len(),
         );
@@ -2834,7 +3536,8 @@ fn main() -> void:
         let inline_player_state_items = completion_items(
             source,
             &analysis,
-            source.find("player_ref(single(selector(\"@a[limit=1]\"))).state.")
+            source
+                .find("player_ref(single(selector(\"@a[limit=1]\"))).state.")
                 .unwrap()
                 + "player_ref(single(selector(\"@a[limit=1]\"))).state.".len(),
         );
@@ -2850,7 +3553,8 @@ fn main() -> void:
         let invalid_inline_nested_items = completion_items(
             source,
             &analysis,
-            source.find("single(selector(\"@e[type=pig,limit=1]\")).position.foo.")
+            source
+                .find("single(selector(\"@e[type=pig,limit=1]\")).position.foo.")
                 .unwrap()
                 + "single(selector(\"@e[type=pig,limit=1]\")).position.foo.".len(),
         );
@@ -2934,6 +3638,409 @@ fn main() -> void:
         assert!(give_hover.contains("entity.give(stack: item_def) -> void"));
         let spawn_item_hover = builtin_hover("spawn_item").expect("spawn_item hover");
         assert!(spawn_item_hover.contains("block.spawn_item(stack: item_def) -> entity_ref"));
+    }
+
+    #[test]
+    fn completes_schema_backed_nbt_fields_for_inline_and_local_builders() {
+        let source = r#"
+fn main() -> void:
+    entity("minecraft:mannequin").nbt.
+    entity("minecraft:mannequin").nbt.profile.
+    let mannequin = entity("minecraft:mannequin")
+    let alias = mannequin
+    alias.nbt.profile.
+    block_type("minecraft:player_head").nbt.
+    item("minecraft:player_head").nbt.
+"#;
+        let analysis = analyze_source(source);
+
+        let entity_root_items = completion_items(
+            source,
+            &analysis,
+            source.find("entity(\"minecraft:mannequin\").nbt.").unwrap()
+                + "entity(\"minecraft:mannequin\").nbt.".len(),
+        );
+        assert!(entity_root_items.iter().any(|item| item.label == "CustomName"));
+        assert!(entity_root_items.iter().any(|item| item.label == "profile"));
+
+        let entity_nested_items = completion_items(
+            source,
+            &analysis,
+            source
+                .find("entity(\"minecraft:mannequin\").nbt.profile.")
+                .unwrap()
+                + "entity(\"minecraft:mannequin\").nbt.profile.".len(),
+        );
+        assert!(entity_nested_items.iter().any(|item| item.label == "name"));
+        assert!(entity_nested_items.iter().any(|item| item.label == "model"));
+
+        let alias_items = completion_items(
+            source,
+            &analysis,
+            source.find("alias.nbt.profile.").unwrap() + "alias.nbt.profile.".len(),
+        );
+        assert!(alias_items.iter().any(|item| item.label == "id"));
+        assert!(alias_items.iter().any(|item| item.label == "properties"));
+
+        let block_items = completion_items(
+            source,
+            &analysis,
+            source.find("block_type(\"minecraft:player_head\").nbt.").unwrap()
+                + "block_type(\"minecraft:player_head\").nbt.".len(),
+        );
+        assert!(block_items.iter().any(|item| item.label == "profile"));
+        assert!(block_items.iter().any(|item| item.label == "custom_name"));
+
+        let item_items = completion_items(
+            source,
+            &analysis,
+            source.find("item(\"minecraft:player_head\").nbt.").unwrap()
+                + "item(\"minecraft:player_head\").nbt.".len(),
+        );
+        assert!(item_items.iter().any(|item| item.label == "display"));
+        assert!(item_items.iter().any(|item| item.label == "SkullOwner"));
+    }
+
+    #[test]
+    fn completes_full_upstream_nbt_for_additional_exact_ids() {
+        let source = r#"
+fn main() -> void:
+    entity("minecraft:armor_stand").nbt.
+    item("minecraft:diamond_sword").nbt.
+"#;
+        let analysis = analyze_source(source);
+
+        let armor_stand_items = completion_items(
+            source,
+            &analysis,
+            source.find("entity(\"minecraft:armor_stand\").nbt.").unwrap()
+                + "entity(\"minecraft:armor_stand\").nbt.".len(),
+        );
+        assert!(armor_stand_items.iter().any(|item| item.label == "equipment"));
+        assert!(armor_stand_items.iter().any(|item| item.label == "ShowArms"));
+
+        let sword_items = completion_items(
+            source,
+            &analysis,
+            source.find("item(\"minecraft:diamond_sword\").nbt.").unwrap()
+                + "item(\"minecraft:diamond_sword\").nbt.".len(),
+        );
+        assert!(sword_items.iter().any(|item| item.label == "Damage"));
+        assert!(sword_items.iter().any(|item| item.label == "Enchantments"));
+    }
+
+    #[test]
+    fn falls_back_to_default_nbt_schema_for_dynamic_builder_ids() {
+        let source = r#"
+fn main() -> void:
+    let id = "minecraft:unknown"
+    let entity_value = entity(id)
+    let block_value = block_type(id)
+    let item_value = item(id)
+    entity_value.nbt.
+    block_value.nbt.
+    item_value.nbt.
+"#;
+        let analysis = analyze_source(source);
+
+        let entity_items = completion_items(
+            source,
+            &analysis,
+            source.find("entity_value.nbt.").unwrap() + "entity_value.nbt.".len(),
+        );
+        assert!(entity_items.iter().any(|item| item.label == "CustomName"));
+        assert!(!entity_items.iter().any(|item| item.label == "profile"));
+
+        let block_items = completion_items(
+            source,
+            &analysis,
+            source.find("block_value.nbt.").unwrap() + "block_value.nbt.".len(),
+        );
+        assert!(block_items.iter().any(|item| item.label == "lock"));
+
+        let item_items = completion_items(
+            source,
+            &analysis,
+            source.find("item_value.nbt.").unwrap() + "item_value.nbt.".len(),
+        );
+        assert!(item_items.iter().any(|item| item.label == "display"));
+    }
+
+    #[test]
+    fn replaces_partial_nbt_field_names() {
+        let source = r#"
+fn main() -> void:
+    entity("minecraft:mannequin").nbt.pro
+"#;
+        let analysis = analyze_source(source);
+        let items = completion_items(
+            source,
+            &analysis,
+            source.find(".nbt.pro").unwrap() + ".nbt.pro".len(),
+        );
+        let profile = items
+            .iter()
+            .find(|item| item.label == "profile")
+            .expect("profile completion");
+        let Some(CompletionTextEdit::Edit(edit)) = profile.text_edit.clone() else {
+            panic!("profile completion should use a text edit");
+        };
+        assert_eq!(edit.new_text, "profile");
+        assert_eq!(
+            edit.range.start,
+            offset_to_position(source, source.find("pro").unwrap())
+        );
+        assert_eq!(
+            edit.range.end,
+            offset_to_position(source, source.find("pro").unwrap() + "pro".len())
+        );
+    }
+
+    #[test]
+    fn completes_contextual_minecraft_ids_inside_string_arguments() {
+        let source = r#"
+fn main() -> void:
+    let player = player_ref(single(selector("@a")))
+    entity("pig")
+    item("diamond_swo")
+    block("~ ~ ~").setblock("gold_bloc")
+    player.playsound("entity.experience_orb.picku", "master")
+    block("~ ~ ~").particle("happy_villag")
+    player.effect("glowin", 3, 0)
+    player.give("stick", 1)
+    player.position.loot_spawn("chests/simple_dungeo")
+"#;
+        let analysis = analyze_source(source);
+
+        let entity_items = completion_items(
+            source,
+            &analysis,
+            source.find("entity(\"pig").unwrap() + "entity(\"pig".len(),
+        );
+        assert!(
+            entity_items
+                .iter()
+                .any(|item| item.label == "minecraft:pig")
+        );
+
+        let item_items = completion_items(
+            source,
+            &analysis,
+            source.find("item(\"diamond_swo").unwrap() + "item(\"diamond_swo".len(),
+        );
+        assert!(
+            item_items
+                .iter()
+                .any(|item| item.label == "minecraft:diamond_sword")
+        );
+
+        let block_items = completion_items(
+            source,
+            &analysis,
+            source.find("setblock(\"gold_bloc").unwrap() + "setblock(\"gold_bloc".len(),
+        );
+        assert!(
+            block_items
+                .iter()
+                .any(|item| item.label == "minecraft:gold_block")
+        );
+
+        let sound_items = completion_items(
+            source,
+            &analysis,
+            source
+                .find("playsound(\"entity.experience_orb.picku")
+                .unwrap()
+                + "playsound(\"entity.experience_orb.picku".len(),
+        );
+        assert!(
+            sound_items
+                .iter()
+                .any(|item| item.label == "minecraft:entity.experience_orb.pickup")
+        );
+
+        let particle_items = completion_items(
+            source,
+            &analysis,
+            source.find("particle(\"happy_villag").unwrap() + "particle(\"happy_villag".len(),
+        );
+        assert!(
+            particle_items
+                .iter()
+                .any(|item| item.label == "minecraft:happy_villager")
+        );
+
+        let effect_items = completion_items(
+            source,
+            &analysis,
+            source.find("effect(\"glowin").unwrap() + "effect(\"glowin".len(),
+        );
+        assert!(
+            effect_items
+                .iter()
+                .any(|item| item.label == "minecraft:glowing")
+        );
+
+        let give_items = completion_items(
+            source,
+            &analysis,
+            source.find("give(\"stick").unwrap() + "give(\"stick".len(),
+        );
+        assert!(
+            give_items
+                .iter()
+                .any(|item| item.label == "minecraft:stick")
+        );
+
+        let loot_items = completion_items(
+            source,
+            &analysis,
+            source.find("loot_spawn(\"chests/simple_dungeo").unwrap()
+                + "loot_spawn(\"chests/simple_dungeo".len(),
+        );
+        assert!(
+            loot_items
+                .iter()
+                .any(|item| item.label == "minecraft:chests/simple_dungeon")
+        );
+    }
+
+    #[test]
+    fn completes_minecraft_ids_for_unterminated_strings_and_item_assignments() {
+        let assignment_source = r#"
+fn main() -> void:
+    let player = player_ref(single(selector("@a")))
+    player.mainhand.item = "carrot_on_a_stic
+"#;
+        let assignment_analysis = analyze_source(assignment_source);
+        assert!(!assignment_analysis.diagnostics.is_empty());
+
+        let equipment_items = completion_items(
+            assignment_source,
+            &assignment_analysis,
+            assignment_source.find("\"carrot_on_a_stic").unwrap() + "\"carrot_on_a_stic".len(),
+        );
+        assert!(
+            equipment_items
+                .iter()
+                .any(|item| item.label == "minecraft:carrot_on_a_stick")
+        );
+
+        let entity_source = r#"
+fn main() -> void:
+    entity("chicke
+"#;
+        let entity_analysis = analyze_source(entity_source);
+        assert!(!entity_analysis.diagnostics.is_empty());
+
+        let entity_items = completion_items(
+            entity_source,
+            &entity_analysis,
+            entity_source.rfind("\"chicke").unwrap() + "\"chicke".len(),
+        );
+        assert!(
+            entity_items
+                .iter()
+                .any(|item| item.label == "minecraft:chicken")
+        );
+    }
+
+    #[test]
+    fn completes_selector_entity_ids_and_top_level_debug_marker_block_ids() {
+        let source = r#"
+fn main() -> void:
+    let matching = selector("@e[type=chicke,limit=1]")
+    let negated = selector("@e[type=!zomb,limit=1]")
+    debug_marker(block("~ ~ ~"), "marker", "gold_bloc")
+"#;
+        let analysis = analyze_source(source);
+
+        let selector_items = completion_items(
+            source,
+            &analysis,
+            source.find("type=chicke").unwrap() + "type=chicke".len(),
+        );
+        assert!(
+            selector_items
+                .iter()
+                .any(|item| item.label == "minecraft:chicken")
+        );
+
+        let negated_items = completion_items(
+            source,
+            &analysis,
+            source.find("type=!zomb").unwrap() + "type=!zomb".len(),
+        );
+        let zombie = negated_items
+            .iter()
+            .find(|item| item.label == "minecraft:zombie")
+            .expect("minecraft:zombie completion");
+        let Some(CompletionTextEdit::Edit(edit)) = zombie.text_edit.clone() else {
+            panic!("minecraft:zombie completion should use a text edit");
+        };
+        assert_eq!(edit.new_text, "minecraft:zombie");
+        assert_eq!(
+            edit.range.start,
+            offset_to_position(source, source.find("zomb").unwrap())
+        );
+        assert_eq!(
+            edit.range.end,
+            offset_to_position(source, source.find("zomb").unwrap() + "zomb".len())
+        );
+
+        let debug_marker_items = completion_items(
+            source,
+            &analysis,
+            source.find("\"gold_bloc").unwrap() + "\"gold_bloc".len(),
+        );
+        assert!(
+            debug_marker_items
+                .iter()
+                .any(|item| item.label == "minecraft:gold_block")
+        );
+    }
+
+    #[test]
+    fn does_not_offer_item_id_completions_for_read_only_item_slot_ids() {
+        let source = r#"
+fn main() -> void:
+    let player = player_ref(single(selector("@a")))
+    player.hotbar[0].id = "stick"
+"#;
+        let analysis = analyze_source(source);
+        let items = completion_items(
+            source,
+            &analysis,
+            source.find("\"stick").unwrap() + "\"stick".len(),
+        );
+        assert!(!items.iter().any(|item| item.label == "minecraft:stick"));
+    }
+
+    #[test]
+    fn minecraft_id_completions_replace_the_full_string_contents() {
+        let source = "fn main() -> void:\n    entity(\"pig\")\n";
+        let analysis = analyze_source(source);
+        let items = completion_items(
+            source,
+            &analysis,
+            source.find("entity(\"pig").unwrap() + "entity(\"pig".len(),
+        );
+        let pig = items
+            .iter()
+            .find(|item| item.label == "minecraft:pig")
+            .expect("minecraft:pig completion");
+        let Some(CompletionTextEdit::Edit(edit)) = pig.text_edit.clone() else {
+            panic!("minecraft:pig completion should use a text edit");
+        };
+        assert_eq!(edit.new_text, "minecraft:pig");
+        assert_eq!(
+            edit.range.start,
+            offset_to_position(source, source.find("pig").unwrap())
+        );
+        assert_eq!(
+            edit.range.end,
+            offset_to_position(source, source.find("pig").unwrap() + "pig".len())
+        );
     }
 
     #[test]

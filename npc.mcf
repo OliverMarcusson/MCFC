@@ -13,6 +13,9 @@ fn main() -> void:
     npc.tags = ["npc"]
     npc.nbt.profile.name = "FaithlessMC"
 
+    let stick = item("minecraft:stick")
+    stick.nbt.Enchantments = '{"minecraft:sharpness": 10}'
+
     at(player):
         let trader_ref = summon(npc_path)
         

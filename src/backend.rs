@@ -1720,7 +1720,8 @@ impl Backend {
                     return;
                 }
                 if value.ty == Type::TextDef {
-                    let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+                    let name_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
                     self.compile_expr_into_slot(function, depth, value, &name_slot, lines);
                     lines.push(format!(
                         "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
@@ -3297,7 +3298,8 @@ impl Backend {
                     return true;
                 }
                 if args[1].ty == Type::TextDef {
-                    let name_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
+                    let name_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::TextDef);
                     self.compile_expr_into_slot(function, depth, &args[1], &name_slot, lines);
                     lines.push(format!(
                         "data modify storage {}:runtime {}.name set from storage {}:runtime {}",
@@ -3410,7 +3412,8 @@ impl Backend {
                     target.storage_path()
                 ));
                 if let Some(arg) = args.first() {
-                    let text_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                    let text_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::String);
                     self.compile_expr_into_slot(function, depth, arg, &text_slot, lines);
                     lines.push(format!(
                         "data modify storage {}:runtime {}.text set from storage {}:runtime {}",

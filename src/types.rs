@@ -1892,7 +1892,10 @@ fn normalize_builder_path_segments(
         return Vec::new();
     };
     let PathSegment::Field(first_name) = first else {
-        if matches!(base_ty, Type::EntityDef | Type::BlockDef | Type::ItemDef | Type::TextDef) {
+        if matches!(
+            base_ty,
+            Type::EntityDef | Type::BlockDef | Type::ItemDef | Type::TextDef
+        ) {
             diagnostics.push(Diagnostic::new(
                 "builder path access must start with a field such as '.nbt', '.states', or '.count'",
                 span,
@@ -3591,14 +3594,20 @@ fn type_check_text_constructor(
     );
     if !(args.len() == 0 || args.len() == 1) {
         diagnostics.push(Diagnostic::new(
-            format!("wrong arity for 'text': expected 0 or 1, found {}", args.len()),
+            format!(
+                "wrong arity for 'text': expected 0 or 1, found {}",
+                args.len()
+            ),
             expr.span.clone(),
         ));
     }
     if let Some(arg) = args.first() {
         if arg.ty != Type::String {
             diagnostics.push(Diagnostic::new(
-                format!("argument 1 for 'text' must be 'string', found '{}'", arg.ty.as_str()),
+                format!(
+                    "argument 1 for 'text' must be 'string', found '{}'",
+                    arg.ty.as_str()
+                ),
                 expr.span.clone(),
             ));
         }

@@ -46,15 +46,28 @@ That includes the builder-oriented gameplay surface, such as:
 
 Run:
 
-```powershell
+```bash
 npm run package
 ```
 
-The packaging script builds `mcfc-lsp` in release mode and copies it to a
-platform-specific server directory before creating the VSIX:
+The packaging script builds `mcfc-lsp` in release mode, clears any previously
+staged server payload, and copies exactly one native server binary into a
+platform-specific server directory before creating the VSIX.
 
-- Windows: `server/win32-x64/mcfc-lsp.exe`
-- Linux: `server/linux-x64/mcfc-lsp`
+Current packaged targets:
+
+- Linux x64: `server/linux-x64/mcfc-lsp`
+- Windows x64: `server/win32-x64/mcfc-lsp.exe`
+
+Important packaging/runtime expectations:
+
+- VSIX artifacts are **platform-specific**.
+- Build the VSIX on the same target platform you intend to install it on.
+- A Linux-built VSIX contains only the Linux server; a Windows-built VSIX
+  contains only the Windows server.
+- macOS is not currently supported.
+- If you install a mismatched VSIX, activation now fails with an explicit error
+  instead of silently missing the language server binary.
 
 ## Install in VSCodium
 

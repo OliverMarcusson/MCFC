@@ -12,13 +12,30 @@ end
 
 fn main() -> void
     let player = single(selector("@p"))
+    let me = player_ref(player)
     let pig = single(selector("@e[type=pig,limit=1]"))
     let chest = block("0 64 0")
     let values = [1, 2, 3]
     let counts = {"wood": 12, "stone": 4}
     let roll = random(1, 20)
-    let title = "MCFC Demo $(random(100))"
+    let label = classify(roll)
+    let title = text("MCFC Demo")
     let bb = bossbar("mcfc:test", "Boss")
+
+    let pig_builder = entity("minecraft:pig")
+    pig_builder.name = "Builder Pig"
+    pig_builder.no_ai = true
+    let pig_nbt = pig_builder.as_nbt()
+
+    let chest_type = block_type("minecraft:chest")
+    chest_type.states.facing = "north"
+    chest_type.lock = "mcfc-lock"
+    let chest_nbt = chest_type.as_nbt()
+
+    let stack = item("minecraft:apple")
+    stack.count = 3
+    stack.name = "Quest Apple"
+    let stack_nbt = stack.as_nbt()
 
     for i in 0..=10:
         values.push(i)
@@ -32,13 +49,13 @@ fn main() -> void
     end
 
     player.tags.mcfc_demo = true
-    player.effect("speed", 10, 1)
     pig.add_tag("elite")
-    pig.offhand.item = "minecraft:shield"
+    pig.effect("speed", 10, 1)
+    pig.offhand.item = stack
     pig.teleport(block("~ ~1 ~"))
     pig.damage(2)
     pig.heal(1)
-    pig.give("minecraft:apple", 1)
+    pig.give(stack)
     pig.clear("minecraft:apple", 1)
     pig.loot_give("minecraft:chests/simple_dungeon")
     pig.tellraw("hello @s")
@@ -51,9 +68,11 @@ fn main() -> void
     chest.loot_insert("minecraft:chests/simple_dungeon")
     chest.loot_spawn("minecraft:chests/simple_dungeon")
     chest.debug_marker("chest marker", "minecraft:gold_block")
-    chest.particle("minecraft:flame", 4, pig)
-    chest.setblock("minecraft:stone")
+    chest.particle("minecraft:flame", 4, me)
+    chest.setblock(chest_type)
     chest.fill(block("1 65 1"), "minecraft:glass")
+    let spawned_item = chest.spawn_item(stack)
+    let spawned_pig = chest.summon(pig_builder, pig_nbt)
 
     bb.value = 5
     bb.max = 10
@@ -61,17 +80,29 @@ fn main() -> void
     bb.players = pig
     bb.name = "Boss Updated"
 
+    if me.inventory[0].exists:
+        me.inventory[0].count = me.inventory[0].count + 1
+        me.hotbar[0].clear()
+    end
+
+    match label:
+        "small" => mcf "say $(label) $(values.len())"
+        "large" => mcf "say $(random(100)) $(me.inventory[0].id)"
+        else => mcf "say $(counts.has(\"stone\")) $(spawned_item.team)"
+    end
+
     async:
-        sleep(1)
+        sleep_ticks(5)
         bb.remove()
         pig.position.setblock("minecraft:gold_block")
-        player.position.particle("minecraft:happy_villager", 8, player)
+        player.position.particle("minecraft:happy_villager", 8, me)
+        spawned_pig.position.particle("minecraft:cloud", 3, me)
+        mcf "say $(random(values.len())) $(stack.count) $(me.hotbar[0].exists)"
     end
 
     debug("entered gameplay branch")
-    let amount = values.len()
-    let label = classify(roll)
+    let amount = values.remove_at(0)
     counts.remove("stone")
     mc "say plain command"
-    mcf "say $(title) $(label) $(amount)"
+    mcf "say $(title) $(label) $(amount) $(stack_nbt) $(chest_nbt)"
 end

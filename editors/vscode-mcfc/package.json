@@ -4,6 +4,11 @@
   "description": "Syntax highlighting, editor basics, and language server support for MCFC .mcf files.",
   "version": "0.0.1",
   "publisher": "mcfc",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:OliverMarcusson/MCFC.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

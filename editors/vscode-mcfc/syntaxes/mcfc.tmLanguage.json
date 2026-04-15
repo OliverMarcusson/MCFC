@@ -57,6 +57,14 @@
         }
       ]
     },
+    "macro-placeholders": {
+      "patterns": [
+        {
+          "name": "constant.other.placeholder.macro.mcfc",
+          "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*(?:[^()]|\\([^()]*\\))*\\)"
+        }
+      ]
+    },
     "strings": {
       "patterns": [
         {
@@ -75,8 +83,7 @@
           },
           "patterns": [
             {
-              "name": "constant.other.placeholder.macro.mcfc",
-              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*(?:[^()]|\\([^()]*\\))*\\)"
+              "include": "#macro-placeholders"
             },
             {
               "include": "#escapes"
@@ -99,8 +106,7 @@
           },
           "patterns": [
             {
-              "name": "constant.other.placeholder.macro.mcfc",
-              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*(?:[^()]|\\([^()]*\\))*\\)"
+              "include": "#macro-placeholders"
             },
             {
               "include": "#escapes"
@@ -130,8 +136,7 @@
           },
           "patterns": [
             {
-              "name": "constant.other.placeholder.macro.mcfc",
-              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
+              "include": "#macro-placeholders"
             },
             {
               "include": "#escapes"
@@ -158,8 +163,7 @@
           },
           "patterns": [
             {
-              "name": "constant.other.placeholder.macro.mcfc",
-              "match": "\\$\\([A-Za-z_][A-Za-z0-9_]*\\)"
+              "include": "#macro-placeholders"
             },
             {
               "include": "#escapes"
@@ -196,7 +200,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|async)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|async|end)\\b"
         },
         {
           "name": "storage.type.function.mcfc",
@@ -208,7 +212,7 @@
         },
         {
           "name": "keyword.other.command.mcfc",
-          "match": "\\bmc\\b"
+          "match": "\\b(?:mc|mcf)\\b"
         },
         {
           "name": "keyword.operator.word.mcfc",
@@ -220,7 +224,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|item_slot|bossbar|nbt|void)\\b"
+          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void)\\b"
         }
       ]
     },
@@ -228,15 +232,15 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:sleep|random|selector|single|exists|has_data|block|at|as|summon|debug|bossbar|int|bool|string)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|bool|string)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:len|push|pop|remove_at|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
         },
         {
           "name": "support.variable.member.mcfc",
-          "match": "(?<=\\.)\\b(?:position|name|value|max|visible|players|nbt|state|tags|team|mainhand|offhand|head|chest|legs|feet|item|count)\\b"
+          "match": "(?<=\\.)\\b(?:position|team|nbt|state|tags|inventory|hotbar|mainhand|offhand|head|chest|legs|feet|item|count|name|value|max|visible|players|states|exists|id|name_visible|no_ai|silent|glowing|lock|loot_table|loot_seed)\\b"
         }
       ]
     },

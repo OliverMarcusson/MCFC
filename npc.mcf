@@ -27,9 +27,20 @@ fn main() -> void:
     return
 
 fn tick() -> void:
-    let player = single(selector("@a"))
-    let book_content = string(player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw)
-    player.tellraw(book_content)
+    let player = player_ref(single(selector("@a")))
+    player.tellraw(string(player.nbt.SelectedItem.id))
+    if string(player.nbt.SelectedItem.id) == "minecraft:writable_book":
+        let book_content = string(player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw)
+        if book_content[-1] == "@":
+            let yes_text = text("$(book_content) $(random(100))")
+            yes_text.color = "gold"
+            yes_text.bold = true
+            player.tellraw(yes_text)
+        else:
+            player.tellraw("no")
+    else:
+        player.tellraw("no")
+
     let traders = selector('@e[tag=trader_fucka]')
     for trader in traders:
         trader.mainhand.item = "minecraft:air"

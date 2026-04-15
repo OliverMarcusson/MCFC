@@ -623,6 +623,34 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_equipment_slot_reads_via_item_slot_surface() {
+    let source = r#"
+fn main() -> void:
+    let player = single(selector("@p"))
+    let hand = player.mainhand
+    let present = hand.exists
+    let id = hand.id
+    let count = hand.count
+    let custom = string(hand.nbt.CustomModelData)
+    mcf "say $(present) $(id) $(count) $(custom)"
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("SelectedItem.id"));
+    assert!(joined.contains("HandItems[0].id"));
+    assert!(joined.contains(".exists set value 0"));
+    assert!(!joined.contains("set from entity $(selector) mainhand.id"));
+}
+
+#[test]
 fn compiles_generic_entity_state_reads_and_writes() {
     let source = r#"
 fn main() -> void:
@@ -1245,6 +1273,53 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_string_character_index_reads() {
+    let source = r#"
+fn main() -> void:
+    let book_content = "Book"
+    let first = book_content[0]
+    let last = book_content[-1]
+    let idx = 1
+    let second = book_content[idx]
+    mcf "say $(first) $(last) $(second)"
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("set string storage mcfc:runtime"));
+    assert!(joined.contains("with storage mcfc:runtime frames.d0.main.__str_index"));
+    assert!(joined.contains("matches ..-1 run scoreboard players operation"));
+}
+
+#[test]
+fn compiles_string_character_index_reads_through_prefix_paths() {
+    let source = r#"
+fn main() -> void:
+    let words = ["hello"]
+    let second = words[0][1]
+    mcf "say $(second)"
+    return
+"#;
+
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let joined = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("set string storage mcfc:runtime"));
+}
+
+#[test]
 fn compiles_storage_backed_arrays() {
     let source = r#"
 fn pick(xs: array<int>, index: int) -> int:
@@ -1478,6 +1553,23 @@ fn main() -> void:
     assert!(rendered.contains("missing field 'Action.duration'"));
     assert!(rendered.contains("field 'Action.action' expects 'string', found 'int'"));
     assert!(rendered.contains("unknown field 'Action.missing'"));
+}
+
+#[test]
+fn rejects_invalid_string_index_usage() {
+    let source = r#"
+fn main() -> void:
+    let book_content = "Book"
+    let bad = book_content["x"]
+    return
+"#;
+
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("string index must have type 'int'")
+    );
 }
 
 #[test]

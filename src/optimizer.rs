@@ -157,6 +157,7 @@ fn fold_expr(expr: IrExpr) -> IrExpr {
             let expr = fold_expr(*expr);
             match (op, &expr.kind) {
                 (UnaryOp::Not, IrExprKind::Bool(value)) => IrExprKind::Bool(!value),
+                (UnaryOp::Neg, IrExprKind::Int(value)) => IrExprKind::Int(-value),
                 _ => IrExprKind::Unary {
                     op,
                     expr: Box::new(expr),

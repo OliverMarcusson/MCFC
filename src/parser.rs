@@ -385,6 +385,16 @@ impl Parser {
                 },
                 span: token.span,
             }
+        } else if self.at(&TokenKind::Minus) {
+            let token = self.bump();
+            let expr = self.parse_expr_bp(11);
+            Expr {
+                kind: ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(expr),
+                },
+                span: token.span,
+            }
         } else {
             self.parse_primary()
         }
@@ -900,7 +910,7 @@ fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::ast::{BinaryOp, Expr, ExprKind, ForKind, StmtKind, UnaryOp};
+    use crate::ast::{BinaryOp, Expr, ExprKind, ForKind, PathSegment, StmtKind, UnaryOp};
 
     #[test]
     fn parses_comments_and_async_blocks() {
@@ -1069,6 +1079,48 @@ fn main() -> void:
                 kind: ExprKind::MethodCall { .. },
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn parses_string_indexing_with_negative_indices() {
+        let program = parse(
+            r#"
+fn main() -> void:
+    let book_content = "abc"
+    let first = book_content[0]
+    let last = book_content[-1]
+"#,
+        )
+        .unwrap();
+
+        let StmtKind::Let { value: first, .. } = &program.functions[0].body[1].kind else {
+            panic!("expected first let statement");
+        };
+        let ExprKind::Path(first_path) = &first.kind else {
+            panic!("expected indexed path expression");
+        };
+        assert!(matches!(
+            first_path.segments.as_slice(),
+            [PathSegment::Index(index)] if matches!(index.kind, ExprKind::Int(0))
+        ));
+
+        let StmtKind::Let { value: last, .. } = &program.functions[0].body[2].kind else {
+            panic!("expected last let statement");
+        };
+        let ExprKind::Path(last_path) = &last.kind else {
+            panic!("expected indexed path expression");
+        };
+        assert!(matches!(
+            last_path.segments.as_slice(),
+            [PathSegment::Index(index)]
+                if matches!(
+                    index.kind,
+                    ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        ..
+                    }
+                )
         ));
     }
 

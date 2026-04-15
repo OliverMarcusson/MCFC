@@ -3267,6 +3267,7 @@ fn parse_type_name(name: &str) -> Option<Type> {
 }
 
 fn infer_expr_type(value: &str) -> Option<Type> {
+    let value = value.trim();
     if value.starts_with("single(") {
         Some(Type::EntityRef)
     } else if value.starts_with("player_ref(") {
@@ -3289,7 +3290,11 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::String)
     } else if value.starts_with("true") || value.starts_with("false") {
         Some(Type::Bool)
-    } else if value.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+    } else if value.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        || value
+            .strip_prefix('-')
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit()))
+    {
         Some(Type::Int)
     } else if value.starts_with('[') {
         Some(Type::Array(Box::new(Type::Nbt)))
@@ -3464,9 +3469,9 @@ mod tests {
     use tower_lsp::lsp_types::{CompletionTextEdit, Position};
 
     use super::{
-        ProjectConfig, build_project_snapshot, builtin_hover, completion_items, offset_to_position,
-        position_to_offset, project_diagnostics_for_segment, project_document_symbols,
-        range_from_text_range, resolve_project_config_for_path,
+        ProjectConfig, build_project_snapshot, builtin_hover, completion_items, infer_expr_type,
+        offset_to_position, position_to_offset, project_diagnostics_for_segment,
+        project_document_symbols, range_from_text_range, resolve_project_config_for_path,
     };
     use crate::analysis::analyze_source;
     use crate::diagnostics::TextRange;
@@ -3624,7 +3629,9 @@ fn main() -> void:
     let asserted = player_ref(single(selector("@e[limit=1]")))
     me.mainhand.
     me.inventory[0].
+    me.inventory[-1].
     me.hotbar[0].
+    me.hotbar[-1].
     asserted.
     mcf "say $(me.mainhand.)"
 "#;
@@ -3650,6 +3657,22 @@ fn main() -> void:
         assert!(inventory_items.iter().any(|item| item.label == "exists"));
         assert!(inventory_items.iter().any(|item| item.label == "clear"));
 
+        let inventory_negative_items = completion_items(
+            source,
+            &analysis,
+            source.find("me.inventory[-1].").unwrap() + 17,
+        );
+        assert!(
+            inventory_negative_items
+                .iter()
+                .any(|item| item.label == "exists")
+        );
+        assert!(
+            inventory_negative_items
+                .iter()
+                .any(|item| item.label == "clear")
+        );
+
         let hotbar_items = completion_items(
             source,
             &analysis,
@@ -3658,10 +3681,28 @@ fn main() -> void:
         assert!(hotbar_items.iter().any(|item| item.label == "id"));
         assert!(hotbar_items.iter().any(|item| item.label == "count"));
 
+        let hotbar_negative_items = completion_items(
+            source,
+            &analysis,
+            source.find("me.hotbar[-1].").unwrap() + 14,
+        );
+        assert!(hotbar_negative_items.iter().any(|item| item.label == "id"));
+        assert!(
+            hotbar_negative_items
+                .iter()
+                .any(|item| item.label == "count")
+        );
+
         let asserted_items =
             completion_items(source, &analysis, source.find("asserted.").unwrap() + 9);
         assert!(asserted_items.iter().any(|item| item.label == "inventory"));
         assert!(asserted_items.iter().any(|item| item.label == "hotbar"));
+    }
+
+    #[test]
+    fn infers_negative_integer_literals_for_lsp_type_heuristics() {
+        assert_eq!(infer_expr_type("-1"), Some(crate::ast::Type::Int));
+        assert_eq!(infer_expr_type("  -42  "), Some(crate::ast::Type::Int));
     }
 
     #[test]

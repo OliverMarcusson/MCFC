@@ -1295,18 +1295,32 @@ fn type_check_expr(
             }
         },
         ExprKind::Unary { op, expr } => {
-            let operand = coerce_expr_to_expected_type(
-                type_check_expr(
-                    expr,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
+            let operand = match op {
+                UnaryOp::Not => coerce_expr_to_expected_type(
+                    type_check_expr(
+                        expr,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    ),
+                    &Type::Bool,
                 ),
-                &Type::Bool,
-            );
+                UnaryOp::Neg => coerce_expr_to_expected_type(
+                    type_check_expr(
+                        expr,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    ),
+                    &Type::Int,
+                ),
+            };
             let ty = match op {
                 UnaryOp::Not => {
                     if operand.ty != Type::Bool {
@@ -1316,6 +1330,15 @@ fn type_check_expr(
                         ));
                     }
                     Type::Bool
+                }
+                UnaryOp::Neg => {
+                    if operand.ty != Type::Int {
+                        diagnostics.push(Diagnostic::new(
+                            "'-' requires an 'int' operand",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Type::Int
                 }
             };
             TypedExpr {
@@ -1580,7 +1603,8 @@ fn type_check_path(
     let mut collection_mode = false;
     let mut segment_types = Vec::new();
     let mut player_slot_namespace: Option<String> = None;
-    for segment in &segments {
+    for (index, segment) in segments.iter().enumerate() {
+        let next_segment = segments.get(index + 1);
         match (&current_ty, segment) {
             (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
                 if field == "position" =>
@@ -1600,6 +1624,22 @@ fn type_check_path(
                     current_ty = Type::Array(Box::new(Type::ItemSlot));
                     player_slot_namespace = Some(field.clone());
                 }
+            }
+            (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
+                if matches!(field.as_str(), "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet") =>
+            {
+                let uses_item_slot_surface = match next_segment {
+                    None => true,
+                    Some(PathSegment::Field(next)) => {
+                        matches!(next.as_str(), "exists" | "id" | "count" | "nbt" | "name")
+                    }
+                    _ => false,
+                };
+                current_ty = if uses_item_slot_surface {
+                    Type::ItemSlot
+                } else {
+                    Type::Nbt
+                };
             }
             (Type::EntityRef | Type::PlayerRef | Type::BlockRef, PathSegment::Field(_)) => {
                 current_ty = Type::Nbt;
@@ -1737,6 +1777,24 @@ fn type_check_path(
                 }
                 current_ty = Type::Nbt;
             }
+            (Type::String, PathSegment::Index(index)) => {
+                let index = type_check_expr(
+                    index,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if index.ty != Type::Int {
+                    diagnostics.push(Diagnostic::new(
+                        "string index must have type 'int'",
+                        span.clone(),
+                    ));
+                }
+                current_ty = Type::String;
+            }
             (Type::Array(element), PathSegment::Index(index)) => {
                 collection_mode = true;
                 if let Some(namespace) = player_slot_namespace.take() {
@@ -1862,7 +1920,7 @@ fn type_check_path(
             }
             _ => {
                 diagnostics.push(Diagnostic::new(
-                    "path access requires an entity, block, bossbar, item slot, nbt, array, or dictionary base",
+                    "path access requires an entity, block, bossbar, item slot, nbt, array, dictionary, or string base",
                     span.clone(),
                 ));
                 current_ty = Type::Nbt;

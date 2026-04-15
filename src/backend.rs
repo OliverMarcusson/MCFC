@@ -1828,6 +1828,18 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        if let Some(first_string_index) = self.first_string_index_segment(path) {
+            self.compile_string_indexed_path_read(
+                function,
+                depth,
+                path,
+                first_string_index,
+                target,
+                lines,
+            );
+            return;
+        }
+
         let base_name = self.new_temp();
         let base_slot = local_slot(depth, &function.name, &base_name, &path.base.ty);
         self.compile_expr_into_slot(function, depth, &path.base, &base_slot, lines);
@@ -1884,6 +1896,160 @@ impl Backend {
             )),
             _ => {}
         }
+    }
+
+    fn first_string_index_segment(&self, path: &IrPathExpr) -> Option<usize> {
+        let mut current_ty = path.base.ty.clone();
+        for (index, segment) in path.segments.iter().enumerate() {
+            if current_ty == Type::String && matches!(segment, PathSegment::Index(_)) {
+                return Some(index);
+            }
+            current_ty = path.segment_types.get(index).cloned().unwrap_or(current_ty);
+        }
+        None
+    }
+
+    fn compile_string_indexed_path_read(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        path: &IrPathExpr,
+        first_string_index: usize,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let source_name = self.new_temp();
+        let mut source_slot = local_slot(depth, &function.name, &source_name, &Type::String);
+
+        if first_string_index == 0 {
+            self.compile_expr_into_slot(function, depth, &path.base, &source_slot, lines);
+        } else {
+            let prefix_path = IrPathExpr {
+                base: path.base.clone(),
+                segments: path.segments[..first_string_index].to_vec(),
+                segment_types: path.segment_types[..first_string_index].to_vec(),
+                ty: path.segment_types[first_string_index - 1].clone(),
+            };
+            self.compile_path_read(function, depth, &prefix_path, &source_slot, lines);
+        }
+
+        for segment_index in first_string_index..path.segments.len() {
+            let PathSegment::Index(index) = &path.segments[segment_index] else {
+                return;
+            };
+            let is_last = segment_index + 1 == path.segments.len();
+            if is_last {
+                self.compile_string_character_read(
+                    function,
+                    depth,
+                    &source_slot,
+                    index,
+                    target,
+                    lines,
+                );
+            } else {
+                let next_name = self.new_temp();
+                let next_slot = local_slot(depth, &function.name, &next_name, &Type::String);
+                self.compile_string_character_read(
+                    function,
+                    depth,
+                    &source_slot,
+                    index,
+                    &next_slot,
+                    lines,
+                );
+                source_slot = next_slot;
+            }
+        }
+    }
+
+    fn compile_string_character_read(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        source: &SlotRef,
+        index: &crate::ast::Expr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        if let crate::ast::ExprKind::Int(value) = &index.kind {
+            if *value >= 0 {
+                if let Some(end) = value.checked_add(1) {
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set string storage {}:runtime {} {} {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        source.storage_path(),
+                        value,
+                        end
+                    ));
+                    return;
+                }
+            }
+        }
+
+        let index_expr = self.lower_macro_path_expr(function, depth, index, &Type::Int);
+        let index_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+        let start_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+        let end_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+        let len_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+        let macro_storage = format!(
+            "frames.d{}.{}.__str_index{}",
+            depth,
+            sanitize(&function.name),
+            self.new_temp()
+        );
+
+        self.compile_expr_into_slot(function, depth, &index_expr, &index_slot, lines);
+        lines.push(format!(
+            "scoreboard players operation {} mcfc = {} mcfc",
+            start_slot.numeric_name(),
+            index_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "execute store result score {} mcfc run data get storage {}:runtime {}",
+            len_slot.numeric_name(),
+            self.namespace,
+            source.storage_path()
+        ));
+        lines.push(format!(
+            "execute if score {} mcfc matches ..-1 run scoreboard players operation {} mcfc += {} mcfc",
+            start_slot.numeric_name(),
+            start_slot.numeric_name(),
+            len_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "scoreboard players operation {} mcfc = {} mcfc",
+            end_slot.numeric_name(),
+            start_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "scoreboard players add {} mcfc 1",
+            end_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "execute store result storage {}:runtime {}.start int 1 run scoreboard players get {} mcfc",
+            self.namespace,
+            macro_storage,
+            start_slot.numeric_name()
+        ));
+        lines.push(format!(
+            "execute store result storage {}:runtime {}.end int 1 run scoreboard players get {} mcfc",
+            self.namespace,
+            macro_storage,
+            end_slot.numeric_name()
+        ));
+        lines.push(self.inline_macro_command(
+            &macro_storage,
+            format!(
+                "data modify storage {}:runtime {} set string storage {}:runtime {} $(start) $(end)",
+                self.namespace,
+                target.storage_path(),
+                self.namespace,
+                source.storage_path()
+            ),
+        ));
     }
 
     fn compile_array_literal(
@@ -4674,6 +4840,54 @@ impl Backend {
                 }
                 true
             }
+            "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" => {
+                let slot_handle =
+                    local_slot(depth, &function.name, &self.new_temp(), &Type::ItemSlot);
+                self.load_entity_equipment_slot(
+                    base_slot,
+                    first,
+                    &slot_handle,
+                    lines,
+                );
+                if path.segments.len() == 1 {
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        slot_handle.storage_path()
+                    ));
+                } else if let Some(PathSegment::Field(field)) = path.segments.get(1) {
+                    if field == "name" {
+                        lines.push(format!(
+                            "data modify storage {}:runtime {} set value \"\"",
+                            self.namespace,
+                            target.storage_path()
+                        ));
+                        lines.push(format!(
+                            "execute if data storage {}:runtime {}.nbt.display.Name run data modify storage {}:runtime {} set from storage {}:runtime {}.nbt.display.Name",
+                            self.namespace,
+                            slot_handle.storage_path(),
+                            self.namespace,
+                            target.storage_path(),
+                            self.namespace,
+                            slot_handle.storage_path()
+                        ));
+                    } else {
+                        let rendered = self.render_storage_path(
+                            function,
+                            depth,
+                            slot_handle.storage_path().to_string(),
+                            &Type::ItemSlot,
+                            &path.segments[1..],
+                            &path.segment_types[1..],
+                            lines,
+                        );
+                        self.compile_storage_read_from_path(rendered, &path.ty, target, lines);
+                    }
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -4920,6 +5134,115 @@ impl Backend {
             ),
             true,
         ));
+        lines.push(format!(
+            "data remove storage {}:runtime {}.nbt.id",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data remove storage {}:runtime {}.nbt.Count",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data remove storage {}:runtime {}.nbt.Slot",
+            self.namespace,
+            target.storage_path()
+        ));
+    }
+
+    fn load_entity_equipment_slot(
+        &mut self,
+        base_slot: &SlotRef,
+        slot_name: &str,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        lines.push(format!(
+            "data modify storage {}:runtime {}.prefix set from storage {}:runtime {}.prefix",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            base_slot.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.selector set from storage {}:runtime {}.selector",
+            self.namespace,
+            target.storage_path(),
+            self.namespace,
+            base_slot.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.command_slot set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(equipment_slot_name(slot_name))
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.exists set value 0",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.id set value \"\"",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.count set value 0",
+            self.namespace,
+            target.storage_path()
+        ));
+        lines.push(format!(
+            "data modify storage {}:runtime {}.nbt set value {{}}",
+            self.namespace,
+            target.storage_path()
+        ));
+        for source_path in equipment_read_nbt_paths(slot_name) {
+            lines.push(self.query_command(
+                target,
+                format!(
+                    "execute if data entity $(selector) {} run data modify storage {}:runtime {}.exists set value 1",
+                    source_path,
+                    self.namespace,
+                    target.storage_path()
+                ),
+                true,
+            ));
+            lines.push(self.query_command(
+                target,
+                format!(
+                    "execute if data entity $(selector) {} run data modify storage {}:runtime {}.id set from entity $(selector) {}.id",
+                    source_path,
+                    self.namespace,
+                    target.storage_path(),
+                    source_path
+                ),
+                true,
+            ));
+            lines.push(self.query_command(
+                target,
+                format!(
+                    "execute if data entity $(selector) {} run execute store result storage {}:runtime {}.count int 1 run data get entity $(selector) {}.Count 1",
+                    source_path,
+                    self.namespace,
+                    target.storage_path(),
+                    source_path
+                ),
+                true,
+            ));
+            lines.push(self.query_command(
+                target,
+                format!(
+                    "execute if data entity $(selector) {} run data modify storage {}:runtime {}.nbt set from entity $(selector) {}",
+                    source_path,
+                    self.namespace,
+                    target.storage_path(),
+                    source_path
+                ),
+                true,
+            ));
+        }
         lines.push(format!(
             "data remove storage {}:runtime {}.nbt.id",
             self.namespace,
@@ -5540,6 +5863,17 @@ impl Backend {
                     target.numeric_name()
                 ));
             }
+            UnaryOp::Neg => {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(format!(
+                    "scoreboard players operation {} mcfc -= {} mcfc",
+                    target.numeric_name(),
+                    temp_slot.numeric_name()
+                ));
+            }
         }
     }
 
@@ -6065,6 +6399,18 @@ fn equipment_slot_name(slot_name: &str) -> &'static str {
         "legs" => "armor.legs",
         "feet" => "armor.feet",
         _ => "weapon.mainhand",
+    }
+}
+
+fn equipment_read_nbt_paths(slot_name: &str) -> &'static [&'static str] {
+    match slot_name {
+        "mainhand" => &["SelectedItem", "HandItems[0]"],
+        "offhand" => &["Inventory[{Slot:-106b}]", "HandItems[1]"],
+        "head" => &["Inventory[{Slot:103b}]", "ArmorItems[3]"],
+        "chest" => &["Inventory[{Slot:102b}]", "ArmorItems[2]"],
+        "legs" => &["Inventory[{Slot:101b}]", "ArmorItems[1]"],
+        "feet" => &["Inventory[{Slot:100b}]", "ArmorItems[0]"],
+        _ => &["SelectedItem"],
     }
 }
 

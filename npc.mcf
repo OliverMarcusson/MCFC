@@ -1,0 +1,29 @@
+fn main() -> void:
+    let player = single(selector("@a"))
+    
+    let npc_path = entity("minecraft:wandering_trader")
+    npc_path.name_visible = false
+    npc_path.silent = true
+    npc_path.glowing = true
+    npc_path.tags = ["trader_fucka"]
+
+    let npc = entity("minecraft:mannequin")
+    npc.name = "En NPC"
+    npc.name_visible = false
+    npc.tags = ["npc"]
+    npc.nbt.profile.name = "FaithlessMC"
+
+    at(player):
+        let trader_ref = summon(npc_path)
+        
+        trader_ref.effect("minecraft:invisibility", 3600, 0)
+        summon(npc)
+    return
+
+fn tick() -> void:
+    let traders = selector('@e[tag=trader_fucka]')
+    for trader in traders:
+        trader.mainhand.item = "minecraft:air"
+        at(trader):
+            single(selector("@e[type=minecraft:mannequin]")).teleport(block("~ ~ ~"))
+    return

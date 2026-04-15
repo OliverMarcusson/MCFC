@@ -1323,10 +1323,14 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
-    completion_items_for_receiver(
-        resolve_receiver_kind(source, analysis, offset, chain),
-        analysis,
-    )
+    let receiver = resolve_receiver_kind(source, analysis, offset, chain).or_else(|| {
+        inline_member_chain_receiver(source, analysis, offset, chain)
+    });
+    if receiver.is_none() && chain.len() > 1 {
+        Vec::new()
+    } else {
+        completion_items_for_receiver(receiver, analysis)
+    }
 }
 
 fn completion_items_for_receiver(
@@ -2048,6 +2052,58 @@ fn resolve_receiver_kind(
     receiver_from_type(base_ty, base_ref_kind, segments, analysis)
 }
 
+fn inline_member_chain_receiver(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    chain: &[String],
+) -> Option<CompletionReceiver> {
+    let (base_ty, base_ref_kind) = inline_member_chain_base_type(source, offset, chain)?;
+    receiver_from_type(base_ty, base_ref_kind, chain, analysis)
+}
+
+fn inline_member_chain_base_type(
+    source: &str,
+    offset: usize,
+    chain: &[String],
+) -> Option<(Type, RefKind)> {
+    let mut index = offset.min(source.len());
+    index = move_back_over_word(source, index);
+    if previous_char(source, index)? != '.' {
+        return None;
+    }
+    index -= 1;
+
+    for _ in chain.iter().rev() {
+        let word_end = move_back_over_bracket_suffix(source, index);
+        index = word_end;
+        while index > 0 {
+            let ch = previous_char(source, index)?;
+            if !is_member_word_char(ch) {
+                break;
+            }
+            index -= ch.len_utf8();
+        }
+        if index == word_end || previous_char(source, index)? != '.' {
+            return None;
+        }
+        index -= 1;
+    }
+
+    let start = move_back_over_call_suffix(source, index);
+    if start == index {
+        return None;
+    }
+
+    let ty = infer_expr_type(source[start..index].trim())?;
+    let ref_kind = if ty == Type::PlayerRef {
+        RefKind::Player
+    } else {
+        RefKind::Unknown
+    };
+    Some((ty, ref_kind))
+}
+
 fn receiver_from_type(
     current: Type,
     current_ref_kind: RefKind,
@@ -2075,7 +2131,14 @@ fn receiver_from_type(
                     None
                 };
             }
-            "state" | "tags" | "nbt" => {
+            "state" => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::PlayerDynamicNamespace)
+                } else {
+                    None
+                };
+            }
+            "tags" | "nbt" => {
                 if !current_is_player_ref && current_ref_kind != RefKind::Player {
                     return None;
                 }
@@ -2639,7 +2702,7 @@ fn main(action: Action) -> void:
     fn completes_nested_player_member_paths() {
         let source = r#"
 fn main() -> void:
-    let me = single(selector("@a"))
+    let me = player_ref(single(selector("@a")))
     let asserted = player_ref(single(selector("@e[limit=1]")))
     me.mainhand.
     me.inventory[0].
@@ -2728,6 +2791,70 @@ fn main() -> void:
         let state_hover = builtin_hover("state").expect("state hover");
         assert!(state_hover.contains("entity.state.*"));
         assert!(state_hover.contains("player.state.*"));
+    }
+
+    #[test]
+    fn completes_state_namespace_consistently_for_generic_entities_and_players() {
+        let source = r#"
+fn main() -> void:
+    let pig = single(selector("@e[type=pig,limit=1]"))
+    let player = player_ref(single(selector("@a[limit=1]")))
+    pig.state.
+    player.state.
+    single(selector("@e[type=pig,limit=1]")).state.
+    player_ref(single(selector("@a[limit=1]"))).state.
+    pig.position.foo.
+    single(selector("@e[type=pig,limit=1]")).position.foo.
+"#;
+        let analysis = analyze_source(source);
+
+        let pig_state_items = completion_items(
+            source,
+            &analysis,
+            source.find("pig.state.").unwrap() + "pig.state.".len(),
+        );
+        assert!(pig_state_items.is_empty());
+
+        let player_state_items = completion_items(
+            source,
+            &analysis,
+            source.find("player.state.").unwrap() + "player.state.".len(),
+        );
+        assert!(player_state_items.is_empty());
+
+        let inline_entity_state_items = completion_items(
+            source,
+            &analysis,
+            source.find("single(selector(\"@e[type=pig,limit=1]\")).state.")
+                .unwrap()
+                + "single(selector(\"@e[type=pig,limit=1]\")).state.".len(),
+        );
+        assert!(inline_entity_state_items.is_empty());
+
+        let inline_player_state_items = completion_items(
+            source,
+            &analysis,
+            source.find("player_ref(single(selector(\"@a[limit=1]\"))).state.")
+                .unwrap()
+                + "player_ref(single(selector(\"@a[limit=1]\"))).state.".len(),
+        );
+        assert!(inline_player_state_items.is_empty());
+
+        let invalid_nested_items = completion_items(
+            source,
+            &analysis,
+            source.find("pig.position.foo.").unwrap() + "pig.position.foo.".len(),
+        );
+        assert!(invalid_nested_items.is_empty());
+
+        let invalid_inline_nested_items = completion_items(
+            source,
+            &analysis,
+            source.find("single(selector(\"@e[type=pig,limit=1]\")).position.foo.")
+                .unwrap()
+                + "single(selector(\"@e[type=pig,limit=1]\")).position.foo.".len(),
+        );
+        assert!(invalid_inline_nested_items.is_empty());
     }
 
     #[test]

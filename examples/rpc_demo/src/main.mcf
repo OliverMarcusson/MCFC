@@ -1,0 +1,7 @@
+fn main() -> void:
+    let r = http.get("https://api.example.com/data")
+    let p = single(selector("@p"))
+    if r.ok:
+        p.tellraw(r.body)
+    else:
+        p.tellraw("request failed")

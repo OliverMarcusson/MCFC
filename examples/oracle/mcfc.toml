@@ -1,0 +1,11 @@
+namespace = "oracle"
+source_dir = "src"
+out_dir = "dist"
+
+[helper]
+backend = "mcfd"
+
+[helper.capabilities]
+http = { allow_domains = ["www.random.org"] }
+time = true
+rand = true

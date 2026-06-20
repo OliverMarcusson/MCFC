@@ -76,6 +76,16 @@ pub enum IrStmt {
         duration: IrExpr,
         unit: crate::ast::SleepUnit,
     },
+    /// A suspending host-bridge call. Lowered like `Sleep`: it suspends the
+    /// coroutine, emits a request envelope, and resumes when the result lands in
+    /// `mcfc:rpc results.<id>`, binding it into `dest` (if any).
+    HostCall {
+        module: String,
+        function: String,
+        args: Vec<IrExpr>,
+        dest: Option<String>,
+        return_type: Type,
+    },
     Expr(IrExpr),
 }
 
@@ -314,6 +324,19 @@ fn lower_stmt_with_ctx(ctx: &mut LowerCtx, stmt: &TypedStmt, owner: &str) -> IrS
         TypedStmtKind::Sleep { duration, unit } => IrStmt::Sleep {
             duration: lower_expr(duration),
             unit: *unit,
+        },
+        TypedStmtKind::HostCall {
+            module,
+            function,
+            args,
+            dest,
+            return_type,
+        } => IrStmt::HostCall {
+            module: module.clone(),
+            function: function.clone(),
+            args: args.iter().map(lower_expr).collect(),
+            dest: dest.clone(),
+            return_type: return_type.clone(),
         },
         TypedStmtKind::Expr(expr) => IrStmt::Expr(lower_expr(expr)),
         TypedStmtKind::Async { .. } => unreachable!("async is lowered in LowerCtx::lower_stmt"),

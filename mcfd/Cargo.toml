@@ -1,0 +1,15 @@
+[package]
+name = "mcfd"
+version = "0.1.0"
+edition = "2021"
+description = "Host-bridge helper daemon for mcfc datapacks (log-tail + reload transport)"
+
+[[bin]]
+name = "mcfd"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+ureq = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }

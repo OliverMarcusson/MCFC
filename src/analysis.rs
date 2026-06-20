@@ -51,7 +51,7 @@ pub fn analyze_source(source: &str) -> AnalysisResult {
     match parser::parse(source) {
         Ok(program) => {
             let functions = collect_functions(source, &program);
-            match types::type_check(&program) {
+            match types::type_check(&program, &types::HostModules::default()) {
                 Ok(typed_program) => {
                     let locals = collect_locals(&typed_program);
                     AnalysisResult {

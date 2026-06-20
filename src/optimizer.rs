@@ -42,7 +42,11 @@ fn optimize_stmts(stmts: Vec<IrStmt>) -> Vec<IrStmt> {
 
 fn contains_control_flow(stmts: &[IrStmt]) -> bool {
     stmts.iter().any(|stmt| match stmt {
-        IrStmt::Break | IrStmt::Continue | IrStmt::Return(_) | IrStmt::Sleep { .. } => true,
+        IrStmt::Break
+        | IrStmt::Continue
+        | IrStmt::Return(_)
+        | IrStmt::Sleep { .. }
+        | IrStmt::HostCall { .. } => true,
         IrStmt::If {
             then_body,
             else_body,
@@ -117,6 +121,19 @@ fn optimize_stmt(stmt: IrStmt) -> Option<IrStmt> {
         IrStmt::Sleep { duration, unit } => Some(IrStmt::Sleep {
             duration: fold_expr(duration),
             unit,
+        }),
+        IrStmt::HostCall {
+            module,
+            function,
+            args,
+            dest,
+            return_type,
+        } => Some(IrStmt::HostCall {
+            module,
+            function,
+            args: args.into_iter().map(fold_expr).collect(),
+            dest,
+            return_type,
         }),
         IrStmt::Expr(value) => Some(IrStmt::Expr(fold_expr(value))),
         IrStmt::MacroCommand {

@@ -1,0 +1,41 @@
+# The Oracle of Numbers — a fun mcfc host-bridge demo.
+#
+# Every 15 seconds the Oracle reaches out to the real web, draws a truly random
+# number from random.org, and proclaims it to everyone online — stamped with the
+# real-world clock and a per-player "prophecies witnessed" counter. Players can
+# also run /function oracle:roll to roll a die powered by the helper's randomness.
+#
+# Capabilities used: http (www.random.org), time, rand.
+
+player_state prophecies: int = "Prophecies"
+
+fn main() -> void:
+    mc "say §5✦ The Oracle of Numbers awakens..."
+    async:
+        while true:
+            # Each of these suspends until the helper answers, then resumes here.
+            let fact = http.get("https://www.random.org/integers/?num=1&min=1&max=1000&col=1&base=10&format=plain&rnd=new")
+            let now = time.now()
+            if fact.ok:
+                for viewer in selector("@a"):
+                    let player = player_ref(viewer)
+                    player.state.prophecies = player.state.prophecies + 1
+                    player.tellraw("§5✦ §dThe Oracle divines §7(§f$(now.iso)§7)")
+                    player.tellraw("§dThe sacred number is §e§l$(fact.body)")
+                    player.tellraw("§8prophecies witnessed: §f$(player.state.prophecies)")
+            else:
+                mc "say §cThe Oracle is silent — is mcfd running?"
+            sleep(15)
+
+# Run with: /function oracle:roll
+fn roll() -> void:
+    let player = single(selector("@p"))
+    let dice = rand.int(1, 6)
+    if dice.ok:
+        player.tellraw("§6You rolled a §e$(dice.value)§6!")
+        if dice.value == 6:
+            player.tellraw("§a✦ A perfect six! The Oracle smiles upon you.")
+            mc "execute at @p run playsound minecraft:ui.toast.challenge_complete player @p"
+            mc "execute at @p run particle minecraft:totem_of_undying ~ ~1 ~ 0.6 0.8 0.6 0.1 60"
+    else:
+        player.tellraw("§cThe dice never landed — is mcfd running?")

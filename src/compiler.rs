@@ -8,8 +8,8 @@ use crate::diagnostics::Diagnostics;
 use crate::ir::{self, IrProgram};
 use crate::optimizer;
 use crate::parser;
-use crate::project::{collect_asset_files, collect_source_files, load_manifest};
-use crate::types::{self, TypedProgram};
+use crate::project::{collect_asset_files, collect_source_files, load_manifest, HelperConfig};
+use crate::types::{self, HostModules, TypedProgram};
 
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
@@ -21,6 +21,7 @@ pub struct CompileOptions {
     pub tick_tag_values: Option<Vec<String>>,
     pub exports: Vec<ExportedFunction>,
     pub optimize: bool,
+    pub helper: Option<HelperConfig>,
 }
 
 impl Default for CompileOptions {
@@ -34,6 +35,7 @@ impl Default for CompileOptions {
             tick_tag_values: None,
             exports: Vec::new(),
             optimize: true,
+            helper: None,
         }
     }
 }
@@ -51,7 +53,8 @@ pub fn compile_source(
 ) -> Result<CompileResult, Diagnostics> {
     let ast = parser::parse(source)?;
     let ast = normalize_special_functions(ast)?;
-    let typed_program = types::type_check(&ast)?;
+    let host_modules = HostModules::from_helper(options.helper.as_ref());
+    let typed_program = types::type_check(&ast, &host_modules)?;
     let ir_program = ir::lower(&typed_program);
     let ir_program = if options.optimize {
         optimizer::optimize(ir_program)
@@ -65,6 +68,7 @@ pub fn compile_source(
             load_tag_values: options.load_tag_values.clone(),
             tick_tag_values: options.tick_tag_values.clone(),
             exports: options.exports.clone(),
+            helper: options.helper.clone(),
         },
     );
     Ok(CompileResult {
@@ -194,6 +198,9 @@ pub fn compile_project(
             function: item.function.clone(),
         })
         .collect();
+    if manifest.helper.is_some() {
+        effective.helper = manifest.helper.clone();
+    }
 
     let mut compiled = compile_source(&merged_source, &effective)
         .map_err(|diagnostics| render_diagnostics(&diagnostics, &merged_source))?;

@@ -5,6 +5,7 @@ use crate::ir::{
     IrAssignTarget, IrCapture, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
     IrPathExpr, IrProgram, IrStmt,
 };
+use crate::project::HelperConfig;
 use crate::types::{CastKind, RefKind};
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub struct BackendOptions {
     pub load_tag_values: Option<Vec<String>>,
     pub tick_tag_values: Option<Vec<String>>,
     pub exports: Vec<ExportedFunction>,
+    pub helper: Option<HelperConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,10 @@ struct Backend {
     macro_counter: usize,
     state_objectives: Vec<ManagedObjective>,
     block_builder_state_fields: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    helper: Option<HelperConfig>,
+    uses_rpc: bool,
+    /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
+    rpc_tick_functions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,13 +178,23 @@ impl Backend {
             macro_counter: 0,
             state_objectives: collect_state_objectives(program),
             block_builder_state_fields: collect_block_builder_state_fields(program),
+            helper: None,
+            uses_rpc: program_uses_rpc(program),
+            rpc_tick_functions: Vec::new(),
         }
     }
 
+    fn helper_backend(&self) -> crate::project::HelperBackend {
+        self.helper
+            .as_ref()
+            .map(|config| config.backend)
+            .unwrap_or_default()
+    }
+
     fn generate(&mut self, program: &IrProgram, options: &BackendOptions) {
+        self.helper = options.helper.clone();
         self.emit_pack_mcmeta();
         self.emit_load_tag(options.load_tag_values.as_deref());
-        self.emit_tick_tag(program, options.tick_tag_values.as_deref());
         self.emit_setup();
         self.emit_main_entry();
         self.emit_tick_entry();
@@ -189,6 +205,12 @@ impl Backend {
         }
         self.emit_auto_export_wrappers(program, &options.exports);
         self.emit_export_wrappers(&options.exports);
+        if self.uses_rpc {
+            self.emit_rpc_runtime();
+        }
+        // Emit the tick tag last so it can include the per-site RPC waiters
+        // collected while emitting function bodies.
+        self.emit_tick_tag(program, options.tick_tag_values.as_deref());
     }
 
     fn emit_pack_mcmeta(&mut self) {
@@ -217,6 +239,23 @@ impl Backend {
             let tick = format!("{}:tick", self.namespace);
             if !values.contains(&tick) {
                 values.push(tick);
+            }
+        }
+        // The mcfd transport needs a global tick driver to throttle `/reload`
+        // and apply the helper inbox while any request is in flight.
+        if self.uses_rpc && self.helper_backend() == crate::project::HelperBackend::Mcfd {
+            let pump = format!("{}:rpc/pump", self.namespace);
+            if !values.contains(&pump) {
+                values.push(pump);
+            }
+        }
+        // Per-site RPC waiters run from the tick tag so they survive `/reload`.
+        if self.uses_rpc {
+            for tick_function in self.rpc_tick_functions.clone() {
+                let value = format!("{}:{}", self.namespace, tick_function);
+                if !values.contains(&value) {
+                    values.push(value);
+                }
             }
         }
         if !values.is_empty() {
@@ -273,6 +312,17 @@ impl Backend {
             }
         }
 
+        if self.uses_rpc {
+            // Shared host-bridge state. `out` carries requests for the mod/agent
+            // transports; mcfd reads requests from the log marker instead.
+            lines.push("data modify storage mcfc:rpc out set value []".to_string());
+            lines.push("data modify storage mcfc:rpc sites set value {}".to_string());
+            lines.push("data modify storage mcfc:rpc results set value {}".to_string());
+            lines.push("scoreboard players set rpc_next mcfc 0".to_string());
+            lines.push("scoreboard players set rpc_active mcfc 0".to_string());
+            lines.push("scoreboard players set rpc_reload_timer mcfc 0".to_string());
+        }
+
         self.files.insert(
             format!(
                 "data/{}/function/generated/setup.mcfunction",
@@ -283,18 +333,37 @@ impl Backend {
     }
 
     fn emit_main_entry(&mut self) {
-        let mut lines = vec![format!("function {}:generated/setup", self.namespace)];
+        let mut body = vec![format!("function {}:generated/setup", self.namespace)];
         if self.functions.contains_key("main") {
-            lines.push(format!(
+            body.push(format!(
                 "scoreboard players set {} mcfc 0",
                 control_slot(0, "main")
             ));
-            lines.push(format!(
+            body.push(format!(
                 "function {}:{}",
                 self.namespace,
                 self.function_entry_name("main", 0)
             ));
         }
+
+        let lines = if self.uses_rpc {
+            // The mcfd transport delivers results with `/reload`, which re-runs the
+            // load tag. Guard setup + main so they run once per world instead of on
+            // every reload — re-running would restart the program and wipe in-flight
+            // RPC state. Scheduled continuations persist across reload, so the
+            // program keeps progressing without re-initialising. Reset the
+            // `#mcfc_init` fake-player score to re-arm a fresh start.
+            let mut guarded = vec![
+                "scoreboard objectives add mcfc dummy".to_string(),
+                "execute if score #mcfc_init mcfc matches 1 run return 0".to_string(),
+                "scoreboard players set #mcfc_init mcfc 1".to_string(),
+            ];
+            guarded.extend(body);
+            guarded
+        } else {
+            body
+        };
+
         self.files.insert(
             format!("data/{}/function/main.mcfunction", self.namespace),
             lines.join("\n") + "\n",
@@ -496,6 +565,37 @@ impl Backend {
                         ),
                     ));
                     stmt_lines.push(format!("scoreboard players set {} mcfc 1", guard.ctrl_slot));
+                    self.extend_guarded(lines, guard, stmt_lines);
+                    return true;
+                }
+                IrStmt::HostCall {
+                    module,
+                    function: host_fn,
+                    args,
+                    dest,
+                    return_type,
+                } => {
+                    let continuation_name = self.emit_sleep_continuation(
+                        function,
+                        depth,
+                        &tail,
+                        guard,
+                        loop_ctx,
+                        resume_context,
+                    );
+                    let mut stmt_lines = Vec::new();
+                    self.emit_host_call_dispatch(
+                        function,
+                        depth,
+                        module,
+                        host_fn,
+                        args,
+                        dest.as_deref(),
+                        return_type,
+                        &continuation_name,
+                        guard,
+                        &mut stmt_lines,
+                    );
                     self.extend_guarded(lines, guard, stmt_lines);
                     return true;
                 }
@@ -1158,6 +1258,252 @@ impl Backend {
             },
         );
         name
+    }
+
+    /// Emit the dispatch code for a host call (`module.fn(args)`): allocate a
+    /// request id, marshal the request into `mcfc:rpc`, suspend the coroutine, and
+    /// schedule a per-site waiter that resumes `continuation` once the result lands
+    /// in `mcfc:rpc results.<id>`. Mirrors the `Sleep` lowering but polls instead of
+    /// waiting a fixed duration.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_host_call_dispatch(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        module: &str,
+        host_fn: &str,
+        args: &[IrExpr],
+        dest: Option<&str>,
+        return_type: &Type,
+        continuation: &str,
+        guard: &Guard,
+        lines: &mut Vec<String>,
+    ) {
+        let (_, base) = self.new_block(function, depth, "rpc");
+        let site = sanitize(&base);
+        let deadline_slot = format!("rpc_deadline_{}", site);
+        let wait_slot = format!("rpc_wait_{}", site);
+        let tick_name = format!("{}_tick", base);
+        let check_name = format!("{}_check", base);
+        let timeout_name = format!("{}_timeout", base);
+
+        // Build the request envelope at `mcfc:rpc sites.<site>`.
+        lines.push(format!(
+            "data modify storage mcfc:rpc sites.{} set value {{}}",
+            site
+        ));
+        lines.push(format!(
+            "data modify storage mcfc:rpc sites.{}.req set value {{v:1,mod:{},fn:{},args:[]}}",
+            site,
+            quoted(module),
+            quoted(host_fn)
+        ));
+        lines.push("scoreboard players add rpc_next mcfc 1".to_string());
+        lines.push(format!(
+            "execute store result storage mcfc:rpc sites.{}.id int 1 run scoreboard players get rpc_next mcfc",
+            site
+        ));
+        lines.push(format!(
+            "execute store result storage mcfc:rpc sites.{}.req.id int 1 run scoreboard players get rpc_next mcfc",
+            site
+        ));
+
+        for arg in args {
+            let arg_slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
+            self.compile_expr_into_slot(function, depth, arg, &arg_slot, lines);
+            if matches!(arg.ty, Type::Int | Type::Bool) {
+                lines.push(format!(
+                    "data modify storage mcfc:rpc sites.{}.req.args append value 0",
+                    site
+                ));
+                lines.push(format!(
+                    "execute store result storage mcfc:rpc sites.{}.req.args[-1] int 1 run scoreboard players get {} mcfc",
+                    site,
+                    arg_slot.numeric_name()
+                ));
+            } else {
+                lines.push(format!(
+                    "data modify storage mcfc:rpc sites.{}.req.args append from storage {}:runtime {}",
+                    site,
+                    self.namespace,
+                    arg_slot.storage_path()
+                ));
+            }
+        }
+
+        // Transport: mcfd reads the request from a log marker; the mod/agent
+        // transports read the shared `out` queue. We populate both.
+        if self.helper_backend() == crate::project::HelperBackend::Mcfd {
+            // Must be `say`, not `tellraw`: only `say` is written to
+            // logs/latest.log, which is what mcfd tails. The macro expands
+            // `$(req)` to the request envelope's SNBT.
+            let marker_macro = self.ensure_inline_macro("say [mcfc_rpc]$(req)".to_string());
+            lines.push(format!(
+                "function {}:{} with storage mcfc:rpc sites.{}",
+                self.namespace, marker_macro, site
+            ));
+        }
+        lines.push(format!(
+            "data modify storage mcfc:rpc out append from storage mcfc:rpc sites.{}.req",
+            site
+        ));
+
+        // Suspend and arm the waiter. The waiter runs from the tick tag (not
+        // `schedule`) so it survives the `/reload`s the mcfd transport performs.
+        lines.push("scoreboard players add rpc_active mcfc 1".to_string());
+        lines.push(format!("scoreboard players set {} mcfc 200", deadline_slot));
+        lines.push(format!("scoreboard players set {} mcfc 1", wait_slot));
+        lines.push(format!("scoreboard players set {} mcfc 1", guard.ctrl_slot));
+
+        let dest_frame = dest.map(|name| {
+            local_slot(depth, &function.name, name, return_type)
+                .storage_path()
+                .to_string()
+        });
+
+        // Waiter clock (registered on the tick tag, active only while waiting):
+        // poll the result, else count down to a timeout. Reload-safe.
+        let tick_lines = vec![
+            format!(
+                "execute unless score {} mcfc matches 1 run return 0",
+                wait_slot
+            ),
+            format!("scoreboard players remove {} mcfc 1", deadline_slot),
+            "scoreboard players set rpc_hit mcfc 0".to_string(),
+            format!(
+                "function {}:{} with storage mcfc:rpc sites.{}",
+                self.namespace, check_name, site
+            ),
+            "execute if score rpc_hit mcfc matches 1 run return 0".to_string(),
+            format!(
+                "execute if score {} mcfc matches ..0 run function {}:{}",
+                deadline_slot, self.namespace, timeout_name
+            ),
+        ];
+        self.files.insert(
+            format!("data/{}/function/{}.mcfunction", self.namespace, tick_name),
+            tick_lines.join("\n") + "\n",
+        );
+        self.rpc_tick_functions.push(tick_name.clone());
+
+        // Result applier (macro over `$(id)`): bind the result, GC it, resume.
+        let mut check_lines = vec![
+            "$execute unless data storage mcfc:rpc results.$(id) run return 0".to_string(),
+        ];
+        if let Some(frame) = &dest_frame {
+            check_lines.push(format!(
+                "$data modify storage {}:runtime {} set from storage mcfc:rpc results.$(id)",
+                self.namespace, frame
+            ));
+        }
+        check_lines.push("$data remove storage mcfc:rpc results.$(id)".to_string());
+        check_lines.push(format!("scoreboard players set {} mcfc 0", wait_slot));
+        check_lines.push("scoreboard players remove rpc_active mcfc 1".to_string());
+        check_lines.push("scoreboard players set rpc_hit mcfc 1".to_string());
+        check_lines.push(format!("function {}:{}", self.namespace, continuation));
+        self.files.insert(
+            format!("data/{}/function/{}.mcfunction", self.namespace, check_name),
+            check_lines.join("\n") + "\n",
+        );
+
+        // Timeout: resume with a failure result so the world never hangs.
+        let mut timeout_lines = Vec::new();
+        if let Some(frame) = &dest_frame {
+            timeout_lines.push(format!(
+                "data modify storage {}:runtime {} set value {{ok:0b,err:\"timeout\"}}",
+                self.namespace, frame
+            ));
+        }
+        timeout_lines.push(format!("scoreboard players set {} mcfc 0", wait_slot));
+        timeout_lines.push("scoreboard players remove rpc_active mcfc 1".to_string());
+        timeout_lines.push("scoreboard players set rpc_hit mcfc 1".to_string());
+        timeout_lines.push(format!("function {}:{}", self.namespace, continuation));
+        self.files.insert(
+            format!(
+                "data/{}/function/{}.mcfunction",
+                self.namespace, timeout_name
+            ),
+            timeout_lines.join("\n") + "\n",
+        );
+    }
+
+    /// Emit the global RPC driver (mcfd transport only): a tick pump that throttles
+    /// `/reload` and applies the helper inbox while any request is in flight.
+    fn emit_rpc_runtime(&mut self) {
+        if self.helper_backend() != crate::project::HelperBackend::Mcfd {
+            return;
+        }
+        let ns = self.namespace.clone();
+        self.files.insert(
+            format!("data/{}/function/rpc/pump.mcfunction", ns),
+            format!(
+                "execute if score rpc_active mcfc matches 1.. run function {}:rpc/pump_active\n",
+                ns
+            ),
+        );
+        self.files.insert(
+            format!("data/{}/function/rpc/pump_active.mcfunction", ns),
+            [
+                format!("function {}:rpc/inbox", ns),
+                "scoreboard players add rpc_reload_timer mcfc 1".to_string(),
+                "execute if score rpc_reload_timer mcfc matches 20.. run scoreboard players set rpc_reload_timer mcfc 0".to_string(),
+                "execute if score rpc_reload_timer mcfc matches 0 run reload".to_string(),
+            ]
+            .join("\n")
+                + "\n",
+        );
+        self.files.insert(
+            format!("data/{}/function/rpc/inbox.mcfunction", ns),
+            "# mcfd writes `data modify storage mcfc:rpc results.<id> set value {...}` lines here\n"
+                .to_string(),
+        );
+        self.files
+            .insert("mcfd.toml".to_string(), self.render_mcfd_toml());
+    }
+
+    /// Render the `mcfd.toml` config the helper daemon reads. Capabilities mirror
+    /// the `[helper.capabilities]` manifest section; the user fills in `log`.
+    fn render_mcfd_toml(&self) -> String {
+        let capabilities = self.helper.as_ref().map(|config| &config.capabilities);
+        let mut out = String::new();
+        out.push_str("# Generated by mcfc. The log is auto-detected by walking up from the\n");
+        out.push_str("# datapack to the first logs/latest.log, so you normally don't set it.\n");
+        out.push_str(&format!("namespace = {}\n", toml_string(&self.namespace)));
+        out.push_str("datapack = \".\"\n");
+        out.push_str(
+            "# Override only if auto-detection fails (Windows: forward slashes or single quotes):\n",
+        );
+        out.push_str("# log = 'C:/path/to/.minecraft/logs/latest.log'\n");
+        out.push_str("poll_ms = 200\n");
+        out.push_str("result_ttl_secs = 10\n\n");
+        out.push_str("[capabilities]\n");
+        if let Some(capabilities) = capabilities {
+            if let Some(http) = &capabilities.http {
+                let domains = http
+                    .allow_domains
+                    .iter()
+                    .map(|domain| toml_string(domain))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("http = {{ allow_domains = [{}] }}\n", domains));
+            }
+            if let Some(file) = &capabilities.file {
+                out.push_str(&format!("file = {{ root = {} }}\n", toml_string(&file.root)));
+            }
+            if let Some(kv) = &capabilities.kv {
+                out.push_str(&format!("kv = {{ root = {} }}\n", toml_string(&kv.root)));
+            }
+            if let Some(db) = &capabilities.db {
+                out.push_str(&format!("db = {{ path = {} }}\n", toml_string(&db.path)));
+            }
+            if capabilities.time {
+                out.push_str("time = true\n");
+            }
+            if capabilities.rand {
+                out.push_str("rand = true\n");
+            }
+        }
+        out
     }
 
     fn emit_continuation_items(
@@ -6418,6 +6764,12 @@ fn quoted(value: &str) -> String {
     format!("{:?}", value)
 }
 
+/// Render a TOML basic string. The debug escaping (`\\`, `\"`, control chars)
+/// matches TOML's basic-string rules, which keeps Windows paths valid.
+fn toml_string(value: &str) -> String {
+    format!("{:?}", value)
+}
+
 fn expand_display_text_sugar(command: &str) -> String {
     expand_json_text_command_sugar(command)
         .or_else(|| expand_say_sugar(command))
@@ -6921,6 +7273,11 @@ fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, 
             IrStmt::Async { function, .. } => {
                 collect_objectives_from_stmts(&function.body, names);
             }
+            IrStmt::HostCall { args, .. } => {
+                for arg in args {
+                    collect_objectives_from_expr(arg, names);
+                }
+            }
             IrStmt::Let { value, .. }
             | IrStmt::Return(Some(value))
             | IrStmt::Sleep {
@@ -7030,4 +7387,31 @@ fn has_special_tick(program: &IrProgram) -> bool {
             && function.params.is_empty()
             && function.return_type == Type::Void
     })
+}
+
+fn program_uses_rpc(program: &IrProgram) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| stmts_use_rpc(&function.body))
+}
+
+fn stmts_use_rpc(stmts: &[IrStmt]) -> bool {
+    stmts.iter().any(stmt_uses_rpc)
+}
+
+fn stmt_uses_rpc(stmt: &IrStmt) -> bool {
+    match stmt {
+        IrStmt::HostCall { .. } => true,
+        IrStmt::If {
+            then_body,
+            else_body,
+            ..
+        } => stmts_use_rpc(then_body) || stmts_use_rpc(else_body),
+        IrStmt::While { body, .. }
+        | IrStmt::For { body, .. }
+        | IrStmt::Context { body, .. } => stmts_use_rpc(body),
+        IrStmt::Async { function, .. } => stmts_use_rpc(&function.body),
+        _ => false,
+    }
 }

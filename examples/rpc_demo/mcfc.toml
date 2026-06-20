@@ -1,0 +1,10 @@
+namespace = "rpcdemo"
+source_dir = "src"
+out_dir = "dist"
+
+[helper]
+backend = "mcfd"
+
+[helper.capabilities]
+http = { allow_domains = ["api.example.com"] }
+db = { path = "./host_data/data.sqlite" }

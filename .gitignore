@@ -2,6 +2,9 @@ target/
 build/
 *.vsix
 
+# Datapack build outputs from examples
+examples/**/dist/
+
 # Taskplane runtime artifacts (machine-specific, do not commit)
 .pi/batch-state.json
 .pi/batch-history.json

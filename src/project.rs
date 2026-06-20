@@ -18,12 +18,130 @@ pub struct ProjectManifest {
     pub tick: Vec<String>,
     #[serde(default)]
     pub export: Vec<ProjectExport>,
+    #[serde(default)]
+    pub helper: Option<HelperConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ProjectExport {
     pub path: String,
     pub function: String,
+}
+
+/// Configuration for the host-bridge helper that gives a vanilla datapack access
+/// to external capabilities (HTTP, files, databases, real time) over the
+/// `mcfc:rpc` command-storage protocol. Parsed from the `[helper]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct HelperConfig {
+    #[serde(default)]
+    pub backend: HelperBackend,
+    #[serde(default)]
+    pub capabilities: CapabilityConfig,
+}
+
+/// Which companion helper performs the external work. They share the `mcfc:rpc`
+/// protocol and differ only in transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HelperBackend {
+    /// Pure-Rust external binary: log-tail out, `/reload`+inbox in. Works in
+    /// single player with no mod loader.
+    #[default]
+    Mcfd,
+    /// Fabric mod reading/writing command storage in-process (follow-up).
+    Mod,
+    /// JVM dynamic-attach agent (follow-up).
+    Agent,
+}
+
+impl HelperBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HelperBackend::Mcfd => "mcfd",
+            HelperBackend::Mod => "mod",
+            HelperBackend::Agent => "agent",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mcfd" => Some(HelperBackend::Mcfd),
+            "mod" => Some(HelperBackend::Mod),
+            "agent" => Some(HelperBackend::Agent),
+            _ => None,
+        }
+    }
+}
+
+/// Per-capability configuration. A capability is "enabled" when its field is
+/// present (for the struct capabilities) or `true` (for `time`/`rand`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct CapabilityConfig {
+    #[serde(default)]
+    pub http: Option<HttpCaps>,
+    #[serde(default)]
+    pub file: Option<FileCaps>,
+    #[serde(default)]
+    pub kv: Option<KvCaps>,
+    #[serde(default)]
+    pub db: Option<DbCaps>,
+    #[serde(default)]
+    pub time: bool,
+    #[serde(default)]
+    pub rand: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct HttpCaps {
+    /// Allowlist of permitted request domains. Empty denies all (fail closed).
+    #[serde(default)]
+    pub allow_domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FileCaps {
+    /// Sandbox root; all file access is confined beneath this directory.
+    pub root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KvCaps {
+    /// Directory backing the key-value store.
+    pub root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DbCaps {
+    /// Path to the SQLite database file.
+    pub path: String,
+}
+
+impl CapabilityConfig {
+    /// The set of host-module names this config enables, used both for
+    /// compile-time gating of `module.fn()` calls and for emitting the helper
+    /// runtime/config.
+    pub fn enabled_modules(&self) -> Vec<&'static str> {
+        let mut modules = Vec::new();
+        if self.http.is_some() {
+            modules.push("http");
+        }
+        if self.file.is_some() {
+            modules.push("file");
+        }
+        if self.kv.is_some() {
+            modules.push("kv");
+        }
+        if self.db.is_some() {
+            modules.push("db");
+        }
+        if self.time {
+            modules.push("time");
+        }
+        if self.rand {
+            modules.push("rand");
+        }
+        modules
+    }
 }
 
 fn default_source_dir() -> String {

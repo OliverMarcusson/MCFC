@@ -2263,3 +2263,118 @@ fn temp_path() -> PathBuf {
         .as_nanos();
     std::env::temp_dir().join(format!("mcfc_test_{unique}"))
 }
+
+fn mcfd_http_options() -> CompileOptions {
+    use mcfc::project::{CapabilityConfig, HelperBackend, HelperConfig, HttpCaps};
+    CompileOptions {
+        helper: Some(HelperConfig {
+            backend: HelperBackend::Mcfd,
+            capabilities: CapabilityConfig {
+                http: Some(HttpCaps {
+                    allow_domains: vec!["api.example.com".to_string()],
+                }),
+                ..Default::default()
+            },
+        }),
+        ..CompileOptions::default()
+    }
+}
+
+#[test]
+fn host_call_emits_rpc_runtime() {
+    let source = r#"
+fn main() -> void:
+    let r = http.get("https://api.example.com/data")
+    let p = single(selector("@p"))
+    if r.ok:
+        p.tellraw(r.body)
+"#;
+    let result = compile_source(source, &mcfd_http_options()).expect("host call should compile");
+    let files = &result.artifacts.files;
+
+    // The helper config is emitted next to the datapack.
+    assert!(files.contains_key("mcfd.toml"));
+    // The mcfd transport registers a reload pump on the tick tag.
+    assert!(files.keys().any(|key| key.ends_with("rpc/pump.mcfunction")));
+    let tick = files
+        .get("data/minecraft/tags/function/tick.json")
+        .expect("tick tag should exist");
+    assert!(tick.contains(":rpc/pump"));
+
+    // The dispatch builds a request envelope and a per-site waiter + resume.
+    let entry = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .expect("entry function");
+    assert!(entry.contains("mcfc:rpc sites."));
+    assert!(entry.contains("scoreboard players add rpc_active mcfc 1"));
+    assert!(files.keys().any(|key| key.contains("rpc") && key.contains("_check")));
+
+    // The request marker must be emitted via `say` (logged), not `tellraw`.
+    assert!(
+        files.values().any(|body| body.contains("say [mcfc_rpc]$(req)")),
+        "expected a say-based [mcfc_rpc] marker macro"
+    );
+    assert!(
+        !files.values().any(|body| body.contains("tellraw") && body.contains("mcfc_rpc")),
+        "marker must not use tellraw (not written to latest.log)"
+    );
+}
+
+#[test]
+fn rpc_load_entry_is_reload_guarded() {
+    // The mcfd transport reloads to deliver results, which re-runs the load tag.
+    // The load entry must be guarded so it runs once instead of restarting the
+    // program (and wiping RPC state) on every reload.
+    let source = r#"
+fn main() -> void:
+    let r = http.get("https://api.example.com/data")
+    let p = single(selector("@p"))
+    if r.ok:
+        p.tellraw(r.body)
+"#;
+    let result = compile_source(source, &mcfd_http_options()).expect("should compile");
+    let entry = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/main.mcfunction")
+        .expect("load entry");
+    assert!(entry.contains("#mcfc_init"));
+    assert!(entry.contains("run return 0"));
+}
+
+#[test]
+fn non_rpc_load_entry_is_not_guarded() {
+    let source = "fn main() -> void:\n    mc \"say hi\"\n";
+    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    let entry = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/main.mcfunction")
+        .expect("load entry");
+    assert!(!entry.contains("#mcfc_init"));
+}
+
+#[test]
+fn host_call_requires_enabled_capability() {
+    let source = r#"
+fn main() -> void:
+    let r = http.get("https://api.example.com/data")
+"#;
+    // No helper configured, so the http module is not enabled.
+    let result = compile_source(source, &CompileOptions::default());
+    assert!(result.is_err(), "unconfigured host module should be rejected");
+}
+
+#[test]
+fn host_call_only_in_statement_position() {
+    let source = r#"
+fn main() -> void:
+    let p = single(selector("@p"))
+    p.tellraw(http.get("https://api.example.com/data").body)
+"#;
+    let result = compile_source(source, &mcfd_http_options());
+    assert!(
+        result.is_err(),
+        "nested host call should be rejected as a non-statement position"
+    );
+}

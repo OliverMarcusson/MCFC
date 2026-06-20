@@ -3,6 +3,154 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 
+/// Host-bridge modules that may be called as `module.fn(...)` from `.mcf` source.
+/// Recognising a name here (independent of whether it is enabled) lets the type
+/// checker emit precise "not enabled" / "wrong position" diagnostics instead of a
+/// generic "unknown variable".
+pub const KNOWN_HOST_MODULES: &[&str] = &["http", "file", "kv", "db", "time", "rand"];
+
+pub fn is_known_host_module(name: &str) -> bool {
+    KNOWN_HOST_MODULES.contains(&name)
+}
+
+/// The set of host modules enabled for a compilation, derived from the
+/// `[helper.capabilities]` manifest section.
+#[derive(Debug, Clone, Default)]
+pub struct HostModules {
+    enabled: HashSet<String>,
+}
+
+impl HostModules {
+    pub fn from_helper(helper: Option<&crate::project::HelperConfig>) -> Self {
+        let enabled = helper
+            .map(|config| {
+                config
+                    .capabilities
+                    .enabled_modules()
+                    .into_iter()
+                    .map(|module| module.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        HostModules { enabled }
+    }
+
+    pub fn is_enabled(&self, module: &str) -> bool {
+        self.enabled.contains(module)
+    }
+
+    pub fn any_enabled(&self) -> bool {
+        !self.enabled.is_empty()
+    }
+}
+
+/// Compile-time signature of a host call. The return type is always a builtin
+/// response struct (see [`builtin_response_structs`]).
+pub struct HostCallSig {
+    pub params: Vec<Type>,
+    pub return_type: Type,
+}
+
+/// Resolve `module.function` to its signature, or `None` if the function does not
+/// exist on that module.
+pub fn host_call_signature(module: &str, function: &str) -> Option<HostCallSig> {
+    let string_array = || Type::Array(Box::new(Type::String));
+    let (params, return_type): (Vec<Type>, Type) = match (module, function) {
+        ("http", "get") => (vec![Type::String], Type::Struct("HttpResponse".to_string())),
+        ("http", "post") => (
+            vec![Type::String, Type::String],
+            Type::Struct("HttpResponse".to_string()),
+        ),
+        ("file", "read") => (vec![Type::String], Type::Struct("FileResult".to_string())),
+        ("file", "write") => (
+            vec![Type::String, Type::String],
+            Type::Struct("OpResult".to_string()),
+        ),
+        ("kv", "get") => (vec![Type::String], Type::Struct("KvResult".to_string())),
+        ("kv", "set") => (
+            vec![Type::String, Type::String],
+            Type::Struct("OpResult".to_string()),
+        ),
+        ("db", "exec") => (
+            vec![Type::String, string_array()],
+            Type::Struct("DbResult".to_string()),
+        ),
+        ("db", "query") => (
+            vec![Type::String, string_array()],
+            Type::Struct("DbResult".to_string()),
+        ),
+        ("time", "now") => (vec![], Type::Struct("TimeResult".to_string())),
+        ("rand", "int") => (
+            vec![Type::Int, Type::Int],
+            Type::Struct("RandResult".to_string()),
+        ),
+        _ => return None,
+    };
+    Some(HostCallSig {
+        params,
+        return_type,
+    })
+}
+
+/// The builtin struct types returned by host calls. Registered into `struct_defs`
+/// so field access (`response.status`) type-checks. Every response carries `ok`.
+fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> {
+    vec![
+        (
+            "HttpResponse",
+            vec![
+                ("ok", Type::Bool),
+                ("status", Type::Int),
+                ("body", Type::String),
+            ],
+        ),
+        (
+            "FileResult",
+            vec![("ok", Type::Bool), ("content", Type::String)],
+        ),
+        ("KvResult", vec![("ok", Type::Bool), ("value", Type::String)]),
+        ("OpResult", vec![("ok", Type::Bool)]),
+        (
+            "DbResult",
+            vec![
+                ("ok", Type::Bool),
+                ("rows_affected", Type::Int),
+                ("rows", Type::Nbt),
+            ],
+        ),
+        (
+            "TimeResult",
+            vec![
+                ("ok", Type::Bool),
+                ("unix", Type::Int),
+                ("iso", Type::String),
+            ],
+        ),
+        ("RandResult", vec![("ok", Type::Bool), ("value", Type::Int)]),
+    ]
+}
+
+/// If `expr` is a top-level host call (`module.fn(args)` where `module` is a known
+/// host module and not shadowed by a local), return its parts.
+fn host_call_parts<'a>(
+    expr: &'a Expr,
+    env: &HashMap<String, Type>,
+) -> Option<(&'a str, &'a str, &'a [Expr])> {
+    if let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+    } = &expr.kind
+    {
+        if let ExprKind::Variable(name) = &receiver.kind {
+            if is_known_host_module(name) && !env.contains_key(name) {
+                return Some((name.as_str(), method.as_str(), args.as_slice()));
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
     pub struct_defs: BTreeMap<String, StructTypeDef>,
@@ -93,6 +241,15 @@ pub enum TypedStmtKind {
     Sleep {
         duration: TypedExpr,
         unit: SleepUnit,
+    },
+    /// A suspending host-bridge call (`module.fn(args)`). When `dest` is set the
+    /// result struct is bound to that local; otherwise the result is discarded.
+    HostCall {
+        module: String,
+        function: String,
+        args: Vec<TypedExpr>,
+        dest: Option<String>,
+        return_type: Type,
     },
     Expr(TypedExpr),
 }
@@ -212,10 +369,25 @@ pub enum CastKind {
     String,
 }
 
-pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
+pub fn type_check(
+    program: &Program,
+    host: &HostModules,
+) -> Result<TypedProgram, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
     let mut struct_defs = BTreeMap::new();
     let mut signatures = BTreeMap::new();
+
+    // Register builtin host-call response structs so field access type-checks.
+    // Only when a helper is configured, to avoid reserving these names otherwise.
+    if host.any_enabled() {
+        for (name, fields) in builtin_response_structs() {
+            let mut field_map = BTreeMap::new();
+            for (field, ty) in fields {
+                field_map.insert(field.to_string(), ty);
+            }
+            struct_defs.insert(name.to_string(), StructTypeDef { fields: field_map });
+        }
+    }
 
     for struct_def in &program.structs {
         let mut fields = BTreeMap::new();
@@ -356,6 +528,7 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
             &mut called_functions,
             0,
             false,
+            host,
             &mut diagnostics,
         );
 
@@ -385,6 +558,96 @@ pub fn type_check(program: &Program) -> Result<TypedProgram, Diagnostics> {
     })
 }
 
+/// Type-check a host call (`module.fn(args)`) appearing in statement position.
+/// Returns the typed statement and the call's result type (for binding in a let).
+#[allow(clippy::too_many_arguments)]
+fn type_check_host_call(
+    module: &str,
+    function: &str,
+    call_args: &[Expr],
+    dest: Option<String>,
+    span: Span,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    host: &HostModules,
+    diagnostics: &mut Diagnostics,
+) -> (TypedStmtKind, Type) {
+    let mut args = type_check_args(
+        call_args,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    );
+
+    if !host.is_enabled(module) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "host module '{}' is not enabled in [helper.capabilities]",
+                module
+            ),
+            span.clone(),
+        ));
+    }
+
+    let return_type = if let Some(sig) = host_call_signature(module, function) {
+        if sig.params.len() != args.len() {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "wrong arity for '{}.{}': expected {}, found {}",
+                    module,
+                    function,
+                    sig.params.len(),
+                    args.len()
+                ),
+                span.clone(),
+            ));
+        }
+        for (index, expected) in sig.params.iter().enumerate() {
+            if let Some(arg) = args.get_mut(index) {
+                let coerced = coerce_expr_to_expected_type(arg.clone(), expected);
+                if &coerced.ty != expected {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "{}.{}(...) argument {} must be '{}', found '{}'",
+                            module,
+                            function,
+                            index + 1,
+                            expected.as_str(),
+                            coerced.ty.as_str()
+                        ),
+                        span.clone(),
+                    ));
+                }
+                *arg = coerced;
+            }
+        }
+        sig.return_type
+    } else {
+        diagnostics.push(Diagnostic::new(
+            format!("unknown host function '{}.{}'", module, function),
+            span.clone(),
+        ));
+        Type::Void
+    };
+
+    (
+        TypedStmtKind::HostCall {
+            module: module.to_string(),
+            function: function.to_string(),
+            args,
+            dest,
+            return_type: return_type.clone(),
+        },
+        return_type,
+    )
+}
+
 fn type_check_block(
     statements: &[Stmt],
     return_type: &Type,
@@ -396,6 +659,7 @@ fn type_check_block(
     called_functions: &mut BTreeSet<String>,
     loop_depth: usize,
     in_async: bool,
+    host: &HostModules,
     diagnostics: &mut Diagnostics,
 ) -> Vec<TypedStmt> {
     let mut typed = Vec::new();
@@ -409,22 +673,43 @@ fn type_check_block(
                         statement.span.clone(),
                     ));
                 }
-                let value = type_check_expr(
-                    value,
-                    struct_defs,
-                    signatures,
-                    env,
-                    ref_env,
-                    called_functions,
-                    diagnostics,
-                );
-                env.insert(name.clone(), value.ty.clone());
-                ref_env.insert(name.clone(), value.ref_kind);
-                locals.insert(name.clone(), value.ty.clone());
-                TypedStmtKind::Let {
-                    name: name.clone(),
-                    ty: value.ty.clone(),
-                    value,
+                if let Some((module, function, call_args)) = host_call_parts(value, env) {
+                    let (kind, return_type) = type_check_host_call(
+                        module,
+                        function,
+                        call_args,
+                        Some(name.clone()),
+                        statement.span.clone(),
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        host,
+                        diagnostics,
+                    );
+                    env.insert(name.clone(), return_type.clone());
+                    ref_env.insert(name.clone(), RefKind::Unknown);
+                    locals.insert(name.clone(), return_type);
+                    kind
+                } else {
+                    let value = type_check_expr(
+                        value,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                    env.insert(name.clone(), value.ty.clone());
+                    ref_env.insert(name.clone(), value.ref_kind);
+                    locals.insert(name.clone(), value.ty.clone());
+                    TypedStmtKind::Let {
+                        name: name.clone(),
+                        ty: value.ty.clone(),
+                        value,
+                    }
                 }
             }
             StmtKind::Assign { target, value } => {
@@ -606,6 +891,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 let else_body = type_check_block(
@@ -619,6 +905,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 TypedStmtKind::If {
@@ -657,6 +944,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth + 1,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 TypedStmtKind::While { condition, body }
@@ -753,6 +1041,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth + 1,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 TypedStmtKind::For {
@@ -801,6 +1090,7 @@ fn type_check_block(
                         called_functions,
                         loop_depth,
                         in_async,
+                        host,
                         diagnostics,
                     );
                     typed_arms.push((arm.pattern.clone(), body));
@@ -816,6 +1106,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 lower_string_match_stmt(value, typed_arms, else_body)
@@ -853,6 +1144,7 @@ fn type_check_block(
                     called_functions,
                     loop_depth,
                     in_async,
+                    host,
                     diagnostics,
                 );
                 TypedStmtKind::Context {
@@ -891,6 +1183,7 @@ fn type_check_block(
                     &mut async_called,
                     loop_depth,
                     true,
+                    host,
                     diagnostics,
                 );
                 called_functions.extend(async_called.iter().cloned());
@@ -989,7 +1282,23 @@ fn type_check_block(
                 }
             }
             StmtKind::Expr(expr) => {
-                if let ExprKind::Call { function, args } = &expr.kind {
+                if let Some((module, function, call_args)) = host_call_parts(expr, env) {
+                    let (kind, _return_type) = type_check_host_call(
+                        module,
+                        function,
+                        call_args,
+                        None,
+                        statement.span.clone(),
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        host,
+                        diagnostics,
+                    );
+                    kind
+                } else if let ExprKind::Call { function, args } = &expr.kind {
                     if matches!(function.as_str(), "sleep" | "sleep_ticks") {
                         let args = type_check_args(
                             args,
@@ -1448,6 +1757,35 @@ fn type_check_expr(
             method,
             args,
         } => {
+            // Host calls (`http.get(...)`) are only valid in statement/let position;
+            // reaching here means one was nested inside an expression.
+            if let ExprKind::Variable(name) = &receiver.kind {
+                if is_known_host_module(name) && !env.contains_key(name) {
+                    for arg in args {
+                        type_check_expr(
+                            arg,
+                            struct_defs,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        );
+                    }
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "host call '{}.{}' may only appear as a standalone statement or a let initializer",
+                            name, method
+                        ),
+                        expr.span.clone(),
+                    ));
+                    return TypedExpr {
+                        kind: TypedExprKind::Int(0),
+                        ty: Type::Void,
+                        ref_kind: RefKind::Unknown,
+                    };
+                }
+            }
             if let Some(builtin) = type_check_method_call(
                 receiver,
                 method,

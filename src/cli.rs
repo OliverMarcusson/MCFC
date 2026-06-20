@@ -8,7 +8,7 @@ use crate::compiler::{
     CompileOptions, canonicalize_output_path, compile_file, compile_project,
     project_default_out_dir,
 };
-use crate::project::{collect_source_files, find_manifest};
+use crate::project::{collect_source_files, find_manifest, load_manifest, HelperBackend};
 
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const WATCH_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(300);
@@ -173,7 +173,57 @@ fn compile_target(target: &BuildTarget) -> Result<(), String> {
         compile_file(&target.input, &target.out_dir, &target.options)?;
     }
     println!("wrote datapack to {}", target.out_dir.display());
+    maybe_copy_helper_binary(target);
     Ok(())
+}
+
+/// When the project targets the `mcfd` helper, copy the prebuilt `mcfd` binary next
+/// to the datapack so it is genuinely plug-and-play. Best-effort: if the binary
+/// can't be found, print a hint instead of failing the build.
+fn maybe_copy_helper_binary(target: &BuildTarget) {
+    let helper = target.options.helper.clone().or_else(|| {
+        target
+            .manifest_path
+            .as_ref()
+            .and_then(|path| load_manifest(path).ok())
+            .and_then(|manifest| manifest.helper)
+    });
+    let Some(helper) = helper else { return };
+    if helper.backend != HelperBackend::Mcfd {
+        return;
+    }
+
+    let binary_name = if cfg!(windows) { "mcfd.exe" } else { "mcfd" };
+    match locate_helper_binary(binary_name) {
+        Some(source) => {
+            let destination = target.out_dir.join(binary_name);
+            match fs::copy(&source, &destination) {
+                Ok(_) => println!("copied helper to {}", destination.display()),
+                Err(error) => eprintln!(
+                    "note: could not copy mcfd helper ({}); build it with `cargo build -p mcfd --release`",
+                    error
+                ),
+            }
+        }
+        None => eprintln!(
+            "note: mcfd helper binary not found; build it with `cargo build -p mcfd --release` and copy it next to {}",
+            target.out_dir.join("mcfd.toml").display()
+        ),
+    }
+}
+
+/// Look for the `mcfd` binary next to the running `mcfc` executable, then in the
+/// workspace `target/{release,debug}` directories.
+fn locate_helper_binary(binary_name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let mut candidates = vec![exe_dir.join(binary_name)];
+    // exe_dir is typically target/<profile>; check sibling profiles too.
+    if let Some(target_dir) = exe_dir.parent() {
+        candidates.push(target_dir.join("release").join(binary_name));
+        candidates.push(target_dir.join("debug").join(binary_name));
+    }
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 fn watch_label(target: &BuildTarget) -> String {

@@ -537,6 +537,60 @@ That means:
 
 String literals support `$(expr)` interpolation with the same expression rules as `mcf` placeholders.
 
+## Host Bridge (external capabilities)
+
+A vanilla datapack can reach the outside world — HTTP, files, a key-value store, a
+SQLite database, real time, randomness — through a companion **helper** that
+exchanges data with the datapack over the `mcfc:rpc` command-storage protocol. The
+datapack itself stays 100% vanilla.
+
+Host calls use `module.fn(...)` syntax and **suspend** like `sleep`: the call yields
+the current path, a request is sent to the helper, and execution resumes when the
+result arrives. Because they suspend, host calls are **statement-only** — they may
+appear as a `let` initializer or a bare statement, never nested inside another
+expression.
+
+```mcfc
+fn on_join(player: player_ref) -> void:
+    let r = http.get("https://api.example.com/motd")
+    if r.ok:
+        player.tellraw(r.body)
+```
+
+Each call returns a builtin response struct (e.g. `HttpResponse { ok, status, body }`),
+and every response carries `ok`. If the helper is unreachable the call resumes after a
+timeout with `ok = false`.
+
+Modules are enabled per project in the manifest `[helper]` section, and a `module.fn`
+call to a module that is not enabled is a compile error:
+
+```toml
+[helper]
+backend = "mcfd"          # mcfd (default) | mod | agent
+
+[helper.capabilities]
+http = { allow_domains = ["api.example.com"] }
+file = { root = "./host_data" }
+kv   = { root = "./host_data/kv" }
+db   = { path = "./host_data/data.sqlite" }
+time = true
+rand = true
+```
+
+Available calls: `http.get(url)`, `http.post(url, body)`, `file.read(path)`,
+`file.write(path, content)`, `kv.get(key)`, `kv.set(key, value)`,
+`db.exec(sql, params)`, `db.query(sql, params)`, `time.now()`, `rand.int(min, max)`.
+
+The default `mcfd` backend is a small external binary (no mod loader, works in single
+player): the datapack emits a `[mcfc_rpc]` chat/log marker, `mcfd` tails
+`logs/latest.log`, performs the work, and writes results back via a generated inbox
+function that the datapack applies with a throttled `/reload`. `mcfc build` emits an
+`mcfd.toml` next to the datapack and copies the `mcfd` binary alongside it; just run
+`mcfd` from the datapack folder — it auto-detects `logs/latest.log` by walking up from
+the datapack (override with `log` in `mcfd.toml` only if needed). The `mod` and `agent`
+backends (in-process, fully invisible) share the same protocol and are planned
+follow-ups.
+
 ## Scope and Name Rules
 
 Variables are function-local.

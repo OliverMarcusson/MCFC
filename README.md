@@ -76,6 +76,24 @@ compiler diagnostics without exiting so you can fix errors and continue.
 The compiler emits `pack.mcmeta`, generated functions under
 `data/<namespace>/function/`, and load/tick tags when needed.
 
+## mcfd Windows Installer
+
+`mcfd` is the optional host-bridge service for datapacks that use helper
+capabilities. Package a x64 installer with:
+
+```powershell
+.\scripts\package-mcfd.ps1
+```
+
+The installer requests administrator approval to create the `MCFC mcfd` user-logon
+Scheduled Task, then starts it with limited privileges. It places `mcfd` under
+`%ProgramFiles%\MCFC\mcfd`. Its bundled uninstaller removes the task,
+executable, and `%LocalAppData%\MCFC\mcfd` runtime data, but never removes Minecraft
+worlds, datapacks, generated descriptors, or logs. Inno Setup 6 is required to create
+the installer. Releases are unsigned by default and include a `.sha256`
+checksum; set `MCFD_SIGN_COMMAND` to a trusted command template containing `{file}` to
+sign the executable and installer during packaging.
+
 ## Language Highlights
 
 - functions with typed parameters and return types

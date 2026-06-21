@@ -1,0 +1,11 @@
+namespace = "cyber_quotes"
+source_dir = "src"
+out_dir = "dist"
+
+[helper]
+backend = "mcfd"
+
+[helper.capabilities]
+# The token value is read by mcfd from this environment variable; only this
+# variable name is emitted in the generated datapack descriptor.
+http = { allow_domains = ["munin-sou.se"], bearer_token_env = "MUNIN_EVENTS_API_SECRET" }

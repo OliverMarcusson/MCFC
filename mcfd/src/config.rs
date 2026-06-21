@@ -1,12 +1,16 @@
-//! `mcfd.toml` schema. Emitted by `mcfc build` (capabilities + namespace) with the
-//! log/datapack paths filled in by the user for their environment.
+//! Per-datapack service descriptor emitted by `mcfc build`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub protocol: u32,
+    #[serde(default)]
+    pub pack_id: String,
     /// Datapack namespace (matches the compiled pack).
     pub namespace: String,
     /// Optional override for the Minecraft instance's `logs/latest.log`. When
@@ -16,16 +20,15 @@ pub struct Config {
     /// Path to the datapack root (where `data/<ns>/function/rpc/inbox` is written).
     #[serde(default = "default_datapack")]
     pub datapack: PathBuf,
-    #[serde(default = "default_poll_ms")]
-    pub poll_ms: u64,
     /// How long a computed result stays in the inbox before being assumed delivered.
     #[serde(default = "default_ttl")]
     pub result_ttl_secs: u64,
     #[serde(default)]
     pub capabilities: Capabilities,
-    /// The resolved log path (override or auto-detected). Filled in by `load`.
+    /// Secrets from the datapack-local `.env`, kept outside the generated
+    /// descriptor and never written to logs.
     #[serde(skip)]
-    pub log_path: PathBuf,
+    pub(crate) secrets: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -48,6 +51,10 @@ pub struct Capabilities {
 pub struct HttpCaps {
     #[serde(default)]
     pub allow_domains: Vec<String>,
+    /// Environment variable whose value is attached as a Bearer token. Only the
+    /// variable name is stored in the generated datapack descriptor.
+    #[serde(default)]
+    pub bearer_token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,12 +76,8 @@ fn default_datapack() -> PathBuf {
     PathBuf::from(".")
 }
 
-fn default_poll_ms() -> u64 {
-    200
-}
-
 fn default_ttl() -> u64 {
-    10
+    300
 }
 
 impl Config {
@@ -87,8 +90,20 @@ impl Config {
                 config.datapack = parent.join(&config.datapack);
             }
         }
-        config.log_path = config.resolve_log(path)?;
+        if config.pack_id.is_empty() {
+            config.pack_id = config.namespace.clone();
+        }
+        config.secrets = load_dotenv(path.parent().unwrap_or(Path::new(".")))?;
         Ok(config)
+    }
+
+    /// Prefer a value from this datapack's `.env`, then fall back to the mcfd
+    /// process environment for backwards compatibility.
+    pub fn secret(&self, name: &str) -> Option<String> {
+        self.secrets
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
     }
 
     /// Determine the log file: an explicit `log` override (resolved relative to the
@@ -96,26 +111,96 @@ impl Config {
     /// first `logs/latest.log`. This handles both singleplayer
     /// (`saves/<world>/datapacks/<pack>`) and server (`world/datapacks/<pack>`)
     /// layouts without any configuration.
-    fn resolve_log(&self, config_path: &Path) -> Result<PathBuf, String> {
+    pub fn resolve_log(&self, config_path: &Path) -> Option<PathBuf> {
         if let Some(log) = &self.log {
             let resolved = if log.is_relative() {
                 config_path.parent().unwrap_or(Path::new(".")).join(log)
             } else {
                 log.clone()
             };
-            return Ok(resolved);
+            return Some(resolved);
         }
 
         let start = std::fs::canonicalize(&self.datapack).unwrap_or_else(|_| self.datapack.clone());
         for ancestor in start.ancestors() {
             let candidate = ancestor.join("logs").join("latest.log");
             if candidate.is_file() {
-                return Ok(candidate);
+                return Some(candidate);
             }
         }
-        Err(format!(
-            "could not auto-detect logs/latest.log above '{}'; set `log` in the config",
-            start.display()
-        ))
+        None
+    }
+}
+
+fn load_dotenv(directory: &Path) -> Result<HashMap<String, String>, String> {
+    let path = directory.join(".env");
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
+    let source = std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read '{}': {}", path.display(), error))?;
+    let mut values = HashMap::new();
+    for (line_number, raw_line) in source.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("invalid .env entry at {}:{}", path.display(), line_number + 1));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("empty .env key at {}:{}", path.display(), line_number + 1));
+        }
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))
+            .unwrap_or(value);
+        values.insert(key.to_string(), value.to_string());
+    }
+    Ok(values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_a_launcher_specific_instance_log() {
+        let root = std::env::temp_dir().join(format!("mcfd_prism_test_{}", std::process::id()));
+        let pack = root
+            .join("instances")
+            .join("Prism Pack")
+            .join("saves")
+            .join("world")
+            .join("datapacks")
+            .join("demo");
+        let log = root
+            .join("instances")
+            .join("Prism Pack")
+            .join("logs")
+            .join("latest.log");
+        std::fs::create_dir_all(pack.join("data")).unwrap();
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        std::fs::write(&log, "").unwrap();
+        let descriptor = pack.join("mcfd.pack.toml");
+        std::fs::write(
+            &descriptor,
+            "protocol = 2\npack_id = 'demo'\nnamespace = 'demo'\ndatapack = '.'\n",
+        )
+        .unwrap();
+        std::fs::write(pack.join(".env"), "MUNIN_EVENTS_API_SECRET=pack-local-token\n").unwrap();
+        let config = Config::load(&descriptor).unwrap();
+        assert_eq!(
+            config.secret("MUNIN_EVENTS_API_SECRET").as_deref(),
+            Some("pack-local-token")
+        );
+        assert_eq!(
+            config.resolve_log(&descriptor),
+            Some(std::fs::canonicalize(&log).unwrap())
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -1,0 +1,64 @@
+# Run with: /function cyber_quotes:quote
+#
+# mcfd fetches one random record and extracts all three fields from that same
+# response, so the displayed quote, author, and source always belong together.
+#
+# Run /function cyber_quotes:health first to confirm the mcfd daemon is reachable
+# before troubleshooting the quote fetch itself.
+
+# Round-trips a no-op request through mcfd so you can verify the bridge end to
+# end (datapack -> log marker -> mcfd -> inbox -> reload) without hitting Munin.
+fn health() -> void:
+    let probe = text("[Cyber Quotes] Pinging mcfd...")
+    probe.color = "gray"
+    for viewer in selector("@a"):
+        player_ref(viewer).tellraw(probe)
+
+    let pong = mcfd.ping()
+    if pong.ok:
+        let connected = text("✦ mcfd is connected.")
+        connected.color = "green"
+        for viewer in selector("@a"):
+            player_ref(viewer).tellraw(connected)
+    else:
+        let offline = text("✦ mcfd did not respond — is the service running?")
+        offline.color = "red"
+        for viewer in selector("@a"):
+            player_ref(viewer).tellraw(offline)
+
+fn quote() -> void:
+    let requesting = text("[Cyber Quotes debug] Requesting a random quote from Munin...")
+    requesting.color = "yellow"
+    for viewer in selector("@a"):
+        player_ref(viewer).tellraw(requesting)
+
+    let response = http.get_json_strings("https://munin-sou.se/api/v1/cyber/quotes/random", ["quote.text", "quote.author.name", "quote.source"])
+
+    if response.ok and response.status == 200:
+        let quote_text = string(response.values[0])
+        let author = string(response.values[1])
+        let source = string(response.values[2])
+
+        let message = text("✦ CYBER QUOTE\n")
+        message.color = "aqua"
+        message.bold = true
+        let quote_line = text("“$(quote_text)”")
+        quote_line.color = "light_purple"
+        quote_line.italic = true
+        quote_line.hover_event.action = "show_text"
+        quote_line.hover_event.value = text("From $(source)")
+        let attribution = text("\n— $(author) · $(source)")
+        attribution.color = "gray"
+        message.extra = [quote_line, attribution]
+
+        for viewer in selector("@a"):
+            player_ref(viewer).tellraw(message)
+    else:
+        let unavailable = text("✦ Cyber quote unavailable right now.")
+        unavailable.color = "red"
+        unavailable.italic = true
+        let diagnostic = text("[Cyber Quotes debug] ok=$(response.ok), status=$(response.status), error=$(response.err)")
+        diagnostic.color = "gold"
+        for viewer in selector("@a"):
+            player_ref(viewer).tellraw(unavailable)
+            player_ref(viewer).tellraw(diagnostic)

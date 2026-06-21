@@ -96,6 +96,11 @@ pub struct HttpCaps {
     /// Allowlist of permitted request domains. Empty denies all (fail closed).
     #[serde(default)]
     pub allow_domains: Vec<String>,
+    /// Optional environment variable whose value is sent as a Bearer token.
+    /// The variable name, rather than its value, is emitted into the datapack
+    /// descriptor so credentials never become datapack content.
+    #[serde(default)]
+    pub bearer_token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

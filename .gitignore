@@ -1,6 +1,8 @@
 target/
 build/
+dist/
 *.vsix
+.env
 
 # Datapack build outputs from examples
 examples/**/dist/

@@ -124,7 +124,7 @@ impl Parser {
 
     fn parse_list(&mut self) -> Option<Value> {
         self.bump(); // consume '['
-        // Skip a typed-array prefix like `I;` or `B;`.
+                     // Skip a typed-array prefix like `I;` or `B;`.
         let save = self.pos;
         self.skip_ws();
         if matches!(self.peek(), Some(c) if c.is_ascii_alphabetic()) {
@@ -241,7 +241,8 @@ mod tests {
 
     #[test]
     fn parses_request_envelope() {
-        let input = r#"{id: 7, v: 1, mod: "http", fn: "get", args: ["https://api.example.com/data"]}"#;
+        let input =
+            r#"{id: 7, v: 1, mod: "http", fn: "get", args: ["https://api.example.com/data"]}"#;
         let value = parse_compound(input).expect("should parse");
         let map = value.as_compound().expect("compound");
         assert_eq!(map.get("id").and_then(Value::as_int), Some(7));
@@ -258,7 +259,11 @@ mod tests {
     #[test]
     fn handles_byte_suffix_and_nested() {
         let input = r#"{id:3b, args:[1, 2, 3], flag: true}"#;
-        let map = parse_compound(input).unwrap().as_compound().unwrap().clone();
+        let map = parse_compound(input)
+            .unwrap()
+            .as_compound()
+            .unwrap()
+            .clone();
         assert_eq!(map.get("id").and_then(Value::as_int), Some(3));
         assert!(matches!(map.get("flag"), Some(Value::Bool(true))));
     }

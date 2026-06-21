@@ -2209,6 +2209,7 @@ fn mcfd_http_options() -> CompileOptions {
             capabilities: CapabilityConfig {
                 http: Some(HttpCaps {
                     allow_domains: vec!["api.example.com".to_string()],
+                    bearer_token_env: Some("MCFC_TEST_BEARER_TOKEN".to_string()),
                 }),
                 ..Default::default()
             },
@@ -2229,8 +2230,13 @@ fn main() -> void:
     let result = compile_source(source, &mcfd_http_options()).expect("host call should compile");
     let files = &result.artifacts.files;
 
-    // The helper config is emitted next to the datapack.
-    assert!(files.contains_key("mcfd.toml"));
+    // The service descriptor is emitted next to the datapack.
+    let descriptor = files
+        .get("mcfd.pack.toml")
+        .expect("mcfd service descriptor");
+    assert!(descriptor.contains("protocol = 2"));
+    assert!(descriptor.contains("pack_id = \"mcfc\""));
+    assert!(descriptor.contains("bearer_token_env = \"MCFC_TEST_BEARER_TOKEN\""));
     // The mcfd transport registers a reload pump on the tick tag.
     assert!(files.keys().any(|key| key.ends_with("rpc/pump.mcfunction")));
     let tick = files
@@ -2246,15 +2252,38 @@ fn main() -> void:
     assert!(entry.contains("scoreboard players add rpc_active mcfc 1"));
     assert!(files.keys().any(|key| key.contains("rpc") && key.contains("_check")));
 
-    // The request marker must be emitted via `say` (logged), not `tellraw`.
+    // Requests are emitted as a macro-generated server log marker for mcfd. The
+    // request compound is staged under `emit.req` so the marker macro can emit it
+    // as a single `$(req)` value (valid SNBT) rather than rebuilding it by hand.
     assert!(
-        files.values().any(|body| body.contains("say [mcfc_rpc]$(req)")),
-        "expected a say-based [mcfc_rpc] marker macro"
+        entry.contains("data modify storage mcfc:rpc emit.req set from storage"),
+        "expected the request compound staged under emit.req"
     );
     assert!(
-        !files.values().any(|body| body.contains("tellraw") && body.contains("mcfc_rpc")),
-        "marker must not use tellraw (not written to latest.log)"
+        files
+            .get("data/mcfc/function/rpc/emit.mcfunction")
+            .is_some_and(|body| body.contains("rpc/emit_marker with storage mcfc:rpc emit")),
+        "expected a storage-backed log emitter"
     );
+    assert!(files.values().any(|body| body.contains("[mcfc_rpc]")));
+}
+
+#[test]
+fn host_call_json_strings_is_typed_and_emits_rpc_runtime() {
+    let source = r#"
+fn quote() -> void:
+    let response = http.get_json_strings("https://api.example.com/quote", ["quote.text", "quote.author.name"])
+    if response.ok:
+        let quote = string(response.values[0])
+        let player = single(selector("@p"))
+        let message = text(quote)
+        message.color = "aqua"
+        player.tellraw(message)
+"#;
+    let result = compile_source(source, &mcfd_http_options()).expect("JSON strings host call should compile");
+    let generated = result.artifacts.files.values().cloned().collect::<Vec<_>>().join("\n");
+    assert!(generated.contains("get_json_strings"));
+    assert!(generated.contains("tellraw $(selector) $(message)"));
 }
 
 #[test]

@@ -21,19 +21,18 @@ cargo build -p mcfd --release
 cargo run --bin mcfc -- build examples/oracle/mcfc.toml --out examples/oracle/dist
 ```
 
-This writes the datapack to `dist/`, emits `dist/mcfd.toml`, and copies the `mcfd`
-helper next to it.
+This writes the datapack to `dist/` and emits its `dist/mcfd.pack.toml` service
+descriptor.
 
 ## Run
 
 1. Copy `dist/` into your world's `datapacks/` folder.
-2. From the `dist/` folder, start the helper: `./mcfd mcfd.toml` (it auto-detects
-   `logs/latest.log` from the datapack location — no path to configure).
+2. Install the standalone helper once: `mcfd service install`.
 3. Load the world (or `/reload`). The Oracle awakens and starts prophesying; try
    `/function oracle:roll` too.
 
-Each request prints a single `[mcfc_rpc]` marker line in chat — that's the one
-visible part of the single-player transport. If `mcfd` isn't running, calls fall
-back to a timeout and the Oracle says it's "silent".
+Each request is emitted from command storage to the instance log without a chat
+message. If `mcfd` isn't running, calls fall back to a timeout and the Oracle says
+it's "silent".
 
 See [`src/main.mcf`](src/main.mcf) for the (short!) source.

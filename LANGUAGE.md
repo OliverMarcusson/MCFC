@@ -569,7 +569,10 @@ call to a module that is not enabled is a compile error:
 backend = "mcfd"          # mcfd (default) | mod | agent
 
 [helper.capabilities]
-http = { allow_domains = ["api.example.com"] }
+# `bearer_token_env` is optional. When present, mcfd reads the secret value from
+# its process environment and sends it as Authorization: Bearer <value>. The
+# generated descriptor stores only the variable name, never the secret itself.
+http = { allow_domains = ["api.example.com"], bearer_token_env = "MY_API_TOKEN" }
 file = { root = "./host_data" }
 kv   = { root = "./host_data/kv" }
 db   = { path = "./host_data/data.sqlite" }
@@ -577,19 +580,26 @@ time = true
 rand = true
 ```
 
-Available calls: `http.get(url)`, `http.post(url, body)`, `file.read(path)`,
+Available calls: `http.get(url)`, `http.post(url, body)`,
+`http.get_json_string(url, path)`, `http.get_json_strings(url, paths)`, `file.read(path)`,
 `file.write(path, content)`, `kv.get(key)`, `kv.set(key, value)`,
 `db.exec(sql, params)`, `db.query(sql, params)`, `time.now()`, `rand.int(min, max)`.
 
-The default `mcfd` backend is a small external binary (no mod loader, works in single
-player): the datapack emits a `[mcfc_rpc]` chat/log marker, `mcfd` tails
-`logs/latest.log`, performs the work, and writes results back via a generated inbox
-function that the datapack applies with a throttled `/reload`. `mcfc build` emits an
-`mcfd.toml` next to the datapack and copies the `mcfd` binary alongside it; just run
-`mcfd` from the datapack folder — it auto-detects `logs/latest.log` by walking up from
-the datapack (override with `log` in `mcfd.toml` only if needed). The `mod` and `agent`
-backends (in-process, fully invisible) share the same protocol and are planned
-follow-ups.
+`http.get_json_string` returns an `HttpResponse` whose `body` is the string at a
+dot-separated object path such as `quote.text`. `http.get_json_strings` fetches
+once and returns the requested string fields in order as `JsonStringsResponse.values`
+(an NBT list), which is useful for random-record endpoints. Both JSON helpers set
+`ok = false` for non-2xx responses, malformed JSON, missing paths, or non-string
+values; `http.get` retains its existing raw-response behavior.
+
+The default `mcfd` backend is a standalone external service (no mod loader, works in
+single player). The datapack emits a marked server-chat record to Minecraft's
+`latest.log`; the service discovers generated `mcfd.pack.toml` descriptors across fixed
+local drives, including launcher-specific layouts such as Prism instances, performs the
+work, and writes results back via a generated inbox function that the datapack applies
+with a throttled `/reload`. Install it once on Windows with `mcfd service install`; use
+`mcfd service status` to list discovered packs. The `mod` and `agent` backends (in-process,
+fully invisible) share the same protocol and are planned follow-ups.
 
 ## Scope and Name Rules
 

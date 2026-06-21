@@ -7,7 +7,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 /// Recognising a name here (independent of whether it is enabled) lets the type
 /// checker emit precise "not enabled" / "wrong position" diagnostics instead of a
 /// generic "unknown variable".
-pub const KNOWN_HOST_MODULES: &[&str] = &["http", "file", "kv", "db", "time", "rand"];
+pub const KNOWN_HOST_MODULES: &[&str] = &["http", "file", "kv", "db", "time", "rand", "mcfd"];
 
 pub fn is_known_host_module(name: &str) -> bool {
     KNOWN_HOST_MODULES.contains(&name)
@@ -22,7 +22,7 @@ pub struct HostModules {
 
 impl HostModules {
     pub fn from_helper(helper: Option<&crate::project::HelperConfig>) -> Self {
-        let enabled = helper
+        let mut enabled: HashSet<String> = helper
             .map(|config| {
                 config
                     .capabilities
@@ -32,6 +32,11 @@ impl HostModules {
                     .collect()
             })
             .unwrap_or_default();
+        // The `mcfd` connectivity probe needs no declared capability; it is
+        // available whenever a host bridge is configured at all.
+        if helper.is_some() {
+            enabled.insert("mcfd".to_string());
+        }
         HostModules { enabled }
     }
 
@@ -57,6 +62,14 @@ pub fn host_call_signature(module: &str, function: &str) -> Option<HostCallSig> 
     let string_array = || Type::Array(Box::new(Type::String));
     let (params, return_type): (Vec<Type>, Type) = match (module, function) {
         ("http", "get") => (vec![Type::String], Type::Struct("HttpResponse".to_string())),
+        ("http", "get_json_string") => (
+            vec![Type::String, Type::String],
+            Type::Struct("HttpResponse".to_string()),
+        ),
+        ("http", "get_json_strings") => (
+            vec![Type::String, string_array()],
+            Type::Struct("JsonStringsResponse".to_string()),
+        ),
         ("http", "post") => (
             vec![Type::String, Type::String],
             Type::Struct("HttpResponse".to_string()),
@@ -84,6 +97,7 @@ pub fn host_call_signature(module: &str, function: &str) -> Option<HostCallSig> 
             vec![Type::Int, Type::Int],
             Type::Struct("RandResult".to_string()),
         ),
+        ("mcfd", "ping") => (vec![], Type::Struct("PingResult".to_string())),
         _ => return None,
     };
     Some(HostCallSig {
@@ -102,6 +116,16 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
                 ("ok", Type::Bool),
                 ("status", Type::Int),
                 ("body", Type::String),
+                ("err", Type::String),
+            ],
+        ),
+        (
+            "JsonStringsResponse",
+            vec![
+                ("ok", Type::Bool),
+                ("status", Type::Int),
+                ("values", Type::Nbt),
+                ("err", Type::String),
             ],
         ),
         (
@@ -127,6 +151,7 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
             ],
         ),
         ("RandResult", vec![("ok", Type::Bool), ("value", Type::Int)]),
+        ("PingResult", vec![("ok", Type::Bool), ("pong", Type::Bool)]),
     ]
 }
 

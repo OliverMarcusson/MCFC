@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde_json::Value as JsonValue;
+
 use crate::config::Config;
 use crate::snbt::{self, Value};
 use crate::Request;
@@ -13,6 +15,8 @@ const MAX_BODY: usize = 32 * 1024;
 pub fn dispatch(config: &Config, request: &Request) -> String {
     match (request.module.as_str(), request.function.as_str()) {
         ("http", "get") => http(config, request, false),
+        ("http", "get_json_string") => http_json_string(config, request),
+        ("http", "get_json_strings") => http_json_strings(config, request),
         ("http", "post") => http(config, request, true),
         ("file", "read") => file_read(config, request),
         ("file", "write") => file_write(config, request),
@@ -22,6 +26,9 @@ pub fn dispatch(config: &Config, request: &Request) -> String {
         ("db", "query") => db_exec(config, request, true),
         ("time", "now") => time_now(config),
         ("rand", "int") => rand_int(config, request),
+        // Connectivity probe: always answerable, no capability required, so a
+        // datapack can confirm the daemon is reachable.
+        ("mcfd", "ping") => "{ok:1b,pong:1b}".to_string(),
         _ => err("unknown host function"),
     }
 }
@@ -51,14 +58,9 @@ fn http(config: &Config, request: &Request, post: bool) -> String {
         return err("domain not allowed");
     }
 
-    // Always time-bound the request so a slow/unreachable host can never hang the
-    // single-threaded daemon.
-    let timeout = Duration::from_secs(10);
-    let response = if post {
-        let body = arg_str(request, 1).unwrap_or_default();
-        ureq::post(&url).timeout(timeout).send_string(&body)
-    } else {
-        ureq::get(&url).timeout(timeout).call()
+    let response = match http_request(config, caps, &url, post, request) {
+        Ok(response) => response,
+        Err(message) => return http_err(0, &message, ""),
     };
 
     match response {
@@ -69,14 +71,210 @@ fn http(config: &Config, request: &Request, post: bool) -> String {
     }
 }
 
+/// Fetch JSON and expose a single string field at a dot-separated object path.
+/// This keeps JSON parsing on the host while giving datapacks a typed string
+/// response suitable for text components.
+fn http_json_string(config: &Config, request: &Request) -> String {
+    let Some(caps) = &config.capabilities.http else {
+        return http_err(0, "http capability disabled", "");
+    };
+    let Some(url) = arg_str(request, 0) else {
+        return http_err(0, "missing url", "");
+    };
+    let Some(path) = arg_str(request, 1) else {
+        return http_err(0, "missing JSON path", "");
+    };
+    if !host_allowed(&url, &caps.allow_domains) {
+        return http_err(0, "domain not allowed", "");
+    }
+
+    let response = match http_request(config, caps, &url, false, request) {
+        Ok(response) => response,
+        Err(message) => return http_err(0, &message, ""),
+    };
+    match response {
+        Ok(resp) => json_string_result(resp.status(), resp, &path),
+        Err(ureq::Error::Status(status, resp)) => {
+            let body = read_body(resp);
+            http_err(status, "HTTP request returned a non-success status", &body)
+        }
+        Err(error) => http_err(0, &format!("request failed: {}", error), ""),
+    }
+}
+
+/// Fetch JSON once and expose multiple string fields, in the order of the
+/// requested dot-separated object paths. This avoids mixing fields from
+/// separate requests when an endpoint returns a random record.
+fn http_json_strings(config: &Config, request: &Request) -> String {
+    let Some(caps) = &config.capabilities.http else {
+        return json_strings_err(0, "http capability disabled");
+    };
+    let Some(url) = arg_str(request, 0) else {
+        return json_strings_err(0, "missing url");
+    };
+    let Some(Value::List(paths)) = request.args.get(1) else {
+        return json_strings_err(0, "missing JSON paths");
+    };
+    let paths: Vec<String> = paths.iter().map(Value::to_arg_string).collect();
+    if paths.is_empty() {
+        return json_strings_err(0, "JSON paths must not be empty");
+    }
+    if !host_allowed(&url, &caps.allow_domains) {
+        return json_strings_err(0, "domain not allowed");
+    }
+
+    let response = match http_request(config, caps, &url, false, request) {
+        Ok(response) => response,
+        Err(message) => return json_strings_err(0, &message),
+    };
+    match response {
+        Ok(resp) => json_strings_result(resp.status(), resp, &paths),
+        Err(ureq::Error::Status(status, _)) => {
+            json_strings_err(status, "HTTP request returned a non-success status")
+        }
+        Err(error) => json_strings_err(0, &format!("request failed: {}", error)),
+    }
+}
+
+fn http_request(
+    config: &Config,
+    caps: &crate::config::HttpCaps,
+    url: &str,
+    post: bool,
+    request: &Request,
+) -> Result<Result<ureq::Response, ureq::Error>, String> {
+    // Always time-bound the request so a slow/unreachable host can never hang the
+    // single-threaded daemon.
+    let timeout = Duration::from_secs(10);
+    let token = bearer_token(config, caps)?;
+    let response = if post {
+        let body = arg_str(request, 1).unwrap_or_default();
+        let request = ureq::post(url)
+            .timeout(timeout)
+            .set("Content-Type", "text/plain");
+        let request = match &token {
+            Some(token) => request.set("Authorization", &format!("Bearer {token}")),
+            None => request,
+        };
+        request.send_string(&body)
+    } else {
+        let request = ureq::get(url).timeout(timeout);
+        match token {
+            Some(token) => request
+                .set("Authorization", &format!("Bearer {token}"))
+                .call(),
+            None => request.call(),
+        }
+    };
+    Ok(response)
+}
+
+fn bearer_token(config: &Config, caps: &crate::config::HttpCaps) -> Result<Option<String>, String> {
+    let Some(name) = &caps.bearer_token_env else {
+        return Ok(None);
+    };
+    let token = config
+        .secret(name)
+        .ok_or_else(|| format!("Bearer token environment variable '{}' is not set", name))?;
+    if token.trim().is_empty() {
+        return Err(format!(
+            "Bearer token environment variable '{}' is empty",
+            name
+        ));
+    }
+    Ok(Some(token))
+}
+
 fn http_result(status: u16, resp: ureq::Response) -> String {
-    let body = resp.into_string().unwrap_or_default();
-    let truncated: String = body.chars().take(MAX_BODY).collect();
+    let truncated = read_body(resp);
     format!(
         "{{ok:1b,status:{},body:{}}}",
         status,
         snbt::escape_string(&truncated)
     )
+}
+
+fn json_string_result(status: u16, resp: ureq::Response, path: &str) -> String {
+    let body = read_body(resp);
+    let value = match json_string_at(&body, path) {
+        Ok(value) => value,
+        Err(message) => return http_err(status, &message, &body),
+    };
+    format!(
+        "{{ok:1b,status:{},body:{}}}",
+        status,
+        snbt::escape_string(&value.chars().take(MAX_BODY).collect::<String>())
+    )
+}
+
+fn json_strings_result(status: u16, resp: ureq::Response, paths: &[String]) -> String {
+    let body = read_body(resp);
+    let values = match json_strings_at(&body, paths) {
+        Ok(values) => values,
+        Err(message) => return json_strings_err(status, &message),
+    };
+    let values = values
+        .iter()
+        .map(|value| snbt::escape_string(value))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{ok:1b,status:{},values:[{}]}}", status, values)
+}
+
+fn read_body(resp: ureq::Response) -> String {
+    resp.into_string()
+        .unwrap_or_default()
+        .chars()
+        .take(MAX_BODY)
+        .collect()
+}
+
+fn http_err(status: u16, message: &str, body: &str) -> String {
+    format!(
+        "{{ok:0b,status:{},body:{},err:{}}}",
+        status,
+        snbt::escape_string(body),
+        snbt::escape_string(message)
+    )
+}
+
+fn json_strings_err(status: u16, message: &str) -> String {
+    format!(
+        "{{ok:0b,status:{},values:[],err:{}}}",
+        status,
+        snbt::escape_string(message)
+    )
+}
+
+fn json_string_at(body: &str, path: &str) -> Result<String, String> {
+    let document: JsonValue =
+        serde_json::from_str(body).map_err(|_| "response body is not valid JSON".to_string())?;
+    json_string_from_document(&document, path)
+}
+
+fn json_strings_at(body: &str, paths: &[String]) -> Result<Vec<String>, String> {
+    let document: JsonValue =
+        serde_json::from_str(body).map_err(|_| "response body is not valid JSON".to_string())?;
+    paths
+        .iter()
+        .map(|path| json_string_from_document(&document, path))
+        .collect()
+}
+
+fn json_string_from_document(document: &JsonValue, path: &str) -> Result<String, String> {
+    if path.is_empty() || path.split('.').any(str::is_empty) {
+        return Err("JSON path must contain dot-separated object keys".to_string());
+    }
+    let mut value = document;
+    for key in path.split('.') {
+        value = value
+            .get(key)
+            .ok_or_else(|| format!("JSON string path '{}' was not found", path))?;
+    }
+    value
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("JSON path '{}' is not a string", path))
 }
 
 fn host_allowed(url: &str, allow: &[String]) -> bool {
@@ -183,7 +381,13 @@ fn kv_set(config: &Config, request: &Request) -> String {
 fn kv_filename(key: &str) -> String {
     let safe: String = key
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{}.kv", safe)
 }
@@ -206,8 +410,10 @@ fn db_exec(config: &Config, request: &Request, query: bool) -> String {
         Ok(connection) => connection,
         Err(error) => return err(&format!("open failed: {}", error)),
     };
-    let bound: Vec<&dyn rusqlite::ToSql> =
-        params.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
+    let bound: Vec<&dyn rusqlite::ToSql> = params
+        .iter()
+        .map(|value| value as &dyn rusqlite::ToSql)
+        .collect();
 
     if query {
         db_query(&connection, &sql, &bound)
@@ -219,7 +425,11 @@ fn db_exec(config: &Config, request: &Request, query: bool) -> String {
     }
 }
 
-fn db_query(connection: &rusqlite::Connection, sql: &str, bound: &[&dyn rusqlite::ToSql]) -> String {
+fn db_query(
+    connection: &rusqlite::Connection,
+    sql: &str,
+    bound: &[&dyn rusqlite::ToSql],
+) -> String {
     let mut statement = match connection.prepare(sql) {
         Ok(statement) => statement,
         Err(error) => return err(&format!("prepare failed: {}", error)),
@@ -243,7 +453,11 @@ fn db_query(connection: &rusqlite::Connection, sql: &str, bound: &[&dyn rusqlite
                         .get::<_, rusqlite::types::Value>(index)
                         .map(value_to_string)
                         .unwrap_or_default();
-                    fields.push(format!("{}:{}", safe_key(column), snbt::escape_string(&value)));
+                    fields.push(format!(
+                        "{}:{}",
+                        safe_key(column),
+                        snbt::escape_string(&value)
+                    ));
                 }
                 out_rows.push(format!("{{{}}}", fields.join(",")));
             }
@@ -271,7 +485,13 @@ fn value_to_string(value: rusqlite::types::Value) -> String {
 
 fn safe_key(name: &str) -> String {
     name.chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -359,23 +579,25 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Capabilities, Config};
+    use crate::config::{Capabilities, Config, HttpCaps};
     use std::path::PathBuf;
 
     fn config_with(capabilities: Capabilities) -> Config {
         Config {
+            protocol: 2,
+            pack_id: "test".to_string(),
             namespace: "test".to_string(),
             log: None,
             datapack: PathBuf::from("."),
-            poll_ms: 200,
             result_ttl_secs: 10,
             capabilities,
-            log_path: PathBuf::from("latest.log"),
+            secrets: std::collections::HashMap::new(),
         }
     }
 
     fn request(module: &str, function: &str, args: Vec<Value>) -> Request {
         Request {
+            pack_id: "test".to_string(),
             id: 1,
             module: module.to_string(),
             function: function.to_string(),
@@ -399,6 +621,13 @@ mod tests {
         let config = config_with(Capabilities::default());
         let result = dispatch(&config, &request("time", "now", vec![]));
         assert!(result.starts_with("{ok:0b"), "got {result}");
+    }
+
+    #[test]
+    fn ping_answers_without_any_capability() {
+        let config = config_with(Capabilities::default());
+        let result = dispatch(&config, &request("mcfd", "ping", vec![]));
+        assert_eq!(result, "{ok:1b,pong:1b}");
     }
 
     #[test]
@@ -435,5 +664,45 @@ mod tests {
             "https://evil.com/x",
             &["api.example.com".to_string()]
         ));
+    }
+
+    #[test]
+    fn bearer_token_requires_a_present_nonempty_environment_value() {
+        let caps = HttpCaps {
+            allow_domains: vec!["example.com".to_string()],
+            bearer_token_env: Some("MCFD_MISSING_TEST_BEARER_TOKEN".to_string()),
+        };
+        assert!(bearer_token(&config_with(Capabilities::default()), &caps).is_err());
+    }
+
+    #[test]
+    fn json_string_helpers_extract_nested_values_in_one_document() {
+        let body =
+            r#"{"quote":{"text":"Stay curious","author":{"name":"Munin"},"source":"Cyber"}}"#;
+        assert_eq!(json_string_at(body, "quote.text").unwrap(), "Stay curious");
+        assert_eq!(
+            json_strings_at(
+                body,
+                &["quote.text".to_string(), "quote.author.name".to_string()]
+            )
+            .unwrap(),
+            vec!["Stay curious".to_string(), "Munin".to_string()]
+        );
+    }
+
+    #[test]
+    fn json_string_helpers_reject_invalid_or_non_string_paths() {
+        assert!(json_string_at("not json", "quote.text").is_err());
+        assert!(json_string_at(r#"{"quote":{"votes":4}}"#, "quote.missing").is_err());
+        assert!(json_string_at(r#"{"quote":{"votes":4}}"#, "quote.votes").is_err());
+    }
+
+    #[test]
+    fn json_string_error_results_preserve_status_and_failure() {
+        let result = json_strings_err(404, "HTTP request returned a non-success status");
+        assert!(
+            result.starts_with("{ok:0b,status:404,values:[]"),
+            "got {result}"
+        );
     }
 }

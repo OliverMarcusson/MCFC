@@ -501,6 +501,73 @@ fn main() -> void:
     }
 
     #[test]
+    fn interpolated_string_preserves_multibyte_literals() {
+        // Multi-byte literal text around a placeholder must survive intact;
+        // a byte-wise rewrite would corrupt “ ” into mojibake.
+        let source = "
+fn main() -> void:
+    let q = \"hi\"
+    let line = \"\u{201c}$(q)\u{201d} \u{2014} done\"
+    let player = single(selector(\"@p\"))
+    player.tellraw(line)
+    return
+";
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            files.contains("set value \"\u{201c}$(p1)\u{201d} \u{2014} done\""),
+            "interpolated template should keep multi-byte characters intact"
+        );
+        assert!(
+            !files.contains('\u{00e2}'),
+            "no Latin-1 mojibake should leak into generated functions"
+        );
+    }
+
+    #[test]
+    fn text_interpolation_sources_dynamic_parts_from_storage() {
+        // text("...$(x)...") must build a component that reads the runtime value
+        // by NBT path, never splicing it into a quoted string (which a value
+        // containing a quote could break).
+        let source = "
+fn main() -> void:
+    let who = \"world\"
+    let line = text(\"hi $(who)!\")
+    let player = single(selector(\"@p\"))
+    player.tellraw(line)
+    return
+";
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            files.contains("set value {text:\"\",extra:[\"hi \",{storage:\"mcfc:runtime\",nbt:")
+                && files.contains("},\"!\"]}"),
+            "text() interpolation should emit an nbt-sourced extra component"
+        );
+        // The dynamic part must not be spliced into a quoted literal.
+        assert!(
+            !files.contains("set value \"hi $(p1)!\""),
+            "text() interpolation must not splice the value into a quoted string"
+        );
+    }
+
+    #[test]
     fn compiles_sleep_continuations() {
         let source = r#"
 fn main() -> void:

@@ -21,6 +21,8 @@ DefaultDirName={autopf}\MCFC\mcfd
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
+; mcfd prefers a Scheduled Task; a standard-user installation falls back to a
+; per-user Windows Run entry when task registration is not permitted.
 PrivilegesRequiredOverridesAllowed=commandline
 UsedUserAreasWarning=no
 ArchitecturesAllowed=x64compatible
@@ -37,9 +39,27 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Source: "{#MyAppSource}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyAppSource}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "service install"; Flags: runhidden waituntilterminated
-Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""MCFC mcfd"""; Flags: runhidden waituntilterminated
+[Code]
+procedure InstallAndStartMcfd;
+var
+  ResultCode: Integer;
+begin
+  if not Exec(ExpandConstant('{app}\{#MyAppExeName}'), 'service install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Could not run mcfd service installation.')
+  else if ResultCode <> 0 then
+    RaiseException(Format('Could not create the MCFC mcfd logon task (exit code %d).', [ResultCode]));
+
+  if not Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "MCFC mcfd"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('The MCFC mcfd logon task was created but could not be started.')
+  else if ResultCode <> 0 then
+    RaiseException(Format('The MCFC mcfd logon task was created but could not be started (exit code %d).', [ResultCode]));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    InstallAndStartMcfd;
+end;
 
 [UninstallRun]
 Filename: "{app}\{#MyAppExeName}"; Parameters: "service uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveMcfdLogonTask"

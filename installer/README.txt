@@ -2,8 +2,9 @@ MCFC mcfd
 ==========
 
 mcfd is the standalone host-bridge service for MCFC datapacks. The installer
-requests administrator approval to create the "MCFC mcfd" Scheduled Task, then
-starts it at user logon with limited privileges.
+creates the "MCFC mcfd" Scheduled Task when Windows permits it. If task
+creation is denied for the current user, it registers a per-user Windows Run
+entry instead; either mechanism starts the service at user logon.
 
 mcfd is installed globally under Program Files\MCFC\mcfd.
 

@@ -85,8 +85,9 @@ capabilities. Package a x64 installer with:
 .\scripts\package-mcfd.ps1
 ```
 
-The installer requests administrator approval to create the `MCFC mcfd` user-logon
-Scheduled Task, then starts it with limited privileges. It places `mcfd` under
+The installer creates the `MCFC mcfd` user-logon Scheduled Task, then starts it
+with limited privileges. On Windows configurations that deny task creation to the
+current user, it falls back to a per-user Windows Run entry. It places `mcfd` under
 `%ProgramFiles%\MCFC\mcfd`. Its bundled uninstaller removes the task,
 executable, and `%LocalAppData%\MCFC\mcfd` runtime data, but never removes Minecraft
 worlds, datapacks, generated descriptors, or logs. Inno Setup 6 is required to create

@@ -377,7 +377,11 @@ fn status() -> Result<(), String> {
 
 fn install_task() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let task = format!("\\\"{}\\\" service run", exe.display());
+    // `/TR` needs one argument containing a normally quoted executable path.
+    // The previous form emitted literal backslashes before each quote (`\"`),
+    // which Task Scheduler could not execute for installations under Program
+    // Files.
+    let task = format!("\"{}\" service run", exe.display());
     let status = Command::new("schtasks")
         .args([
             "/Create",
@@ -394,9 +398,16 @@ fn install_task() -> Result<(), String> {
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
+        let _ = remove_run_entry();
         Ok(())
     } else {
-        Err("could not create the MCFC mcfd logon task".to_string())
+        // Some Windows configurations let a standard user install programs but
+        // deny task registration.  A per-user Run entry has the same logon
+        // behaviour and requires no elevation, so retain autostart instead of
+        // leaving an otherwise usable installation dormant.
+        install_run_entry(&exe)?;
+        eprintln!("mcfd: could not create the logon task; registered per-user startup instead");
+        Ok(())
     }
 }
 
@@ -406,20 +417,81 @@ fn uninstall_task() -> Result<(), String> {
     let _ = Command::new("schtasks")
         .args(["/End", "/TN", "MCFC mcfd"])
         .status();
-    let status = Command::new("schtasks")
+    let _ = Command::new("schtasks")
         .args(["/Delete", "/TN", "MCFC mcfd", "/F"])
+        .status()
+        .map_err(|e| e.to_string())?;
+    let _ = remove_run_entry();
+    Ok(())
+}
+
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "MCFC mcfd";
+
+fn install_run_entry(exe: &Path) -> Result<(), String> {
+    let script = state_dir()?.join("mcfd-startup.vbs");
+    std::fs::write(&script, startup_script_body(exe)).map_err(|e| e.to_string())?;
+    let command = run_entry_command(&script);
+    let status = Command::new("reg")
+        .args(["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &command, "/f"])
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
         Ok(())
     } else {
-        Err("could not remove the MCFC mcfd logon task".to_string())
+        Err("could not register MCFC mcfd for user logon".to_string())
     }
+}
+
+fn startup_script_body(exe: &Path) -> String {
+    format!(
+        r#"Set shell = CreateObject("WScript.Shell")
+shell.Run """{}"" service run", 0, False
+"#,
+        exe.display()
+    )
+}
+
+fn run_entry_command(script: &Path) -> String {
+    format!("wscript.exe //B //Nologo \"{}\"", script.display())
+}
+
+fn remove_run_entry() -> Result<(), String> {
+    let _ = Command::new("reg")
+        .args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if let Ok(state) = state_dir() {
+        let _ = std::fs::remove_file(state.join("mcfd-startup.vbs"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduled_task_action_quotes_the_executable_without_backslashes() {
+        let exe = PathBuf::from(r"C:\Program Files\MCFC\mcfd\mcfd.exe");
+        let task = format!("\"{}\" service run", exe.display());
+        assert_eq!(task, r#""C:\Program Files\MCFC\mcfd\mcfd.exe" service run"#);
+    }
+
+    #[test]
+    fn run_entry_uses_a_hidden_wscript_launcher() {
+        let exe = PathBuf::from(r"C:\Program Files\MCFC\mcfd\mcfd.exe");
+        assert_eq!(
+            startup_script_body(&exe),
+            "Set shell = CreateObject(\"WScript.Shell\")\nshell.Run \"\"\"C:\\Program Files\\MCFC\\mcfd\\mcfd.exe\"\" service run\", 0, False\n"
+        );
+
+        let script = PathBuf::from(r"C:\Users\Oliver\AppData\Local\MCFC\mcfd\mcfd-startup.vbs");
+        assert_eq!(
+            run_entry_command(&script),
+            r#"wscript.exe //B //Nologo "C:\Users\Oliver\AppData\Local\MCFC\mcfd\mcfd-startup.vbs""#
+        );
+    }
 
     #[test]
     fn parses_entity_death_marker() {

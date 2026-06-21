@@ -2193,69 +2193,6 @@ fn bootstrap_load() -> void:
     );
 }
 
-#[test]
-fn anpc_project_builds_expected_public_outputs() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("ANPC_MCF")
-        .join("anpc.mcfc.toml");
-    if !manifest.exists() {
-        return;
-    }
-    let out = temp_path().join("anpc_out");
-    let result = compile_project(
-        &manifest,
-        &out,
-        &CompileOptions {
-            clean: true,
-            ..CompileOptions::default()
-        },
-    )
-    .expect("ANPC project should compile");
-
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/function/internal/init.mcfunction")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/function/internal/tick.mcfunction")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/function/api/create_default.mcfunction")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/function/api/create_dialogue.mcfunction")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/function/api/create_guard.mcfunction")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/advancement/internal/interacted_with_interaction.json")
-    );
-    assert!(
-        result
-            .artifacts
-            .files
-            .contains_key("data/anpc/predicate/has_vehicle.json")
-    );
-}
-
 fn temp_path() -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

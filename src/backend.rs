@@ -1333,14 +1333,13 @@ impl Backend {
             }
         }
 
-        // Transport: mcfd emits the request from command storage to latest.log;
+        // Transport: mcfd emits the request through an off-map entity death to
+        // latest.log;
         // the mod/agent transports read the shared `out` queue. We populate both.
         if self.helper_backend() == crate::project::HelperBackend::Mcfd {
-            // Stage the request compound under `emit.req` so the marker macro can
-            // substitute it as a single value (`$(req)`). Letting Minecraft
-            // serialize the whole compound keeps the emitted SNBT valid; rebuilding
-            // it field-by-field in the macro is error-prone and has produced
-            // malformed markers that mcfd silently drops.
+            // Stage the complete request compound under `emit.req`. The entity's
+            // macro writes this serialized SNBT into the CustomName string that
+            // Minecraft includes in the logged death message.
             lines.push("data modify storage mcfc:rpc emit set value {}".to_string());
             lines.push(format!(
                 "data modify storage mcfc:rpc emit.req set from storage mcfc:rpc sites.{}.req",
@@ -1462,21 +1461,26 @@ impl Backend {
             "# mcfd writes `data modify storage mcfc:rpc results.<id> set value {...}` lines here\n"
                 .to_string(),
         );
+        // Vanilla logs named entity deaths reliably. This mirrors VanilLog's
+        // approach without changing gamerules or sending request data to chat.
+        // The pig exists only for these three commands, 1000 blocks above the
+        // executor, so it has no gameplay-visible effect.
         self.files.insert(
             format!("data/{}/function/rpc/emit.mcfunction", ns),
-            format!(
-                "function {}:rpc/emit_marker with storage mcfc:rpc emit\n",
-                self.namespace
-            ),
+            [
+                "summon minecraft:pig ~ ~1000 ~ {Tags:[\"mcfc_rpc_emit\"],Age:-24000,Health:1f,NoAI:1b,Silent:1b}".to_string(),
+                format!(
+                    "function {}:rpc/emit_name with storage mcfc:rpc emit",
+                    self.namespace
+                ),
+                "damage @e[type=minecraft:pig,tag=mcfc_rpc_emit,sort=nearest,limit=1] 1 minecraft:generic_kill".to_string(),
+            ]
+            .join("\n")
+                + "\n",
         );
-        // Function command feedback is not logged by the target Minecraft
-        // version, so `data get storage` cannot be used as a host-bridge
-        // marker. `say` is logged reliably. The macro substitutes the whole
-        // request compound (`$(req)`) as a single value so Minecraft emits valid
-        // SNBT; mcfd tails the line, finds the `{`, and parses it.
         self.files.insert(
-            format!("data/{}/function/rpc/emit_marker.mcfunction", ns),
-            "$say [mcfc_rpc] $(req)\n".to_string(),
+            format!("data/{}/function/rpc/emit_name.mcfunction", ns),
+            "$data modify entity @e[type=minecraft:pig,tag=mcfc_rpc_emit,sort=nearest,limit=1] CustomName set value '[mcfc_rpc] $(req)'\n".to_string(),
         );
         self.files
             .insert("mcfd.pack.toml".to_string(), self.render_mcfd_toml());

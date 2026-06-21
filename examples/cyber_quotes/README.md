@@ -27,6 +27,8 @@ cargo run --bin mcfc -- build examples/cyber_quotes/mcfc.toml --out examples/cyb
 Copy `dist/` into the world's `datapacks/` directory, then install/start the
 helper once with `mcfd service install`. The generated `mcfd.pack.toml` contains
 only the environment-variable name, never the secret value.
+Each host request reaches `mcfd` through an immediately killed, off-map pig death
+record; it does not use chat or admin-command logging.
 
 The datapack calls Munin's random Cyber quote endpoint once, extracts the quote
 text, author, and source from that same JSON response, and broadcasts a styled

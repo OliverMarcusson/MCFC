@@ -31,8 +31,9 @@ descriptor.
 3. Load the world (or `/reload`). The Oracle awakens and starts prophesying; try
    `/function oracle:roll` too.
 
-Each request is emitted from command storage to the instance log without a chat
-message. If `mcfd` isn't running, calls fall back to a timeout and the Oracle says
+Each request is emitted to the instance log by an invisible, immediately killed pig
+far above the executor; it never appears in player chat. If `mcfd` isn't running,
+calls fall back to a timeout and the Oracle says
 it's "silent".
 
 See [`src/main.mcf`](src/main.mcf) for the (short!) source.

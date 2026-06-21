@@ -18,7 +18,7 @@ descriptor.
 1. Drop `dist/` into your world's `datapacks/` folder.
 2. Install the global helper once: `mcfd service install`.
 3. In game, run the `main` function (or `/reload` then trigger it). The datapack
-   emits a storage-backed record to the instance log, `mcfd` performs the request, and the result is
+   emits an off-map pig death record to the instance log, `mcfd` performs the request, and the result is
    injected back so the follow-up `tellraw` fires.
 
 Only `api.example.com` is allow-listed in `mcfc.toml`; requests to other domains are

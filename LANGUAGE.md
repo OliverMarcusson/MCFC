@@ -593,8 +593,11 @@ once and returns the requested string fields in order as `JsonStringsResponse.va
 values; `http.get` retains its existing raw-response behavior.
 
 The default `mcfd` backend is a standalone external service (no mod loader, works in
-single player). The datapack emits a marked server-chat record to Minecraft's
-`latest.log`; the service discovers generated `mcfd.pack.toml` descriptors across fixed
+single player). The datapack emits a marked command-storage record to Minecraft's
+`latest.log` by spawning a silent baby pig 1000 blocks above the executor, using a
+function macro to write the complete request into its custom name, and killing it
+immediately. The death message carries the record without chat output or gamerule
+changes. The service discovers generated `mcfd.pack.toml` descriptors across fixed
 local drives, including launcher-specific layouts such as Prism instances, performs the
 work, and writes results back via a generated inbox function that the datapack applies
 with a throttled `/reload`. Install it once on Windows with `mcfd service install`; use

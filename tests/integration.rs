@@ -2235,6 +2235,7 @@ fn main() -> void:
         .get("mcfd.pack.toml")
         .expect("mcfd service descriptor");
     assert!(descriptor.contains("protocol = 2"));
+    assert!(!descriptor.contains("transport ="));
     assert!(descriptor.contains("pack_id = \"mcfc\""));
     assert!(descriptor.contains("bearer_token_env = \"MCFC_TEST_BEARER_TOKEN\""));
     // The mcfd transport registers a reload pump on the tick tag.
@@ -2252,20 +2253,40 @@ fn main() -> void:
     assert!(entry.contains("scoreboard players add rpc_active mcfc 1"));
     assert!(files.keys().any(|key| key.contains("rpc") && key.contains("_check")));
 
-    // Requests are emitted as a macro-generated server log marker for mcfd. The
-    // request compound is staged under `emit.req` so the marker macro can emit it
-    // as a single `$(req)` value (valid SNBT) rather than rebuilding it by hand.
+    // Requests are staged in storage, then emitted through a silent, off-map pig
+    // death. A function macro writes one complete SNBT compound into its name.
     assert!(
         entry.contains("data modify storage mcfc:rpc emit.req set from storage"),
         "expected the request compound staged under emit.req"
     );
-    assert!(
-        files
-            .get("data/mcfc/function/rpc/emit.mcfunction")
-            .is_some_and(|body| body.contains("rpc/emit_marker with storage mcfc:rpc emit")),
-        "expected a storage-backed log emitter"
-    );
-    assert!(files.values().any(|body| body.contains("[mcfc_rpc]")));
+    let emitter = files
+        .get("data/mcfc/function/rpc/emit.mcfunction")
+        .expect("entity-death emitter");
+    assert!(emitter.contains("summon minecraft:pig ~ ~1000 ~"));
+    assert!(emitter.contains("Tags:[\"mcfc_rpc_emit\"]"));
+    assert!(emitter.contains("rpc/emit_name with storage mcfc:rpc emit"));
+    assert!(files
+        .get("data/mcfc/function/rpc/emit_name.mcfunction")
+        .is_some_and(|body| body.contains("CustomName set value '[mcfc_rpc] $(req)'")));
+    assert!(emitter.contains("damage @e[type=minecraft:pig,tag=mcfc_rpc_emit"));
+    assert!(!emitter.contains("data get storage"));
+    assert!(!emitter.contains("log_admin_commands"));
+    assert!(!emitter.contains("$say"));
+    assert!(!files.keys().any(|key| key.ends_with("rpc/emit_storage.mcfunction")));
+    assert!(!files.keys().any(|key| key.ends_with("rpc/emit_marker.mcfunction")));
+}
+
+#[test]
+fn mcfd_emitter_does_not_change_gamerules() {
+    let source = r#"
+fn main() -> void:
+    http.get("https://api.example.com/data")
+"#;
+    let result = compile_source(source, &mcfd_http_options()).expect("host call should compile");
+    let files = &result.artifacts.files;
+    assert!(!files
+        .values()
+        .any(|body| body.contains("gamerule minecraft:")));
 }
 
 #[test]

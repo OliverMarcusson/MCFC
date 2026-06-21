@@ -1,0 +1,6 @@
+# This function runs through MCFC's generated load entry.
+fn main() -> void:
+    mc "bossbar remove debug_function_log:log_probe"
+    mc 'bossbar add debug_function_log:log_probe {"text":"MCFC bossbar load probe 7D4C"}'
+    mc "bossbar set debug_function_log:log_probe max 1"
+    mc "bossbar set debug_function_log:log_probe value 1"

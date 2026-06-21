@@ -2,7 +2,7 @@
 name = "mcfd"
 version = "0.1.0"
 edition = "2021"
-description = "Host-bridge helper daemon for mcfc datapacks (log-tail + reload transport)"
+description = "Host-bridge helper daemon for mcfc datapacks (entity-death log-tail + reload transport)"
 
 [[bin]]
 name = "mcfd"

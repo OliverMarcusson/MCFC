@@ -1,8 +1,9 @@
-//! Global storage-backed host bridge for MCFC datapacks.
+//! Global entity-death-backed host bridge for MCFC datapacks.
 //!
-//! Compiled packs emit `data get storage mcfc:rpc emit` records to Minecraft's
-//! `latest.log`. This process discovers generated `mcfd.pack.toml` descriptors,
-//! tails their launcher-specific logs, and writes replies into each pack inbox.
+//! Compiled packs create an off-map, named pig and immediately kill it. The death
+//! message carries a command-storage RPC record into Minecraft's `latest.log`.
+//! This process discovers generated `mcfd.pack.toml` descriptors, tails their
+//! launcher-specific logs, and writes replies into each pack inbox.
 
 mod config;
 mod handlers;
@@ -39,7 +40,7 @@ struct Pack {
     log: PathBuf,
 }
 
-/// A parsed storage-backed request record.
+/// A parsed entity-death request record.
 pub struct Request {
     pub pack_id: String,
     pub id: i64,
@@ -281,7 +282,8 @@ fn collect_minecraft_roots_under(dir: &Path, depth: usize, out: &mut Vec<PathBuf
 }
 
 fn parse_marker(line: &str) -> Option<Request> {
-    let brace = line.find('{')?;
+    let marker = line.find("[mcfc_rpc]")?;
+    let brace = line[marker..].find('{')? + marker;
     let value = snbt::parse_compound(&line[brace..])?;
     let compound = value.as_compound()?;
     if compound.get("mcpipe")?.as_int()? != 1 || compound.get("protocol")?.as_int()? != 2 {
@@ -420,8 +422,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_storage_marker() {
-        let request = parse_marker(r#"[12:00:00] [Server thread/INFO]: Storage mcfc:rpc has the following contents: {mcpipe:1,protocol:2,pack:"demo",id:5,mod:"time",fn:"now",args:[]}"#).unwrap();
+    fn parses_entity_death_marker() {
+        let request = parse_marker(r#"[12:00:00] [Server thread/INFO]: [mcfc_rpc] {mcpipe:1,protocol:2,pack:"demo",id:5,mod:"time",fn:"now",args:[]} was killed"#).unwrap();
         assert_eq!(request.pack_id, "demo");
         assert_eq!(request.id, 5);
     }
@@ -429,15 +431,18 @@ mod tests {
     #[test]
     fn rejects_unmarked_log_line() {
         assert!(parse_marker(r#"{id:5,mod:"time",fn:"now"}"#).is_none());
+        assert!(parse_marker(
+            r#"[12:00:00] [Server thread/INFO]: {mcpipe:1,protocol:2,pack:"demo",id:5,mod:"time",fn:"now",args:[]}"#
+        )
+        .is_none());
     }
 
-    /// The datapack emits `say [mcfc_rpc] $(req)`, so the marker is whatever
-    /// SNBT Minecraft serializes the request compound into: keys reordered,
-    /// numbers possibly suffixed, and nested lists for `args`. mcfd must still
-    /// recover the request and its arguments.
+    /// The datapack puts its full request compound in the pig's resolved custom
+    /// name, then kills the pig. Minecraft appends death-message text after the
+    /// name, so mcfd must recover the compound and its nested arguments.
     #[test]
     fn parses_whole_compound_marker_with_nested_args() {
-        let line = r#"[15:23:01] [Server thread/INFO]: [FaithlessMC] [mcfc_rpc] {args:["https://munin-sou.se/api/v1/cyber/quotes/random",["quote.text","quote.author.name","quote.source"]],fn:"get_json_strings",id:9,mcpipe:1b,mod:"http",namespace:"cyber_quotes",pack:"cyber_quotes",protocol:2,v:1}"#;
+        let line = r#"[15:23:01] [Server thread/INFO]: [mcfc_rpc] {args:["https://munin-sou.se/api/v1/cyber/quotes/random",["quote.text","quote.author.name","quote.source"]],fn:"get_json_strings",id:9,mcpipe:1b,mod:"http",namespace:"cyber_quotes",pack:"cyber_quotes",protocol:2,v:1} was killed by magic"#;
         let request = parse_marker(line).expect("whole-compound marker should parse");
         assert_eq!(request.pack_id, "cyber_quotes");
         assert_eq!(request.id, 9);

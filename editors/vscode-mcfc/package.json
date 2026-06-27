@@ -2,7 +2,7 @@
   "name": "mcfc-syntax",
   "displayName": "MCFC Language Support",
   "description": "Syntax highlighting, editor basics, and language server support for MCFC .mcf files.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "mcfc",
   "license": "UNLICENSED",
   "repository": {
@@ -48,7 +48,32 @@
         "scopeName": "source.mcfc",
         "path": "./syntaxes/mcfc.tmLanguage.json"
       }
-    ]
+    ],
+    "snippets": [
+      { "language": "mcfc", "path": "./snippets/mcfc.code-snippets" }
+    ],
+    "commands": [
+      { "command": "mcfc.buildProject", "title": "MCFC: Build Project" },
+      { "command": "mcfc.watchProject", "title": "MCFC: Watch Project" },
+      { "command": "mcfc.stopWatch", "title": "MCFC: Stop Watch" },
+      { "command": "mcfc.deployProject", "title": "MCFC: Deploy Project" },
+      { "command": "mcfc.buildAndDeploy", "title": "MCFC: Build and Deploy" },
+      { "command": "mcfc.openGeneratedDatapack", "title": "MCFC: Open Generated Datapack" }
+    ],
+    "configuration": {
+      "title": "MCFC",
+      "properties": {
+        "mcfc.cli.path": { "type": "string", "default": "", "description": "Optional path to an MCFC CLI binary. The bundled CLI is used by default." },
+        "mcfc.deploy.datapacksDirectory": { "type": "string", "default": "", "description": "Datapacks directory that receives deployed MCFC packs." },
+        "mcfc.deploy.packName": { "type": "string", "default": "", "description": "Deployment directory name. Defaults to the project namespace." },
+        "mcfc.deploy.reloadCommand": { "type": "string", "default": "", "description": "Optional shell command after deploy. Supports ${datapackPath} and ${workspaceFolder}." }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        { "command": "mcfc.stopWatch", "when": "editorLangId == mcfc" }
+      ]
+    }
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

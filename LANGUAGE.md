@@ -91,6 +91,102 @@ Special functions:
   remain ordinary helpers unless a zero-argument `tick() -> void` is also
   present.
 
+### Vanilla Bukkit-style declarations
+
+MCFC includes a small vanilla-safe surface inspired by Bukkit/Paper. These
+declarations are top-level and compile to ordinary datapack functions.
+
+```mcfc
+data player.coins: int = 0
+
+event player_join:
+    let player = single(selector("@s"))
+    player.send_message("Welcome!")
+
+event player_death:
+    let player = single(selector("@s"))
+    player.send_message("Death observed")
+
+command status:
+    let player = single(selector("@s"))
+    player.send_message("coins=$(player.data.coins)")
+
+task heartbeat every_ticks(20):
+    debug("heartbeat")
+
+task delayed after_ticks(40):
+    debug("runs once after datapack load")
+```
+
+Supported declarations in this first runtime are:
+
+- `event player_join:`: runs once as every player first seen by the pack.
+- `event player_death:`: runs as a player when their `deathCount` score changes.
+- `command name:`: enables `/trigger mcfcc_name` for players; the handler runs
+  as the triggering player.
+- `task name every_ticks(n):` and `task name after_ticks(n):`, where `n` is a
+  positive integer.
+- `data player.name: int = 0` and `data player.name: bool = false`: aliases for
+  scoreboard-backed `player.state.name`. `player.data.name` is accepted in
+  expressions and assignments.
+
+Event handlers are not cancellable and intentionally expose no synthetic event
+object. Use `single(selector("@s"))` to obtain the affected player. Real command
+registration, arbitrary event metadata, inventory events, and cancellation need
+the future agent backend and are not emulated by a vanilla datapack.
+
+`send_message`, `send_title`, `send_actionbar`, `play_sound`, and `stop_sound`
+are Bukkit-inspired aliases for the existing `tellraw`, `title`, `actionbar`,
+`playsound`, and `stopsound` methods.
+
+### Agent-backed events and commands (experimental 26.1.2)
+
+With `[helper.agent] enabled = true`, MCFC also accepts typed event declarations
+for the version-pinned JVM adapter. They run as the affected player and receive
+a compiler-provided payload:
+
+```mcfc
+event chat(event: chat_event):
+    event.player.send_message("You said: $(event.message)")
+
+event inventory_click(event: inventory_click_event):
+    event.player.send_message("slot=$(event.slot), button=$(event.button)")
+
+event player_interact_block(event: agent_event):
+    event.player.send_message("packet=$(event.payload)")
+```
+
+Detailed payloads are `chat_event { player, message, cancelled }`,
+`inventory_click_event { player, container_id, state_id, slot, button, cancelled }`,
+`player_action_event { player, action, face, x, y, z, cancelled }`, and
+`block_break_event { player, x, y, z, cancelled }`. Interaction payloads now
+also expose their actual packet data: `player_interact_block_event` has hand,
+face, and block position; `player_interact_item_event`/`player_swing_event`
+have hand; entity interaction/attack expose target ID; held-item change exposes
+slot; container close exposes container ID; player-toggle exposes action, entity
+ID, and data; rename/trade/sign/recipe/game-mode requests expose their relevant
+name, index, lines, recipe, or mode fields. The broader `agent_event` has
+`player`, `player_name`, `source`, `payload`, and `cancelled` fields.
+
+The expanded catalog is: `player_interact_block`, `player_interact_item`,
+`entity_interact`, `entity_attack`, `item_held_change`, `inventory_close`,
+`player_swing`, `player_action_toggle`, `player_respawn_request`, `item_rename`,
+`trade_select`, `sign_change`, `book_edit`, `beacon_effect`, `recipe_place`,
+`item_pick`, `entity_teleport`, `game_mode_request`, `player_abilities`,
+`player_connect`, `player_quit`, `player_respawn`, `player_damage`,
+`player_teleport`, `player_item_drop`, `player_item_pickup`, `inventory_open`,
+and `game_mode_change`, in addition to the four detailed events above.
+
+`command name:` always retains its vanilla `/trigger mcfcc_name` fallback. When
+the agent is attached, the same declaration additionally reserves the real
+`/name` root and dispatches it as the player. This first command adapter has no
+arguments or tab completion yet.
+
+Cancellable packet-entry events such as chat, inventory and interaction input,
+player actions, and block breaking can call `event.cancel()` from inside their
+typed handler. Lifecycle callbacks such as damage, teleport, join, quit, and
+respawn are observation-only and reject cancellation.
+
 ### Statements
 
 Supported statements:
@@ -566,7 +662,15 @@ call to a module that is not enabled is a compile error:
 
 ```toml
 [helper]
-backend = "mcfd"          # mcfd (default) | mod | agent
+backend = "mcfd"
+
+[helper.agent]
+# Optional and best-effort. It never prevents the vanilla datapack loading.
+enabled = true
+# `event ...` and `command ...` declarations are added automatically. Optional
+# manual observation/command routes can be listed as well.
+# events = ["player_damage"]
+# commands = ["home"]
 
 [helper.capabilities]
 # `bearer_token_env` is optional. When present, mcfd reads the secret value from
@@ -601,8 +705,23 @@ changes. The service discovers generated `mcfd.pack.toml` descriptors across fix
 local drives, including launcher-specific layouts such as Prism instances, performs the
 work, and writes results back via a generated inbox function that the datapack applies
 with a throttled `/reload`. Install it once on Windows with `mcfd service install`; use
-`mcfd service status` to list discovered packs. The `mod` and `agent` backends (in-process,
-fully invisible) share the same protocol and are planned follow-ups.
+`mcfd service status` to list discovered packs.
+
+`[helper.agent] enabled = true` additionally records an optional JVM-agent request in
+the generated descriptor. mcfd packages an attachable agent and reports requesting packs
+with `mcfd agent status`. When the global service discovers an enabled pack, it
+automatically attempts one best-effort dynamic attachment to the unambiguous running
+Minecraft JVM for that instance. `mcfd agent attach <pid>` remains a diagnostic fallback.
+
+The current 26.1.2 adapter emits a versioned JSON record after each
+`[mcfd-agent] event=...` log line; mcfd parses that record and routes subscribed
+events to generated datapack functions on the server thread. This is still a
+best-effort, version-pinned adapter: restart Minecraft after installing a new
+agent build so it can attach with the descriptor's latest routes.
+
+Cancellable typed agent events are cancelled from inside the handler with
+`event.cancel()`. Manifest-level `cancel_events` was removed and is rejected by
+the compiler.
 
 ## Scope and Name Rules
 

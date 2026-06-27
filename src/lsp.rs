@@ -5,20 +5,17 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    CompletionTextEdit, Diagnostic as LspDiagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    Documentation, Hover, HoverContents, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, MarkedString, OneOf, Position, Range, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
-};
+use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
+use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::analysis::{AnalysisResult, analyze_source, function_at_offset, word_at_offset};
+use crate::analysis::{
+    AnalysisResult, analyze_source, analyze_source_with_host_modules, function_at_offset,
+    word_at_offset,
+};
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
+use crate::language_catalog::{AGENT_EVENTS, VANILLA_EVENTS, agent_event_payload_type};
 use crate::minecraft_ids::{MinecraftIdCategory, ids_for_category};
 use crate::minecraft_nbt_schema::{self, NbtSchemaCategory, NbtSchemaNode};
 use crate::project::{collect_source_files, find_manifest_in_ancestors, load_manifest};
@@ -34,12 +31,14 @@ struct DocumentState {
 enum DocumentMode {
     Standalone { analysis: AnalysisResult },
     Project { manifest_path: PathBuf },
+    Manifest,
 }
 
 #[derive(Debug, Clone)]
 struct ProjectConfig {
     manifest_path: PathBuf,
     source_root: PathBuf,
+    host_modules: crate::types::HostModules,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +108,29 @@ impl Backend {
     }
 
     async fn update_document(&self, uri: Url, text: String) {
+        if is_manifest_uri(&uri) {
+            self.documents.write().await.insert(
+                uri.clone(),
+                DocumentState {
+                    text: text.clone(),
+                    mode: DocumentMode::Manifest,
+                },
+            );
+            let diagnostics = match toml::from_str::<crate::project::ProjectManifest>(&text) {
+                Ok(_) => Vec::new(),
+                Err(error) => vec![LspDiagnostic {
+                    range: Range::default(),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    source: Some("mcfc".to_string()),
+                    message: format!("invalid mcfc.toml: {}", error),
+                    ..LspDiagnostic::default()
+                }],
+            };
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
+            return;
+        }
         {
             self.documents.write().await.insert(
                 uri.clone(),
@@ -121,6 +143,7 @@ impl Backend {
                             typed_program: None,
                             functions: Vec::new(),
                             locals: Vec::new(),
+                            source_map: crate::analysis::SourceMap::identity(""),
                         },
                     },
                 },
@@ -140,7 +163,7 @@ impl Backend {
         let diagnostics = analysis
             .diagnostics
             .iter()
-            .map(|diagnostic| diagnostic_to_lsp(text, diagnostic))
+            .map(|diagnostic| diagnostic_to_lsp(text, diagnostic, &analysis.source_map))
             .collect();
         self.client
             .publish_diagnostics(uri, diagnostics, None)
@@ -262,6 +285,7 @@ impl Backend {
                     segment: Some(segment),
                 })
             }
+            DocumentMode::Manifest => None,
         }
     }
 }
@@ -286,6 +310,38 @@ impl LanguageServer for Backend {
                     ..CompletionOptions::default()
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    ..SignatureHelpOptions::default()
+                }),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: vec![
+                                    SemanticTokenType::FUNCTION,
+                                    SemanticTokenType::STRUCT,
+                                    SemanticTokenType::PARAMETER,
+                                    SemanticTokenType::VARIABLE,
+                                    SemanticTokenType::TYPE,
+                                    SemanticTokenType::KEYWORD,
+                                ],
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            range: Some(false),
+                            ..SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
                 ..ServerCapabilities::default()
             },
             server_info: Some(tower_lsp::lsp_types::ServerInfo {
@@ -396,6 +452,9 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        if is_manifest_uri(&params.text_document_position.text_document.uri) {
+            return Ok(Some(CompletionResponse::Array(manifest_completion_items())));
+        }
         let items = match self
             .ensure_document_context(&params.text_document_position.text_document.uri)
             .await
@@ -419,6 +478,19 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
+        if is_manifest_uri(&params.text_document.uri) {
+            return Ok(Some(DocumentSymbolResponse::Nested(
+                manifest_document_symbols(
+                    &self
+                        .documents
+                        .read()
+                        .await
+                        .get(&params.text_document.uri)
+                        .map(|state| state.text.clone())
+                        .unwrap_or_default(),
+                ),
+            )));
+        }
         let Some(context) = self
             .ensure_document_context(&params.text_document.uri)
             .await
@@ -434,6 +506,678 @@ impl LanguageServer for Backend {
 
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(context) = self.ensure_document_context(uri).await else {
+            return Ok(None);
+        };
+        let offset = position_to_offset(
+            &context.local_text,
+            params.text_document_position_params.position,
+        );
+        let Some((word, _)) = word_at_offset(&context.local_text, offset) else {
+            return Ok(None);
+        };
+        if let Some(range) = local_definition_range(&context.local_text, offset, &word) {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: range_from_text_range(&context.local_text, range),
+            })));
+        }
+        if let Some(location) = self.project_function_definition(uri, &word).await {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+        Ok(
+            function_definition_range(&context.local_text, &word).map(|range| {
+                GotoDefinitionResponse::Scalar(Location {
+                    uri: uri.clone(),
+                    range: range_from_text_range(&context.local_text, range),
+                })
+            }),
+        )
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(context) = self.ensure_document_context(uri).await else {
+            return Ok(None);
+        };
+        let offset =
+            position_to_offset(&context.local_text, params.text_document_position.position);
+        let Some((word, _)) = word_at_offset(&context.local_text, offset) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.semantic_locations(uri, &context, offset, &word).await,
+        ))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(context) = self.ensure_document_context(uri).await else {
+            return Ok(None);
+        };
+        let offset = position_to_offset(
+            &context.local_text,
+            params.text_document_position_params.position,
+        );
+        let Some((word, _)) = word_at_offset(&context.local_text, offset) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            semantic_ranges(&context.local_text, offset, &word)
+                .into_iter()
+                .map(|range| DocumentHighlight {
+                    range: range_from_text_range(&context.local_text, range),
+                    kind: None,
+                })
+                .collect(),
+        ))
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let Some(context) = self
+            .ensure_document_context(&params.text_document.uri)
+            .await
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            params
+                .positions
+                .into_iter()
+                .map(|position| selection_at(&context.local_text, position))
+                .collect(),
+        ))
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let Some(context) = self
+            .ensure_document_context(&params.text_document.uri)
+            .await
+        else {
+            return Ok(None);
+        };
+        Ok(Some(folding_ranges(&context.local_text)))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let Some(context) = self
+            .ensure_document_context(&params.text_document.uri)
+            .await
+        else {
+            return Ok(None);
+        };
+        let formatted = format_mcfc(&context.local_text);
+        if formatted == context.local_text {
+            return Ok(Some(Vec::new()));
+        }
+        Ok(Some(vec![TextEdit {
+            range: Range {
+                start: Position::new(0, 0),
+                end: offset_to_position(&context.local_text, context.local_text.len()),
+            },
+            new_text: formatted,
+        }]))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        if !is_lsp_identifier(&params.new_name) {
+            return Ok(None);
+        }
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(context) = self.ensure_document_context(uri).await else {
+            return Ok(None);
+        };
+        let offset =
+            position_to_offset(&context.local_text, params.text_document_position.position);
+        let Some((word, _)) = word_at_offset(&context.local_text, offset) else {
+            return Ok(None);
+        };
+        let locations = self.semantic_locations(uri, &context, offset, &word).await;
+        if locations.is_empty() {
+            return Ok(None);
+        }
+        let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        for location in locations {
+            changes.entry(location.uri).or_default().push(TextEdit {
+                range: location.range,
+                new_text: params.new_name.clone(),
+            });
+        }
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        }))
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(context) = self.ensure_document_context(uri).await else {
+            return Ok(None);
+        };
+        let offset = position_to_offset(
+            &context.local_text,
+            params.text_document_position_params.position,
+        );
+        let Some(call) = call_context_before_offset(&context.local_text, offset) else {
+            return Ok(None);
+        };
+        let Some(signature) = signature_for_call(&context.analysis, &call.name) else {
+            return Ok(None);
+        };
+        Ok(Some(SignatureHelp {
+            signatures: vec![SignatureInformation {
+                label: signature.to_string(),
+                documentation: None,
+                parameters: None,
+                active_parameter: None,
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(call.arg_index as u32),
+        }))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let Some(context) = self
+            .ensure_document_context(&params.text_document.uri)
+            .await
+        else {
+            return Ok(None);
+        };
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data: semantic_tokens(&context.local_text, &context.analysis),
+        })))
+    }
+}
+
+impl Backend {
+    async fn project_function_definition(&self, uri: &Url, name: &str) -> Option<Location> {
+        let config = resolve_project_config_for_uri(uri)?;
+        let snapshot = self
+            .projects
+            .read()
+            .await
+            .get(&config.manifest_path)?
+            .clone();
+        let function = snapshot
+            .analysis
+            .functions
+            .iter()
+            .find(|function| function.name == name && !function.name.starts_with("__mcfc_"))?;
+        snapshot.segments.iter().find_map(|(path, segment)| {
+            let local = segment.merged_to_local_range(function.name_range)?;
+            Some(Location {
+                uri: Url::from_file_path(path).ok()?,
+                range: range_from_text_range(&fs::read_to_string(path).ok()?, local),
+            })
+        })
+    }
+
+    async fn semantic_locations(
+        &self,
+        uri: &Url,
+        context: &DocumentContext,
+        offset: usize,
+        word: &str,
+    ) -> Vec<Location> {
+        if local_definition_range(&context.local_text, offset, word).is_some() {
+            return semantic_ranges(&context.local_text, offset, word)
+                .into_iter()
+                .map(|range| Location {
+                    uri: uri.clone(),
+                    range: range_from_text_range(&context.local_text, range),
+                })
+                .collect();
+        }
+        let Some(config) = resolve_project_config_for_uri(uri) else {
+            return semantic_ranges(&context.local_text, offset, word)
+                .into_iter()
+                .map(|range| Location {
+                    uri: uri.clone(),
+                    range: range_from_text_range(&context.local_text, range),
+                })
+                .collect();
+        };
+        let Some(snapshot) = self
+            .projects
+            .read()
+            .await
+            .get(&config.manifest_path)
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        if !snapshot
+            .analysis
+            .functions
+            .iter()
+            .any(|function| function.name == word && !function.name.starts_with("__mcfc_"))
+        {
+            return Vec::new();
+        }
+        snapshot
+            .segments
+            .iter()
+            .flat_map(|(path, _segment)| {
+                let text = fs::read_to_string(path).unwrap_or_default();
+                function_reference_ranges(&text, word)
+                    .into_iter()
+                    .map(move |range| Location {
+                        uri: Url::from_file_path(path).unwrap_or_else(|_| uri.clone()),
+                        range: range_from_text_range(&text, range),
+                    })
+            })
+            .collect()
+    }
+}
+
+fn is_lsp_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().enumerate().all(|(index, ch)| {
+            ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || ch.is_ascii_alphabetic())
+        })
+}
+
+fn is_manifest_uri(uri: &Url) -> bool {
+    uri.to_file_path()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name == "mcfc.toml"))
+        .unwrap_or(false)
+}
+
+fn manifest_completion_items() -> Vec<CompletionItem> {
+    [
+        ("namespace", "namespace = \"my_pack\""),
+        ("source_dir", "source_dir = \"src\""),
+        ("asset_dir", "asset_dir = \"assets\""),
+        ("out_dir", "out_dir = \"dist\""),
+        ("load", "load = [\"main\"]"),
+        ("tick", "tick = [\"tick\"]"),
+        ("[helper]", "[helper]\nbackend = \"mcfd\""),
+        ("[helper.agent]", "[helper.agent]\nenabled = true"),
+        (
+            "[helper.capabilities]",
+            "[helper.capabilities]\ntime = true\nrand = true",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, insert_text)| CompletionItem {
+        label: label.to_string(),
+        kind: Some(CompletionItemKind::PROPERTY),
+        insert_text: Some(insert_text.to_string()),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        detail: Some("MCFC project manifest".to_string()),
+        ..CompletionItem::default()
+    })
+    .collect()
+}
+
+#[allow(deprecated)]
+fn manifest_document_symbols(source: &str) -> Vec<DocumentSymbol> {
+    let mut symbols = Vec::new();
+    let mut offset = 0usize;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let name = if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            Some(trimmed.trim_matches(&['[', ']'][..]))
+        } else {
+            trimmed.split_once('=').map(|(key, _)| key.trim())
+        };
+        if let Some(name) = name.filter(|name| !name.is_empty()) {
+            let start = offset + line.find(name).unwrap_or(0);
+            let range = TextRange::new(start, start + name.len());
+            symbols.push(DocumentSymbol {
+                name: name.to_string(),
+                detail: Some("mcfc.toml".to_string()),
+                kind: SymbolKind::PROPERTY,
+                tags: None,
+                deprecated: None,
+                range: range_from_text_range(source, range),
+                selection_range: range_from_text_range(source, range),
+                children: None,
+            });
+        }
+        offset += line.len() + 1;
+    }
+    symbols
+}
+
+fn is_lsp_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn semantic_ranges(source: &str, offset: usize, word: &str) -> Vec<TextRange> {
+    let Some(target) = word_at_offset(source, offset).map(|(_, range)| range) else {
+        return Vec::new();
+    };
+    if previous_char(source, target.start) == Some('.') {
+        return Vec::new();
+    }
+    if let Some(scope) = scope_at_offset(source, offset) {
+        if local_definition_in_scope(source, &scope, word).is_some() {
+            return identifier_ranges(&source[scope.start..scope.end], word, false)
+                .into_iter()
+                .map(|range| TextRange::new(range.start + scope.start, range.end + scope.start))
+                .collect();
+        }
+    }
+    if function_definition_range(source, word).is_some() {
+        return function_reference_ranges(source, word);
+    }
+    Vec::new()
+}
+
+fn local_definition_range(source: &str, offset: usize, word: &str) -> Option<TextRange> {
+    let scope = scope_at_offset(source, offset)?;
+    local_definition_in_scope(source, &scope, word)
+}
+
+fn function_definition_range(source: &str, word: &str) -> Option<TextRange> {
+    identifier_ranges(source, word, false)
+        .into_iter()
+        .find(|range| {
+            let before = &source[..range.start];
+            before
+                .rfind('\n')
+                .map(|line| source[line + 1..range.start].trim_start().ends_with("fn"))
+                .unwrap_or(source[..range.start].trim_start().ends_with("fn"))
+        })
+}
+
+fn function_reference_ranges(source: &str, word: &str) -> Vec<TextRange> {
+    identifier_ranges(source, word, false)
+        .into_iter()
+        .filter(|range| {
+            let rest = source[range.end..].trim_start();
+            rest.starts_with('(')
+        })
+        .collect()
+}
+
+fn scope_at_offset(source: &str, offset: usize) -> Option<TextRange> {
+    let mut line_start = 0usize;
+    let mut active = None;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if !line.starts_with(char::is_whitespace) && is_scope_header(trimmed) {
+            if line_start <= offset {
+                active = Some(line_start);
+            } else {
+                break;
+            }
+        }
+        line_start += line.len();
+    }
+    let start = active?;
+    let end = source[start..]
+        .find('\n')
+        .map(|_| {
+            let mut cursor = start;
+            for line in source[start..].split_inclusive('\n') {
+                if cursor > start
+                    && !line.starts_with(char::is_whitespace)
+                    && is_scope_header(line.trim_start())
+                {
+                    return cursor;
+                }
+                cursor += line.len();
+            }
+            source.len()
+        })
+        .unwrap_or(source.len());
+    Some(TextRange::new(start, end))
+}
+
+fn local_definition_in_scope(source: &str, scope: &TextRange, word: &str) -> Option<TextRange> {
+    let body = &source[scope.start..scope.end];
+    let header_end = body.find('\n').unwrap_or(body.len());
+    if let Some(params) = parse_params(&body[..header_end])
+        .into_iter()
+        .find(|local| local.name == word)
+    {
+        let start = body[..header_end].find(&params.name)? + scope.start;
+        return Some(TextRange::new(start, start + params.name.len()));
+    }
+    body.split_inclusive('\n')
+        .scan(scope.start, |base, line| {
+            let current = *base;
+            *base += line.len();
+            Some((current, line))
+        })
+        .find_map(|(base, line)| {
+            let trimmed = line.trim_start();
+            let name = parse_let_binding(trimmed)
+                .map(|(name, _)| name)
+                .or_else(|| parse_for_local(trimmed).map(|local| local.name))?;
+            (name == word).then(|| {
+                let start = base + line.find(&name).unwrap_or(0);
+                TextRange::new(start, start + name.len())
+            })
+        })
+}
+
+fn identifier_ranges(source: &str, word: &str, allow_members: bool) -> Vec<TextRange> {
+    let bytes = source.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0usize;
+    let mut quote = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index += 2;
+                continue;
+            }
+            if byte == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'#' {
+            index += source[index..].find('\n').unwrap_or(source.len() - index);
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if source[index..].starts_with(word) {
+            let end = index + word.len();
+            let before = source[..index].chars().next_back();
+            let after = source[end..].chars().next();
+            if !before.map(is_lsp_word_char).unwrap_or(false)
+                && !after.map(is_lsp_word_char).unwrap_or(false)
+                && (allow_members || before != Some('.'))
+            {
+                ranges.push(TextRange::new(index, end));
+            }
+            index = end;
+            continue;
+        }
+        index += 1;
+    }
+    ranges
+}
+
+fn selection_at(source: &str, position: Position) -> SelectionRange {
+    let offset = position_to_offset(source, position);
+    let word = word_at_offset(source, offset)
+        .map(|(_, range)| range)
+        .unwrap_or(TextRange::new(offset, offset));
+    let line_start = source[..offset]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_end = source[offset..]
+        .find('\n')
+        .map(|index| offset + index)
+        .unwrap_or(source.len());
+    SelectionRange {
+        range: range_from_text_range(source, word),
+        parent: Some(Box::new(SelectionRange {
+            range: range_from_text_range(source, TextRange::new(line_start, line_end)),
+            parent: None,
+        })),
+    }
+}
+
+fn folding_ranges(source: &str) -> Vec<FoldingRange> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut ranges = Vec::new();
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        while stack
+            .last()
+            .map(|(_, depth)| indent <= *depth)
+            .unwrap_or(false)
+        {
+            let (start, _) = stack.pop().unwrap();
+            if index > start + 1 {
+                ranges.push(FoldingRange {
+                    start_line: start as u32,
+                    start_character: None,
+                    end_line: (index - 1) as u32,
+                    end_character: None,
+                    kind: Some(FoldingRangeKind::Region),
+                    collapsed_text: None,
+                });
+            }
+        }
+        if trimmed.ends_with(':') {
+            stack.push((index, indent));
+        }
+    }
+    while let Some((start, _)) = stack.pop() {
+        if lines.len() > start + 1 {
+            ranges.push(FoldingRange {
+                start_line: start as u32,
+                start_character: None,
+                end_line: (lines.len() - 1) as u32,
+                end_character: None,
+                kind: Some(FoldingRangeKind::Region),
+                collapsed_text: None,
+            });
+        }
+    }
+    ranges
+}
+
+fn format_mcfc(source: &str) -> String {
+    let mut output = String::new();
+    for line in source.lines() {
+        let trimmed_end = line.trim_end();
+        if trimmed_end.is_empty() {
+            output.push('\n');
+            continue;
+        }
+        let indent = trimmed_end.len() - trimmed_end.trim_start().len();
+        let level = indent / 4;
+        output.push_str(&"    ".repeat(level));
+        output.push_str(trimmed_end.trim_start());
+        output.push('\n');
+    }
+    output
+}
+
+fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
+    if let Some(function) = analysis
+        .functions
+        .iter()
+        .find(|function| function.name == name)
+    {
+        return Some(function.signature());
+    }
+    match name {
+        "selector" => Some("selector(value: string) -> entity_set".to_string()),
+        "single" => Some("single(value: entity_set) -> entity_ref".to_string()),
+        "player_ref" => Some("player_ref(entity: entity_ref) -> player_ref".to_string()),
+        "entity" => Some("entity(id: string) -> entity_def".to_string()),
+        "item" => Some("item(id: string) -> item_def".to_string()),
+        "block" => Some("block(position: string) -> block_ref".to_string()),
+        "block_type" => Some("block_type(id: string) -> block_def".to_string()),
+        "sleep" => Some("sleep(seconds: int) -> void".to_string()),
+        "sleep_ticks" => Some("sleep_ticks(ticks: int) -> void".to_string()),
+        "random" => Some(
+            "random() -> int | random(max: int) -> int | random(min: int, max: int) -> int"
+                .to_string(),
+        ),
+        "bossbar" => Some("bossbar(id: string, name: string|text_def) -> bossbar".to_string()),
+        _ => None,
+    }
+}
+
+fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken> {
+    let mut entries: Vec<(u32, u32, u32, u32)> = Vec::new();
+    for function in &analysis.functions {
+        let position = offset_to_position(source, function.name_range.start);
+        entries.push((
+            position.line,
+            position.character,
+            function.name.len() as u32,
+            0,
+        ));
+    }
+    if let Some(program) = &analysis.program {
+        for struct_def in &program.structs {
+            let position = offset_to_position(
+                source,
+                analysis
+                    .source_map
+                    .to_original_offset(struct_def.span.range.start),
+            );
+            entries.push((
+                position.line,
+                position.character,
+                struct_def.name.len() as u32,
+                1,
+            ));
+        }
+    }
+    entries.sort();
+    let mut previous_line = 0u32;
+    let mut previous_start = 0u32;
+    entries
+        .into_iter()
+        .map(|(line, start, length, token_type)| {
+            let delta_line = line - previous_line;
+            let delta_start = if delta_line == 0 {
+                start - previous_start
+            } else {
+                start
+            };
+            previous_line = line;
+            previous_start = start;
+            SemanticToken {
+                delta_line,
+                delta_start,
+                length,
+                token_type,
+                token_modifiers_bitset: 0,
+            }
+        })
+        .collect()
 }
 
 fn path_from_url(uri: &Url) -> Option<PathBuf> {
@@ -470,6 +1214,7 @@ fn resolve_project_config_for_path(
     Ok(Some(ProjectConfig {
         manifest_path,
         source_root,
+        host_modules: crate::types::HostModules::from_helper(manifest.helper.as_ref()),
     }))
 }
 
@@ -526,7 +1271,7 @@ fn build_project_snapshot(
     Ok(ProjectSnapshot {
         manifest_path: config.manifest_path.clone(),
         source_root: config.source_root.clone(),
-        analysis: analyze_source(&merged_text),
+        analysis: analyze_source_with_host_modules(&merged_text, &config.host_modules),
         merged_text,
         segments,
     })
@@ -541,7 +1286,9 @@ fn project_diagnostics_for_segment(
         .diagnostics
         .iter()
         .filter_map(|diagnostic| {
-            let range = segment.merged_to_local_range(diagnostic.span.range)?;
+            let range = segment.merged_to_local_range(
+                analysis.source_map.to_original_range(diagnostic.span.range),
+            )?;
             Some(LspDiagnostic {
                 range: range_from_text_range(local_text, range),
                 severity: Some(DiagnosticSeverity::ERROR),
@@ -575,23 +1322,36 @@ fn document_symbols_for_analysis(source: &str, analysis: &AnalysisResult) -> Vec
                     kind: tower_lsp::lsp_types::SymbolKind::STRUCT,
                     tags: None,
                     deprecated: None,
-                    range: range_from_text_range(source, struct_def.span.range),
-                    selection_range: range_from_text_range(source, struct_def.span.range),
+                    range: range_from_text_range(
+                        source,
+                        analysis.source_map.to_original_range(struct_def.span.range),
+                    ),
+                    selection_range: range_from_text_range(
+                        source,
+                        analysis.source_map.to_original_range(struct_def.span.range),
+                    ),
                     children: None,
                 })
                 .collect()
         })
         .unwrap_or_default();
-    symbols.extend(analysis.functions.iter().map(|function| DocumentSymbol {
-        name: function.name.clone(),
-        detail: Some(function.signature()),
-        kind: tower_lsp::lsp_types::SymbolKind::FUNCTION,
-        tags: None,
-        deprecated: None,
-        range: range_from_text_range(source, function.range),
-        selection_range: range_from_text_range(source, function.name_range),
-        children: None,
-    }));
+    symbols.extend(
+        analysis
+            .functions
+            .iter()
+            .filter(|function| !function.name.starts_with("__mcfc_"))
+            .map(|function| DocumentSymbol {
+                name: function.name.clone(),
+                detail: Some(function.signature()),
+                kind: tower_lsp::lsp_types::SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                range: range_from_text_range(source, function.range),
+                selection_range: range_from_text_range(source, function.name_range),
+                children: None,
+            }),
+    );
+    symbols.extend(source_declaration_symbols(source));
     symbols
 }
 
@@ -605,7 +1365,9 @@ fn project_document_symbols(
 
     if let Some(program) = analysis.program.as_ref() {
         for struct_def in &program.structs {
-            let Some(range) = segment.merged_to_local_range(struct_def.span.range) else {
+            let Some(range) = segment.merged_to_local_range(
+                analysis.source_map.to_original_range(struct_def.span.range),
+            ) else {
                 continue;
             };
             symbols.push(DocumentSymbol {
@@ -628,7 +1390,11 @@ fn project_document_symbols(
         }
     }
 
-    for function in &analysis.functions {
+    for function in analysis
+        .functions
+        .iter()
+        .filter(|function| !function.name.starts_with("__mcfc_"))
+    {
         let Some(range) = segment.merged_to_local_range(function.range) else {
             continue;
         };
@@ -647,6 +1413,51 @@ fn project_document_symbols(
         });
     }
 
+    symbols.extend(source_declaration_symbols(local_text));
+    symbols
+}
+
+#[allow(deprecated)]
+fn source_declaration_symbols(source: &str) -> Vec<DocumentSymbol> {
+    let mut symbols = Vec::new();
+    let mut offset = 0usize;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        let (keyword, kind) = if trimmed.starts_with("data player.") {
+            ("data player.", SymbolKind::FIELD)
+        } else if trimmed.starts_with("event ") {
+            ("event ", SymbolKind::EVENT)
+        } else if trimmed.starts_with("command ") {
+            ("command ", SymbolKind::FUNCTION)
+        } else if trimmed.starts_with("task ") {
+            ("task ", SymbolKind::FUNCTION)
+        } else {
+            offset += line.len() + 1;
+            continue;
+        };
+        let rest = &trimmed[keyword.len()..];
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect();
+        if !name.is_empty() {
+            let name_start = offset + indent + keyword.len();
+            let range = TextRange::new(offset + indent, offset + line.len());
+            let name_range = TextRange::new(name_start, name_start + name.len());
+            symbols.push(DocumentSymbol {
+                name,
+                detail: Some(keyword.trim().to_string()),
+                kind,
+                tags: None,
+                deprecated: None,
+                range: range_from_text_range(source, range),
+                selection_range: range_from_text_range(source, name_range),
+                children: None,
+            });
+        }
+        offset += line.len() + 1;
+    }
     symbols
 }
 
@@ -820,8 +1631,15 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
 
     let containing_function =
         function_at_offset(analysis, offset).map(|function| function.name.as_str());
-    let mut items = static_completion_items(false, containing_function);
-    items.extend(struct_type_items(analysis));
+    let mut items = if is_declaration_completion_position(source, offset) {
+        let mut items = static_completion_items(false, containing_function);
+        items.extend(struct_type_items(analysis));
+        items
+    } else {
+        let mut items = expression_completion_items();
+        items.extend(struct_type_items(analysis));
+        items
+    };
 
     for function in &analysis.functions {
         items.push(CompletionItem {
@@ -834,13 +1652,18 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
         });
     }
 
+    let syntactic_locals = syntactic_locals_at_offset(source, offset);
+    let visible_syntactic_names: HashSet<_> = syntactic_locals
+        .iter()
+        .map(|local| local.name.as_str())
+        .collect();
     let mut seen_locals = HashSet::new();
     if let Some(function_name) = containing_function {
-        for local in analysis
-            .locals
-            .iter()
-            .filter(|local| local.function == function_name)
-        {
+        for local in analysis.locals.iter().filter(|local| {
+            local.function == function_name
+                && (visible_syntactic_names.is_empty()
+                    || visible_syntactic_names.contains(local.name.as_str()))
+        }) {
             seen_locals.insert(local.name.clone());
             items.push(CompletionItem {
                 label: local.name.clone(),
@@ -851,7 +1674,7 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
         }
     }
 
-    for local in syntactic_locals_at_offset(source, offset) {
+    for local in syntactic_locals {
         if seen_locals.insert(local.name.clone()) {
             items.push(CompletionItem {
                 label: local.name,
@@ -863,6 +1686,31 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
     }
 
     items
+}
+
+fn is_declaration_completion_position(source: &str, offset: usize) -> bool {
+    let line_start = source[..offset.min(source.len())]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let before_cursor = &source[line_start..offset.min(source.len())];
+    // Declarations are only legal at top level. A partially typed keyword is
+    // still a declaration position, but indented code is always an expression.
+    !before_cursor.starts_with(char::is_whitespace)
+        && matches!(
+            before_cursor.trim_start().split_whitespace().next(),
+            None | Some("fn" | "struct" | "player_state" | "data" | "event" | "command" | "task")
+        )
+}
+
+fn expression_completion_items() -> Vec<CompletionItem> {
+    static_completion_items(false, None)
+        .into_iter()
+        .filter(|item| {
+            matches!(item.kind, Some(CompletionItemKind::FUNCTION))
+                && !item.label.starts_with("event ")
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1433,6 +2281,10 @@ fn static_completion_items(
         "and",
         "or",
         "not",
+        "data",
+        "event",
+        "command",
+        "task",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -1459,6 +2311,11 @@ fn static_completion_items(
         ("bossbar", "bossbar"),
         ("nbt", "nbt"),
         ("void", "void"),
+        ("agent_event", "agent_event"),
+        ("chat_event", "chat_event"),
+        ("inventory_click_event", "inventory_click_event"),
+        ("player_action_event", "player_action_event"),
+        ("block_break_event", "block_break_event"),
     ] {
         items.push(snippet_item(
             label,
@@ -1469,6 +2326,31 @@ fn static_completion_items(
     }
 
     for (label, detail, insert_text) in [
+        (
+            "data player...",
+            "Declare scoreboard-backed Bukkit-style player data",
+            "data player.${1:name}: ${2:int} = ${3:0}",
+        ),
+        (
+            "event player_join",
+            "Vanilla lifecycle event",
+            "event player_join:\n\t$0",
+        ),
+        (
+            "event chat",
+            "Typed JVM-agent event",
+            "event chat(event: chat_event):\n\t$0",
+        ),
+        (
+            "command ...",
+            "Register a trigger command and optional agent root command",
+            "command ${1:status}:\n\t$0",
+        ),
+        (
+            "task every_ticks",
+            "Repeat a task every positive number of ticks",
+            "task ${1:name} every_ticks(${2:20}):\n\t$0",
+        ),
         (
             "struct ...",
             "Define a named struct with typed fields",
@@ -1731,6 +2613,28 @@ fn static_completion_items(
         ));
     }
 
+    for event in VANILLA_EVENTS {
+        items.push(CompletionItem {
+            label: format!("event {}", event),
+            kind: Some(CompletionItemKind::EVENT),
+            detail: Some("MCFC event handler".to_string()),
+            insert_text: Some(format!("event {}:\n\t$0", event)),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..CompletionItem::default()
+        });
+    }
+    for event in AGENT_EVENTS {
+        let payload = agent_event_payload_type(event).unwrap_or("agent_event");
+        items.push(CompletionItem {
+            label: format!("event {}", event),
+            kind: Some(CompletionItemKind::EVENT),
+            detail: Some(format!("JVM-agent event ({})", payload)),
+            insert_text: Some(format!("event {}(event: {}):\n\t$0", event, payload)),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..CompletionItem::default()
+        });
+    }
+
     items
 }
 
@@ -1787,6 +2691,9 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
+    if let Some(items) = agent_event_member_completion_items(source, analysis, offset, chain) {
+        return items;
+    }
     if let Some(items) = text_member_completion_items(source, analysis, offset, chain) {
         return items;
     }
@@ -1826,7 +2733,9 @@ fn completion_items_for_receiver(
             | CompletionReceiver::Nbt,
         ) => Vec::new(),
         Some(CompletionReceiver::BlockRef) => block_ref_items(),
-        None => broad_member_items(),
+        // Guessing every member API for an unresolved receiver makes the
+        // completion list actively misleading while a document is incomplete.
+        None => Vec::new(),
     }
 }
 
@@ -1973,6 +2882,7 @@ fn nbt_schema_field_completion_items(
         .collect()
 }
 
+#[allow(dead_code)]
 fn broad_member_items() -> Vec<CompletionItem> {
     [
         array_method_items(),
@@ -3111,17 +4021,22 @@ fn struct_signature_from_fields(name: &str, fields: &[(String, Type)]) -> String
 
 fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLocal> {
     let prefix = &source[..offset.min(source.len())];
-    let mut locals = Vec::new();
+    let mut locals: Vec<(CompletionLocal, usize)> = Vec::new();
     let mut active = false;
     let mut depth = 0usize;
 
     for line in prefix.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("fn ") {
+        let indent = line.len() - trimmed.len();
+        if is_scope_header(trimmed) {
             locals.clear();
             active = true;
             depth = 1;
-            locals.extend(parse_params(trimmed));
+            locals.extend(
+                parse_params(trimmed)
+                    .into_iter()
+                    .map(|local| (local, indent)),
+            );
             continue;
         }
 
@@ -3129,27 +4044,43 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
             continue;
         }
 
+        // A binding disappears when the cursor dedents out of the block that
+        // introduced it. This intentionally remains tolerant of unfinished
+        // code: only a real non-empty line can close a lexical scope.
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            locals.retain(|(_, binding_indent)| *binding_indent <= indent);
+        }
+        let visible = locals
+            .iter()
+            .map(|(local, _)| local.clone())
+            .collect::<Vec<_>>();
+
         if let Some((name, value)) = parse_let_binding(trimmed) {
             let ty = infer_expr_type(value).or_else(|| {
-                locals
+                visible
                     .iter()
                     .rev()
                     .find(|local| local.name == value)
                     .and_then(|local| local.ty.clone())
             });
-            let nbt_origin = infer_nbt_completion_origin_from_value(value, &locals);
-            upsert_completion_local(
+            let nbt_origin = infer_nbt_completion_origin_from_value(value, &visible);
+            upsert_scoped_completion_local(
                 &mut locals,
                 CompletionLocal {
                     name,
                     ty,
                     nbt_origin,
                 },
+                indent,
             );
         } else if let Some(local) = parse_for_local(trimmed) {
-            upsert_completion_local(&mut locals, local);
+            upsert_scoped_completion_local(&mut locals, local, indent);
         } else if let Some(name) = assigned_local_name(trimmed) {
-            if let Some(local) = locals.iter_mut().rev().find(|local| local.name == name) {
+            if let Some((local, _)) = locals
+                .iter_mut()
+                .rev()
+                .find(|(local, _)| local.name == name)
+            {
                 local.nbt_origin = None;
             }
         }
@@ -3165,17 +4096,94 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
         }
     }
 
-    locals
+    let cursor_line_start = source[..offset.min(source.len())]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let cursor_indent =
+        source[cursor_line_start..].len() - source[cursor_line_start..].trim_start().len();
+    locals.retain(|(_, binding_indent)| *binding_indent <= cursor_indent);
+    locals.into_iter().map(|(local, _)| local).collect()
 }
 
-fn upsert_completion_local(locals: &mut Vec<CompletionLocal>, local: CompletionLocal) {
+fn agent_event_member_completion_items(
+    source: &str,
+    analysis: &AnalysisResult,
+    offset: usize,
+    chain: &[String],
+) -> Option<Vec<CompletionItem>> {
+    let (parameter, payload_type) = agent_event_context(source, offset)?;
+    if chain.first()? != &parameter {
+        return None;
+    }
+    let mut ty = Type::Struct(payload_type);
+    for segment in &chain[1..] {
+        ty = match ty {
+            Type::Struct(ref name) => analysis
+                .typed_program
+                .as_ref()?
+                .struct_defs
+                .get(name)?
+                .fields
+                .get(segment)?
+                .clone(),
+            Type::PlayerRef => return Some(player_entity_root_items()),
+            _ => return Some(Vec::new()),
+        };
+    }
+    match ty {
+        Type::Struct(name) => Some(struct_field_items(analysis, &name)),
+        Type::PlayerRef => Some(player_entity_root_items()),
+        _ => Some(Vec::new()),
+    }
+}
+
+/// Find the nearest typed agent-event header before the cursor. This works on
+/// original source positions, unlike the compiler lowering used for execution.
+fn agent_event_context(source: &str, offset: usize) -> Option<(String, String)> {
+    let prefix = &source[..offset.min(source.len())];
+    for line in prefix.lines().rev() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("event ") else {
+            continue;
+        };
+        let Some((kind, parameter)) = rest.split_once('(') else {
+            continue;
+        };
+        let Some(parameter) = parameter.strip_suffix("):") else {
+            continue;
+        };
+        let Some((name, ty)) = parameter.trim().split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let ty = ty.trim();
+        if agent_event_payload_type(kind.trim()) == Some(ty) {
+            return Some((name.to_string(), ty.to_string()));
+        }
+    }
+    None
+}
+
+fn upsert_scoped_completion_local(
+    locals: &mut Vec<(CompletionLocal, usize)>,
+    local: CompletionLocal,
+    indent: usize,
+) {
     if let Some(index) = locals
         .iter()
-        .position(|existing| existing.name == local.name)
+        .position(|(existing, _)| existing.name == local.name)
     {
         locals.remove(index);
     }
-    locals.push(local);
+    locals.push((local, indent));
+}
+
+fn is_scope_header(line: &str) -> bool {
+    line.starts_with("fn ")
+        || line.starts_with("event ")
+        || line.starts_with("command ")
+        || line.starts_with("task ")
 }
 
 fn parse_params(line: &str) -> Vec<CompletionLocal> {
@@ -3389,9 +4397,13 @@ fn opens_block(line: &str) -> bool {
         && line.contains(':')
 }
 
-fn diagnostic_to_lsp(source: &str, diagnostic: &McfcDiagnostic) -> LspDiagnostic {
+fn diagnostic_to_lsp(
+    source: &str,
+    diagnostic: &McfcDiagnostic,
+    source_map: &crate::analysis::SourceMap,
+) -> LspDiagnostic {
     LspDiagnostic {
-        range: range_from_text_range(source, diagnostic.span.range),
+        range: range_from_text_range(source, source_map.to_original_range(diagnostic.span.range)),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("mcfc".to_string()),
         message: diagnostic.message.clone(),
@@ -3472,6 +4484,7 @@ mod tests {
         ProjectConfig, build_project_snapshot, builtin_hover, completion_items, infer_expr_type,
         offset_to_position, position_to_offset, project_diagnostics_for_segment,
         project_document_symbols, range_from_text_range, resolve_project_config_for_path,
+        semantic_ranges,
     };
     use crate::analysis::analyze_source;
     use crate::diagnostics::TextRange;
@@ -3529,13 +4542,12 @@ fn main() -> void:
 "#;
         let analysis = analyze_source(source);
         let items = completion_items(source, &analysis, source.find("helper(1)").unwrap());
-        assert!(items.iter().any(|item| item.label == "fn"));
+        assert!(!items.iter().any(|item| item.label == "fn"));
         assert!(items.iter().any(|item| item.label == "helper"));
         assert!(items.iter().any(|item| item.label == "value"));
 
         let method_items = completion_items("value.", &analysis, 6);
-        assert!(method_items.iter().any(|item| item.label == "len"));
-        assert!(!method_items.iter().any(|item| item.label == "helper"));
+        assert!(method_items.is_empty());
     }
 
     #[test]
@@ -3556,6 +4568,65 @@ fn main(kind: string) -> void:
 
         let team_items = completion_items(source, &analysis, source.find("me.team.").unwrap() + 8);
         assert!(team_items.is_empty());
+    }
+
+    #[test]
+    fn completes_locals_and_members_inside_lowered_event_declarations() {
+        let source = r#"
+event player_death:
+    let player = single(selector("@s"))
+    player.
+"#;
+        let analysis = analyze_source(source);
+        let local_items = completion_items(source, &analysis, source.find("player.").unwrap());
+        assert!(local_items.iter().any(|item| item.label == "player"));
+        assert!(
+            !local_items
+                .iter()
+                .any(|item| item.label == "event player_join")
+        );
+
+        let member_items = completion_items(
+            source,
+            &analysis,
+            source.find("player.").unwrap() + "player.".len(),
+        );
+        assert!(member_items.iter().any(|item| item.label == "tellraw"));
+        assert!(!member_items.iter().any(|item| item.label == "push"));
+    }
+
+    #[test]
+    fn semantic_ranges_exclude_strings_comments_members_and_other_scopes() {
+        let source = r#"
+fn first() -> void:
+    let player = single(selector("@s"))
+    player.tellraw("player") # player
+fn second() -> void:
+    let player = single(selector("@p"))
+    player.tellraw("ok")
+"#;
+        let offset = source.find("player.tellraw").unwrap();
+        let ranges = semantic_ranges(source, offset, "player");
+        assert_eq!(
+            ranges.len(),
+            2,
+            "definition and use in the first scope only"
+        );
+    }
+
+    #[test]
+    fn completion_does_not_leak_dedented_branch_locals() {
+        let source = r#"
+fn main() -> void:
+    let outer = 1
+    if true:
+        let branch_only = 2
+    outer
+"#;
+        let analysis = analyze_source(source);
+        let items = completion_items(source, &analysis, source.rfind("outer").unwrap());
+        assert!(items.iter().any(|item| item.label == "outer"));
+        assert!(!items.iter().any(|item| item.label == "branch_only"));
     }
 
     #[test]
@@ -4507,6 +5578,7 @@ fn main() -> void:
             &ProjectConfig {
                 manifest_path: project.join("sample.mcfc.toml"),
                 source_root: src_dir.clone(),
+                host_modules: crate::types::HostModules::for_editor(),
             },
             &HashMap::new(),
         )
@@ -4556,6 +5628,7 @@ fn main() -> void:
             &ProjectConfig {
                 manifest_path: project.join("sample.mcfc.toml"),
                 source_root: src_dir.clone(),
+                host_modules: crate::types::HostModules::for_editor(),
             },
             &HashMap::new(),
         )
@@ -4590,6 +5663,7 @@ fn main() -> void:
             &ProjectConfig {
                 manifest_path: project.join("sample.mcfc.toml"),
                 source_root: src_dir,
+                host_modules: crate::types::HostModules::for_editor(),
             },
             &overrides,
         )

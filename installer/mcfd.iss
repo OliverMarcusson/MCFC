@@ -37,6 +37,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "{#MyAppSource}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyAppSource}\mcfd-agent.jar"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyAppSource}\mcfd-agent-attach.jar"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyAppSource}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]

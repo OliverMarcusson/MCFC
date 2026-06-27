@@ -44,10 +44,27 @@ longer part of the supported syntax.
 
 ## CLI Usage
 
+Create a new manifest-based project:
+
+```powershell
+cargo run -- new my-pack
+```
+
+The project creator asks whether to use plain MCFC, `mcfd`, or `mcfd` plus the
+optional `mcfd-agent`. For scripts, pass the helper explicitly:
+
+```powershell
+cargo run -- new plain-pack --helper none
+cargo run -- new my-pack --helper mcfd
+cargo run -- new agent-pack --helper mcfd-agent
+```
+
+Use `--force` only with an existing empty target directory.
+
 Build a single source file into a datapack directory:
 
 ```powershell
-cargo run -- build test.mcf --out build/pack --clean
+cargo run -- build npc.mcf --out build/pack --clean
 ```
 
 Build a project from a manifest or project directory:
@@ -65,6 +82,8 @@ cargo run -- watch path/to/project --out build/pack --clean
 Common flags:
 
 - `--namespace <name>`: override the generated datapack namespace
+- `--helper <none|mcfd|mcfd-agent>`: choose a helper runtime for `mcfc new`
+- `--force`: allow `mcfc new` to use an existing empty directory
 - `--emit-ast`: write the typed program dump to `debug/typed_program.txt`
 - `--emit-ir`: write the lowered IR dump to `debug/ir.txt`
 - `--no-optimize`: disable the conservative IR optimization pass
@@ -106,10 +125,19 @@ sign the executable and installer during packaging.
 - macro commands with `mcf`
 - non-blocking `async:` blocks with `sleep(...)` and `sleep_ticks(...)`
 - special `tick()` functions that compile to the datapack tick entrypoint
+- vanilla-first Bukkit-style `event`, `command`, `task`, and `data player.*`
+  declarations
 - public wrappers for no-argument `void` functions so they can be run with
   `/function <namespace>:<function_name>`
 
 See `LANGUAGE.md` for the full guide.
+
+The Bukkit-style declarations are deliberately vanilla-safe. `event player_join`
+and `event player_death` run through generated datapack detectors, `command`
+always has a `/trigger mcfcc_<name>` fallback, and `task` generates a tick or
+scheduled function. With the opt-in 26.1.2 JVM agent, typed event callbacks and
+real no-argument command roots are also available. See
+`examples/bukkit_api_conformance` for a runnable pack.
 
 ## Project Manifests
 
@@ -140,7 +168,7 @@ cargo build --bin mcfc-lsp
 Manual smoke test:
 
 ```powershell
-cargo run -- build test.mcf --out build/pack --clean
+cargo run -- build npc.mcf --out build/pack --clean
 ```
 
 VS Code extension commands are run from `editors/vscode-mcfc`:

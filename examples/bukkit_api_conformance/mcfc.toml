@@ -1,0 +1,17 @@
+namespace = "bukkit_api_conformance"
+source_dir = "src"
+asset_dir = "assets"
+out_dir = "dist"
+
+[helper]
+backend = "mcfd"
+
+[helper.agent]
+enabled = true
+
+[helper.capabilities]
+file = { root = "./host_data/files" }
+kv = { root = "./host_data/kv" }
+db = { path = "./host_data/conformance.sqlite" }
+time = true
+rand = true

@@ -4,20 +4,22 @@ VS Code syntax highlighting, editor basics, and language server support for
 MCFC `.mcf` files.
 
 This extension registers the `mcfc` language id, associates it with `.mcf`
-files, and provides a static TextMate grammar, basic editor behavior, and a
-Rust language server.
+files, and provides a TextMate grammar, snippets, project workflow commands,
+and a bundled Rust language server. `mcfc.toml` is also validated and completed
+without replacing your installed TOML syntax theme.
 
 ## Language Server
 
 The bundled `mcfc-lsp` server provides:
 
-- compiler-backed diagnostics
-- function document symbols
-- hovers for functions, locals, built-ins, and methods
-- completions for keywords, types, built-ins, functions, locals, and common
-  member-access surfaces
-- indentation-based block syntax with `:` headers, including `player_state`
-  declarations
+- compiler-backed diagnostics for normal source plus Bukkit-style `data`,
+  `event`, `command`, and `task` declarations
+- symbols, semantic highlighting, folding ranges, selection ranges, formatting,
+  document highlights, definitions, references, rename, and signature help
+- hovers and completions for functions, locals, types, methods, host modules,
+  payload structs, vanilla events, and the full experimental agent event catalog
+- manifest diagnostics, symbols, and completions for `mcfc.toml`, including
+  helper capabilities and agent cancellation policy
 
 That includes the builder-oriented gameplay surface, such as:
 
@@ -40,7 +42,22 @@ That includes the builder-oriented gameplay surface, such as:
 5. Open `syntaxes/test-cases/sample.mcf`, or an existing `.mcf` file from this
    repository.
 6. Confirm VS Code detects the file as `MCFC`, starts `mcfc-lsp`, highlights the
-   file, and reports diagnostics as you edit.
+   file, and reports diagnostics as you edit. Also open an `mcfc.toml` project
+   manifest and verify its MCFC completions.
+
+## Build, Watch, and Deploy
+
+The extension contributes these commands: **MCFC: Build Project**, **Watch
+Project**, **Stop Watch**, **Deploy Project**, **Build and Deploy**, and **Open
+Generated Datapack**. The packaged extension includes both `mcfc` and
+`mcfc-lsp`; set `mcfc.cli.path` only to override the bundled compiler.
+
+Deployment is deliberately opt-in. Set `mcfc.deploy.datapacksDirectory` to a
+Minecraft world's `datapacks` directory. `mcfc.deploy.packName` defaults to the
+manifest namespace. An optional `mcfc.deploy.reloadCommand` runs after copying
+and can use `${datapackPath}` and `${workspaceFolder}`. It is intentionally an
+external command: the extension never pretends it can inject `/reload` into a
+single-player game.
 
 ## Packaging
 
@@ -52,14 +69,14 @@ npm run package:linux-x64
 npm run package:win32-x64
 ```
 
-The packaging flow builds `mcfc-lsp` in release mode, clears any previously
-staged server payload, and copies exactly one native server binary into a
-platform-specific server directory before creating the VSIX.
+The packaging flow builds `mcfc` and `mcfc-lsp` in release mode, clears any
+previously staged payload, and copies exactly one matching CLI/server pair into
+a platform-specific server directory before creating the VSIX.
 
 Current packaged targets:
 
-- Linux x64: `server/linux-x64/mcfc-lsp`
-- Windows x64: `server/win32-x64/mcfc-lsp.exe`
+- Linux x64: `server/linux-x64/mcfc` and `server/linux-x64/mcfc-lsp`
+- Windows x64: `server/win32-x64/mcfc.exe` and `server/win32-x64/mcfc-lsp.exe`
 
 Important packaging/runtime expectations:
 

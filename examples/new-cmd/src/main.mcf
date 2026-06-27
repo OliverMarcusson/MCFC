@@ -1,0 +1,4 @@
+fn main() -> void:
+    let player = single(selector("@p"))
+    if exists(player):
+        player.tellraw("MCFC is live.")

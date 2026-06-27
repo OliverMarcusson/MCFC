@@ -1,0 +1,137 @@
+# Vanilla Bukkit-style API conformance pack.
+# Run `/function bukkit_api_conformance:run_all`, then use
+# `/trigger mcfcc_status` as a player to exercise the command bridge.
+
+data player.coins: int = 0
+data player.completed: bool = false
+data player.tests_passed: int = 0
+data player.arcade_score: int = 0
+data player.arcade_blocks: int = 0
+data player.arcade_hits: int = 0
+data player.arcade_events: int = 0
+data player.arcade_slot: int = 0
+
+event player_connect(event: agent_event):
+    let player = event.player
+    player.send_message("Hello")
+    player.data.coins = player.data.coins + 1
+    player.actionbar("MCFC Event Arcade ready — use /arcade")
+
+event block_break(event: block_break_event):
+    event.cancel()
+
+event player_death:
+    let player = single(selector("@s"))
+    player.send_message("you dead.")
+    player.data.arcade_hits = 0
+
+# Event Arcade: packet callbacks are quiet by default and instead change the
+# player's score, combo, hotbar state, or action bar.
+event chat(event: chat_event):
+    let player = single(selector("@s"))
+    if event.message == "spark":
+        player.data.arcade_score = player.data.arcade_score + 3
+        player.actionbar("Spark! +3 arcade score")
+        player.playsound("minecraft:entity.experience_orb.pickup", "master")
+
+event inventory_click(event: inventory_click_event):
+    let player = single(selector("@s"))
+    player.data.arcade_slot = event.slot
+    player.data.arcade_events = player.data.arcade_events + 1
+
+event player_action(event: player_action_event):
+    let player = single(selector("@s"))
+    player.data.arcade_events = player.data.arcade_events + 1
+
+event player_interact_block(event: player_interact_block_event):
+    let player = single(selector("@s"))
+    if event.hand == "MAIN_HAND":
+        player.data.arcade_events = player.data.arcade_events + 1
+        player.actionbar("Touched $(event.face): $(event.x), $(event.y), $(event.z)")
+
+event entity_interact(event: entity_interact_event):
+    let player = single(selector("@s"))
+    if event.secondary:
+        player.data.arcade_score = player.data.arcade_score + 1
+        player.actionbar("Sneak-interact bonus +1")
+
+event entity_attack(event: entity_attack_event):
+    let player = single(selector("@s"))
+    player.data.arcade_hits = player.data.arcade_hits + 1
+    player.data.arcade_score = player.data.arcade_score + 2
+    if player.data.arcade_hits >= 3:
+        player.data.arcade_hits = 0
+        mc 'give @s minecraft:cookie 1'
+        player.actionbar("3-hit combo! Cookie reward")
+        player.playsound("minecraft:entity.arrow.hit_player", "master")
+
+event item_held_change(event: item_held_change_event):
+    let player = single(selector("@s"))
+    player.data.arcade_slot = event.slot
+
+event inventory_close(event: inventory_close_event):
+    let player = single(selector("@s"))
+    player.data.arcade_events = player.data.arcade_events + 1
+
+command status:
+    let player = single(selector("@s"))
+    player.send_message("Arcade score=$(player.data.arcade_score), blocks=$(player.data.arcade_blocks), hits=$(player.data.arcade_hits), slot=$(player.data.arcade_slot), events=$(player.data.arcade_events)")
+
+command arcade:
+    let player = single(selector("@s"))
+    player.data.arcade_score = 0
+    player.data.arcade_blocks = 0
+    player.data.arcade_hits = 0
+    player.data.arcade_events = 0
+    player.actionbar("Event Arcade started: break blocks, attack, sneak-interact, or say spark")
+    player.playsound("minecraft:block.note_block.pling", "master")
+
+task delayed_notice after_ticks(40):
+    debug("bukkit_api_conformance delayed task fired")
+
+fn run_all() -> void:
+    let player = single(selector("@p"))
+    if exists(player):
+        player.data.tests_passed = 0
+        player.data.coins = 7
+        player.data.completed = true
+        player.data.tests_passed = player.data.tests_passed + 1
+        player.send_message("data API: coins=7, completed=true")
+        player.actionbar("MCFC Bukkit-style API conformance running")
+        player.playsound("minecraft:entity.experience_orb.pickup", "master")
+
+        let bar = bossbar("bukkit_api_conformance:status", "MCFC API conformance")
+        bar.max = 4
+        bar.value = 4
+        bar.players = player
+        bar.visible = true
+        player.data.tests_passed = player.data.tests_passed + 1
+
+        at(player):
+            block("~ ~-1 ~").particle("minecraft:happy_villager", 8, player)
+        player.data.tests_passed = player.data.tests_passed + 1
+
+        let now = time.now()
+        let roll = rand.int(1, 6)
+        if now.ok and roll.ok:
+            player.send_message("mcfd services: unix=$(now.unix), roll=$(roll.value)")
+            player.data.tests_passed = player.data.tests_passed + 1
+
+        let saved = kv.set("conformance", "pass")
+        let stored = kv.get("conformance")
+        if saved.ok and stored.ok:
+            player.send_message("mcfd KV: $(stored.value)")
+            player.data.tests_passed = player.data.tests_passed + 1
+
+        player.send_message("Use /trigger mcfcc_status for the command test, then chat, click an inventory slot, and break a block for agent callbacks.")
+
+fn report() -> void:
+    let player = single(selector("@p"))
+    if exists(player):
+        player.send_message("Conformance pass count=$(player.data.tests_passed); mcfd checks add two when available.")
+
+fn cleanup() -> void:
+    let player = single(selector("@p"))
+    if exists(player):
+        player.stopsound("master", "minecraft:entity.experience_orb.pickup")
+        player.send_message("Conformance cleanup complete")

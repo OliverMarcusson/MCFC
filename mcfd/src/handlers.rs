@@ -579,7 +579,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Capabilities, Config, HttpCaps};
+    use crate::config::{AgentConfig, Capabilities, Config, HttpCaps};
     use std::path::PathBuf;
 
     fn config_with(capabilities: Capabilities) -> Config {
@@ -591,6 +591,7 @@ mod tests {
             datapack: PathBuf::from("."),
             result_ttl_secs: 10,
             capabilities,
+            agent: AgentConfig::default(),
             secrets: std::collections::HashMap::new(),
         }
     }

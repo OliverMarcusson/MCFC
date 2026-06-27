@@ -2015,6 +2015,153 @@ fn main() -> void:
 }
 
 #[test]
+fn cli_new_creates_plain_project_that_builds() {
+    let base = temp_path();
+    let project = base.join("plain_pack");
+    fs::create_dir_all(&base).unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "new".into(),
+        project.display().to_string(),
+        "--helper".into(),
+        "none".into(),
+    ]);
+
+    assert_eq!(status, 0);
+
+    let manifest = fs::read_to_string(project.join("mcfc.toml")).unwrap();
+    assert!(manifest.contains("namespace = \"plain_pack\""));
+    assert!(!manifest.contains("[helper]"));
+    assert!(!manifest.contains("[helper.capabilities]"));
+
+    let source = fs::read_to_string(project.join("src").join("main.mcf")).unwrap();
+    assert!(source.contains("MCFC is live."));
+    assert!(!source.contains("time.now()"));
+    assert!(!source.contains("rand.int"));
+
+    let gitignore = fs::read_to_string(project.join(".gitignore")).unwrap();
+    assert_eq!(gitignore, "dist/\n");
+
+    let build_status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        project.display().to_string(),
+        "--clean".into(),
+    ]);
+
+    assert_eq!(build_status, 0);
+    assert!(project.join("dist").join("pack.mcmeta").exists());
+    assert!(!project.join("dist").join("mcfd.pack.toml").exists());
+}
+
+#[test]
+fn cli_new_creates_mcfd_project_that_builds() {
+    let base = temp_path();
+    let project = base.join("demo_pack");
+    fs::create_dir_all(&base).unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "new".into(),
+        project.display().to_string(),
+        "--helper".into(),
+        "mcfd".into(),
+    ]);
+
+    assert_eq!(status, 0);
+    assert!(project.join("mcfc.toml").exists());
+    assert!(project.join("src").join("main.mcf").exists());
+    assert!(project.join("assets").join(".gitkeep").exists());
+    assert!(project.join("README.md").exists());
+    assert!(project.join(".gitignore").exists());
+
+    let manifest = fs::read_to_string(project.join("mcfc.toml")).unwrap();
+    assert!(manifest.contains("namespace = \"demo_pack\""));
+    assert!(manifest.contains("[helper]\nbackend = \"mcfd\""));
+    assert!(manifest.contains("time = true"));
+    assert!(manifest.contains("rand = true"));
+    assert!(!manifest.contains("[helper.agent]"));
+
+    let source = fs::read_to_string(project.join("src").join("main.mcf")).unwrap();
+    assert!(source.contains("time.now()"));
+    assert!(source.contains("rand.int(1, 6)"));
+
+    let build_status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        project.display().to_string(),
+        "--clean".into(),
+    ]);
+
+    assert_eq!(build_status, 0);
+    assert!(project.join("dist").join("pack.mcmeta").exists());
+}
+
+#[test]
+fn cli_new_creates_mcfd_agent_project_that_builds() {
+    let base = temp_path();
+    let project = base.join("Agent Pack");
+    fs::create_dir_all(&base).unwrap();
+
+    let status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "new".into(),
+        project.display().to_string(),
+        "--helper".into(),
+        "mcfd-agent".into(),
+    ]);
+
+    assert_eq!(status, 0);
+
+    let manifest = fs::read_to_string(project.join("mcfc.toml")).unwrap();
+    assert!(manifest.contains("namespace = \"agent_pack\""));
+    assert!(manifest.contains("[helper]\nbackend = \"mcfd\""));
+    assert!(manifest.contains("[helper.agent]\nenabled = true"));
+
+    let source = fs::read_to_string(project.join("src").join("main.mcf")).unwrap();
+    assert!(source.contains("command status:"));
+    assert!(source.contains("event chat(event: chat_event):"));
+
+    let build_status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "build".into(),
+        project.display().to_string(),
+        "--clean".into(),
+    ]);
+
+    assert_eq!(build_status, 0);
+    assert!(project.join("dist").join("mcfd.pack.toml").exists());
+}
+
+#[test]
+fn cli_new_rejects_invalid_or_existing_targets() {
+    let base = temp_path();
+    let existing = base.join("existing");
+    fs::create_dir_all(&existing).unwrap();
+
+    let existing_status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "new".into(),
+        existing.display().to_string(),
+        "--helper".into(),
+        "mcfd".into(),
+    ]);
+
+    assert_eq!(existing_status, 1);
+
+    let invalid_status = mcfc::cli::run(vec![
+        "mcfc".into(),
+        "new".into(),
+        base.join("Æøå").display().to_string(),
+        "--helper".into(),
+        "mcfd".into(),
+    ]);
+
+    assert_eq!(invalid_status, 1);
+}
+
+#[test]
 fn compiles_multi_file_project_with_assets_and_exports() {
     let base = temp_path();
     let project = base.join("sample_project");
@@ -2202,10 +2349,16 @@ fn temp_path() -> PathBuf {
 }
 
 fn mcfd_http_options() -> CompileOptions {
-    use mcfc::project::{CapabilityConfig, HelperBackend, HelperConfig, HttpCaps};
+    use mcfc::project::{AgentConfig, CapabilityConfig, HelperBackend, HelperConfig, HttpCaps};
     CompileOptions {
         helper: Some(HelperConfig {
             backend: HelperBackend::Mcfd,
+            agent: Some(AgentConfig {
+                enabled: true,
+                events: Vec::new(),
+                commands: Vec::new(),
+                cancel_events: Vec::new(),
+            }),
             capabilities: CapabilityConfig {
                 http: Some(HttpCaps {
                     allow_domains: vec!["api.example.com".to_string()],
@@ -2238,6 +2391,7 @@ fn main() -> void:
     assert!(!descriptor.contains("transport ="));
     assert!(descriptor.contains("pack_id = \"mcfc\""));
     assert!(descriptor.contains("bearer_token_env = \"MCFC_TEST_BEARER_TOKEN\""));
+    assert!(descriptor.contains("[agent]\nenabled = true"));
     // The mcfd transport registers a reload pump on the tick tag.
     assert!(files.keys().any(|key| key.ends_with("rpc/pump.mcfunction")));
     let tick = files
@@ -2251,7 +2405,11 @@ fn main() -> void:
         .expect("entry function");
     assert!(entry.contains("mcfc:rpc sites."));
     assert!(entry.contains("scoreboard players add rpc_active mcfc 1"));
-    assert!(files.keys().any(|key| key.contains("rpc") && key.contains("_check")));
+    assert!(
+        files
+            .keys()
+            .any(|key| key.contains("rpc") && key.contains("_check"))
+    );
 
     // Requests are staged in storage, then emitted through a silent, off-map pig
     // death. A function macro writes one complete SNBT compound into its name.
@@ -2265,15 +2423,25 @@ fn main() -> void:
     assert!(emitter.contains("summon minecraft:pig ~ ~1000 ~"));
     assert!(emitter.contains("Tags:[\"mcfc_rpc_emit\"]"));
     assert!(emitter.contains("rpc/emit_name with storage mcfc:rpc emit"));
-    assert!(files
-        .get("data/mcfc/function/rpc/emit_name.mcfunction")
-        .is_some_and(|body| body.contains("CustomName set value '[mcfc_rpc] $(req)'")));
+    assert!(
+        files
+            .get("data/mcfc/function/rpc/emit_name.mcfunction")
+            .is_some_and(|body| body.contains("CustomName set value '[mcfc_rpc] $(req)'"))
+    );
     assert!(emitter.contains("damage @e[type=minecraft:pig,tag=mcfc_rpc_emit"));
     assert!(!emitter.contains("data get storage"));
     assert!(!emitter.contains("log_admin_commands"));
     assert!(!emitter.contains("$say"));
-    assert!(!files.keys().any(|key| key.ends_with("rpc/emit_storage.mcfunction")));
-    assert!(!files.keys().any(|key| key.ends_with("rpc/emit_marker.mcfunction")));
+    assert!(
+        !files
+            .keys()
+            .any(|key| key.ends_with("rpc/emit_storage.mcfunction"))
+    );
+    assert!(
+        !files
+            .keys()
+            .any(|key| key.ends_with("rpc/emit_marker.mcfunction"))
+    );
 }
 
 #[test]
@@ -2284,9 +2452,11 @@ fn main() -> void:
 "#;
     let result = compile_source(source, &mcfd_http_options()).expect("host call should compile");
     let files = &result.artifacts.files;
-    assert!(!files
-        .values()
-        .any(|body| body.contains("gamerule minecraft:")));
+    assert!(
+        !files
+            .values()
+            .any(|body| body.contains("gamerule minecraft:"))
+    );
 }
 
 #[test]
@@ -2301,8 +2471,15 @@ fn quote() -> void:
         message.color = "aqua"
         player.tellraw(message)
 "#;
-    let result = compile_source(source, &mcfd_http_options()).expect("JSON strings host call should compile");
-    let generated = result.artifacts.files.values().cloned().collect::<Vec<_>>().join("\n");
+    let result = compile_source(source, &mcfd_http_options())
+        .expect("JSON strings host call should compile");
+    let generated = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(generated.contains("get_json_strings"));
     assert!(generated.contains("tellraw $(selector) $(message)"));
 }
@@ -2349,7 +2526,10 @@ fn main() -> void:
 "#;
     // No helper configured, so the http module is not enabled.
     let result = compile_source(source, &CompileOptions::default());
-    assert!(result.is_err(), "unconfigured host module should be rejected");
+    assert!(
+        result.is_err(),
+        "unconfigured host module should be rejected"
+    );
 }
 
 #[test]

@@ -35,8 +35,36 @@ pub struct ProjectExport {
 pub struct HelperConfig {
     #[serde(default)]
     pub backend: HelperBackend,
+    /// Optional best-effort JVM agent request. The generated datapack remains
+    /// valid without an attached agent; the request only enables future
+    /// server-hook capabilities for the mcfd service.
+    #[serde(default)]
+    pub agent: Option<AgentConfig>,
     #[serde(default)]
     pub capabilities: CapabilityConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct AgentConfig {
+    /// Ask mcfd to attempt a non-invasive dynamic attachment when it discovers
+    /// this pack. Attachment failure is reported by mcfd and never stops the
+    /// vanilla datapack from loading.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optional extra 26.1.2 event observations to request even when no typed
+    /// MCFC handler subscribes to them. Handler declarations are added to the
+    /// generated descriptor automatically.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Optional extra root command names to reserve through the agent. Command
+    /// declarations are added to the generated descriptor automatically.
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// Server operations the experimental agent should cancel before vanilla
+    /// handles them. Values are `chat`, `inventory_click`, `player_action`,
+    /// and `block_break` for the current 26.1.2 adapter.
+    #[serde(default)]
+    pub cancel_events: Vec<String>,
 }
 
 /// Which companion helper performs the external work. They share the `mcfc:rpc`

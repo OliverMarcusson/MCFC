@@ -14,10 +14,12 @@ const env = {
   MCFC_VSCODE_TARGET: target,
 };
 
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+// Invoking a .cmd shim through execFileSync is unreliable under newer Node on
+// Windows. Run VSCE's JavaScript entry point with the active Node runtime.
+const vsce = path.join(extensionRoot, "node_modules", "@vscode", "vsce", "vsce");
 execFileSync(
-  npx,
-  ["vsce", "package", "--target", target, "--ignore-other-target-folders"],
+  process.execPath,
+  [vsce, "package", "--target", target, "--ignore-other-target-folders"],
   {
     cwd: extensionRoot,
     stdio: "inherit",

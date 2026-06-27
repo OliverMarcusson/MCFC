@@ -191,6 +191,16 @@
           }
         },
         {
+          "name": "meta.declaration.mcfc",
+          "match": "\\b(event|command|task)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.declaration.mcfc" }, "2": { "name": "entity.name.function.mcfc" } }
+        },
+        {
+          "name": "meta.declaration.data.mcfc",
+          "match": "\\b(data)\\s+(player)\\.([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.declaration.mcfc" }, "2": { "name": "support.type.mcfc" }, "3": { "name": "variable.other.member.mcfc" } }
+        },
+        {
           "name": "entity.name.function.call.mcfc",
           "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
         }
@@ -200,7 +210,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|async|end)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|data|event|command|task|async|end)\\b"
         },
         {
           "name": "storage.type.function.mcfc",
@@ -224,7 +234,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void)\\b"
+          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void|agent_event|chat_event|inventory_click_event|player_action_event|block_break_event|player_interact_block_event|player_interact_item_event|entity_interact_event|entity_attack_event|item_held_change_event|inventory_close_event|player_swing_event|player_action_toggle_event|item_rename_event|trade_select_event|sign_change_event|recipe_place_event|game_mode_request_event)\\b"
         }
       ]
     },
@@ -232,11 +242,11 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|bool|string)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|push|pop|remove_at|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:len|push|pop|remove_at|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|send_message|send_title|send_actionbar|play_sound|stop_sound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
         },
         {
           "name": "support.variable.member.mcfc",

@@ -1,0 +1,10 @@
+{
+  "Function": { "prefix": "fn", "body": ["fn ${1:name}(${2}) -> ${3:void}:", "    ${0}"], "description": "MCFC function" },
+  "Player data": { "prefix": "data-player", "body": "data player.${1:name}: ${2:int} = ${3:0}", "description": "Scoreboard-backed player data" },
+  "Vanilla event": { "prefix": "event", "body": ["event ${1:player_join}:", "    ${0}"], "description": "Vanilla lifecycle event" },
+  "Agent event": { "prefix": "agent-event", "body": ["event ${1:chat}(event: ${2:chat_event}):", "    ${0}"], "description": "Typed JVM-agent event" },
+  "Command": { "prefix": "command", "body": ["command ${1:status}:", "    ${0}"], "description": "MCFC command" },
+  "Repeating task": { "prefix": "task", "body": ["task ${1:name} every_ticks(${2:20}):", "    ${0}"], "description": "Repeating task" },
+  "Async": { "prefix": "async", "body": ["async:", "    ${0}"], "description": "Async block" },
+  "Host call": { "prefix": "host", "body": "${1:http}.${2:get}(${0})", "description": "Capability-gated host call" }
+}

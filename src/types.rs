@@ -21,6 +21,15 @@ pub struct HostModules {
 }
 
 impl HostModules {
+    /// Editor analysis needs compiler-provided response and agent payload types
+    /// before a manifest is available. `mcfd` registers those structs while
+    /// leaving the other host capabilities gated.
+    pub fn for_editor() -> Self {
+        let mut enabled = HashSet::new();
+        enabled.insert("mcfd".to_string());
+        HostModules { enabled }
+    }
+
     pub fn from_helper(helper: Option<&crate::project::HelperConfig>) -> Self {
         let mut enabled: HashSet<String> = helper
             .map(|config| {
@@ -110,6 +119,190 @@ pub fn host_call_signature(module: &str, function: &str) -> Option<HostCallSig> 
 /// so field access (`response.status`) type-checks. Every response carries `ok`.
 fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> {
     vec![
+        // JVM-agent event payloads. These are compiler-provided structs rather
+        // than user declarations so every agent-enabled pack shares one stable
+        // 26.1.2 wire contract.
+        (
+            "agent_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("player_name", Type::String),
+                ("source", Type::String),
+                ("payload", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "command_sender",
+            vec![
+                ("kind", Type::String),
+                ("name", Type::String),
+                ("permission_level", Type::Int),
+                ("player", Type::PlayerRef),
+            ],
+        ),
+        (
+            "chat_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("message", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "inventory_click_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("container_id", Type::Int),
+                ("state_id", Type::Int),
+                ("slot", Type::Int),
+                ("button", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "player_action_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("action", Type::String),
+                ("face", Type::String),
+                ("x", Type::Int),
+                ("y", Type::Int),
+                ("z", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "block_break_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("x", Type::Int),
+                ("y", Type::Int),
+                ("z", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "player_interact_block_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("hand", Type::String),
+                ("face", Type::String),
+                ("x", Type::Int),
+                ("y", Type::Int),
+                ("z", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "player_interact_item_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("hand", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "entity_interact_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("target_id", Type::Int),
+                ("hand", Type::String),
+                ("secondary", Type::Bool),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "entity_attack_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("target_id", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "item_held_change_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("slot", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "inventory_close_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("container_id", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "player_swing_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("hand", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "player_action_toggle_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("action", Type::String),
+                ("entity_id", Type::Int),
+                ("data", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "item_rename_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("name", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "trade_select_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("trade_index", Type::Int),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "sign_change_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("x", Type::Int),
+                ("y", Type::Int),
+                ("z", Type::Int),
+                ("front", Type::Bool),
+                ("line_1", Type::String),
+                ("line_2", Type::String),
+                ("line_3", Type::String),
+                ("line_4", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "recipe_place_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("container_id", Type::Int),
+                ("recipe", Type::String),
+                ("use_max_items", Type::Bool),
+                ("cancelled", Type::Bool),
+            ],
+        ),
+        (
+            "game_mode_request_event",
+            vec![
+                ("player", Type::PlayerRef),
+                ("mode", Type::String),
+                ("cancelled", Type::Bool),
+            ],
+        ),
         (
             "HttpResponse",
             vec![
@@ -132,7 +325,10 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
             "FileResult",
             vec![("ok", Type::Bool), ("content", Type::String)],
         ),
-        ("KvResult", vec![("ok", Type::Bool), ("value", Type::String)]),
+        (
+            "KvResult",
+            vec![("ok", Type::Bool), ("value", Type::String)],
+        ),
         ("OpResult", vec![("ok", Type::Bool)]),
         (
             "DbResult",
@@ -394,10 +590,7 @@ pub enum CastKind {
     String,
 }
 
-pub fn type_check(
-    program: &Program,
-    host: &HostModules,
-) -> Result<TypedProgram, Diagnostics> {
+pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
     let mut struct_defs = BTreeMap::new();
     let mut signatures = BTreeMap::new();
@@ -1604,10 +1797,18 @@ fn type_check_expr(
                 diagnostics,
                 expr.span.clone(),
             );
+            let ref_kind = if path.ty == Type::PlayerRef {
+                RefKind::Player
+            } else {
+                RefKind::Unknown
+            };
             TypedExpr {
                 ty: path.ty.clone(),
                 kind: TypedExprKind::Path(path),
-                ref_kind: RefKind::Unknown,
+                // Struct-backed event payloads can expose a known player ref
+                // (for example `event.player`). Preserve that fact through a
+                // path expression so player state/inventory APIs remain valid.
+                ref_kind,
             }
         }
         ExprKind::Variable(name) => match env.get(name) {
@@ -1989,7 +2190,10 @@ fn type_check_path(
                 }
             }
             (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
-                if matches!(field.as_str(), "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet") =>
+                if matches!(
+                    field.as_str(),
+                    "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet"
+                ) =>
             {
                 let uses_item_slot_surface = match next_segment {
                     None => true,
@@ -3227,6 +3431,16 @@ fn type_check_method_call(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
+    // Bukkit-inspired spellings are source aliases; lowering keeps the
+    // established MCFC operations so generated datapacks remain unchanged.
+    let method = match method {
+        "send_message" => "tellraw",
+        "send_title" => "title",
+        "send_actionbar" => "actionbar",
+        "play_sound" => "playsound",
+        "stop_sound" => "stopsound",
+        other => other,
+    };
     let receiver_expr = receiver;
     let receiver = type_check_expr(
         receiver_expr,
@@ -3247,6 +3461,17 @@ fn type_check_method_call(
         diagnostics,
     );
     match method {
+        "cancel" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            let is_agent_event = matches!(&receiver.ty, Type::Struct(name) if name == "agent_event" || name.ends_with("_event"));
+            if !is_agent_event {
+                diagnostics.push(Diagnostic::new(
+                    "cancel() is only available on a typed agent event payload",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
         "as_nbt" => {
             expect_arity(method, &args, 0, expr, diagnostics);
             if !matches!(
@@ -5376,6 +5601,14 @@ fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, spa
 
 fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span) -> String {
     if is_plain_player_name_target(value) {
+        return value.to_string();
+    }
+    // `@s` is intrinsically a single target.  Appending `limit=1` to it is
+    // redundant and, on the target Minecraft version, prevents the selector
+    // produced inside generated event/command execution contexts from being
+    // resolved reliably.
+    let trimmed = value.trim();
+    if trimmed == "@s" || trimmed.starts_with("@s[") {
         return value.to_string();
     }
     let lower = value.to_ascii_lowercase();

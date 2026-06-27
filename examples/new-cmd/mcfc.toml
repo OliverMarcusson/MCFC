@@ -1,0 +1,4 @@
+namespace = "new_cmd"
+source_dir = "src"
+asset_dir = "assets"
+out_dir = "dist"

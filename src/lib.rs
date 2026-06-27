@@ -5,6 +5,7 @@ pub mod cli;
 pub mod compiler;
 pub mod diagnostics;
 pub mod ir;
+pub mod language_catalog;
 pub mod lexer;
 pub mod lsp;
 pub mod minecraft_ids;

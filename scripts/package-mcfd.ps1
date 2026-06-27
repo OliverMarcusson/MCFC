@@ -13,6 +13,9 @@ $releaseDir = Join-Path $repoRoot 'target\release'
 $distDir = Join-Path $repoRoot 'dist'
 $stagingDir = Join-Path $repoRoot 'target\package\mcfd'
 $exePath = Join-Path $releaseDir 'mcfd.exe'
+$agentBuildScript = Join-Path $repoRoot 'mcfd-agent\build.ps1'
+$agentJar = Join-Path $repoRoot 'mcfd-agent\dist\mcfd-agent.jar'
+$agentAttachJar = Join-Path $repoRoot 'mcfd-agent\dist\mcfd-agent-attach.jar'
 
 function Get-McfdVersion {
     $match = Select-String -Path $manifestPath -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
@@ -67,14 +70,21 @@ if ($DryRun) {
 if (-not $SkipBuild) {
     & cargo build -p mcfd --release --manifest-path (Join-Path $repoRoot 'Cargo.toml')
     if ($LASTEXITCODE -ne 0) { throw 'cargo build -p mcfd --release failed.' }
+    & $agentBuildScript
+    if ($LASTEXITCODE -ne 0) { throw 'mcfd-agent build failed.' }
 }
 if (-not (Test-Path -LiteralPath $exePath)) { throw "mcfd release binary not found at $exePath" }
+if (-not (Test-Path -LiteralPath $agentJar) -or -not (Test-Path -LiteralPath $agentAttachJar)) {
+    throw 'mcfd agent JARs are missing; run mcfd-agent\build.ps1 or omit -SkipBuild.'
+}
 
 $iscc = Find-Iscc
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 Invoke-OptionalSigning $exePath
 Copy-Item -Force -LiteralPath $exePath -Destination (Join-Path $stagingDir 'mcfd.exe')
+Copy-Item -Force -LiteralPath $agentJar -Destination (Join-Path $stagingDir 'mcfd-agent.jar')
+Copy-Item -Force -LiteralPath $agentAttachJar -Destination (Join-Path $stagingDir 'mcfd-agent-attach.jar')
 Copy-Item -Force -LiteralPath (Join-Path $repoRoot 'installer\README.txt') -Destination (Join-Path $stagingDir 'README.txt')
 
 & $iscc "/DMyAppVersion=$version" "/DMyAppSource=$stagingDir" $installerPath

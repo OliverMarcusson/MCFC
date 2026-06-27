@@ -1,5 +1,21 @@
 # MCFC syntax highlighting fixture
 
+data player.coins: int = 0
+
+event player_join:
+    let player = single(selector("@s"))
+    player.send_message("Welcome to MCFC")
+
+event chat(event: chat_event):
+    event.player.send_actionbar("chat: $(event.message)")
+
+command status:
+    let player = single(selector("@s"))
+    player.send_message("coins=$(player.data.coins)")
+
+task heartbeat every_ticks(20):
+    debug("heartbeat")
+
 fn classify(value: int) -> string
     if value == 0:
         return 'zero'

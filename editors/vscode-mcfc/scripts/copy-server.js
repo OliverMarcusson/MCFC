@@ -9,12 +9,17 @@ const SUPPORTED_TARGETS = {
   "linux-x64": {
     dir: "linux-x64",
     binary: "mcfc-lsp",
+    cliBinary: "mcfc",
     cargoTarget: "x86_64-unknown-linux-gnu",
   },
   "win32-x64": {
     dir: "win32-x64",
     binary: "mcfc-lsp.exe",
-    cargoTarget: "x86_64-pc-windows-gnu",
+    cliBinary: "mcfc.exe",
+    // The Windows installer and normal rustup setup use the MSVC toolchain.
+    // Building the VSIX with GNU here made local packaging fail unless users
+    // installed an unrelated cross target and linker.
+    cargoTarget: "x86_64-pc-windows-msvc",
   },
 };
 
@@ -56,10 +61,11 @@ const target = packageTarget();
 const serverRoot = path.join(extensionRoot, "server");
 const destinationDir = path.join(serverRoot, target.dir);
 const destination = path.join(destinationDir, target.binary);
+const cliDestination = path.join(destinationDir, target.cliBinary);
 
 execFileSync(
   "cargo",
-  ["build", "--bin", "mcfc-lsp", "--release", "--target", target.cargoTarget],
+  ["build", "--bin", "mcfc-lsp", "--bin", "mcfc", "--release", "--target", target.cargoTarget],
   {
     cwd: repoRoot,
     stdio: "inherit",
@@ -73,15 +79,18 @@ const releaseServer = path.join(
   "release",
   target.binary,
 );
-if (!fs.existsSync(releaseServer)) {
-  throw new Error(`Expected built server at ${releaseServer}`);
+const releaseCli = path.join(repoRoot, "target", target.cargoTarget, "release", target.cliBinary);
+if (!fs.existsSync(releaseServer) || !fs.existsSync(releaseCli)) {
+  throw new Error(`Expected built MCFC binaries at ${releaseServer} and ${releaseCli}`);
 }
 
 fs.rmSync(serverRoot, { recursive: true, force: true });
 fs.mkdirSync(destinationDir, { recursive: true });
 fs.copyFileSync(releaseServer, destination);
+fs.copyFileSync(releaseCli, cliDestination);
 if (process.platform !== "win32") {
   fs.chmodSync(destination, 0o755);
+  fs.chmodSync(cliDestination, 0o755);
 }
 console.log(`Copied ${releaseServer} to ${destination}`);
 console.log(`Prepared a platform-specific VSIX payload for ${target.dir}.`);

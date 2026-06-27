@@ -11,6 +11,95 @@ pub struct AnalysisResult {
     pub typed_program: Option<TypedProgram>,
     pub functions: Vec<FunctionInfo>,
     pub locals: Vec<LocalInfo>,
+    /// Maps parser/type-checker spans back to the text the editor displays.
+    pub source_map: SourceMap,
+}
+
+/// A byte-offset map between public MCFC source and the internal, lowered
+/// syntax consumed by the parser.  All LSP-facing spans must use original
+/// offsets; only the parser and type checker see normalized offsets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMap {
+    original_to_normalized: Vec<usize>,
+    normalized_to_original: Vec<usize>,
+}
+
+impl SourceMap {
+    pub fn identity(source: &str) -> Self {
+        let offsets: Vec<usize> = (0..=source.len()).collect();
+        Self {
+            original_to_normalized: offsets.clone(),
+            normalized_to_original: offsets,
+        }
+    }
+
+    pub fn from_sources(original: &str, normalized: &str) -> Self {
+        if original == normalized {
+            return Self::identity(original);
+        }
+        Self {
+            original_to_normalized: build_offset_map(original, normalized),
+            normalized_to_original: build_offset_map(normalized, original),
+        }
+    }
+
+    pub fn to_original_offset(&self, offset: usize) -> usize {
+        self.normalized_to_original[offset.min(self.normalized_to_original.len().saturating_sub(1))]
+    }
+
+    pub fn to_original_range(&self, range: TextRange) -> TextRange {
+        TextRange::new(
+            self.to_original_offset(range.start),
+            self.to_original_offset(range.end),
+        )
+    }
+}
+
+/// Align byte offsets using common prefix/suffix anchors. Lowering only
+/// changes individual declaration lines, so this keeps editor positions exact
+/// for bodies and identifiers without exposing generated function names.
+fn build_offset_map(from: &str, to: &str) -> Vec<usize> {
+    let mut map = vec![0; from.len() + 1];
+    let mut from_base = 0usize;
+    let mut to_base = 0usize;
+    for (from_line, to_line) in from.split_inclusive('\n').zip(to.split_inclusive('\n')) {
+        map_line_offsets(from_line, to_line, from_base, to_base, &mut map);
+        from_base += from_line.len();
+        to_base += to_line.len();
+    }
+    // Both normalizers preserve line count.  This fallback also makes a
+    // malformed/incomplete final line safe.
+    for index in from_base..=from.len() {
+        map[index] = to_base + (index - from_base).min(to.len().saturating_sub(to_base));
+    }
+    map
+}
+
+fn map_line_offsets(from: &str, to: &str, from_base: usize, to_base: usize, map: &mut [usize]) {
+    let prefix = from
+        .bytes()
+        .zip(to.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut suffix = 0usize;
+    while suffix < from.len().saturating_sub(prefix)
+        && suffix < to.len().saturating_sub(prefix)
+        && from.as_bytes()[from.len() - 1 - suffix] == to.as_bytes()[to.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let from_changed_end = from.len() - suffix;
+    let to_changed_end = to.len() - suffix;
+    for index in 0..=prefix {
+        map[from_base + index] = to_base + index;
+    }
+    for index in prefix..=from_changed_end {
+        let relative = index - prefix;
+        map[from_base + index] = to_base + prefix + relative.min(to_changed_end - prefix);
+    }
+    for index in from_changed_end..=from.len() {
+        map[from_base + index] = to_base + to_changed_end + (index - from_changed_end);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,10 +137,24 @@ pub struct LocalInfo {
 }
 
 pub fn analyze_source(source: &str) -> AnalysisResult {
-    match parser::parse(source) {
+    analyze_source_with_host_modules(source, &types::HostModules::for_editor())
+}
+
+/// Analyze source with the helper capability set resolved from its project
+/// manifest. The compiler and LSP share this entry point so a valid `kv.get`
+/// or agent payload is never rejected only inside the editor.
+pub fn analyze_source_with_host_modules(
+    source: &str,
+    host_modules: &types::HostModules,
+) -> AnalysisResult {
+    // The editor consumes the public MCFC syntax, including Bukkit-style
+    // declarations which are lowered before the compact parser sees them.
+    let normalized = crate::compiler::normalize_bukkit_declarations_source(source);
+    let source_map = SourceMap::from_sources(source, &normalized);
+    match parser::parse(&normalized) {
         Ok(program) => {
-            let functions = collect_functions(source, &program);
-            match types::type_check(&program, &types::HostModules::default()) {
+            let functions = collect_functions(&normalized, &program, &source_map);
+            match types::type_check(&program, host_modules) {
                 Ok(typed_program) => {
                     let locals = collect_locals(&typed_program);
                     AnalysisResult {
@@ -60,6 +163,7 @@ pub fn analyze_source(source: &str) -> AnalysisResult {
                         typed_program: Some(typed_program),
                         functions,
                         locals,
+                        source_map,
                     }
                 }
                 Err(diagnostics) => AnalysisResult {
@@ -68,6 +172,7 @@ pub fn analyze_source(source: &str) -> AnalysisResult {
                     typed_program: None,
                     functions,
                     locals: Vec::new(),
+                    source_map,
                 },
             }
         }
@@ -77,6 +182,7 @@ pub fn analyze_source(source: &str) -> AnalysisResult {
             typed_program: None,
             functions: Vec::new(),
             locals: Vec::new(),
+            source_map,
         },
     }
 }
@@ -104,9 +210,9 @@ fn collect_locals(typed_program: &TypedProgram) -> Vec<LocalInfo> {
         .collect()
 }
 
-fn collect_functions(source: &str, program: &Program) -> Vec<FunctionInfo> {
+fn collect_functions(source: &str, program: &Program, source_map: &SourceMap) -> Vec<FunctionInfo> {
     let Ok(tokens) = lex(source) else {
-        return fallback_functions(program);
+        return fallback_functions(program, source_map);
     };
 
     let mut cursor = 0usize;
@@ -114,14 +220,14 @@ fn collect_functions(source: &str, program: &Program) -> Vec<FunctionInfo> {
         .functions
         .iter()
         .map(|function| {
-            let info = collect_function_info(function, &tokens, &mut cursor);
+            let info = collect_function_info(function, &tokens, &mut cursor, source_map);
             cursor = info.next_cursor;
             info.function
         })
         .collect()
 }
 
-fn fallback_functions(program: &Program) -> Vec<FunctionInfo> {
+fn fallback_functions(program: &Program, source_map: &SourceMap) -> Vec<FunctionInfo> {
     program
         .functions
         .iter()
@@ -133,8 +239,8 @@ fn fallback_functions(program: &Program) -> Vec<FunctionInfo> {
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect(),
             return_type: function.return_type.clone(),
-            range: function.span.range,
-            name_range: function.span.range,
+            range: source_map.to_original_range(function.span.range),
+            name_range: source_map.to_original_range(function.span.range),
         })
         .collect()
 }
@@ -148,6 +254,7 @@ fn collect_function_info(
     function: &Function,
     tokens: &[Token],
     cursor: &mut usize,
+    source_map: &SourceMap,
 ) -> CollectedFunction {
     let mut fn_index = *cursor;
     while fn_index < tokens.len() {
@@ -208,8 +315,8 @@ fn collect_function_info(
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect(),
             return_type: function.return_type.clone(),
-            range: TextRange::new(start, end),
-            name_range,
+            range: source_map.to_original_range(TextRange::new(start, end)),
+            name_range: source_map.to_original_range(name_range),
         },
         next_cursor: index,
     }
@@ -292,6 +399,7 @@ impl From<Diagnostics> for AnalysisResult {
             typed_program: None,
             functions: Vec::new(),
             locals: Vec::new(),
+            source_map: SourceMap::identity(""),
         }
     }
 }
@@ -355,6 +463,25 @@ fn launch(level: int) -> void:
         assert_eq!(
             function_at_offset(&analysis, offset).unwrap().name,
             "launch"
+        );
+    }
+
+    #[test]
+    fn analyzes_bukkit_style_declarations_with_the_compiler_frontend() {
+        let analysis = analyze_source(
+            r#"data player.coins: int = 0
+event chat(event: chat_event):
+    event.player.send_message(event.message)
+command status:
+    let player = single(selector("@s"))
+    player.send_message("ok")
+"#,
+        );
+
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
         );
     }
 

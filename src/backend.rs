@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{BinaryOp, ContextKind, PathSegment, SleepUnit, Type, UnaryOp};
 use crate::ir::{
@@ -48,6 +48,7 @@ struct Backend {
     block_builder_state_fields: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     helper: Option<HelperConfig>,
     uses_rpc: bool,
+    bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
 }
@@ -63,6 +64,31 @@ struct FunctionInfo {
 struct ManagedObjective {
     objective: String,
     display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BukkitRuntime {
+    join_handlers: Vec<String>,
+    death_handlers: Vec<String>,
+    agent_handlers: Vec<AgentEventHandler>,
+    commands: Vec<BukkitCommand>,
+    every_tasks: Vec<(String, u32)>,
+    after_tasks: Vec<(String, u32)>,
+}
+
+#[derive(Debug, Clone)]
+struct BukkitCommand {
+    command: String,
+    handler: String,
+    objective: String,
+}
+
+#[derive(Debug, Clone)]
+struct AgentEventHandler {
+    event: String,
+    handler: String,
+    parameter: String,
+    decision: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +206,7 @@ impl Backend {
             block_builder_state_fields: collect_block_builder_state_fields(program),
             helper: None,
             uses_rpc: program_uses_rpc(program),
+            bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
         }
     }
@@ -189,6 +216,13 @@ impl Backend {
             .as_ref()
             .map(|config| config.backend)
             .unwrap_or_default()
+    }
+
+    fn agent_enabled(&self) -> bool {
+        self.helper
+            .as_ref()
+            .and_then(|config| config.agent.as_ref())
+            .is_some_and(|agent| agent.enabled)
     }
 
     fn generate(&mut self, program: &IrProgram, options: &BackendOptions) {
@@ -202,6 +236,12 @@ impl Backend {
             for depth in 0..=self.max_depth {
                 self.emit_function_variant(function, depth);
             }
+        }
+        self.emit_bukkit_runtime();
+        // Agent-only packs do not otherwise need the RPC runtime, but mcfd must
+        // still discover their descriptor in order to attach and route events.
+        if !self.uses_rpc && self.agent_enabled() {
+            self.emit_mcfd_descriptor();
         }
         self.emit_auto_export_wrappers(program, &options.exports);
         self.emit_export_wrappers(&options.exports);
@@ -239,6 +279,17 @@ impl Backend {
             let tick = format!("{}:tick", self.namespace);
             if !values.contains(&tick) {
                 values.push(tick);
+            }
+        }
+        if !self.bukkit.join_handlers.is_empty()
+            || !self.bukkit.death_handlers.is_empty()
+            || !self.bukkit.agent_handlers.is_empty()
+            || !self.bukkit.commands.is_empty()
+            || !self.bukkit.every_tasks.is_empty()
+        {
+            let runtime_tick = format!("{}:generated/bukkit/tick", self.namespace);
+            if !values.contains(&runtime_tick) {
+                values.push(runtime_tick);
             }
         }
         // The mcfd transport needs a global tick driver to throttle `/reload`
@@ -322,6 +373,16 @@ impl Backend {
             lines.push("scoreboard players set rpc_active mcfc 0".to_string());
             lines.push("scoreboard players set rpc_reload_timer mcfc 0".to_string());
         }
+        if !self.bukkit.death_handlers.is_empty() {
+            lines.push("scoreboard objectives add mcfc_deaths deathCount".to_string());
+            lines.push("scoreboard objectives add mcfc_deaths_seen dummy".to_string());
+        }
+        for command in &self.bukkit.commands {
+            lines.push(format!(
+                "scoreboard objectives add {} trigger",
+                command.objective
+            ));
+        }
 
         self.files.insert(
             format!(
@@ -334,6 +395,9 @@ impl Backend {
 
     fn emit_main_entry(&mut self) {
         let mut body = vec![format!("function {}:generated/setup", self.namespace)];
+        if !self.bukkit.after_tasks.is_empty() {
+            body.push(format!("function {}:generated/bukkit/load", self.namespace));
+        }
         if self.functions.contains_key("main") {
             body.push(format!(
                 "scoreboard players set {} mcfc 0",
@@ -394,6 +458,7 @@ impl Backend {
             if function.generated
                 || function.name == "main"
                 || function.name == "tick"
+                || is_bukkit_generated_function(&function.name)
                 || !function.params.is_empty()
                 || function.return_type != Type::Void
             {
@@ -419,6 +484,210 @@ impl Backend {
                 self.files.insert(relative, contents);
             }
         }
+    }
+
+    fn emit_bukkit_runtime(&mut self) {
+        let has_tick_runtime = !self.bukkit.join_handlers.is_empty()
+            || !self.bukkit.death_handlers.is_empty()
+            || !self.bukkit.agent_handlers.is_empty()
+            || !self.bukkit.commands.is_empty()
+            || !self.bukkit.every_tasks.is_empty();
+        if has_tick_runtime {
+            let mut tick = Vec::new();
+            if !self.bukkit.join_handlers.is_empty() {
+                let tag = bukkit_join_tag(&self.namespace);
+                tick.push(format!(
+                    "execute as @a[tag=!{}] run function {}:generated/bukkit/player_join",
+                    tag, self.namespace
+                ));
+                tick.push(format!("tag @a[tag=!{}] add {}", tag, tag));
+            }
+            if !self.bukkit.death_handlers.is_empty() {
+                tick.push(format!(
+                    "execute as @a if score @s mcfc_deaths matches 1.. unless score @s mcfc_deaths_seen = @s mcfc_deaths run function {}:generated/bukkit/player_death",
+                    self.namespace
+                ));
+                tick.push("execute as @a if score @s mcfc_deaths matches 1.. run scoreboard players operation @s mcfc_deaths_seen = @s mcfc_deaths".to_string());
+            }
+            for command in &self.bukkit.commands {
+                let objective = &command.objective;
+                tick.push(format!("scoreboard players enable @a {}", objective));
+                tick.push(format!(
+                    "execute as @a[scores={{{}=1..}}] run function {}:generated/bukkit/command/{}",
+                    objective, self.namespace, command.command
+                ));
+                tick.push(format!(
+                    "scoreboard players set @a[scores={{{}=1..}}] {} 0",
+                    objective, objective
+                ));
+            }
+            for (task, interval) in &self.bukkit.every_tasks {
+                let clock = format!("#mcfct_{}", sanitize(task));
+                tick.push(format!("scoreboard players add {} mcfc 1", clock));
+                tick.push(format!(
+                    "execute if score {} mcfc matches {}.. run scoreboard players set {} mcfc 0",
+                    clock, interval, clock
+                ));
+                tick.push(format!(
+                    "execute if score {} mcfc matches 0 run function {}:generated/bukkit/task/{}",
+                    clock, self.namespace, task
+                ));
+            }
+            self.files.insert(
+                format!(
+                    "data/{}/function/generated/bukkit/tick.mcfunction",
+                    self.namespace
+                ),
+                tick.join("\n") + "\n",
+            );
+        }
+
+        for (path, handlers) in [
+            ("player_join", self.bukkit.join_handlers.clone()),
+            ("player_death", self.bukkit.death_handlers.clone()),
+        ] {
+            if handlers.is_empty() {
+                continue;
+            }
+            let mut lines = Vec::new();
+            for handler in handlers {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    control_slot(0, &handler)
+                ));
+                lines.push(format!(
+                    "function {}:{}",
+                    self.namespace,
+                    self.function_entry_name(&handler, 0)
+                ));
+            }
+            self.files.insert(
+                format!(
+                    "data/{}/function/generated/bukkit/{}.mcfunction",
+                    self.namespace, path
+                ),
+                lines.join("\n") + "\n",
+            );
+        }
+
+        // The JVM agent writes a typed event compound into `<ns>:agent current`
+        // and invokes this wrapper as the affected player. Copying the compound
+        // into the ordinary function frame makes agent handlers indistinguishable
+        // from regular MCFC functions to the rest of the backend.
+        for agent in self.bukkit.agent_handlers.clone() {
+            let parameter_type = self.functions[&agent.handler].params[0].1.clone();
+            let parameter_slot = local_slot(0, &agent.handler, &agent.parameter, &parameter_type);
+            let contents = format!(
+                "data modify storage {}:runtime {} set from storage {}:agent current\nscoreboard players set {} mcfc 0\nfunction {}:{}\n",
+                self.namespace,
+                parameter_slot.storage_path(),
+                self.namespace,
+                control_slot(0, &agent.handler),
+                self.namespace,
+                self.function_entry_name(&agent.handler, 0),
+            );
+            self.files.insert(
+                format!(
+                    "data/{}/function/agent/event/{}.mcfunction",
+                    self.namespace, agent.event
+                ),
+                contents,
+            );
+        }
+
+        for command in self.bukkit.commands.clone() {
+            let mut contents = String::new();
+            if let Some(info) = self.functions.get(&command.handler) {
+                if info.params.len() == 2
+                    && info.params[0].1 == Type::Struct("command_sender".to_string())
+                    && info.params[1].1 == Type::Array(Box::new(Type::String))
+                {
+                    let sender =
+                        local_slot(0, &command.handler, &info.params[0].0, &info.params[0].1);
+                    let args =
+                        local_slot(0, &command.handler, &info.params[1].0, &info.params[1].1);
+                    contents.push_str(&format!(
+                        "data modify storage {}:runtime {} set from storage {}:agent command.sender\ndata modify storage {}:runtime {} set from storage {}:agent command.args\n",
+                        self.namespace, sender.storage_path(), self.namespace,
+                        self.namespace, args.storage_path(), self.namespace,
+                    ));
+                }
+            }
+            contents.push_str(&format!(
+                "scoreboard players set {} mcfc 0\nfunction {}:{}\n",
+                control_slot(0, &command.handler),
+                self.namespace,
+                self.function_entry_name(&command.handler, 0)
+            ));
+            self.files.insert(
+                format!(
+                    "data/{}/function/generated/bukkit/command/{}.mcfunction",
+                    self.namespace, command.command
+                ),
+                contents.clone(),
+            );
+            self.files.insert(
+                format!(
+                    "data/{}/function/agent/command/{}.mcfunction",
+                    self.namespace, command.command
+                ),
+                contents,
+            );
+        }
+
+        for (task, ticks) in self.bukkit.every_tasks.clone() {
+            let Some(function) = self.bukkit_function_for_task(&task, ticks, true) else {
+                continue;
+            };
+            self.emit_bukkit_task_wrapper(&task, &function);
+        }
+
+        if !self.bukkit.after_tasks.is_empty() {
+            let mut load = Vec::new();
+            for (task, ticks) in self.bukkit.after_tasks.clone() {
+                let function = self
+                    .bukkit_function_for_task(&task, ticks, false)
+                    .expect("discovered task has a handler");
+                self.emit_bukkit_task_wrapper(&task, &function);
+                load.push(format!(
+                    "schedule function {}:generated/bukkit/task/{} {}t replace",
+                    self.namespace, task, ticks
+                ));
+            }
+            self.files.insert(
+                format!(
+                    "data/{}/function/generated/bukkit/load.mcfunction",
+                    self.namespace
+                ),
+                load.join("\n") + "\n",
+            );
+        }
+    }
+
+    fn bukkit_function_for_task(&self, task: &str, ticks: u32, repeating: bool) -> Option<String> {
+        let suffix = if repeating {
+            "every_ticks"
+        } else {
+            "after_ticks"
+        };
+        let expected = format!("__mcfc_task_{}_{}_{}", task, suffix, ticks);
+        self.functions.contains_key(&expected).then_some(expected)
+    }
+
+    fn emit_bukkit_task_wrapper(&mut self, task: &str, handler: &str) {
+        let contents = format!(
+            "scoreboard players set {} mcfc 0\nfunction {}:{}\n",
+            control_slot(0, handler),
+            self.namespace,
+            self.function_entry_name(handler, 0)
+        );
+        self.files.insert(
+            format!(
+                "data/{}/function/generated/bukkit/task/{}.mcfunction",
+                self.namespace, task
+            ),
+            contents,
+        );
     }
 
     fn emit_export_wrappers(&mut self, exports: &[ExportedFunction]) {
@@ -1391,9 +1660,8 @@ impl Backend {
         self.rpc_tick_functions.push(tick_name.clone());
 
         // Result applier (macro over `$(id)`): bind the result, GC it, resume.
-        let mut check_lines = vec![
-            "$execute unless data storage mcfc:rpc results.$(id) run return 0".to_string(),
-        ];
+        let mut check_lines =
+            vec!["$execute unless data storage mcfc:rpc results.$(id) run return 0".to_string()];
         if let Some(frame) = &dest_frame {
             check_lines.push(format!(
                 "$data modify storage {}:runtime {} set from storage mcfc:rpc results.$(id)",
@@ -1482,6 +1750,10 @@ impl Backend {
             format!("data/{}/function/rpc/emit_name.mcfunction", ns),
             "$data modify entity @e[type=minecraft:pig,tag=mcfc_rpc_emit,sort=nearest,limit=1] CustomName set value '[mcfc_rpc] $(req)'\n".to_string(),
         );
+        self.emit_mcfd_descriptor();
+    }
+
+    fn emit_mcfd_descriptor(&mut self) {
         self.files
             .insert("mcfd.pack.toml".to_string(), self.render_mcfd_toml());
     }
@@ -1501,6 +1773,61 @@ impl Backend {
         );
         out.push_str("# log = 'C:/path/to/.minecraft/logs/latest.log'\n");
         out.push_str("result_ttl_secs = 300\n\n");
+        if self.agent_enabled() {
+            out.push_str("[agent]\n");
+            out.push_str("enabled = true\n\n");
+            if let Some(agent) = self
+                .helper
+                .as_ref()
+                .and_then(|config| config.agent.as_ref())
+            {
+                let mut events = agent.events.iter().cloned().collect::<BTreeSet<_>>();
+                events.extend(
+                    self.bukkit
+                        .agent_handlers
+                        .iter()
+                        .map(|handler| handler.event.clone()),
+                );
+                if !events.is_empty() {
+                    let events = events
+                        .iter()
+                        .map(|event| toml_string(event))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("events = [{}]\n", events));
+                }
+                let mut commands = agent.commands.iter().cloned().collect::<BTreeSet<_>>();
+                commands.extend(
+                    self.bukkit
+                        .commands
+                        .iter()
+                        .map(|command| command.command.clone()),
+                );
+                if !commands.is_empty() {
+                    let commands = commands
+                        .iter()
+                        .map(|command| toml_string(command))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("commands = [{}]\n", commands));
+                }
+                let deciders = self
+                    .bukkit
+                    .agent_handlers
+                    .iter()
+                    .filter(|handler| handler.decision)
+                    .map(|handler| handler.event.clone())
+                    .collect::<BTreeSet<_>>();
+                if !deciders.is_empty() {
+                    let events = deciders
+                        .iter()
+                        .map(|event| toml_string(event))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("deciders = [{}]\n\n", events));
+                }
+            }
+        }
         out.push_str("[capabilities]\n");
         if let Some(capabilities) = capabilities {
             if let Some(http) = &capabilities.http {
@@ -1517,7 +1844,10 @@ impl Backend {
                 out.push_str(" }\n");
             }
             if let Some(file) = &capabilities.file {
-                out.push_str(&format!("file = {{ root = {} }}\n", toml_string(&file.root)));
+                out.push_str(&format!(
+                    "file = {{ root = {} }}\n",
+                    toml_string(&file.root)
+                ));
             }
             if let Some(kv) = &capabilities.kv {
                 out.push_str(&format!("kv = {{ root = {} }}\n", toml_string(&kv.root)));
@@ -3089,6 +3419,14 @@ impl Backend {
         lines: &mut Vec<String>,
     ) {
         match method {
+            "cancel" if matches!(&receiver.ty, Type::Struct(name) if name == "agent_event" || name.ends_with("_event")) =>
+            {
+                lines.push(format!(
+                    "data modify storage {}:agent decision.cancel set value 1b",
+                    self.namespace
+                ));
+                return;
+            }
             "as_nbt" => {
                 self.compile_value_as_nbt(function, depth, receiver, target, lines);
                 return;
@@ -5241,12 +5579,7 @@ impl Backend {
             "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" => {
                 let slot_handle =
                     local_slot(depth, &function.name, &self.new_temp(), &Type::ItemSlot);
-                self.load_entity_equipment_slot(
-                    base_slot,
-                    first,
-                    &slot_handle,
-                    lines,
-                );
+                self.load_entity_equipment_slot(base_slot, first, &slot_handle, lines);
                 if path.segments.len() == 1 {
                     lines.push(format!(
                         "data modify storage {}:runtime {} set from storage {}:runtime {}",
@@ -7556,6 +7889,196 @@ fn has_special_tick(program: &IrProgram) -> bool {
     })
 }
 
+fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
+    let mut runtime = BukkitRuntime::default();
+    let mut command_objectives = BTreeSet::new();
+    for function in &program.functions {
+        let name = &function.name;
+        if let Some(event) = name.strip_prefix("__mcfc_agent_event_") {
+            if let Some(event_type) = agent_event_type(event) {
+                if function.params.len() == 1
+                    && function.params[0].ty == Type::Struct(event_type.to_string())
+                {
+                    runtime.agent_handlers.push(AgentEventHandler {
+                        event: event.to_string(),
+                        handler: name.clone(),
+                        parameter: function.params[0].name.clone(),
+                        decision: ir_function_contains_cancel(function),
+                    });
+                }
+            }
+            continue;
+        }
+        if let Some(kind) = name.strip_prefix("__mcfc_event_") {
+            match kind {
+                "player_join" => runtime.join_handlers.push(name.clone()),
+                "player_death" => runtime.death_handlers.push(name.clone()),
+                _ => {}
+            }
+            continue;
+        }
+        if let Some(command) = name.strip_prefix("__mcfc_command_") {
+            runtime.commands.push(BukkitCommand {
+                command: command.to_string(),
+                handler: name.clone(),
+                objective: bukkit_command_objective(command, &mut command_objectives),
+            });
+            continue;
+        }
+        if let Some(rest) = name.strip_prefix("__mcfc_task_") {
+            if let Some((task, ticks)) = rest.rsplit_once("_every_ticks_") {
+                if let Ok(ticks) = ticks.parse::<u32>() {
+                    runtime.every_tasks.push((task.to_string(), ticks));
+                }
+            } else if let Some((task, ticks)) = rest.rsplit_once("_after_ticks_") {
+                if let Ok(ticks) = ticks.parse::<u32>() {
+                    runtime.after_tasks.push((task.to_string(), ticks));
+                }
+            }
+        }
+    }
+    runtime
+}
+
+pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
+    fn contains_expr(value: &IrExpr) -> bool {
+        match &value.kind {
+            IrExprKind::MethodCall {
+                method,
+                receiver,
+                args,
+            } => method == "cancel" || contains_expr(receiver) || args.iter().any(contains_expr),
+            IrExprKind::Call { args, .. } | IrExprKind::ArrayLiteral(args) => {
+                args.iter().any(contains_expr)
+            }
+            IrExprKind::Binary { left, right, .. } => contains_expr(left) || contains_expr(right),
+            IrExprKind::Unary { expr, .. }
+            | IrExprKind::Single(expr)
+            | IrExprKind::Exists(expr)
+            | IrExprKind::HasData(expr)
+            | IrExprKind::Cast { expr, .. } => contains_expr(expr),
+            IrExprKind::At { anchor, value } | IrExprKind::As { anchor, value } => {
+                contains_expr(anchor) || contains_expr(value)
+            }
+            IrExprKind::DictLiteral(values) | IrExprKind::StructLiteral { fields: values, .. } => {
+                values.iter().any(|(_, value)| contains_expr(value))
+            }
+            _ => false,
+        }
+    }
+    fn contains_statements(values: &[IrStmt]) -> bool {
+        values.iter().any(|statement| match statement {
+            IrStmt::Expr(value) => contains_expr(value),
+            IrStmt::Let { value, .. } => contains_expr(value),
+            IrStmt::Assign { value, .. } => contains_expr(value),
+            IrStmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                contains_expr(condition)
+                    || contains_statements(then_body)
+                    || contains_statements(else_body)
+            }
+            IrStmt::While { condition, body } => {
+                contains_expr(condition) || contains_statements(body)
+            }
+            IrStmt::For { body, .. } | IrStmt::Context { body, .. } => contains_statements(body),
+            IrStmt::Async { function, .. } => contains_statements(&function.body),
+            IrStmt::Return(Some(value)) => contains_expr(value),
+            _ => false,
+        })
+    }
+    contains_statements(&function.body)
+}
+
+fn agent_event_type(event: &str) -> Option<&'static str> {
+    match event {
+        "chat" => Some("chat_event"),
+        "inventory_click" => Some("inventory_click_event"),
+        "player_action" => Some("player_action_event"),
+        "block_break" => Some("block_break_event"),
+        "player_interact_block" => Some("player_interact_block_event"),
+        "player_interact_item" => Some("player_interact_item_event"),
+        "entity_interact" => Some("entity_interact_event"),
+        "entity_attack" => Some("entity_attack_event"),
+        "item_held_change" => Some("item_held_change_event"),
+        "inventory_close" => Some("inventory_close_event"),
+        "player_swing" => Some("player_swing_event"),
+        "player_action_toggle" => Some("player_action_toggle_event"),
+        "item_rename" => Some("item_rename_event"),
+        "trade_select" => Some("trade_select_event"),
+        "sign_change" => Some("sign_change_event"),
+        "recipe_place" => Some("recipe_place_event"),
+        "game_mode_request" => Some("game_mode_request_event"),
+        "player_respawn_request"
+        | "book_edit"
+        | "beacon_effect"
+        | "item_pick"
+        | "entity_teleport"
+        | "player_abilities"
+        | "player_connect"
+        | "player_quit"
+        | "player_respawn"
+        | "player_damage"
+        | "player_teleport"
+        | "player_item_drop"
+        | "player_item_pickup"
+        | "inventory_open"
+        | "game_mode_change" => Some("agent_event"),
+        _ => None,
+    }
+}
+
+fn is_bukkit_generated_function(name: &str) -> bool {
+    name.starts_with("__mcfc_event_")
+        || name.starts_with("__mcfc_agent_event_")
+        || name.starts_with("__mcfc_command_")
+        || name.starts_with("__mcfc_task_")
+}
+
+fn bukkit_command_objective(command: &str, used: &mut BTreeSet<String>) -> String {
+    let sanitized = sanitize(command);
+    let base = if sanitized.is_empty() {
+        "command"
+    } else {
+        sanitized.as_str()
+    };
+    let first_suffix: String = base.chars().take(10).collect();
+    let first = format!("mcfcc_{}", first_suffix);
+    if used.insert(first.clone()) {
+        return first;
+    }
+    for counter in 1u32.. {
+        let tag = format!("_{}", base36(counter));
+        let prefix_len = 10usize.saturating_sub(tag.len());
+        let prefix: String = base.chars().take(prefix_len).collect();
+        let objective = format!("mcfcc_{}{}", prefix, tag);
+        if used.insert(objective.clone()) {
+            return objective;
+        }
+    }
+    unreachable!("unbounded command objective counter should always produce a value")
+}
+
+fn base36(mut value: u32) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    loop {
+        out.push(DIGITS[(value % 36) as usize] as char);
+        value /= 36;
+        if value == 0 {
+            break;
+        }
+    }
+    out.iter().rev().collect()
+}
+
+fn bukkit_join_tag(namespace: &str) -> String {
+    let suffix: String = sanitize(namespace).chars().take(24).collect();
+    format!("mcfc_join_{}", suffix)
+}
+
 fn program_uses_rpc(program: &IrProgram) -> bool {
     program
         .functions
@@ -7575,9 +8098,9 @@ fn stmt_uses_rpc(stmt: &IrStmt) -> bool {
             else_body,
             ..
         } => stmts_use_rpc(then_body) || stmts_use_rpc(else_body),
-        IrStmt::While { body, .. }
-        | IrStmt::For { body, .. }
-        | IrStmt::Context { body, .. } => stmts_use_rpc(body),
+        IrStmt::While { body, .. } | IrStmt::For { body, .. } | IrStmt::Context { body, .. } => {
+            stmts_use_rpc(body)
+        }
         IrStmt::Async { function, .. } => stmts_use_rpc(&function.body),
         _ => false,
     }

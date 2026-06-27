@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::{Function, Program, Type};
 use crate::backend::{self, BackendOptions, BuildArtifacts, ExportedFunction};
-use crate::diagnostics::Diagnostic;
 use crate::diagnostics::Diagnostics;
+use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{self, IrProgram};
 use crate::optimizer;
 use crate::parser;
-use crate::project::{collect_asset_files, collect_source_files, load_manifest, HelperConfig};
+use crate::project::{HelperConfig, collect_asset_files, collect_source_files, load_manifest};
 use crate::types::{self, HostModules, TypedProgram};
 
 #[derive(Debug, Clone)]
@@ -51,11 +51,31 @@ pub fn compile_source(
     source: &str,
     options: &CompileOptions,
 ) -> Result<CompileResult, Diagnostics> {
-    let ast = parser::parse(source)?;
+    // Bukkit-inspired declarations are intentionally a small, vanilla-safe
+    // surface over ordinary MCFC functions.  Desugaring before lexing keeps
+    // the core language and all existing source files backwards compatible.
+    let normalized_source = normalize_bukkit_declarations_source(source);
+    if normalized_source.contains("fn __mcfc_agent_event_")
+        && !options
+            .helper
+            .as_ref()
+            .and_then(|helper| helper.agent.as_ref())
+            .is_some_and(|agent| agent.enabled)
+    {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.push(Diagnostic::new(
+            "agent event declarations require '[helper.agent] enabled = true'",
+            Span::new(1, 1),
+        ));
+        return Err(diagnostics);
+    }
+    validate_agent_manifest(options)?;
+    let ast = parser::parse(&normalized_source)?;
     let ast = normalize_special_functions(ast)?;
     let host_modules = HostModules::from_helper(options.helper.as_ref());
     let typed_program = types::type_check(&ast, &host_modules)?;
     let ir_program = ir::lower(&typed_program);
+    validate_decision_handlers(&ir_program)?;
     let ir_program = if options.optimize {
         optimizer::optimize(ir_program)
     } else {
@@ -76,6 +96,241 @@ pub fn compile_source(
         ir_program,
         artifacts,
     })
+}
+
+fn validate_decision_handlers(program: &IrProgram) -> Result<(), Diagnostics> {
+    let cancellable = [
+        "chat",
+        "inventory_click",
+        "player_action",
+        "block_break",
+        "player_interact_block",
+        "player_interact_item",
+        "entity_interact",
+        "entity_attack",
+        "item_held_change",
+        "inventory_close",
+        "player_swing",
+        "player_action_toggle",
+        "player_respawn_request",
+        "item_rename",
+        "trade_select",
+        "sign_change",
+        "book_edit",
+        "beacon_effect",
+        "recipe_place",
+        "item_pick",
+        "entity_teleport",
+        "game_mode_request",
+        "player_abilities",
+    ];
+    let mut diagnostics = Diagnostics::new();
+    for function in &program.functions {
+        let Some(event) = function.name.strip_prefix("__mcfc_agent_event_") else {
+            continue;
+        };
+        if backend::ir_function_contains_cancel(function) && !cancellable.contains(&event) {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "event.cancel() is not supported for observation-only event '{}'",
+                    event
+                ),
+                Span::new(1, 1),
+            ));
+        }
+    }
+    diagnostics.into_result(())
+}
+
+fn validate_agent_manifest(options: &CompileOptions) -> Result<(), Diagnostics> {
+    let Some(agent) = options
+        .helper
+        .as_ref()
+        .and_then(|helper| helper.agent.as_ref())
+    else {
+        return Ok(());
+    };
+    let observable = [
+        "chat",
+        "inventory_click",
+        "player_action",
+        "block_break",
+        "player_interact_block",
+        "player_interact_item",
+        "entity_interact",
+        "entity_attack",
+        "item_held_change",
+        "inventory_close",
+        "player_swing",
+        "player_action_toggle",
+        "player_respawn_request",
+        "item_rename",
+        "trade_select",
+        "sign_change",
+        "book_edit",
+        "beacon_effect",
+        "recipe_place",
+        "item_pick",
+        "entity_teleport",
+        "game_mode_request",
+        "player_abilities",
+        "player_connect",
+        "player_quit",
+        "player_respawn",
+        "player_damage",
+        "player_teleport",
+        "player_item_drop",
+        "player_item_pickup",
+        "inventory_open",
+        "game_mode_change",
+    ];
+    let mut diagnostics = Diagnostics::new();
+    for event in &agent.events {
+        if !observable.contains(&event.as_str()) {
+            diagnostics.push(Diagnostic::new(
+                format!("unknown 26.1.2 agent event '{}'", event),
+                Span::new(1, 1),
+            ));
+        }
+    }
+    if !agent.cancel_events.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            "[helper.agent].cancel_events was removed; it cannot cancel observation-only events. Call event.cancel() inside a cancellable typed event handler instead",
+            Span::new(1, 1),
+        ));
+    }
+    for command in &agent.commands {
+        if !is_mcfc_identifier(command) {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "agent command '{}' is not a valid command identifier",
+                    command
+                ),
+                Span::new(1, 1),
+            ));
+        }
+    }
+    diagnostics.into_result(())
+}
+
+/// Expand the first vanilla Bukkit-style declarations into ordinary functions.
+///
+/// The generated names are consumed by the backend to install their runtime
+/// drivers.  Keeping this as a source-normalisation pass lets old parser and
+/// library users continue to operate on the stable MCFC AST.
+/// Lower the source-only Bukkit/Paper-inspired declarations into the compact
+/// parser core. Kept crate-visible so the language server validates precisely
+/// the same surface accepted by the compiler.
+pub(crate) fn normalize_bukkit_declarations_source(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| normalize_bukkit_declaration_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if source.ends_with('\n') { "\n" } else { "" }
+}
+
+fn normalize_bukkit_declaration_line(line: &str) -> String {
+    // These declarations are top-level by design.  Nested text is left alone,
+    // including comments and strings in function bodies.
+    if line.starts_with(char::is_whitespace) {
+        return line.replace(".data.", ".state.");
+    }
+
+    let trimmed = line.trim();
+    if let Some((kind, parameter)) = parse_agent_event_declaration(trimmed) {
+        return format!("fn __mcfc_agent_event_{}({}) -> void:", kind, parameter);
+    }
+    if let Some(kind) = trimmed
+        .strip_prefix("event ")
+        .and_then(|value| value.strip_suffix(':'))
+        .filter(|value| is_mcfc_identifier(value))
+    {
+        return format!("fn __mcfc_event_{}() -> void:", kind);
+    }
+    if let Some(signature) = trimmed
+        .strip_prefix("command ")
+        .and_then(|value| value.strip_suffix(':'))
+    {
+        if let Some((name, rest)) = signature.split_once('(') {
+            if is_mcfc_identifier(name.trim()) {
+                return format!("fn __mcfc_command_{}({}", name.trim(), rest);
+            }
+        }
+        if is_mcfc_identifier(signature.trim()) {
+            return format!("fn __mcfc_command_{}() -> void:", signature.trim());
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("task ") {
+        if let Some((name, schedule)) = rest.split_once(' ') {
+            if let Some(ticks) = schedule
+                .strip_prefix("every_ticks(")
+                .and_then(|value| value.strip_suffix("):"))
+                .filter(|value| {
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .is_some()
+                })
+            {
+                return format!("fn __mcfc_task_{}_every_ticks_{}() -> void:", name, ticks);
+            }
+            if let Some(ticks) = schedule
+                .strip_prefix("after_ticks(")
+                .and_then(|value| value.strip_suffix("):"))
+                .filter(|value| {
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .is_some()
+                })
+            {
+                return format!("fn __mcfc_task_{}_after_ticks_{}() -> void:", name, ticks);
+            }
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("data player.") {
+        if let Some((name, declaration)) = rest.split_once(':') {
+            if is_mcfc_identifier(name) {
+                if let Some((ty, default)) = declaration.split_once('=') {
+                    let ty = ty.trim();
+                    let default = default.trim();
+                    // Vanilla scoreboards initialise to zero/false.  Rejecting
+                    // non-zero defaults here would turn a useful parse error
+                    // into a silent semantic surprise, so leave them for the
+                    // normal parser until default initialisers are added.
+                    if matches!((ty, default), ("int", "0") | ("bool", "false")) {
+                        return format!("player_state {}: {} = \"{}\"", name, ty, name);
+                    }
+                }
+            }
+        }
+    }
+    line.replace(".data.", ".state.")
+}
+
+/// Parse the typed form of an agent event declaration. Vanilla lifecycle events
+/// intentionally retain the shorter `event player_join:` form; JVM-backed
+/// events carry their explicit, compiler-provided payload type.
+fn parse_agent_event_declaration(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("event ")?;
+    let (kind, parameter) = rest.split_once('(')?;
+    let kind = kind.trim();
+    let parameter = parameter.strip_suffix("):")?.trim();
+    let (name, ty) = parameter.split_once(':')?;
+    let name = name.trim();
+    let ty = ty.trim();
+    let expected = crate::language_catalog::agent_event_payload_type(kind)?;
+    (is_mcfc_identifier(kind) && is_mcfc_identifier(name) && ty == expected)
+        .then_some((kind, parameter))
+}
+
+fn is_mcfc_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(ch) if ch == '_' || ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnostics> {
@@ -794,5 +1049,238 @@ fn main() -> void:
         .unwrap_err()
         .to_string();
         assert!(ambiguous_error.contains("ambiguous 'entity_ref'"));
+    }
+
+    #[test]
+    fn compiles_vanilla_bukkit_declarations_and_data_aliases() {
+        let result = compile_source(
+            r#"
+data player.coins: int = 0
+
+event player_join:
+    let player = single(selector("@s"))
+    player.data.coins = player.data.coins + 1
+
+event player_death:
+    debug("dead")
+
+command status:
+    debug("status")
+
+task pulse every_ticks(20):
+    debug("pulse")
+
+task later after_ticks(5):
+    debug("later")
+"#,
+            &CompileOptions::default(),
+        )
+        .expect("Bukkit declarations should compile");
+        let files = &result.artifacts.files;
+        let tick = files
+            .get("data/minecraft/tags/function/tick.json")
+            .expect("Bukkit runtime tick tag");
+        assert!(tick.contains("generated/bukkit/tick"));
+        let runtime = files
+            .get("data/mcfc/function/generated/bukkit/tick.mcfunction")
+            .expect("Bukkit runtime");
+        assert!(runtime.contains("mcfc_join_mcfc"));
+        assert!(runtime.contains("mcfc_deaths matches 1.."));
+        assert!(runtime.contains("mcfcc_status"));
+        assert!(runtime.contains("#mcfct_pulse"));
+        assert!(files.contains_key("data/mcfc/function/generated/bukkit/load.mcfunction"));
+        assert!(files.contains_key("data/mcfc/function/generated/bukkit/player_join.mcfunction"));
+        let generated = files.values().cloned().collect::<Vec<_>>().join("\n");
+        assert!(generated.contains("@s"));
+        assert!(!generated.contains("@s[limit=1]"));
+    }
+
+    #[test]
+    fn bukkit_command_objectives_are_unique_after_truncation() {
+        let result = compile_source(
+            r#"
+command abcdefghij_one:
+    debug("one")
+
+command abcdefghij_two:
+    debug("two")
+"#,
+            &CompileOptions::default(),
+        )
+        .expect("commands with shared objective prefixes should compile");
+        let files = &result.artifacts.files;
+        let setup = files
+            .get("data/mcfc/function/generated/setup.mcfunction")
+            .expect("setup function");
+        assert!(setup.contains("scoreboard objectives add mcfcc_abcdefghij trigger"));
+        assert!(setup.contains("scoreboard objectives add mcfcc_abcdefgh_1 trigger"));
+        let runtime = files
+            .get("data/mcfc/function/generated/bukkit/tick.mcfunction")
+            .expect("Bukkit runtime");
+        assert!(runtime.contains("execute as @a[scores={mcfcc_abcdefghij=1..}] run function mcfc:generated/bukkit/command/abcdefghij_one"));
+        assert!(runtime.contains("execute as @a[scores={mcfcc_abcdefgh_1=1..}] run function mcfc:generated/bukkit/command/abcdefghij_two"));
+    }
+
+    #[test]
+    fn compiles_typed_agent_event_declaration_and_wrapper() {
+        let options = CompileOptions {
+            helper: Some(crate::project::HelperConfig {
+                agent: Some(crate::project::AgentConfig {
+                    enabled: true,
+                    events: Vec::new(),
+                    commands: Vec::new(),
+                    cancel_events: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..CompileOptions::default()
+        };
+        let result = compile_source(
+            r#"
+event chat(event: chat_event):
+    event.player.send_message(event.message)
+"#,
+            &options,
+        )
+        .expect("typed agent event should compile");
+        let files = &result.artifacts.files;
+        let wrapper = files
+            .get("data/mcfc/function/agent/event/chat.mcfunction")
+            .expect("agent event wrapper");
+        assert!(wrapper.contains("storage mcfc:agent current"));
+        assert!(wrapper.contains("__mcfc_agent_event_chat"));
+        let descriptor = files.get("mcfd.pack.toml").expect("agent descriptor");
+        assert!(descriptor.contains("events = [\"chat\"]"));
+    }
+
+    #[test]
+    fn compiles_explicit_agent_event_cancellation_into_a_decider_route() {
+        let options = CompileOptions {
+            helper: Some(crate::project::HelperConfig {
+                agent: Some(crate::project::AgentConfig {
+                    enabled: true,
+                    events: Vec::new(),
+                    commands: Vec::new(),
+                    cancel_events: Vec::new(),
+                }),
+                ..crate::project::HelperConfig::default()
+            }),
+            ..CompileOptions::default()
+        };
+        let result = compile_source(
+            "event chat(event: chat_event):\n    event.cancel()\n",
+            &options,
+        )
+        .expect("cancellable packet event should compile");
+        let descriptor = result
+            .artifacts
+            .files
+            .get("mcfd.pack.toml")
+            .expect("descriptor");
+        assert!(descriptor.contains("deciders = [\"chat\"]"));
+        assert!(
+            result
+                .artifacts
+                .files
+                .values()
+                .any(|contents| contents.contains("decision.cancel set value 1b"))
+        );
+    }
+
+    #[test]
+    fn rejects_cancel_call_for_observation_only_agent_event() {
+        let options = CompileOptions {
+            helper: Some(crate::project::HelperConfig {
+                agent: Some(crate::project::AgentConfig {
+                    enabled: true,
+                    events: Vec::new(),
+                    commands: Vec::new(),
+                    cancel_events: Vec::new(),
+                }),
+                ..crate::project::HelperConfig::default()
+            }),
+            ..CompileOptions::default()
+        };
+        let error = compile_source(
+            "event player_connect(event: agent_event):\n    event.cancel()\n",
+            &options,
+        )
+        .expect_err("lifecycle event cancellation must fail");
+        assert!(error.to_string().contains("observation-only"));
+    }
+
+    #[test]
+    fn agent_event_requires_agent_manifest_capability() {
+        let error = compile_source(
+            "event chat(event: chat_event):\n    debug(event.message)\n",
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("helper.agent"));
+    }
+
+    #[test]
+    fn compiles_expanded_agent_event_with_generic_payload() {
+        let options = CompileOptions {
+            helper: Some(crate::project::HelperConfig {
+                agent: Some(crate::project::AgentConfig {
+                    enabled: true,
+                    events: Vec::new(),
+                    commands: Vec::new(),
+                    cancel_events: Vec::new(),
+                }),
+                ..Default::default()
+            }),
+            ..CompileOptions::default()
+        };
+        let result = compile_source(
+            r#"
+event player_interact_block(event: player_interact_block_event):
+    event.player.send_message(event.face)
+"#,
+            &options,
+        )
+        .expect("expanded agent event should compile");
+        let descriptor = result
+            .artifacts
+            .files
+            .get("mcfd.pack.toml")
+            .expect("agent descriptor");
+        assert!(descriptor.contains("events = [\"player_interact_block\"]"));
+        assert!(
+            result
+                .artifacts
+                .files
+                .contains_key("data/mcfc/function/agent/event/player_interact_block.mcfunction")
+        );
+    }
+
+    #[test]
+    fn rejects_cancelling_observation_only_agent_events() {
+        let options = CompileOptions {
+            helper: Some(crate::project::HelperConfig {
+                agent: Some(crate::project::AgentConfig {
+                    enabled: true,
+                    events: Vec::new(),
+                    commands: Vec::new(),
+                    cancel_events: vec!["player_damage".to_string()],
+                }),
+                ..Default::default()
+            }),
+            ..CompileOptions::default()
+        };
+        let error = compile_source("fn main() -> void:\n    return\n", &options)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("observation-only"));
+    }
+
+    #[test]
+    fn bukkit_data_rejects_non_zero_defaults_until_managed_storage_exists() {
+        let error = compile_source("data player.coins: int = 10\n", &CompileOptions::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("expected player_state"));
     }
 }

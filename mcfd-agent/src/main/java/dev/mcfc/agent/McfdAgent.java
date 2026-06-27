@@ -19,7 +19,7 @@ import org.objectweb.asm.Opcodes;
 /**
  * Minimal, loader-safe entrypoint for the optional MCFC server agent.
  *
- * The first adapter targets the named 26.1.2 server classes. It observes chat,
+ * The first adapter targets the named 26.2 server classes. It observes chat,
  * inventory-click, player-action, and block-break entrypoints. A configured
  * event can be cancelled before vanilla receives it; all other hooks only log.
  */
@@ -93,7 +93,7 @@ public final class McfdAgent {
                 if (!visitor.hasChanges()) {
                     return null;
                 }
-                System.err.println("[mcfd-agent] installed 26.1.2 hooks in " + className
+                System.err.println("[mcfd-agent] installed 26.2 hooks in " + className
                         + ": " + visitor.installedHooks());
                 return writer.toByteArray();
             } catch (Throwable error) {

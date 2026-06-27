@@ -16,7 +16,7 @@ The project currently provides:
 - `mcfc-lsp`, a language server for editor integration
 - a VS Code extension under `editors/vscode-mcfc`
 
-MCFC targets Minecraft `26.1.2` datapacks. The language guide in
+MCFC targets Minecraft `26.2` datapacks. The language guide in
 `LANGUAGE.md` is the canonical reference for syntax and behavior.
 
 ## Example
@@ -135,7 +135,7 @@ See `LANGUAGE.md` for the full guide.
 The Bukkit-style declarations are deliberately vanilla-safe. `event player_join`
 and `event player_death` run through generated datapack detectors, `command`
 always has a `/trigger mcfcc_<name>` fallback, and `task` generates a tick or
-scheduled function. With the opt-in 26.1.2 JVM agent, typed event callbacks and
+scheduled function. With the opt-in 26.2 JVM agent, typed event callbacks and
 real no-argument command roots are also available. See
 `examples/bukkit_api_conformance` for a runnable pack.
 

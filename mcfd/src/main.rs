@@ -975,7 +975,7 @@ mod tests {
                 namespace: "demo".to_string(),
                 log: None,
                 datapack: PathBuf::from(
-                    r"C:\Users\Oliver\AppData\Roaming\PrismLauncher\instances\26.1.2\minecraft\saves\world\datapacks\demo",
+                    r"C:\Users\Oliver\AppData\Roaming\PrismLauncher\instances\26.2\minecraft\saves\world\datapacks\demo",
                 ),
                 result_ttl_secs: 300,
                 capabilities: config::Capabilities::default(),
@@ -990,12 +990,12 @@ mod tests {
             },
             descriptor: PathBuf::from("mcfd.pack.toml"),
             log: PathBuf::from(
-                r"C:\Users\Oliver\AppData\Roaming\PrismLauncher\instances\26.1.2\minecraft\logs\latest.log",
+                r"C:\Users\Oliver\AppData\Roaming\PrismLauncher\instances\26.2\minecraft\logs\latest.log",
             ),
         };
         let matching = JavaProcess {
             pid: 42,
-            command_line: "javaw.exe -Djava.library.path=C:/Users/Oliver/AppData/Roaming/PrismLauncher/instances/26.1.2/natives".to_string(),
+            command_line: "javaw.exe -Djava.library.path=C:/Users/Oliver/AppData/Roaming/PrismLauncher/instances/26.2/natives".to_string(),
         };
         let other = JavaProcess {
             pid: 43,

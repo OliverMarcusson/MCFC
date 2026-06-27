@@ -188,7 +188,7 @@ fn validate_agent_manifest(options: &CompileOptions) -> Result<(), Diagnostics> 
     for event in &agent.events {
         if !observable.contains(&event.as_str()) {
             diagnostics.push(Diagnostic::new(
-                format!("unknown 26.1.2 agent event '{}'", event),
+                format!("unknown 26.2 agent event '{}'", event),
                 Span::new(1, 1),
             ));
         }

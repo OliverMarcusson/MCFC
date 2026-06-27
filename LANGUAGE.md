@@ -1,6 +1,6 @@
 # MCFC Language Guide
 
-`mcfc` is a statically typed language that compiles to a Minecraft datapack for Minecraft `26.1.2`.
+`mcfc` is a statically typed language that compiles to a Minecraft datapack for Minecraft `26.2`.
 
 The current language focuses on a compact core:
 
@@ -139,7 +139,7 @@ the future agent backend and are not emulated by a vanilla datapack.
 are Bukkit-inspired aliases for the existing `tellraw`, `title`, `actionbar`,
 `playsound`, and `stopsound` methods.
 
-### Agent-backed events and commands (experimental 26.1.2)
+### Agent-backed events and commands (experimental 26.2)
 
 With `[helper.agent] enabled = true`, MCFC also accepts typed event declarations
 for the version-pinned JVM adapter. They run as the affected player and receive
@@ -713,7 +713,7 @@ with `mcfd agent status`. When the global service discovers an enabled pack, it
 automatically attempts one best-effort dynamic attachment to the unambiguous running
 Minecraft JVM for that instance. `mcfd agent attach <pid>` remains a diagnostic fallback.
 
-The current 26.1.2 adapter emits a versioned JSON record after each
+The current 26.2 adapter emits a versioned JSON record after each
 `[mcfd-agent] event=...` log line; mcfd parses that record and routes subscribed
 events to generated datapack functions on the server thread. This is still a
 best-effort, version-pinned adapter: restart Minecraft after installing a new

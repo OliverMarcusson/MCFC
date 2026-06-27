@@ -121,7 +121,7 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
     vec![
         // JVM-agent event payloads. These are compiler-provided structs rather
         // than user declarations so every agent-enabled pack shares one stable
-        // 26.1.2 wire contract.
+        // 26.2 wire contract.
         (
             "agent_event",
             vec![

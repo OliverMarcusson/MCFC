@@ -12,10 +12,10 @@ use build_mcdoc::{
 use serde_json::Value;
 
 const REGISTRY_SOURCE_URL: &str =
-    "https://raw.githubusercontent.com/misode/mcmeta/summary/registries/data.json";
+    "https://raw.githubusercontent.com/misode/mcmeta/26.2-summary/registries/data.json";
 const REGISTRY_SNAPSHOT_PATH: &str = "data/minecraft_registries_snapshot.json";
-const VANILLA_MCDOC_TARBALL_URL: &str = "https://github.com/SpyglassMC/vanilla-mcdoc/archive/6ef5413a6b0dcd4cbf448aedeebead491221c5cb.tar.gz";
-const VANILLA_MCDOC_TARBALL_PATH: &str = "data/vanilla_mcdoc_26.1.2.tar.gz";
+const VANILLA_MCDOC_TARBALL_URL: &str = "https://github.com/SpyglassMC/vanilla-mcdoc/archive/8e0271a118f654031de11c688f64cb783c3bc6c7.tar.gz";
+const VANILLA_MCDOC_TARBALL_PATH: &str = "data/vanilla_mcdoc_26.2.tar.gz";
 
 #[derive(Debug)]
 struct RegistrySnapshot {

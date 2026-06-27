@@ -62,7 +62,7 @@ cancellation remain a later, compile-time-gated backend.
 The `mcfd-agent/` module builds an attachable Java instrumentation agent and
 Attach-API launcher. `[helper.agent] enabled = true` is emitted into the
 per-pack descriptor; mcfd auto-attaches to the matching Minecraft JVM and
-passes generated event/command subscriptions. The 26.1.2 adapter emits
+passes generated event/command subscriptions. The 26.2 adapter emits
 versioned log records, dispatches typed callbacks for chat, inventory click,
 player action, and block break, supports a broad generic player-event catalog,
 and reserves real no-argument command roots while retaining `/trigger`
@@ -81,7 +81,7 @@ not a synchronous per-event MCFC cancellation API.
 
 ## Constraints
 
-- Target the current Minecraft `26.1.2` datapack baseline and Windows-first
+- Target the current Minecraft `26.2` datapack baseline and Windows-first
   `mcfd` distribution.
 - Do not provide Java Bukkit binary compatibility, plugin interoperability, or
   fake cancellable events.

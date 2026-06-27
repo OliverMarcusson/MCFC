@@ -4,8 +4,8 @@ use std::io::Read;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-pub const TARGET_MINECRAFT_VERSION: &str = "26.1.2";
-pub const TARGET_VANILLA_MCDOC_REF: &str = "6ef5413a6b0dcd4cbf448aedeebead491221c5cb";
+pub const TARGET_MINECRAFT_VERSION: &str = "26.2";
+pub const TARGET_VANILLA_MCDOC_REF: &str = "8e0271a118f654031de11c688f64cb783c3bc6c7";
 
 const DEFAULT_ENTITY_SYMBOL: &str = "::java::world::entity::mob::MobBase";
 const DEFAULT_BLOCK_SYMBOL: &str = "::java::world::block::container::ContainerBase";
@@ -577,10 +577,11 @@ impl<'a> FileParser<'a> {
                             Some(TokenKind::String(value)) | Some(TokenKind::Word(value)) => {
                                 Some(value)
                             }
-                            other => {
+                            Some(_) => None,
+                            None => {
                                 return Err(format!(
-                                    "unexpected attribute value token {:?} in {}",
-                                    other, self.path
+                                    "unterminated attribute value in {}",
+                                    self.path
                                 ));
                             }
                         }

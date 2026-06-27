@@ -51,7 +51,7 @@ pub struct AgentConfig {
     /// vanilla datapack from loading.
     #[serde(default)]
     pub enabled: bool,
-    /// Optional extra 26.1.2 event observations to request even when no typed
+    /// Optional extra 26.2 event observations to request even when no typed
     /// MCFC handler subscribes to them. Handler declarations are added to the
     /// generated descriptor automatically.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub struct AgentConfig {
     pub commands: Vec<String>,
     /// Server operations the experimental agent should cancel before vanilla
     /// handles them. Values are `chat`, `inventory_click`, `player_action`,
-    /// and `block_break` for the current 26.1.2 adapter.
+    /// and `block_break` for the current 26.2 adapter.
     #[serde(default)]
     pub cancel_events: Vec<String>,
 }

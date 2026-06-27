@@ -5286,9 +5286,12 @@ fn main() -> void:
     let player = player_ref(single(selector("@a")))
     entity("pig")
     item("diamond_swo")
+    item("music_disc_boun")
     block("~ ~ ~").setblock("gold_bloc")
     player.playsound("entity.experience_orb.picku", "master")
+    player.playsound("block.sulfur_spike.brea", "master")
     block("~ ~ ~").particle("happy_villag")
+    block("~ ~ ~").particle("geyser_poo")
     player.effect("glowin", 3, 0)
     player.give("stick", 1)
     player.position.loot_spawn("chests/simple_dungeo")
@@ -5316,6 +5319,16 @@ fn main() -> void:
                 .iter()
                 .any(|item| item.label == "minecraft:diamond_sword")
         );
+        let new_item_items = completion_items(
+            source,
+            &analysis,
+            source.find("item(\"music_disc_boun").unwrap() + "item(\"music_disc_boun".len(),
+        );
+        assert!(
+            new_item_items
+                .iter()
+                .any(|item| item.label == "minecraft:music_disc_bounce")
+        );
 
         let block_items = completion_items(
             source,
@@ -5341,6 +5354,17 @@ fn main() -> void:
                 .iter()
                 .any(|item| item.label == "minecraft:entity.experience_orb.pickup")
         );
+        let new_sound_items = completion_items(
+            source,
+            &analysis,
+            source.find("playsound(\"block.sulfur_spike.brea").unwrap()
+                + "playsound(\"block.sulfur_spike.brea".len(),
+        );
+        assert!(
+            new_sound_items
+                .iter()
+                .any(|item| item.label == "minecraft:block.sulfur_spike.break")
+        );
 
         let particle_items = completion_items(
             source,
@@ -5351,6 +5375,16 @@ fn main() -> void:
             particle_items
                 .iter()
                 .any(|item| item.label == "minecraft:happy_villager")
+        );
+        let new_particle_items = completion_items(
+            source,
+            &analysis,
+            source.find("particle(\"geyser_poo").unwrap() + "particle(\"geyser_poo".len(),
+        );
+        assert!(
+            new_particle_items
+                .iter()
+                .any(|item| item.label == "minecraft:geyser_poof")
         );
 
         let effect_items = completion_items(

@@ -61,6 +61,6 @@ The compiler and agent still support the wider event catalog; this pack only
 subscribes to the gameplay-oriented events above so normal play is not flooded
 with acknowledgement messages.
 
-All callbacks are experimental and version-pinned to 26.1.2. Packet-entry
-events may be globally blocked with `cancel_events` in the manifest; lifecycle
-events are observation-only, and MCFC handler code cannot set cancellation.
+All callbacks are experimental and version-pinned to 26.1.2. Cancellable typed
+events may call `event.cancel()` inside the handler; lifecycle events are
+observation-only and cannot be cancelled.

@@ -23,8 +23,6 @@ fn classify(value: int) -> string
         return "small"
     else:
         return "large"
-    end
-end
 
 fn main() -> void
     let player = single(selector("@p"))
@@ -57,12 +55,9 @@ fn main() -> void
         values.push(i)
         if i == 5:
             continue
-        end
-    end
 
     for pig in selector("@e[type=pig]"):
         pig.CustomName = "Highlighted"
-    end
 
     player.tags.mcfc_demo = true
     pig.add_tag("elite")
@@ -99,13 +94,11 @@ fn main() -> void
     if me.inventory[0].exists:
         me.inventory[0].count = me.inventory[0].count + 1
         me.hotbar[0].clear()
-    end
 
     match label:
         "small" => mcf "say $(label) $(values.len())"
         "large" => mcf "say $(random(100)) $(me.inventory[0].id)"
         else => mcf "say $(counts.has(\"stone\")) $(spawned_item.team)"
-    end
 
     async:
         sleep_ticks(5)
@@ -114,11 +107,9 @@ fn main() -> void
         player.position.particle("minecraft:happy_villager", 8, me)
         spawned_pig.position.particle("minecraft:cloud", 3, me)
         mcf "say $(random(values.len())) $(stack.count) $(me.hotbar[0].exists)"
-    end
 
     debug("entered gameplay branch")
     let amount = values.remove_at(0)
     counts.remove("stone")
     mc "say plain command"
     mcf "say $(title) $(label) $(amount) $(stack_nbt) $(chest_nbt)"
-end

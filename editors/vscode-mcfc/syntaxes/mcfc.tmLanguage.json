@@ -210,7 +210,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|data|event|command|task|async|end)\\b"
+          "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|data|event|command|task|async)\\b"
         },
         {
           "name": "storage.type.function.mcfc",

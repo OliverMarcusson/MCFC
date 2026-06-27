@@ -19,7 +19,7 @@ The bundled `mcfc-lsp` server provides:
 - hovers and completions for functions, locals, types, methods, host modules,
   payload structs, vanilla events, and the full experimental agent event catalog
 - manifest diagnostics, symbols, and completions for `mcfc.toml`, including
-  helper capabilities and agent cancellation policy
+  helper capabilities, agent events, and agent commands
 
 That includes the builder-oriented gameplay surface, such as:
 

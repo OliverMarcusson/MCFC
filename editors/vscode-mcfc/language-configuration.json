@@ -26,6 +26,6 @@
   ],
   "indentationRules": {
     "increaseIndentPattern": "^\\s*(?:fn\\b.*|struct\\b.*:|(?:event|command|task)\\b.*:|(?:if|else(?:\\s+if)?|while|for|as|at|match)\\b.*:|async\\s*:)\\s*(?:#.*)?$",
-    "decreaseIndentPattern": "^\\s*(?:end\\b|else\\s*:)\\s*(?:#.*)?$"
+    "decreaseIndentPattern": "^\\s*else\\s*:\\s*(?:#.*)?$"
   }
 }

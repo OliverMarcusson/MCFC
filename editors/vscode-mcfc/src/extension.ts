@@ -153,5 +153,5 @@ function resolveBinary(extensionPath: string, kind: "lsp" | "cli"): string {
   const dev = path.resolve(extensionPath, "..", "..", "target", "debug", binary);
   if (target) { const packaged = path.join(extensionPath, "server", target.dir, kind === "lsp" ? target.lsp : target.cli); if (fs.existsSync(packaged)) return packaged; }
   if (fs.existsSync(dev)) return dev;
-  throw new Error(`unable to find ${binary} for ${process.platform}-${process.arch}; install a matching MCFC VSIX or configure mcfc.cli.path.`);
+  throw new Error(`unable to find ${binary} for ${process.platform}-${process.arch}; install a matching MCFC VSIX or set mcfc.cli.path to an MCFC CLI binary.`);
 }

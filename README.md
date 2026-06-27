@@ -132,6 +132,19 @@ sign the executable and installer during packaging.
 
 See `LANGUAGE.md` for the full guide.
 
+## Documentation Site
+
+The rich documentation site is built with VitePress:
+
+```powershell
+npm install
+npm run docs:dev
+npm run docs:build
+```
+
+Source lives under `docs/`; production output is generated under
+`docs/.vitepress/dist/`.
+
 The Bukkit-style declarations are deliberately vanilla-safe. `event player_join`
 and `event player_death` run through generated datapack detectors, `command`
 always has a `/trigger mcfcc_<name>` fallback, and `task` generates a tick or

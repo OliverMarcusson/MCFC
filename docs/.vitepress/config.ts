@@ -50,6 +50,19 @@ export default defineConfig({
         ]
       },
       {
+        text: 'Language Reference',
+        items: [
+          { text: 'Statements', link: '/language/reference/statements' },
+          { text: 'Raw Commands: mc', link: '/language/reference/raw-mc' },
+          { text: 'Macro Commands: mcf', link: '/language/reference/macro-mcf' },
+          { text: 'Built-in Types', link: '/language/reference/builtin-types' },
+          { text: 'Function-style Builtins', link: '/language/reference/function-builtins' },
+          { text: 'Entity and Player Methods', link: '/language/reference/entity-player-methods' },
+          { text: 'Builders', link: '/language/reference/builders' },
+          { text: 'Event Catalog', link: '/language/reference/event-catalog' }
+        ]
+      },
+      {
         text: 'Runtime',
         items: [
           { text: 'Host Bridge', link: '/runtime/host-bridge' },

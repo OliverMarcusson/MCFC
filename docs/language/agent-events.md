@@ -27,6 +27,8 @@ The broader `agent_event` has `player`, `player_name`, `source`, `payload`, and 
 
 The expanded catalog includes chat, inventory click, player actions, block break, interactions, entity attack/interact, held-item changes, inventory open/close, sign/book edits, recipe placement, item pickup/drop, teleport, damage, connect, quit, respawn, and game-mode events.
 
+See the [event catalog reference](./reference/event-catalog) for event names, payload types, important fields, and cancellation behavior.
+
 ## Commands
 
 `command name:` always keeps its vanilla `/trigger mcfcc_name` fallback. When the agent is attached, the same declaration also reserves a real `/name` root command.

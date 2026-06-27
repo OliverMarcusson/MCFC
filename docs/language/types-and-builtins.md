@@ -2,32 +2,13 @@
 
 ## Built-in Types
 
-MCFC supports:
+MCFC includes primitive values, collections, Minecraft reference types, builder handles, `bossbar`, `nbt`, `void`, and named `struct` types.
 
-- `int`
-- `bool`
-- `string`
-- `array<T>`
-- `dict<T>`
-- `entity_set`
-- `entity_ref`
-- `player_ref`
-- `block_ref`
-- `entity_def`
-- `block_def`
-- `item_def`
-- `text_def`
-- `item_slot`
-- `bossbar`
-- `nbt`
-- `void`
-- named `struct` types
-
-Locals infer their type from the initializer. Assignments must keep the original variable type, function arguments must match declared parameter types, and return expressions must match declared return types.
+See the [built-in types reference](./reference/builtin-types) for the complete list and type rules. Locals infer their type from the initializer. Assignments must keep the original variable type, function arguments must match declared parameter types, and return expressions must match declared return types.
 
 ## Function-style Builtins
 
-Frequently used builtins:
+Frequently used builtins include selectors, single-entity narrowing, block/entity/item/text builders, bossbars, debugging, sleep helpers, random numbers, summoning, and NBT conversion helpers.
 
 ```mcfc
 let players = selector("@a")
@@ -39,7 +20,7 @@ let title = text("Hello")
 let bb = bossbar("mcfc:demo", title)
 ```
 
-Other host-independent builtins include `exists`, `has_data`, `block_type`, `summon`, `debug`, `sleep`, `sleep_ticks`, and `random`.
+See the [function-style builtins reference](./reference/function-builtins) for signatures and examples.
 
 ## Entity And Player Methods
 
@@ -59,6 +40,8 @@ Entities expose gameplay operations such as:
 - `add_tag`
 - `remove_tag`
 - `has_tag`
+
+See the [entity and player methods reference](./reference/entity-player-methods) for signatures, fields, player inventory surfaces, aliases, and examples.
 
 Players additionally expose inventory and hotbar surfaces:
 
@@ -92,6 +75,8 @@ single(selector("@p")).tellraw(msg)
 ```
 
 When an `nbt` value is expected, `entity_def`, `block_def`, and `item_def` can be assigned as shorthand for `.as_nbt()`.
+
+See the [builders reference](./reference/builders) for supported builder fields and NBT behavior.
 
 ## Bossbars
 

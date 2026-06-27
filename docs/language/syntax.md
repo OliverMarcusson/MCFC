@@ -20,25 +20,9 @@ Rules:
 
 ## Statements
 
-Common statements:
+MCFC supports declarations, local bindings, assignment, branching, loops, async blocks, context blocks, raw commands, macro commands, control flow, and function-call statements.
 
-- `struct Name:` followed by indented fields
-- `let name = expr`
-- `name = expr`
-- `if condition:` and `else:`
-- `match value:` with string arms
-- `while condition:`
-- `for name in start..end:`
-- `for name in selector_expr:`
-- `for name in array_expr:`
-- `async:`
-- `break`, `continue`, `return`, `return expr`
-- `mc "raw minecraft command"`
-- `mcf "macro command with $(placeholders)"`
-- `as(entity):` and `at(entity):`
-- a bare function call as a statement
-
-Only function calls may be used as bare expression statements.
+See the [statements reference](./reference/statements) for the full list, examples, and rules such as the bare-expression restriction: only function calls may be used as bare expression statements.
 
 ## Expressions
 
@@ -61,14 +45,14 @@ Precedence:
 
 ## Raw And Macro Commands
 
-Use `mc` for literal Minecraft commands:
+Use [`mc`](./reference/raw-mc) for literal Minecraft commands:
 
 ```mcfc
 mc "say hello"
 mc "scoreboard players set @s health 20"
 ```
 
-Use `mcf` for runtime interpolation:
+Use [`mcf`](./reference/macro-mcf) for runtime interpolation:
 
 ```mcfc
 let amount = 5

@@ -15,3 +15,6 @@ fn delayed() -> void:
 
 Inside `async`, the sleep pauses only that async branch.
 
+## Under The Hood
+
+`sleep` splits the current lowered function at the call site. MCFC emits a continuation function for the remaining statements and schedules it with Minecraft `schedule function` after converting seconds to ticks.

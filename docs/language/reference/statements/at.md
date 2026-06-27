@@ -12,3 +12,6 @@ fn sparkle() -> void:
 
 Use the function-style `at(origin, value)` builtin when composing selector expressions.
 
+## Under The Hood
+
+The block body lowers to a generated function called through `execute at <selector-or-position> run function ...`. Relative coordinates inside raw commands and block references resolve under that position context.

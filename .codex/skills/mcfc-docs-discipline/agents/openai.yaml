@@ -1,0 +1,4 @@
+interface:
+  display_name: "MCFC Docs Discipline"
+  short_description: "Keep MCFC docs current with language changes"
+  default_prompt: "Use $mcfc-docs-discipline when changing MCFC language, compiler, runtime, or examples so documentation stays current."

@@ -2,6 +2,12 @@
 
 MCFC has two event surfaces: vanilla-safe declarations that compile to ordinary datapack behavior, and opt-in agent-backed typed events enabled with `[helper.agent] enabled = true`.
 
+## Under The Hood
+
+Vanilla-safe events are implemented entirely inside the generated datapack. Join detection uses generated tags, death detection uses `deathCount` scoreboard objectives, commands use trigger objectives, and tasks use generated counters or `schedule function`.
+
+Agent-backed events use generated entrypoints under `agent/event/<name>.mcfunction`. The JVM agent writes the current event payload into command storage; the generated wrapper copies it into the typed event parameter slot, resets the handler control slot, and calls the lowered MCFC handler. If the handler calls `event.cancel()`, MCFC writes `decision.cancel` into the generated agent decision storage.
+
 ## Vanilla-safe Events
 
 | Declaration | Payload | Cancellation | Notes |

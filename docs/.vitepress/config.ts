@@ -52,6 +52,7 @@ export default defineConfig({
       {
         text: 'Language Reference',
         items: [
+          { text: 'How MCFC Lowers To mcfunction', link: '/language/reference/lowering' },
           { text: 'Statements', link: '/language/reference/statements' },
           {
             text: 'Statement Pages',

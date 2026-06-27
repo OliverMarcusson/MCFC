@@ -15,6 +15,12 @@ fn reward(amount: int, label: string) -> void:
 - The generated command is macro-backed, so use it only when interpolation is needed.
 - Use [`mc`](./raw-mc) for literal commands.
 
+## Under The Hood
+
+`mcf` lowers to a generated Minecraft function macro. MCFC evaluates each placeholder expression into command storage under the generated runtime namespace, then calls the macro with `function <namespace>:<path> with storage <namespace>:runtime <slot>`.
+
+Scoreboard-backed values are copied into storage first with `execute store result storage ... run scoreboard players get ...`. Storage-backed values are copied with `data modify storage ... set from storage ...`.
+
 ## Expressions In Placeholders
 
 ```mcfc
@@ -35,4 +41,3 @@ fn compare() -> void:
 ```
 
 The first command emits literal `$(amount)`. The second command substitutes the current value of `amount`.
-

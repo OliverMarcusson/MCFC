@@ -14,3 +14,6 @@ fn roll() -> void:
     mcf "say rolled $(value)"
 ```
 
+## Under The Hood
+
+`random` lowers to Minecraft scoreboard randomization commands where possible, with the result stored in the generated scoreboard slot for the returned `int`.

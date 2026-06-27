@@ -14,3 +14,6 @@ fn tick() -> void:
 
 Each branch has its own block scope.
 
+## Under The Hood
+
+The condition is evaluated into a scoreboard boolean. MCFC emits guarded `execute if score ... run function ...` calls for the branch bodies, and generated control slots prevent later branch commands from running after a `return`, `break`, or suspended call.

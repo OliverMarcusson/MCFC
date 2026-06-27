@@ -15,3 +15,6 @@ fn tick() -> void:
 
 Locals and parameters are snapshotted when the async block starts. `return` is not allowed inside `async`.
 
+## Under The Hood
+
+MCFC emits the async body as a separate generated function. Before launching it, captured scoreboard values and storage values are copied into async-local slots, then the generated function is called without blocking the parent path.

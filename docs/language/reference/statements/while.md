@@ -12,3 +12,6 @@ fn count() -> void:
 
 Use `break` to exit early and `continue` to skip to the next iteration.
 
+## Under The Hood
+
+`while` lowers to generated loop functions. MCFC reevaluates the condition each iteration, uses scoreboard slots for loop control, and schedules or calls continuation functions when the body contains `sleep` or another suspension point.

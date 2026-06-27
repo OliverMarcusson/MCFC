@@ -2,6 +2,12 @@
 
 Builder handles let MCFC assemble NBT-rich entities, blocks, items, and text components before using them in gameplay APIs.
 
+## Under The Hood
+
+Builders are command-storage objects. Field assignments such as `pig.no_ai = true`, `chest.states.facing = "north"`, or `msg.color = "gold"` become `data modify storage ...` writes into generated runtime storage.
+
+When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `summon(pig)` uses the entity id and NBT payload, while `block("~ ~ ~").setblock(chest)` emits the block id/states and then merges block-entity NBT.
+
 ## Entity Builders
 
 Create an `entity_def` with `entity(id)`.
@@ -113,4 +119,3 @@ fn payloads() -> void:
 
     summon("minecraft:pig", payload)
 ```
-

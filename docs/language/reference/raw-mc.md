@@ -15,6 +15,10 @@ fn load() -> void:
 - Use `mc` when the command has no MCFC values to interpolate.
 - Use [`mcf`](./macro-mcf) when the command needs runtime placeholders.
 
+## Under The Hood
+
+`mc` is the thinnest statement in MCFC: the backend writes the command text directly into the current generated `.mcfunction`. It does not allocate storage, generate a macro file, or evaluate placeholders.
+
 ## Literal Placeholder Text
 
 Because `mc` is literal-only, placeholder-looking text remains placeholder-looking text.
@@ -41,4 +45,3 @@ fn mark_nearest() -> void:
     at(player):
         mc "setblock ~ ~-1 ~ minecraft:gold_block"
 ```
-

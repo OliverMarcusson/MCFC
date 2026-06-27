@@ -15,3 +15,6 @@ fn tick() -> void:
     bb.visible = true
 ```
 
+## Under The Hood
+
+The bossbar handle stores the bossbar id in command storage. Field writes lower to vanilla `bossbar set` commands, and `remove()` lowers to `bossbar remove`.

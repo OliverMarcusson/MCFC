@@ -10,3 +10,6 @@ fn load() -> void:
 
 `$(...)` is not interpolated in `mc`. For interpolation, use [`mcf`](./mcf).
 
+## Under The Hood
+
+The command string is copied directly into the generated `.mcfunction`. MCFC does not evaluate placeholders or allocate temporary storage for `mc`.

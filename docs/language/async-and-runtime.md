@@ -47,6 +47,8 @@ The current backend maps values to Minecraft primitives:
 
 Generated files are deterministic and use a reserved generated namespace layout.
 
+See [How MCFC Lowers To mcfunction](./reference/lowering) for the full reference view of scoreboards, storage, generated functions, macro calls, and event dispatch.
+
 ## Optimization
 
 By default, MCFC runs a conservative IR optimization pass. It folds pure literal expressions, removes simple no-op self-assignments, drops `while false:` bodies, and simplifies literal `if` branches when this cannot change later control-flow guarding.

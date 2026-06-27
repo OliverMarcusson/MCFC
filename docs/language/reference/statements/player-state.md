@@ -12,3 +12,6 @@ fn tick() -> void:
 
 Supported state types are `int` and `bool`.
 
+## Under The Hood
+
+Player state values are scoreboard-backed. MCFC creates the objective during setup and compiles `player.state.name` reads and writes to scoreboard commands for the selected player.

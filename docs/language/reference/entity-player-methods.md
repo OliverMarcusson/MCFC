@@ -2,6 +2,18 @@
 
 `entity_ref` and `player_ref` expose gameplay operations for moving, damaging, messaging, inventory work, tags, effects, and sound.
 
+## Under The Hood
+
+Entity and player methods lower to vanilla commands targeted at the receiver selector:
+
+- movement and combat methods emit commands such as `teleport` and `damage`
+- messaging methods emit `tellraw`, `title`, or actionbar/title commands
+- sound methods emit `playsound` and `stopsound`
+- tag methods emit scoreboard tag commands
+- inventory and hotbar surfaces use generated item-slot storage/NBT commands
+
+When the receiver is context-sensitive, MCFC preserves executor and position by wrapping generated method commands in the necessary `execute as` or `execute at` context.
+
 ## Methods
 
 | Method | Returns | Notes |

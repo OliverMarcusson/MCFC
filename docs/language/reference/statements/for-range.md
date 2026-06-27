@@ -13,3 +13,6 @@ fn count() -> void:
 
 The loop variable is local to the loop body.
 
+## Under The Hood
+
+Range loops use scoreboard slots for the current index and bounds. The generated loop function increments the index and calls the lowered body while the range check passes.

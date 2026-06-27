@@ -2,6 +2,15 @@
 
 Function-style builtins are ordinary calls that create references, builder handles, utility values, or runtime effects.
 
+## Under The Hood
+
+Many builtins do not become runtime function calls. Instead, the compiler recognizes them and lowers them directly:
+
+- `selector`, `single`, `block`, `as`, and `at` build selector/position references used by later `execute` commands.
+- `entity`, `item`, `text`, and `block_type` allocate builder payloads in command storage.
+- `summon`, `debug`, `sleep`, `sleep_ticks`, `random`, and conversion builtins emit Minecraft commands or generated continuation functions.
+- `int`, `bool`, and `string` convert between storage/NBT paths and scoreboard or storage-backed values.
+
 ## Signatures
 
 | Builtin | Returns | Notes |

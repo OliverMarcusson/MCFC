@@ -38,6 +38,17 @@ MCFC is statically typed. Local variables infer their type from their initialize
 
 Builder values have one important convenience: `entity_def`, `block_def`, and `item_def` can be used where an `nbt` payload is expected, as shorthand for `.as_nbt()`. `text_def` is storage-backed and can be assigned anywhere an NBT text component payload is expected.
 
+## Under The Hood
+
+MCFC maps typed values onto Minecraft's limited runtime primitives:
+
+- numeric and boolean values live in scoreboard slots
+- strings, arrays, dictionaries, structs, text components, and builder payloads live in command storage
+- entity and block references are selectors/positions plus execution context
+- `nbt` values are storage paths or live NBT paths used by `data` commands
+
+This split is why some operations emit `scoreboard players ...` commands while others emit `data modify storage ...` commands.
+
 ## Examples
 
 ```mcfc

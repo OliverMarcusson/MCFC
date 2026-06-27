@@ -32,6 +32,17 @@ Statements perform work, control flow, or introduce declarations. MCFC uses `:` 
 
 Only function calls may be used as bare expression statements. For example, `debug("ok")` is valid, but `amount + 1` is not a statement.
 
+## Under The Hood
+
+Statements lower into generated `.mcfunction` files. Straight-line statements become command lines in the current generated function; nested blocks usually become generated helper functions guarded by scoreboard state.
+
+- `if`, `match`, `while`, and `for` use generated scoreboard guards and `execute if/unless score ... run function ...`.
+- `break`, `continue`, and `return` set generated control slots that later commands check before continuing.
+- `async`, `sleep`, and host calls split code into continuation functions so the current execution path can pause or branch.
+- `as:` and `at:` wrap the generated body call with `execute as ...` or `execute at ...`.
+
+For the full runtime model, see [How MCFC Lowers To mcfunction](./lowering).
+
 ## Structs
 
 Struct declarations are top-level and contain typed fields.

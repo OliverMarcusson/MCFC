@@ -10,3 +10,6 @@ fn show(values: array<int>) -> void:
 
 The loop variable type is the array element type.
 
+## Under The Hood
+
+Array loops keep the array in command storage and use a scoreboard index. Each iteration copies the current storage element into the loop variable slot before calling the body.

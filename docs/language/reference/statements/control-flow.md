@@ -22,3 +22,6 @@ fn clamp(value: int) -> int:
 
 `return expr` must match the function return type. Use plain `return` in `void` functions.
 
+## Under The Hood
+
+`break`, `continue`, and `return` set generated scoreboard control flags. Later generated commands are wrapped in guard checks, so once a control flag is set the rest of the current lowered block is skipped.

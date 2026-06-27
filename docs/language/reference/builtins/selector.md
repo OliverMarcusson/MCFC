@@ -15,3 +15,6 @@ fn tick() -> void:
 
 Use `single(selector(...))` when an API requires one entity.
 
+## Under The Hood
+
+Selectors are carried as selector strings plus execution context. Later calls decide whether to emit the selector directly or wrap the operation in `execute as`/`execute at`.

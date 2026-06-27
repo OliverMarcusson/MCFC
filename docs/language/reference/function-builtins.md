@@ -6,29 +6,29 @@ Function-style builtins are ordinary calls that create references, builder handl
 
 | Builtin | Returns | Notes |
 | --- | --- | --- |
-| `selector(value: string)` | `entity_set` | Wraps a Minecraft selector or player name. |
-| `single(value: entity_set)` | `entity_ref` | Narrows a selector to one entity. |
-| `exists(value: entity_ref)` | `bool` | Tests whether the reference exists. |
-| `has_data(path)` | `bool` | Tests whether a storage/NBT path has data. |
-| `block(pos: string)` | `block_ref` | Creates a block reference from coordinates. |
-| `entity(id: string)` | `entity_def` | Creates an entity builder. |
-| `item(id: string)` | `item_def` | Creates an item builder. |
-| `text()` | `text_def` | Creates an empty text component builder. |
-| `text(value: string)` | `text_def` | Creates a text component builder with text. |
-| `block_type(id: string)` | `block_def` | Creates a block builder. |
-| `bossbar(id: string, name: string\|text_def)` | `bossbar` | Creates or references a bossbar handle. |
-| `summon(id: string)` | `entity_ref` | Summons an entity by id. |
-| `summon(id: string, data: nbt)` | `entity_ref` | Summons with NBT payload. |
-| `summon(spec: entity_def)` | `entity_ref` | Summons from an entity builder. |
-| `debug(message: string)` | `void` | Emits a debug/log message. |
-| `sleep(seconds: int)` | `void` | Pauses the current execution path by seconds. |
-| `sleep_ticks(ticks: int)` | `void` | Pauses the current execution path by ticks. |
-| `random()` | `int` | Returns a random integer. |
-| `random(max: int)` | `int` | Returns a bounded random integer. |
-| `random(min: int, max: int)` | `int` | Returns a random integer in a range. |
-| `int(value: nbt)` | `int` | Converts an NBT value to an `int`. |
-| `bool(value: nbt)` | `bool` | Converts an NBT value to a `bool`. |
-| `string(value: nbt)` | `string` | Converts an NBT value to a `string`. |
+| [`selector(value: string)`](./builtins/selector) | `entity_set` | Wraps a Minecraft selector or player name. |
+| [`single(value: entity_set)`](./builtins/single) | `entity_ref` | Narrows a selector to one entity. |
+| [`exists(value: entity_ref)`](./builtins/exists) | `bool` | Tests whether the reference exists. |
+| [`has_data(path)`](./builtins/has-data) | `bool` | Tests whether a storage/NBT path has data. |
+| [`block(pos: string)`](./builtins/block) | `block_ref` | Creates a block reference from coordinates. |
+| [`entity(id: string)`](./builtins/entity) | `entity_def` | Creates an entity builder. |
+| [`item(id: string)`](./builtins/item) | `item_def` | Creates an item builder. |
+| [`text()`](./builtins/text) | `text_def` | Creates an empty text component builder. |
+| [`text(value: string)`](./builtins/text) | `text_def` | Creates a text component builder with text. |
+| [`block_type(id: string)`](./builtins/block-type) | `block_def` | Creates a block builder. |
+| [`bossbar(id: string, name: string\|text_def)`](./builtins/bossbar) | `bossbar` | Creates or references a bossbar handle. |
+| [`summon(id: string)`](./builtins/summon) | `entity_ref` | Summons an entity by id. |
+| [`summon(id: string, data: nbt)`](./builtins/summon) | `entity_ref` | Summons with NBT payload. |
+| [`summon(spec: entity_def)`](./builtins/summon) | `entity_ref` | Summons from an entity builder. |
+| [`debug(message: string)`](./builtins/debug) | `void` | Emits a debug/log message. |
+| [`sleep(seconds: int)`](./builtins/sleep) | `void` | Pauses the current execution path by seconds. |
+| [`sleep_ticks(ticks: int)`](./builtins/sleep-ticks) | `void` | Pauses the current execution path by ticks. |
+| [`random()`](./builtins/random) | `int` | Returns a random integer. |
+| [`random(max: int)`](./builtins/random) | `int` | Returns a bounded random integer. |
+| [`random(min: int, max: int)`](./builtins/random) | `int` | Returns a random integer in a range. |
+| [`int(value: nbt)`](./builtins/int) | `int` | Converts an NBT value to an `int`. |
+| [`bool(value: nbt)`](./builtins/bool) | `bool` | Converts an NBT value to a `bool`. |
+| [`string(value: nbt)`](./builtins/string) | `string` | Converts an NBT value to a `string`. |
 
 `as(...)` and `at(...)` also exist as two-argument builtins for selector context composition:
 
@@ -77,4 +77,3 @@ fn delayed_roll() -> void:
         let roll = random(1, 6)
         mcf "say rolled $(roll)"
 ```
-

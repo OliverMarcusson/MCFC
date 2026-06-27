@@ -6,23 +6,29 @@ Statements perform work, control flow, or introduce declarations. MCFC uses `:` 
 
 | Statement | Purpose |
 | --- | --- |
-| `struct Name:` | Declare a named struct type with indented fields. |
-| `let name = expr` | Create a local binding inferred from the initializer. |
-| `name = expr` | Assign a new value to an existing local or writable path. |
-| `if condition:` / `else:` | Branch on a `bool` expression. |
-| `match value:` | Branch on string arms and an optional `else` arm. |
-| `while condition:` | Repeat while a `bool` expression is true. |
-| `for name in start..end:` | Iterate an integer range. |
-| `for name in start..=end:` | Iterate an inclusive integer range. |
-| `for name in selector_expr:` | Iterate over matching entities. |
-| `for name in array_expr:` | Iterate over array values. |
-| `async:` | Launch a non-blocking execution path. |
-| `break` / `continue` | Control the nearest enclosing loop. |
-| `return` / `return expr` | Exit the current function. |
-| `mc "..."` | Emit a literal Minecraft command. |
-| `mcf "..."` | Emit a Minecraft function macro with `$(...)` placeholders. |
-| `as(entity):` / `at(entity):` | Run the body with changed executor or position context. |
-| `do_work()` | Call a function for side effects. |
+| [`fn name(...) -> type:`](./statements/fn) | Declare a function. |
+| [`data player.name: type = value`](./statements/data) | Declare scoreboard-backed player data. |
+| [`event name:`](./statements/event) | Declare an event handler. |
+| [`command name:`](./statements/command) | Declare a command handler. |
+| [`task name every_ticks(n):`](./statements/task) | Declare a scheduled task. |
+| [`player_state name: type = "Display"`](./statements/player-state) | Declare scoreboard-backed player state. |
+| [`struct Name:`](./statements/struct) | Declare a named struct type with indented fields. |
+| [`let name = expr`](./statements/let) | Create a local binding inferred from the initializer. |
+| [`name = expr`](./statements/assignment) | Assign a new value to an existing local or writable path. |
+| [`if condition:` / `else:`](./statements/if) | Branch on a `bool` expression. |
+| [`match value:`](./statements/match) | Branch on string arms and an optional `else` arm. |
+| [`while condition:`](./statements/while) | Repeat while a `bool` expression is true. |
+| [`for name in start..end:`](./statements/for-range) | Iterate an integer range. |
+| [`for name in start..=end:`](./statements/for-range) | Iterate an inclusive integer range. |
+| [`for name in selector_expr:`](./statements/for-selector) | Iterate over matching entities. |
+| [`for name in array_expr:`](./statements/for-array) | Iterate over array values. |
+| [`async:`](./statements/async) | Launch a non-blocking execution path. |
+| [`break` / `continue`](./statements/control-flow) | Control the nearest enclosing loop. |
+| [`return` / `return expr`](./statements/control-flow) | Exit the current function. |
+| [`mc "..."`](./statements/mc) | Emit a literal Minecraft command. |
+| [`mcf "..."`](./statements/mcf) | Emit a Minecraft function macro with `$(...)` placeholders. |
+| [`as(entity):`](./statements/as) / [`at(entity):`](./statements/at) | Run the body with changed executor or position context. |
+| [`do_work()`](./statements/call) | Call a function for side effects. |
 
 Only function calls may be used as bare expression statements. For example, `debug("ok")` is valid, but `amount + 1` is not a statement.
 
@@ -162,4 +168,3 @@ fn announce() -> void:
     debug("done")
     return
 ```
-

@@ -6,25 +6,25 @@
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `teleport(destination: entity_ref\|block_ref)` | `void` | Teleports the receiver. |
-| `damage(amount: int)` | `void` | Applies damage. |
-| `heal(amount: int)` | `void` | Restores health. |
-| `give(item_id: string, count: int)` | `void` | Gives an item by id and count. |
-| `give(stack: item_def)` | `void` | Gives a built item stack. |
-| `clear(item_id: string, count: int)` | `void` | Clears matching items. |
-| `loot_give(table: string)` | `void` | Gives loot from a loot table. |
-| `tellraw(message: string\|text_def)` | `void` | Sends chat text. |
-| `title(message: string\|text_def)` | `void` | Sends a title. |
-| `actionbar(message: string\|text_def)` | `void` | Sends an actionbar message. |
-| `playsound(sound: string, category: string)` | `void` | Plays a sound. |
-| `stopsound(category: string, sound: string)` | `void` | Stops a sound. |
-| `debug_entity(label: string)` | `void` | Emits debug info for the receiver. |
-| `effect(name: string, duration: int, amplifier: int)` | `void` | Applies an effect. |
-| `add_tag(name: string)` | `void` | Adds a scoreboard tag. |
-| `remove_tag(name: string)` | `void` | Removes a scoreboard tag. |
-| `has_tag(name: string)` | `bool` | Tests for a scoreboard tag. |
+| [`teleport(destination: entity_ref\|block_ref)`](./methods/teleport) | `void` | Teleports the receiver. |
+| [`damage(amount: int)`](./methods/damage) | `void` | Applies damage. |
+| [`heal(amount: int)`](./methods/heal) | `void` | Restores health. |
+| [`give(item_id: string, count: int)`](./methods/give) | `void` | Gives an item by id and count. |
+| [`give(stack: item_def)`](./methods/give) | `void` | Gives a built item stack. |
+| [`clear(item_id: string, count: int)`](./methods/clear) | `void` | Clears matching items. |
+| [`loot_give(table: string)`](./methods/loot-give) | `void` | Gives loot from a loot table. |
+| [`tellraw(message: string\|text_def)`](./methods/tellraw) | `void` | Sends chat text. |
+| [`title(message: string\|text_def)`](./methods/title) | `void` | Sends a title. |
+| [`actionbar(message: string\|text_def)`](./methods/actionbar) | `void` | Sends an actionbar message. |
+| [`playsound(sound: string, category: string)`](./methods/playsound) | `void` | Plays a sound. |
+| [`stopsound(category: string, sound: string)`](./methods/stopsound) | `void` | Stops a sound. |
+| [`debug_entity(label: string)`](./methods/debug-entity) | `void` | Emits debug info for the receiver. |
+| [`effect(name: string, duration: int, amplifier: int)`](./methods/effect) | `void` | Applies an effect. |
+| [`add_tag(name: string)`](./methods/add-tag) | `void` | Adds a scoreboard tag. |
+| [`remove_tag(name: string)`](./methods/remove-tag) | `void` | Removes a scoreboard tag. |
+| [`has_tag(name: string)`](./methods/has-tag) | `bool` | Tests for a scoreboard tag. |
 
-Bukkit-style aliases are also available for display and sound calls: `send_message`, `send_title`, `send_actionbar`, `play_sound`, and `stop_sound`.
+Bukkit-style aliases are also available for display and sound calls: [`send_message`](./methods/send-message), [`send_title`](./methods/send-title), [`send_actionbar`](./methods/send-actionbar), [`play_sound`](./methods/play-sound), and [`stop_sound`](./methods/stop-sound).
 
 ## Fields And Surfaces
 
@@ -103,4 +103,3 @@ fn mark_position() -> void:
     player.position.particle("minecraft:happy_villager", 8, player)
     player.position.setblock("minecraft:gold_block")
 ```
-

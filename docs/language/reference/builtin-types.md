@@ -6,24 +6,24 @@ MCFC is statically typed. Local variables infer their type from their initialize
 
 | Type | Description |
 | --- | --- |
-| `int` | Integer values and arithmetic. |
-| `bool` | `true` or `false`; used by conditions and logical operators. |
-| `string` | Text values and Minecraft identifiers/selectors. |
-| `array<T>` | Ordered collection of values of type `T`. |
-| `dict<T>` | String-keyed map of values of type `T`. |
-| `entity_set` | A selector result that may contain multiple entities. |
-| `entity_ref` | A single entity reference. |
-| `player_ref` | A single player reference. |
-| `block_ref` | A block position reference. |
-| `entity_def` | Mutable entity builder created with `entity(...)`. |
-| `block_def` | Mutable block builder created with `block_type(...)`. |
-| `item_def` | Mutable item builder created with `item(...)`. |
-| `text_def` | Mutable text component builder created with `text(...)`. |
-| `item_slot` | Player inventory or hotbar slot surface. |
-| `bossbar` | Bossbar handle created with `bossbar(...)`. |
-| `nbt` | NBT-like storage path or payload value. |
-| `void` | Function return type for no returned value. |
-| named `struct` types | User-defined structured values. |
+| [`int`](./types/int) | Integer values and arithmetic. |
+| [`bool`](./types/bool) | `true` or `false`; used by conditions and logical operators. |
+| [`string`](./types/string) | Text values and Minecraft identifiers/selectors. |
+| [`array<T>`](./types/array) | Ordered collection of values of type `T`. |
+| [`dict<T>`](./types/dict) | String-keyed map of values of type `T`. |
+| [`entity_set`](./types/entity-set) | A selector result that may contain multiple entities. |
+| [`entity_ref`](./types/entity-ref) | A single entity reference. |
+| [`player_ref`](./types/player-ref) | A single player reference. |
+| [`block_ref`](./types/block-ref) | A block position reference. |
+| [`entity_def`](./types/entity-def) | Mutable entity builder created with `entity(...)`. |
+| [`block_def`](./types/block-def) | Mutable block builder created with `block_type(...)`. |
+| [`item_def`](./types/item-def) | Mutable item builder created with `item(...)`. |
+| [`text_def`](./types/text-def) | Mutable text component builder created with `text(...)`. |
+| [`item_slot`](./types/item-slot) | Player inventory or hotbar slot surface. |
+| [`bossbar`](./types/bossbar) | Bossbar handle created with `bossbar(...)`. |
+| [`nbt`](./types/nbt) | NBT-like storage path or payload value. |
+| [`void`](./types/void) | Function return type for no returned value. |
+| [named `struct` types](./types/struct) | User-defined structured values. |
 
 ## Type Rules
 
@@ -63,4 +63,3 @@ fn place_marker() -> void:
 
     pos.summon(marker)
 ```
-

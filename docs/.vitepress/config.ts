@@ -4,6 +4,7 @@ import mcfcGrammar from '../../editors/vscode-mcfc/syntaxes/mcfc.tmLanguage.json
 export default defineConfig({
   title: 'MCFC',
   description: 'A statically typed language, compiler, and language server for Minecraft datapacks.',
+  base: '/mcfc/',
   cleanUrls: true,
   ignoreDeadLinks: false,
   markdown: {

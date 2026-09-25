@@ -578,6 +578,12 @@ supported yet.
 - `array<T>.pop() -> T`
 - `array<T>.remove(index: int) -> T`
 - `array<T>.remove_at(index: int) -> T` compatibility alias for `remove(index)`
+- `array<T>.insert(index: int, value: T) -> void`
+- `array<T>.clear() -> void`
+- `array<T>.first() -> T` and `array<T>.last() -> T`
+- `array<T>.contains(value: T) -> bool`
+- `array<T>.index_of(value: T) -> int`, or `-1` when missing
+- `array<T>.reverse() -> void`, in place
 - `dict<T>.has(key: string) -> bool`
 - `dict<T>.remove(key: string) -> void`
 

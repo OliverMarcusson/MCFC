@@ -3630,6 +3630,60 @@ fn type_check_method_call(
                 ref_kind: RefKind::Unknown,
             })
         }
+        "clear" | "insert" | "reverse" | "first" | "last" | "contains" | "index_of"
+            if matches!(receiver.ty, Type::Array(_)) =>
+        {
+            let Type::Array(element) = receiver.ty.clone() else {
+                unreachable!()
+            };
+            let element = *element;
+            // The value argument is the last one: insert(index, value), contains(value).
+            let (arity, value_arg) = match method {
+                "insert" => (2, Some(1)),
+                "contains" | "index_of" => (1, Some(0)),
+                _ => (0, None),
+            };
+            expect_arity(method, &args, arity, expr, diagnostics);
+            let mutates = matches!(method, "clear" | "insert" | "reverse");
+            if mutates && !is_storage_lvalue_expr(receiver_expr) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "{}() requires a variable or collection element receiver",
+                        method
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            if method == "insert" && args.first().is_some_and(|arg| arg.ty != Type::Int) {
+                diagnostics.push(Diagnostic::new(
+                    "insert(...) index must be 'int'",
+                    expr.span.clone(),
+                ));
+            }
+            if let Some(arg) = value_arg.and_then(|index| args.get_mut(index)) {
+                if element == Type::Nbt {
+                    *arg = coerce_expr_to_nbt(arg.clone());
+                }
+                if arg.ty != element {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "{}(...) value must be '{}', found '{}'",
+                            method,
+                            element.as_str(),
+                            arg.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            let ty = match method {
+                "first" | "last" => element,
+                "contains" => Type::Bool,
+                "index_of" => Type::Int,
+                _ => Type::Void,
+            };
+            Some(method_call_expr(receiver, method, args, ty))
+        }
         "pop" => {
             expect_arity(method, &args, 0, expr, diagnostics);
             if !is_storage_lvalue_expr(receiver_expr) {

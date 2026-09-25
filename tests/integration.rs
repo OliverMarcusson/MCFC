@@ -2830,3 +2830,61 @@ fn main() -> void:
         );
     }
 }
+
+#[test]
+fn array_methods_insert_clear_search_and_reverse() {
+    let source = r#"
+fn main() -> void:
+    let xs = [3, 1, 2]
+    let i = 1
+    xs.insert(0, 9)
+    xs.insert(i, 7)
+    let a = xs.first()
+    let b = xs.last()
+    let has = xs.contains(2)
+    let at = xs.index_of(2)
+    xs.reverse()
+    xs.clear()
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = &result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    for expected in [
+        "frames.d0.main.xs insert 0 from storage",
+        "[0] 1",
+        "[-1] 1",
+        "run function mcfc:generated/main__d0__index_of_",
+        "run function mcfc:generated/main__d0__reverse_",
+        "frames.d0.main.xs set value []",
+    ] {
+        assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
+    }
+    let bodies: Vec<&String> = files.values().collect();
+    for expected in [
+        "insert $(index) from storage",
+        "execute store success score",
+        "prepend from storage",
+    ] {
+        assert!(
+            bodies.iter().any(|body| body.contains(expected)),
+            "no file contains '{expected}'"
+        );
+    }
+}
+
+#[test]
+fn array_search_values_must_match_the_element_type() {
+    let source = r#"
+fn main() -> void:
+    let xs = [1, 2]
+    let has = xs.contains("a")
+"#;
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("contains(...) value must be 'int', found 'string'")
+    );
+}

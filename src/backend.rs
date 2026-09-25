@@ -3525,6 +3525,113 @@ impl Backend {
                 ));
                 return;
             }
+            "first" | "last" if matches!(receiver.ty, Type::Array(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                let index = if method == "first" { 0 } else { -1 };
+                let Type::Array(element_ty) = &receiver.ty else {
+                    unreachable!()
+                };
+                self.compile_storage_read_from_path(
+                    RenderedStoragePath {
+                        path: format!("{}[{}]", source.storage_path(), index),
+                        macro_storage: None,
+                    },
+                    element_ty,
+                    target,
+                    lines,
+                );
+                return;
+            }
+            "contains" | "index_of" if matches!(receiver.ty, Type::Array(_)) => {
+                let found = self.compile_array_index_of(function, depth, receiver, &args[0], lines);
+                if method == "index_of" {
+                    lines.push(format!(
+                        "scoreboard players operation {} mcfc = {} mcfc",
+                        target.numeric_name(),
+                        found
+                    ));
+                } else {
+                    lines.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        target.numeric_name()
+                    ));
+                    lines.push(format!(
+                        "execute unless score {} mcfc matches -1 run scoreboard players set {} mcfc 1",
+                        found,
+                        target.numeric_name()
+                    ));
+                }
+                return;
+            }
+            "clear" | "insert" | "reverse" if matches!(receiver.ty, Type::Array(_)) => {
+                let Some(rendered) =
+                    self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
+                else {
+                    return;
+                };
+                let command = match method {
+                    "clear" => format!(
+                        "data modify storage {}:runtime {} set value []",
+                        self.namespace, rendered.path
+                    ),
+                    "reverse" => {
+                        let source =
+                            self.compile_storage_receiver(function, depth, receiver, lines);
+                        let reversed = self.compile_array_reverse(function, depth, &source, lines);
+                        format!(
+                            "data modify storage {}:runtime {} set from storage {}:runtime {}",
+                            self.namespace, rendered.path, self.namespace, reversed
+                        )
+                    }
+                    _ => {
+                        let value = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                        self.compile_value_as_nbt(function, depth, &args[1], &value, lines);
+                        let index = match args[0].kind {
+                            IrExprKind::Int(index) => index.to_string(),
+                            _ => "$(index)".to_string(),
+                        };
+                        let command = format!(
+                            "data modify storage {}:runtime {} insert {} from storage {}:runtime {}",
+                            self.namespace,
+                            rendered.path,
+                            index,
+                            self.namespace,
+                            value.storage_path()
+                        );
+                        if !matches!(args[0].kind, IrExprKind::Int(_)) {
+                            let macro_storage =
+                                rendered.macro_storage.clone().unwrap_or_else(|| {
+                                    format!(
+                                        "frames.d{}.{}.__path{}",
+                                        depth,
+                                        sanitize(&function.name),
+                                        self.new_temp()
+                                    )
+                                });
+                            let index_slot =
+                                local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                            self.compile_expr_into_slot(
+                                function,
+                                depth,
+                                &args[0],
+                                &index_slot,
+                                lines,
+                            );
+                            lines.push(format!(
+                                "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
+                                self.namespace,
+                                macro_storage,
+                                index_slot.numeric_name()
+                            ));
+                            lines.push(self.storage_path_command(command, Some(macro_storage)));
+                            return;
+                        }
+                        command
+                    }
+                };
+                lines.push(self.storage_path_command(command, rendered.macro_storage));
+                return;
+            }
             "push" => {
                 if let Some(rendered) =
                     self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
@@ -7180,6 +7287,83 @@ impl Backend {
             target.storage_path(),
             parts.join(",")
         ));
+    }
+
+    /// Emit a loop that finds the first element equal to `value`. Returns the
+    /// score holder with its index, or -1. Two tags are equal when copying one
+    /// onto the other changes nothing, so `data modify` reports no success.
+    fn compile_array_index_of(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        array: &IrExpr,
+        value: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let ns = self.namespace.clone();
+        let rest = self.compile_storage_receiver(function, depth, array, lines);
+        let needle = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+        self.compile_value_as_nbt(function, depth, value, &needle, lines);
+        let probe = string_slot(depth, &function.name, &self.new_temp());
+        let found = numeric_slot(depth, &function.name, &self.new_temp());
+        let index = numeric_slot(depth, &function.name, &self.new_temp());
+        let changed = numeric_slot(depth, &function.name, &self.new_temp());
+        let rest = rest.storage_path();
+        let needle = needle.storage_path();
+        let (path, name) = self.new_block(function, depth, "index_of");
+        let body = [
+            format!(
+                "data modify storage {ns}:runtime {probe} set from storage {ns}:runtime {rest}[0]"
+            ),
+            format!(
+                "execute store success score {changed} mcfc run data modify storage {ns}:runtime {probe} set from storage {ns}:runtime {needle}"
+            ),
+            format!(
+                "execute if score {changed} mcfc matches 0 run scoreboard players operation {found} mcfc = {index} mcfc"
+            ),
+            format!("data remove storage {ns}:runtime {rest}[0]"),
+            format!("scoreboard players add {index} mcfc 1"),
+            format!(
+                "execute if score {changed} mcfc matches 1 if data storage {ns}:runtime {rest}[0] run function {ns}:{name}"
+            ),
+        ];
+        self.files.insert(path, body.join("\n") + "\n");
+        lines.push(format!("scoreboard players set {found} mcfc -1"));
+        lines.push(format!("scoreboard players set {index} mcfc 0"));
+        lines.push(format!(
+            "execute if data storage {ns}:runtime {rest}[0] run function {ns}:{name}"
+        ));
+        found
+    }
+
+    /// Emit a loop that moves every element of `source` to the front of a new
+    /// list, emptying `source`. Returns the storage path of the reversed list.
+    fn compile_array_reverse(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        source: &SlotRef,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let ns = self.namespace.clone();
+        let reversed = string_slot(depth, &function.name, &self.new_temp());
+        let source = source.storage_path();
+        let (path, name) = self.new_block(function, depth, "reverse");
+        let body = [
+            format!(
+                "data modify storage {ns}:runtime {reversed} prepend from storage {ns}:runtime {source}[0]"
+            ),
+            format!("data remove storage {ns}:runtime {source}[0]"),
+            format!("execute if data storage {ns}:runtime {source}[0] run function {ns}:{name}"),
+        ];
+        self.files.insert(path, body.join("\n") + "\n");
+        lines.push(format!(
+            "data modify storage {ns}:runtime {reversed} set value []"
+        ));
+        lines.push(format!(
+            "execute if data storage {ns}:runtime {source}[0] run function {ns}:{name}"
+        ));
+        reversed
     }
 
     /// Write `body` as a generated macro function and call it with the

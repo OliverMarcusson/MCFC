@@ -2912,6 +2912,25 @@ fn array_method_items() -> Vec<CompletionItem> {
             "array<T>.remove_at(index: int) -> T",
             "remove_at(${1:index})",
         ),
+        (
+            "insert",
+            "array<T>.insert(index: int, value: T) -> void",
+            "insert(${1:index}, ${2:value})",
+        ),
+        ("clear", "array<T>.clear() -> void", "clear()"),
+        ("first", "array<T>.first() -> T", "first()"),
+        ("last", "array<T>.last() -> T", "last()"),
+        (
+            "contains",
+            "array<T>.contains(value: T) -> bool",
+            "contains(${1:value})",
+        ),
+        (
+            "index_of",
+            "array<T>.index_of(value: T) -> int",
+            "index_of(${1:value})",
+        ),
+        ("reverse", "array<T>.reverse() -> void", "reverse()"),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {

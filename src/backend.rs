@@ -6325,6 +6325,10 @@ impl Backend {
                     BinaryOp::Add => format!("{{type:\"add\",inputs:[{},{}]}}", left, right),
                     BinaryOp::Mul => format!("{{type:\"mul\",inputs:[{},{}]}}", left, right),
                     BinaryOp::Sub => format!("{{type:\"sub\",left:{},right:{}}}", left, right),
+                    // a - b * floor(a / b), so the sign follows `b` like the int `%`.
+                    BinaryOp::Rem => format!(
+                        "{{type:\"sub\",left:{left},right:{{type:\"mul\",inputs:[{right},{{type:\"floor\",input:{{type:\"div\",left:{left},right:{right}}}}}]}}}}"
+                    ),
                     _ => format!("{{type:\"div\",left:{},right:{}}}", left, right),
                 }
             }
@@ -6852,7 +6856,7 @@ impl Backend {
         self.compile_expr_into_slot(function, depth, right, &right_slot, lines);
 
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
                 lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
                     target.numeric_name(),
@@ -6863,6 +6867,7 @@ impl Backend {
                     BinaryOp::Sub => "-=",
                     BinaryOp::Mul => "*=",
                     BinaryOp::Div => "/=",
+                    BinaryOp::Rem => "%=",
                     _ => unreachable!(),
                 };
                 lines.push(format!(

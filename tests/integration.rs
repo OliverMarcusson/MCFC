@@ -2757,3 +2757,31 @@ fn main() -> void:
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
     assert!(error.to_string().contains("cannot mix 'int' and 'float'"));
 }
+
+#[test]
+fn remainder_operator_matches_scoreboard_floor_mod() {
+    let source = r#"
+fn main() -> void:
+    let a = -7 % 3
+    let b = 7 % -3
+    let c = 7 % 3
+    let x = random(10)
+    let d = x % 4
+    let f = 5.5 % 2.0
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    for expected in [
+        "$d0_main_a mcfc 2",
+        "$d0_main_b mcfc -2",
+        "$d0_main_c mcfc 1",
+        "%=",
+        r#"{type:"floor",input:{type:"div",left:5.5,right:2.0}}"#,
+    ] {
+        assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
+    }
+}

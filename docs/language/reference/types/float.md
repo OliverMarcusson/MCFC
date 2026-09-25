@@ -18,7 +18,7 @@ A float literal needs a digit on both sides of the point: `1.0`, `0.5`. Write `-
 
 | Operator | Result |
 | --- | --- |
-| `+`, `-`, `*`, `/` | `float` |
+| `+`, `-`, `*`, `/`, `%` | `float` |
 | unary `-` | `float` |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | `bool` |
 

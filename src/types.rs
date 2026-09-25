@@ -1917,7 +1917,7 @@ fn type_check_expr(
                 diagnostics,
             );
             let ty = match op {
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
                     if left.ty == Type::Float || right.ty == Type::Float =>
                 {
                     if left.ty != right.ty {
@@ -1928,7 +1928,7 @@ fn type_check_expr(
                     }
                     Type::Float
                 }
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
                     left = coerce_expr_to_expected_type(left, &Type::Int);
                     right = coerce_expr_to_expected_type(right, &Type::Int);
                     if left.ty != Type::Int || right.ty != Type::Int {

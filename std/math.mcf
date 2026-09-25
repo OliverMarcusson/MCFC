@@ -31,7 +31,7 @@ pub fn clamp(x: int, low: int, high: int) -> int:
 
 # Remainder with the sign of `b`, matching Minecraft's `%=` operation.
 pub fn rem(a: int, b: int) -> int:
-    return a - (a / b) * b
+    return a % b
 
 # `base` raised to `exponent`; exponents below zero return 0.
 pub fn pow(base: int, exponent: int) -> int:

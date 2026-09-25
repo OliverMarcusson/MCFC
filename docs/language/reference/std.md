@@ -21,7 +21,7 @@ Only the `std` functions a pack calls are compiled into it. The name `std` is re
 | `abs(x: int) -> int` | `x` without its sign. |
 | `sign(x: int) -> int` | `1`, `0`, or `-1`. |
 | `clamp(x: int, low: int, high: int) -> int` | `x` limited to `low..=high`. |
-| `rem(a: int, b: int) -> int` | The remainder of `a / b`, with the sign of `b`. For example, `rem(-7, 3)` is `2`. |
+| `rem(a: int, b: int) -> int` | The remainder of `a / b`, with the sign of `b`. For example, `rem(-7, 3)` is `2`. Same as `a % b`. |
 | `pow(base: int, exponent: int) -> int` | `base` multiplied by itself `exponent` times. Negative exponents return `0`. |
 
 All arithmetic is 32-bit scoreboard math, so results wrap on overflow.

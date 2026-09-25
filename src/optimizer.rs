@@ -268,6 +268,10 @@ fn fold_binary(op: BinaryOp, left: &IrExpr, right: &IrExpr) -> Option<IrExprKind
             BinaryOp::Sub => Some(IrExprKind::Int(left - right)),
             BinaryOp::Mul => Some(IrExprKind::Int(left * right)),
             BinaryOp::Div if *right != 0 => floor_div(*left, *right).map(IrExprKind::Int),
+            // Scoreboard `%=` is Math.floorMod, which is rem_euclid only for positive divisors.
+            BinaryOp::Rem if *right != 0 => {
+                floor_div(*left, *right).map(|q| IrExprKind::Int(left - q * right))
+            }
             BinaryOp::Eq => Some(IrExprKind::Bool(left == right)),
             BinaryOp::NotEq => Some(IrExprKind::Bool(left != right)),
             BinaryOp::Lt => Some(IrExprKind::Bool(left < right)),

@@ -311,14 +311,17 @@ Supported expressions:
 
 Binary operators:
 
-- arithmetic: `+`, `-`, `*`, `/`
+- arithmetic: `+`, `-`, `*`, `/`, `%`
 - logical: `and`, `or`
 - comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
+
+`/` rounds down and `%` takes the sign of the right side, matching Minecraft's
+scoreboard `/=` and `%=`: `-7 / 2` is `-4` and `-7 % 3` is `2`.
 
 Precedence:
 
 1. `not`
-2. `*`, `/`
+2. `*`, `/`, `%`
 3. `+`, `-`
 4. comparisons
 5. `and`

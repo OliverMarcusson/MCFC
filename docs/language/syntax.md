@@ -30,14 +30,16 @@ Supported expressions include literals, variables, calls, method calls, path acc
 
 Binary operators:
 
-- arithmetic: `+`, `-`, `*`, `/`
+- arithmetic: `+`, `-`, `*`, `/`, `%`
 - logical: `and`, `or`
 - comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
+
+`/` rounds down and `%` takes the sign of the right side, like Minecraft's scoreboard operations: `-7 / 2` is `-4` and `-7 % 3` is `2`. Both work on `int` and on `float`.
 
 Precedence:
 
 1. `not`
-2. `*`, `/`
+2. `*`, `/`, `%`
 3. `+`, `-`
 4. comparisons
 5. `and`

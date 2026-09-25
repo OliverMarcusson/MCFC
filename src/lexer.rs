@@ -50,6 +50,7 @@ pub enum TokenKind {
     Minus,
     Star,
     Slash,
+    Percent,
     EqEq,
     BangEq,
     Lt,
@@ -230,6 +231,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
             '+' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Plus),
             '*' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Star),
             '/' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Slash),
+            '%' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Percent),
             '.' => {
                 let start = cursor.position();
                 cursor.bump();

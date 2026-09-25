@@ -92,6 +92,7 @@ export default defineConfig({
             text: 'Type Pages',
             items: [
               { text: 'int', link: '/language/reference/types/int' },
+              { text: 'float', link: '/language/reference/types/float' },
               { text: 'bool', link: '/language/reference/types/bool' },
               { text: 'string', link: '/language/reference/types/string' },
               { text: 'array<T>', link: '/language/reference/types/array' },
@@ -131,6 +132,7 @@ export default defineConfig({
               { text: 'sleep_ticks', link: '/language/reference/builtins/sleep-ticks' },
               { text: 'random', link: '/language/reference/builtins/random' },
               { text: 'int', link: '/language/reference/builtins/int' },
+              { text: 'float', link: '/language/reference/builtins/float' },
               { text: 'bool', link: '/language/reference/builtins/bool' },
               { text: 'string', link: '/language/reference/builtins/string' },
               { text: 'as', link: '/language/reference/builtins/as' },

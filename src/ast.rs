@@ -68,6 +68,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
     Int,
+    Float,
     Bool,
     String,
     Array(Box<Type>),
@@ -91,6 +92,7 @@ impl Type {
     pub fn as_str(&self) -> String {
         match self {
             Type::Int => "int".to_string(),
+            Type::Float => "float".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "string".to_string(),
             Type::Array(element) => format!("array<{}>", element.as_str()),
@@ -220,6 +222,7 @@ pub enum PathSegment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Int(i64),
+    Float(String),
     Bool(bool),
     String(String),
     ArrayLiteral(Vec<Expr>),

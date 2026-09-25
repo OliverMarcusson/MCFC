@@ -2708,6 +2708,7 @@ fn completion_items_for_receiver(
 ) -> Vec<CompletionItem> {
     match receiver {
         Some(CompletionReceiver::Array) => array_method_items(),
+        Some(CompletionReceiver::Float) => float_method_items(),
         Some(CompletionReceiver::Dict) => dict_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
@@ -2909,6 +2910,42 @@ fn array_method_items() -> Vec<CompletionItem> {
             "remove_at",
             "array<T>.remove_at(index: int) -> T",
             "remove_at(${1:index})",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text)| {
+        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+    })
+    .collect()
+}
+
+fn float_method_items() -> Vec<CompletionItem> {
+    [
+        ("sqrt", "float.sqrt() -> float", "sqrt()"),
+        ("sin", "float.sin() -> float", "sin()"),
+        ("cos", "float.cos() -> float", "cos()"),
+        ("tan", "float.tan() -> float", "tan()"),
+        ("abs", "float.abs() -> float", "abs()"),
+        ("floor", "float.floor() -> float", "floor()"),
+        ("ceil", "float.ceil() -> float", "ceil()"),
+        ("round", "float.round() -> float", "round()"),
+        ("trunc", "float.trunc() -> float", "trunc()"),
+        (
+            "pow",
+            "float.pow(exponent: float) -> float",
+            "pow(${1:exponent})",
+        ),
+        ("min", "float.min(other: float) -> float", "min(${1:other})"),
+        ("max", "float.max(other: float) -> float", "max(${1:other})"),
+        (
+            "clamp",
+            "float.clamp(low: float, high: float) -> float",
+            "clamp(${1:low}, ${2:high})",
+        ),
+        (
+            "hypot",
+            "float.hypot(other: float) -> float",
+            "hypot(${1:other})",
         ),
     ]
     .into_iter()
@@ -3702,6 +3739,7 @@ fn nbt_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CompletionReceiver {
     Array,
+    Float,
     Dict,
     Struct(String),
     GenericEntityRef,
@@ -3919,6 +3957,7 @@ fn receiver_from_type(
 fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<CompletionReceiver> {
     match ty {
         Type::Array(_) => Some(CompletionReceiver::Array),
+        Type::Float => Some(CompletionReceiver::Float),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
         Type::EntityRef => Some(if ref_kind == RefKind::Player {

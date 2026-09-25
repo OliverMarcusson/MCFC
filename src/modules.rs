@@ -665,7 +665,11 @@ impl Resolver {
                 }
             }
             ExprKind::Path(path) => self.walk_path(module, path, diagnostics),
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Variable(_) => {}
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Variable(_) => {}
         }
     }
 }

@@ -7,6 +7,7 @@ MCFC is statically typed. Local variables infer their type from their initialize
 | Type | Description |
 | --- | --- |
 | [`int`](./types/int) | Integer values and arithmetic. |
+| [`float`](./types/float) | 32-bit decimal values with `sqrt`, trigonometry, and rounding. |
 | [`bool`](./types/bool) | `true` or `false`; used by conditions and logical operators. |
 | [`string`](./types/string) | Text values and Minecraft identifiers/selectors. |
 | [`array<T>`](./types/array) | Ordered collection of values of type `T`. |

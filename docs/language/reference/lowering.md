@@ -29,6 +29,7 @@ Generated files are deterministic and use reserved generated paths under the pac
 | MCFC value | Runtime representation |
 | --- | --- |
 | `int` | scoreboard value in the generated `mcfc` objective or a state objective |
+| `float` | command storage float tag, computed with one `/compute` command per expression |
 | `bool` | scoreboard value, conventionally `0` or `1` |
 | `string` | command storage |
 | `array<T>` / `dict<T>` | command storage |

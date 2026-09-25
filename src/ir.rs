@@ -139,6 +139,7 @@ pub struct IrPathExpr {
 #[derive(Debug, Clone)]
 pub enum IrExprKind {
     Int(i64),
+    Float(String),
     Bool(bool),
     String(String),
     InterpolatedString {
@@ -390,6 +391,7 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
         ref_kind: expr.ref_kind,
         kind: match &expr.kind {
             TypedExprKind::Int(value) => IrExprKind::Int(*value),
+            TypedExprKind::Float(value) => IrExprKind::Float(value.clone()),
             TypedExprKind::Bool(value) => IrExprKind::Bool(*value),
             TypedExprKind::String(value) => IrExprKind::String(value.clone()),
             TypedExprKind::InterpolatedString {
@@ -455,6 +457,7 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
             TypedExprKind::Cast { kind, expr } => IrExprKind::Cast {
                 kind: match kind {
                     CastKind::Int => CastKind::Int,
+                    CastKind::Float => CastKind::Float,
                     CastKind::Bool => CastKind::Bool,
                     CastKind::String => CastKind::String,
                 },

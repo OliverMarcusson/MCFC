@@ -58,6 +58,7 @@ pub enum TokenKind {
     Gte,
     Identifier(String),
     Integer(i64),
+    Float(String),
     String(String),
     Newline,
     Indent,
@@ -440,10 +441,21 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
             ch if ch.is_ascii_digit() => {
                 let start = cursor.position();
                 cursor.consume_while(|next| next.is_ascii_digit());
+                let rest = &source[cursor.position()..];
+                let is_float = rest.starts_with('.')
+                    && rest[1..].starts_with(|next: char| next.is_ascii_digit());
+                if is_float {
+                    cursor.bump();
+                    cursor.consume_while(|next| next.is_ascii_digit());
+                }
                 let range = TextRange::new(start, cursor.position());
                 let raw = &source[range.start..range.end];
-                let value = raw.parse().unwrap_or(0);
-                push_token(&mut tokens, &source_file, TokenKind::Integer(value), range);
+                let kind = if is_float {
+                    TokenKind::Float(raw.to_string())
+                } else {
+                    TokenKind::Integer(raw.parse().unwrap_or(0))
+                };
+                push_token(&mut tokens, &source_file, kind, range);
             }
             ch if is_ident_start(ch) => {
                 let start = cursor.position();

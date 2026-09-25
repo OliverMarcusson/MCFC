@@ -532,6 +532,7 @@ pub struct TypedPathExpr {
 #[derive(Debug, Clone)]
 pub enum TypedExprKind {
     Int(i64),
+    Float(String),
     Bool(bool),
     String(String),
     InterpolatedString {
@@ -586,6 +587,7 @@ pub enum TypedExprKind {
 #[derive(Debug, Clone, Copy)]
 pub enum CastKind {
     Int,
+    Float,
     Bool,
     String,
 }
@@ -1623,6 +1625,11 @@ fn type_check_expr(
             ty: Type::Int,
             ref_kind: RefKind::Unknown,
         },
+        ExprKind::Float(value) => TypedExpr {
+            kind: TypedExprKind::Float(value.clone()),
+            ty: Type::Float,
+            ref_kind: RefKind::Unknown,
+        },
         ExprKind::Bool(value) => TypedExpr {
             kind: TypedExprKind::Bool(*value),
             ty: Type::Bool,
@@ -1843,8 +1850,8 @@ fn type_check_expr(
                     ),
                     &Type::Bool,
                 ),
-                UnaryOp::Neg => coerce_expr_to_expected_type(
-                    type_check_expr(
+                UnaryOp::Neg => {
+                    let operand = type_check_expr(
                         expr,
                         struct_defs,
                         signatures,
@@ -1852,9 +1859,13 @@ fn type_check_expr(
                         ref_env,
                         called_functions,
                         diagnostics,
-                    ),
-                    &Type::Int,
-                ),
+                    );
+                    if operand.ty == Type::Float {
+                        operand
+                    } else {
+                        coerce_expr_to_expected_type(operand, &Type::Int)
+                    }
+                }
             };
             let ty = match op {
                 UnaryOp::Not => {
@@ -1866,6 +1877,7 @@ fn type_check_expr(
                     }
                     Type::Bool
                 }
+                UnaryOp::Neg if operand.ty == Type::Float => Type::Float,
                 UnaryOp::Neg => {
                     if operand.ty != Type::Int {
                         diagnostics.push(Diagnostic::new(
@@ -1905,6 +1917,17 @@ fn type_check_expr(
                 diagnostics,
             );
             let ty = match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div
+                    if left.ty == Type::Float || right.ty == Type::Float =>
+                {
+                    if left.ty != right.ty {
+                        diagnostics.push(Diagnostic::new(
+                            "cannot mix 'int' and 'float'; convert with float(x) or int(x)",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Type::Float
+                }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                     left = coerce_expr_to_expected_type(left, &Type::Int);
                     right = coerce_expr_to_expected_type(right, &Type::Int);
@@ -1943,17 +1966,20 @@ fn type_check_expr(
                     }
                     match op {
                         BinaryOp::Eq | BinaryOp::NotEq => {
-                            if !matches!(left.ty, Type::Int | Type::Bool | Type::String) {
+                            if !matches!(
+                                left.ty,
+                                Type::Int | Type::Float | Type::Bool | Type::String
+                            ) {
                                 diagnostics.push(Diagnostic::new(
-                                    "equality operators currently support only 'int', 'bool', and 'string'",
+                                    "equality operators currently support only 'int', 'float', 'bool', and 'string'",
                                     expr.span.clone(),
                                 ));
                             }
                         }
                         _ => {
-                            if !matches!(left.ty, Type::Int | Type::Bool) {
+                            if !matches!(left.ty, Type::Int | Type::Float | Type::Bool) {
                                 diagnostics.push(Diagnostic::new(
-                                    "ordering comparisons currently support only 'int' and 'bool'",
+                                    "ordering comparisons currently support only 'int', 'float', and 'bool'",
                                     expr.span.clone(),
                                 ));
                             }
@@ -3379,7 +3405,7 @@ fn type_check_builtin_call(
                 ref_kind: value.ref_kind,
             })
         }
-        "int" | "bool" | "string" => {
+        "int" | "float" | "bool" | "string" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -3395,14 +3421,23 @@ fn type_check_builtin_call(
                 ty: Type::Nbt,
                 ref_kind: RefKind::Unknown,
             });
-            if arg.ty != Type::Nbt {
+            let numeric = matches!(
+                (function, &arg.ty),
+                ("int", Type::Float) | ("float", Type::Int)
+            );
+            if arg.ty != Type::Nbt && !numeric {
                 diagnostics.push(Diagnostic::new(
-                    format!("{}(...) requires an 'nbt' argument", function),
+                    match function {
+                        "int" => "int(...) requires an 'nbt' or 'float' argument".to_string(),
+                        "float" => "float(...) requires an 'nbt' or 'int' argument".to_string(),
+                        _ => format!("{}(...) requires an 'nbt' argument", function),
+                    },
                     expr.span.clone(),
                 ));
             }
             let (kind, ty) = match function {
                 "int" => (CastKind::Int, Type::Int),
+                "float" => (CastKind::Float, Type::Float),
                 "bool" => (CastKind::Bool, Type::Bool),
                 _ => (CastKind::String, Type::String),
             };
@@ -3461,6 +3496,24 @@ fn type_check_method_call(
         diagnostics,
     );
     match method {
+        "sqrt" | "sin" | "cos" | "tan" | "abs" | "floor" | "ceil" | "round" | "trunc" | "pow"
+        | "min" | "max" | "hypot" | "clamp"
+            if receiver.ty == Type::Float =>
+        {
+            let arity = match method {
+                "pow" | "min" | "max" | "hypot" => 1,
+                "clamp" => 2,
+                _ => 0,
+            };
+            expect_arity(method, &args, arity, expr, diagnostics);
+            if args.iter().any(|arg| arg.ty != Type::Float) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{}() requires 'float' arguments", method),
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::Float))
+        }
         "cancel" => {
             expect_arity(method, &args, 0, expr, diagnostics);
             let is_agent_event = matches!(&receiver.ty, Type::Struct(name) if name == "agent_event" || name.ends_with("_event"));

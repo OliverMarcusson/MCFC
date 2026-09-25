@@ -238,7 +238,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void|agent_event|chat_event|inventory_click_event|player_action_event|block_break_event|player_interact_block_event|player_interact_item_event|entity_interact_event|entity_attack_event|item_held_change_event|inventory_close_event|player_swing_event|player_action_toggle_event|item_rename_event|trade_select_event|sign_change_event|recipe_place_event|game_mode_request_event)\\b"
+          "match": "\\b(?:int|float|bool|string|array|dict|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void|agent_event|chat_event|inventory_click_event|player_action_event|block_break_event|player_interact_block_event|player_interact_item_event|entity_interact_event|entity_attack_event|item_held_change_event|inventory_close_event|player_swing_event|player_action_toggle_event|item_rename_event|trade_select_event|sign_change_event|recipe_place_event|game_mode_request_event)\\b"
         }
       ]
     },
@@ -246,7 +246,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|float|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",
@@ -268,6 +268,10 @@
     },
     "numbers": {
       "patterns": [
+        {
+          "name": "constant.numeric.float.mcfc",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
         {
           "name": "constant.numeric.integer.mcfc",
           "match": "\\b[0-9]+\\b"

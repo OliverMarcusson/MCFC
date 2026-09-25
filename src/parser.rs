@@ -494,6 +494,10 @@ impl Parser {
                 kind: ExprKind::Int(value),
                 span: token.span,
             },
+            TokenKind::Float(value) => Expr {
+                kind: ExprKind::Float(value),
+                span: token.span,
+            },
             TokenKind::True => Expr {
                 kind: ExprKind::Bool(true),
                 span: token.span,
@@ -758,6 +762,7 @@ impl Parser {
         match token.kind {
             TokenKind::Identifier(name) => match name.as_str() {
                 "int" => Type::Int,
+                "float" => Type::Float,
                 "bool" => Type::Bool,
                 "string" => Type::String,
                 "entity_set" => Type::EntitySet,

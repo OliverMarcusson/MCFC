@@ -2716,3 +2716,44 @@ fn main() -> void:
         assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
     }
 }
+
+#[test]
+fn floats_lower_to_one_compute_command_per_expression() {
+    let source = r#"
+fn main() -> void:
+    let x = 3.0
+    let y = (x * x + 1.5).sqrt()
+    let n = int(y * 100.0)
+    let z = float(n) / 2.0
+    if y < x:
+        mc "say smaller"
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    let x = r#"{type:"storage",storage:"mcfc:runtime",path:"frames.d0.main.x"}"#;
+    for expected in [
+        "frames.d0.main.x set value 3.0f".to_string(),
+        format!(
+            r#"frames.d0.main.y set compute default float {{type:"sqrt",input:{{type:"add",inputs:[{{type:"mul",inputs:[{x},{x}]}},1.5]}}}}"#
+        ),
+        "execute store result score $d0_main_n mcfc run data get storage".to_string(),
+        r#"{type:"from_int",input:{type:"score",target:{type:"fixed",name:"#.to_string(),
+        "run compute default float {type:\"sub\",left:{type:\"storage\"".to_string(),
+    ] {
+        assert!(main.contains(&expected), "missing '{expected}' in:\n{main}");
+    }
+}
+
+#[test]
+fn floats_reject_mixing_with_ints() {
+    let source = r#"
+fn main() -> void:
+    let x = 1.5 + 2
+"#;
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("cannot mix 'int' and 'float'"));
+}

@@ -2053,10 +2053,26 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        if is_float_op(expr) {
+            let provider = self.float_provider(function, depth, expr, lines);
+            lines.push(format!(
+                "data modify storage {}:runtime {} set compute default float {}",
+                self.namespace,
+                target.storage_path(),
+                provider
+            ));
+            return;
+        }
         match &expr.kind {
             IrExprKind::Int(value) => lines.push(format!(
                 "scoreboard players set {} mcfc {}",
                 target.numeric_name(),
+                value
+            )),
+            IrExprKind::Float(value) => lines.push(format!(
+                "data modify storage {}:runtime {} set value {}f",
+                self.namespace,
+                target.storage_path(),
                 value
             )),
             IrExprKind::Bool(value) => lines.push(format!(
@@ -2099,6 +2115,7 @@ impl Backend {
                     numeric_slot(depth, &function.name, name)
                 )),
                 Type::String
+                | Type::Float
                 | Type::Array(_)
                 | Type::Dict(_)
                 | Type::Struct(_)
@@ -2239,6 +2256,7 @@ impl Backend {
                             numeric_return_slot(callee_depth, callee)
                         )),
                         Type::String
+                        | Type::Float
                         | Type::Array(_)
                         | Type::Dict(_)
                         | Type::Struct(_)
@@ -6274,7 +6292,163 @@ impl Backend {
                 self.namespace,
                 temp_slot.storage_path()
             )),
+            CastKind::Float => unreachable!("float casts lower through float_provider"),
         }
+    }
+
+    /// Render a float expression as one `/compute` float provider, so a whole
+    /// arithmetic tree costs a single command. Leaves that are not float
+    /// operations are evaluated into temp slots first and read back by path.
+    fn float_provider(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        expr: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> String {
+        match &expr.kind {
+            IrExprKind::Float(value) => value.clone(),
+            IrExprKind::Variable(name) => {
+                self.storage_provider(&string_slot(depth, &function.name, name))
+            }
+            IrExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => format!(
+                "{{type:\"negate\",input:{}}}",
+                self.float_provider(function, depth, expr, lines)
+            ),
+            IrExprKind::Binary { op, left, right } if is_float_op(expr) => {
+                let left = self.float_provider(function, depth, left, lines);
+                let right = self.float_provider(function, depth, right, lines);
+                match op {
+                    BinaryOp::Add => format!("{{type:\"add\",inputs:[{},{}]}}", left, right),
+                    BinaryOp::Mul => format!("{{type:\"mul\",inputs:[{},{}]}}", left, right),
+                    BinaryOp::Sub => format!("{{type:\"sub\",left:{},right:{}}}", left, right),
+                    _ => format!("{{type:\"div\",left:{},right:{}}}", left, right),
+                }
+            }
+            IrExprKind::Cast {
+                kind: CastKind::Float,
+                expr: inner,
+            } if inner.ty == Type::Int => {
+                let input = match &inner.kind {
+                    IrExprKind::Int(value) => value.to_string(),
+                    _ => {
+                        let temp = self.new_temp();
+                        let slot = local_slot(depth, &function.name, &temp, &Type::Int);
+                        self.compile_expr_into_slot(function, depth, inner, &slot, lines);
+                        format!(
+                            "{{type:\"score\",target:{{type:\"fixed\",name:{}}},score:\"mcfc\"}}",
+                            quoted(slot.numeric_name())
+                        )
+                    }
+                };
+                format!("{{type:\"from_int\",input:{}}}", input)
+            }
+            IrExprKind::Cast {
+                kind: CastKind::Float,
+                expr: inner,
+            } => {
+                let temp = self.new_temp();
+                let slot = local_slot(depth, &function.name, &temp, &Type::Nbt);
+                self.compile_expr_into_slot(function, depth, inner, &slot, lines);
+                self.storage_provider(slot.storage_path())
+            }
+            IrExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+            } if is_float_op(expr) => {
+                let value = self.float_provider(function, depth, receiver, lines);
+                let args: Vec<String> = args
+                    .iter()
+                    .map(|arg| self.float_provider(function, depth, arg, lines))
+                    .collect();
+                let single =
+                    |kind: &str, input: &str| format!("{{type:\"{}\",input:{}}}", kind, input);
+                let many = |kind: &str, inputs: &[&str]| {
+                    format!("{{type:\"{}\",inputs:[{}]}}", kind, inputs.join(","))
+                };
+                match method.as_str() {
+                    "trunc" => single("truncate", &value),
+                    "tan" => format!(
+                        "{{type:\"div\",left:{},right:{}}}",
+                        single("sin", &value),
+                        single("cos", &value)
+                    ),
+                    "pow" => format!("{{type:\"pow\",base:{},exponent:{}}}", value, args[0]),
+                    "min" | "max" => many(method, &[&value, &args[0]]),
+                    "hypot" => many("length", &[&value, &args[0]]),
+                    "clamp" => many("min", &[&many("max", &[&value, &args[0]]), &args[1]]),
+                    _ => single(method, &value),
+                }
+            }
+            _ => {
+                let temp = self.new_temp();
+                let slot = local_slot(depth, &function.name, &temp, &Type::Float);
+                self.compile_expr_into_slot(function, depth, expr, &slot, lines);
+                self.storage_provider(slot.storage_path())
+            }
+        }
+    }
+
+    fn storage_provider(&self, path: &str) -> String {
+        format!(
+            "{{type:\"storage\",storage:\"{}:runtime\",path:{}}}",
+            self.namespace,
+            quoted(path)
+        )
+    }
+
+    /// Compare two floats through the sign of `floor(a - b)` and `floor(b - a)`.
+    #[allow(clippy::too_many_arguments)]
+    fn compile_float_comparison(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        op: BinaryOp,
+        left: &IrExpr,
+        right: &IrExpr,
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let left = self.float_provider(function, depth, left, lines);
+        let right = self.float_provider(function, depth, right, lines);
+        let mut floor_diff = |a: &str, b: &str, lines: &mut Vec<String>| {
+            let slot = numeric_slot(depth, &function.name, &self.new_temp());
+            lines.push(format!(
+                "execute store result score {} mcfc run compute default float {{type:\"sub\",left:{},right:{}}}",
+                slot, a, b
+            ));
+            slot
+        };
+        let a_minus_b = floor_diff(&left, &right, lines);
+        let b_minus_a = floor_diff(&right, &left, lines);
+        let target = target.numeric_name();
+        let (initial, condition, value) = match op {
+            BinaryOp::Lt => (0, format!("if score {} mcfc matches ..-1", a_minus_b), 1),
+            BinaryOp::Gt => (0, format!("if score {} mcfc matches ..-1", b_minus_a), 1),
+            BinaryOp::Lte => (0, format!("if score {} mcfc matches 0..", b_minus_a), 1),
+            BinaryOp::Gte => (0, format!("if score {} mcfc matches 0..", a_minus_b), 1),
+            BinaryOp::Eq | BinaryOp::NotEq => (
+                if op == BinaryOp::Eq { 0 } else { 1 },
+                format!(
+                    "if score {} mcfc matches 0.. if score {} mcfc matches 0..",
+                    a_minus_b, b_minus_a
+                ),
+                if op == BinaryOp::Eq { 1 } else { 0 },
+            ),
+            _ => unreachable!(),
+        };
+        lines.push(format!(
+            "scoreboard players set {} mcfc {}",
+            target, initial
+        ));
+        lines.push(format!(
+            "execute {} run scoreboard players set {} mcfc {}",
+            condition, target, value
+        ));
     }
 
     fn compile_value_as_nbt(
@@ -6391,6 +6565,7 @@ impl Backend {
                 ));
             }
             Type::String
+            | Type::Float
             | Type::Array(_)
             | Type::Dict(_)
             | Type::Struct(_)
@@ -6662,6 +6837,10 @@ impl Backend {
                 ));
                 return;
             }
+            _ if left.ty == Type::Float => {
+                self.compile_float_comparison(function, depth, op, left, right, target, lines);
+                return;
+            }
             _ => {}
         }
 
@@ -6826,7 +7005,7 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
+                Type::String | Type::Float | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -6979,7 +7158,7 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
+                Type::String | Type::Float | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -7078,6 +7257,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
             name: numeric_slot(depth, function, name),
         },
         Type::String
+        | Type::Float
         | Type::Array(_)
         | Type::Dict(_)
         | Type::Struct(_)
@@ -7106,6 +7286,7 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
             name: numeric_return_slot(depth, function),
         },
         Type::String
+        | Type::Float
         | Type::Array(_)
         | Type::Dict(_)
         | Type::Struct(_)
@@ -7188,6 +7369,16 @@ fn equipment_read_nbt_paths(slot_name: &str) -> &'static [&'static str] {
         "feet" => &["Inventory[{Slot:100b}]", "ArmorItems[0]"],
         _ => &["SelectedItem"],
     }
+}
+
+/// Float expressions that `float_provider` fuses into one `/compute` provider.
+fn is_float_op(expr: &IrExpr) -> bool {
+    expr.ty == Type::Float
+        && match &expr.kind {
+            IrExprKind::Unary { .. } | IrExprKind::Binary { .. } | IrExprKind::Cast { .. } => true,
+            IrExprKind::MethodCall { receiver, .. } => receiver.ty == Type::Float,
+            _ => false,
+        }
 }
 
 fn quoted(value: &str) -> String {
@@ -7450,6 +7641,7 @@ fn normalize_runtime_nbt_segments<'a>(
 fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) -> Option<Type> {
     match &expr.kind {
         crate::ast::ExprKind::Int(_) => Some(Type::Int),
+        crate::ast::ExprKind::Float(_) => Some(Type::Float),
         crate::ast::ExprKind::String(_) => Some(Type::String),
         crate::ast::ExprKind::Variable(name) => function.locals.get(name).cloned(),
         crate::ast::ExprKind::Unary { expr, .. } => infer_dynamic_nbt_index_type(function, expr),
@@ -7845,6 +8037,7 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, Opti
             collect_objectives_from_expr(value, names);
         }
         IrExprKind::Int(_)
+        | IrExprKind::Float(_)
         | IrExprKind::Bool(_)
         | IrExprKind::String(_)
         | IrExprKind::Variable(_)

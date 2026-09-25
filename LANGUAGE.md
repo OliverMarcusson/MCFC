@@ -296,6 +296,7 @@ Rules:
 Supported expressions:
 
 - integer literals, for example `42`
+- float literals, for example `1.5`
 - boolean literals: `true`, `false`
 - string literals, for example `"hello"` or `'hello'`
 - variables
@@ -330,6 +331,7 @@ Parentheses may be used to group expressions.
 Built-in types:
 
 - `int`
+- `float`
 - `bool`
 - `string`
 - `array<T>`
@@ -363,9 +365,9 @@ Type rules:
 
 Current operator support:
 
-- arithmetic requires `int`
+- arithmetic requires two `int` or two `float` operands; mixing them is an error
 - `and`, `or`, and `not` require `bool`
-- ordering comparisons currently support `int` and `bool`
+- ordering comparisons currently support `int`, `float`, and `bool`
 - string equality supports only `==` and `!=`
 
 ## Builtins and Methods
@@ -395,7 +397,8 @@ These remain ordinary functions:
 - `random() -> int`
 - `random(max: int) -> int`
 - `random(min: int, max: int) -> int`
-- `int(nbt) -> int`
+- `int(nbt|float) -> int` (floats round down)
+- `float(int|nbt) -> float`
 - `bool(nbt) -> bool`
 - `string(nbt) -> string`
 - `bossbar(id: string, name: string|text_def) -> bossbar`
@@ -545,6 +548,13 @@ if below.is("minecraft:air"):
 ```
 
 `entity_set.position` is not supported. Iterate the set and use each `entity_ref.position`.
+
+### Float methods
+
+`float` values have `sqrt()`, `sin()`, `cos()`, `tan()`, `abs()`, `floor()`,
+`ceil()`, `round()`, `trunc()`, `pow(e)`, `min(y)`, `max(y)`, `clamp(low, high)`,
+and `hypot(y)`. Every argument is a `float` and every method returns `float`.
+A whole float expression lowers to a single `/compute` command (Minecraft 26.3).
 
 ### Collections
 
@@ -852,6 +862,7 @@ The current backend maps values like this:
 
 - `int`: scoreboard-backed
 - `bool`: scoreboard-backed using `0` and `1`
+- `float`: 32-bit float tag in data storage; each float expression is one `/compute` command
 - `string`: Minecraft data storage-backed
 - `array<T>`: Minecraft data storage-backed
 - `dict<T>`: Minecraft data storage-backed

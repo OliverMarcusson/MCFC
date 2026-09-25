@@ -39,14 +39,15 @@ Both sides must be `float`. `1.5 + 2` is an error; write `1.5 + float(2)` or `in
 | `x.clamp(low, high)` | `x` limited to `low..=high`. |
 | `x.hypot(y)` | `sqrt(x*x + y*y)`. |
 
-All arguments are `float`. The trigonometry methods follow Minecraft's `/compute` providers; whether they take radians has not been checked in game yet.
+All arguments are `float`. `sin`, `cos`, and `tan` take radians, so `1.5707964.sin()` is `1.0`. Entity `yaw()` and `pitch()` are in degrees; multiply by `0.017453292` to convert.
+
+`x.to_string()` gives text such as `0.5`, `-0.25`, or `4` for a whole number.
 
 ## Converting
 
 - `float(n)` turns an `int` into a `float`.
 - `int(x)` turns a `float` into an `int`, rounding down: `int(2.7)` is `2`, `int(-2.7)` is `-3`.
 - `float(value)` also reads an `nbt` value.
-- `x.to_string()` gives text such as `"1.5"`.
 
 ## Limits
 

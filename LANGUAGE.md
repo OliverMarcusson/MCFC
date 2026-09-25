@@ -152,15 +152,15 @@ data player.coins: int = 0
 
 event player_join:
     let player = single(selector("@s"))
-    player.send_message("Welcome!")
+    player.tellraw("Welcome!")
 
 event player_death:
     let player = single(selector("@s"))
-    player.send_message("Death observed")
+    player.tellraw("Death observed")
 
 command status:
     let player = single(selector("@s"))
-    player.send_message("coins=$(player.data.coins)")
+    player.tellraw("coins=$(player.data.coins)")
 
 task heartbeat every_ticks(20):
     debug("heartbeat")
@@ -186,10 +186,6 @@ object. Use `single(selector("@s"))` to obtain the affected player. Real command
 registration, arbitrary event metadata, inventory events, and cancellation need
 the future agent backend and are not emulated by a vanilla datapack.
 
-`send_message`, `send_title`, `send_actionbar`, `play_sound`, and `stop_sound`
-are Bukkit-inspired aliases for the existing `tellraw`, `title`, `actionbar`,
-`playsound`, and `stopsound` methods.
-
 ### Agent-backed events and commands (experimental 26.2)
 
 The JVM adapter is still pinned to Minecraft 26.2 and has not been ported to
@@ -201,13 +197,13 @@ a compiler-provided payload:
 
 ```mcfc
 event chat(event: chat_event):
-    event.player.send_message("You said: $(event.message)")
+    event.player.tellraw("You said: $(event.message)")
 
 event inventory_click(event: inventory_click_event):
-    event.player.send_message("slot=$(event.slot), button=$(event.button)")
+    event.player.tellraw("slot=$(event.slot), button=$(event.button)")
 
 event player_interact_block(event: agent_event):
-    event.player.send_message("packet=$(event.payload)")
+    event.player.tellraw("packet=$(event.payload)")
 ```
 
 Detailed payloads are `chat_event { player, message, cancelled }`,
@@ -580,7 +576,6 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `array<T>.push(value: T) -> void`
 - `array<T>.pop() -> T`
 - `array<T>.remove(index: int) -> T`
-- `array<T>.remove_at(index: int) -> T` compatibility alias for `remove(index)`
 - `array<T>.insert(index: int, value: T) -> void`
 - `array<T>.clear() -> void`
 - `array<T>.first() -> T` and `array<T>.last() -> T`
@@ -604,6 +599,11 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `player_ref(entity)` asserts that an `entity_ref` is a player so player-only surfaces are available
 - `entity.mainhand.*`, `entity.offhand.*`, `entity.head.*`, `entity.chest.*`, `entity.legs.*`, and `entity.feet.*` modify equipped items
 - `heal(...)` is currently limited to known non-player `entity_ref` targets
+- `entity.x()`, `.y()`, `.z()`, `.yaw()`, `.pitch()`, and `.health()` return `float`
+- `entity.distance_to(other) -> float` measures between two entities
+- `player.food()`, `.xp_level()`, `.game_mode()`, and `.selected_slot()` return `int`,
+  and `player.dimension()` returns `string`
+- `game_time()`, `world_time()`, and `border_size()` return `int`
 
 For runtime entities and blocks, `.nbt.*` is the explicit NBT namespace. Raw
 paths such as `pig.CustomName` and `block("~ ~ ~").CustomName` still work as a

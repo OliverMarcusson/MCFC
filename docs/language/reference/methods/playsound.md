@@ -11,5 +11,3 @@ fn chime(player: player_ref) -> void:
     player.playsound("minecraft:entity.player.levelup", "master")
 ```
 
-Alias: [`play_sound`](./play-sound).
-

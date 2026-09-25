@@ -13,5 +13,3 @@ fn greet(player: player_ref) -> void:
     player.tellraw(msg)
 ```
 
-Alias: [`send_message`](./send-message).
-

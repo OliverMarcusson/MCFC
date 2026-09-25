@@ -52,9 +52,6 @@ impl Parser {
                 self.parse_use(&mut uses);
             } else if self.at(&TokenKind::PlayerState) {
                 player_states.push(self.parse_player_state());
-            } else if self.at(&TokenKind::End) {
-                self.error_here("'end' is no longer used; close blocks with indentation");
-                self.bump();
             } else {
                 self.error_here("expected player_state, struct, function, mod, or use declaration");
                 self.recover_top_level();
@@ -343,14 +340,6 @@ impl Parser {
                 };
                 self.expect_statement_break("expected newline after return");
                 StmtKind::Return(value)
-            }
-            TokenKind::End => {
-                self.error_here("'end' is no longer used; close blocks with indentation");
-                self.bump();
-                StmtKind::Expr(Expr {
-                    kind: ExprKind::Variable("_error".to_string()),
-                    span: span.clone(),
-                })
             }
             TokenKind::Mc => {
                 self.bump();

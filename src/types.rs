@@ -2787,6 +2787,19 @@ fn type_check_builtin_call(
             ));
             Some(builtin_call_expr(function, args, Type::Void))
         }
+        "game_time" | "world_time" | "border_size" if !signatures.contains_key(function) => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 0, expr, diagnostics);
+            Some(builtin_call_expr(function, args, Type::Int))
+        }
         "random" => Some(type_check_random_builtin(
             args,
             expr,
@@ -3469,16 +3482,6 @@ fn type_check_method_call(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
-    // Bukkit-inspired spellings are source aliases; lowering keeps the
-    // established MCFC operations so generated datapacks remain unchanged.
-    let method = match method {
-        "send_message" => "tellraw",
-        "send_title" => "title",
-        "send_actionbar" => "actionbar",
-        "play_sound" => "playsound",
-        "stop_sound" => "stopsound",
-        other => other,
-    };
     let receiver_expr = receiver;
     let receiver = type_check_expr(
         receiver_expr,
@@ -3489,6 +3492,22 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    if matches!(receiver.ty, Type::EntityRef | Type::PlayerRef) {
+        let is_player = receiver.ty == Type::PlayerRef || receiver.ref_kind == RefKind::Player;
+        if let Some(read) =
+            entity_read_expr(receiver_expr, method, args, is_player, expr, diagnostics)
+        {
+            return Some(type_check_expr(
+                &read,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            ));
+        }
+    }
     let mut args = type_check_args(
         args,
         struct_defs,
@@ -3702,40 +3721,6 @@ fn type_check_method_call(
                     Type::Nbt
                 }
             };
-            Some(TypedExpr {
-                kind: TypedExprKind::MethodCall {
-                    receiver: Box::new(receiver),
-                    method: method.to_string(),
-                    args,
-                },
-                ty,
-                ref_kind: RefKind::Unknown,
-            })
-        }
-        "remove_at" => {
-            expect_arity(method, &args, 1, expr, diagnostics);
-            if !is_storage_lvalue_expr(receiver_expr) {
-                diagnostics.push(Diagnostic::new(
-                    "remove_at(...) requires a variable or collection element receiver",
-                    expr.span.clone(),
-                ));
-            }
-            let ty = match &receiver.ty {
-                Type::Array(element) => *element.clone(),
-                _ => {
-                    diagnostics.push(Diagnostic::new(
-                        "remove_at(...) requires an 'array' receiver",
-                        expr.span.clone(),
-                    ));
-                    Type::Nbt
-                }
-            };
-            if args.first().map(|arg| &arg.ty) != Some(&Type::Int) {
-                diagnostics.push(Diagnostic::new(
-                    "remove_at(...) index must be 'int'",
-                    expr.span.clone(),
-                ));
-            }
             Some(TypedExpr {
                 kind: TypedExprKind::MethodCall {
                     receiver: Box::new(receiver),
@@ -4955,6 +4940,102 @@ fn builtin_call_expr(function: &str, args: Vec<TypedExpr>, ty: Type) -> TypedExp
         ty,
         ref_kind: RefKind::Unknown,
     }
+}
+
+/// Rewrite typed entity reads such as `pig.x()` or `player.food()` into the
+/// NBT reads they stand for, so they lower through the existing casts.
+/// Returns `None` when `method` is not one of these reads.
+fn entity_read_expr(
+    receiver: &Expr,
+    method: &str,
+    args: &[Expr],
+    is_player: bool,
+    expr: &Expr,
+    diagnostics: &mut Diagnostics,
+) -> Option<Expr> {
+    let span = expr.span.clone();
+    let node = |kind: ExprKind| Expr {
+        kind,
+        span: span.clone(),
+    };
+    let read = |target: &Expr, cast: &str, key: &str, index: Option<i64>| {
+        let mut segments = vec![
+            PathSegment::Field("nbt".to_string()),
+            PathSegment::Field(key.to_string()),
+        ];
+        if let Some(index) = index {
+            segments.push(PathSegment::Index(Box::new(node(ExprKind::Int(index)))));
+        }
+        node(ExprKind::Call {
+            function: cast.to_string(),
+            args: vec![node(ExprKind::Path(PathExpr {
+                base: Box::new(target.clone()),
+                segments,
+            }))],
+        })
+    };
+    let (cast, key, index, player_only) = match method {
+        "x" => ("float", "Pos", Some(0), false),
+        "y" => ("float", "Pos", Some(1), false),
+        "z" => ("float", "Pos", Some(2), false),
+        "yaw" => ("float", "Rotation", Some(0), false),
+        "pitch" => ("float", "Rotation", Some(1), false),
+        "health" => ("float", "Health", None, false),
+        "food" => ("int", "foodLevel", None, true),
+        "xp_level" => ("int", "XpLevel", None, true),
+        "game_mode" => ("int", "playerGameType", None, true),
+        "selected_slot" => ("int", "SelectedItemSlot", None, true),
+        "dimension" => ("string", "Dimension", None, true),
+        "distance_to" => {
+            let [other] = args else {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for 'distance_to': expected 1, found {}",
+                        args.len()
+                    ),
+                    span.clone(),
+                ));
+                return None;
+            };
+            // |a - b| as hypot(hypot(dx, dy), dz), one /compute command.
+            let diff = |axis: i64| {
+                node(ExprKind::Binary {
+                    op: BinaryOp::Sub,
+                    left: Box::new(read(receiver, "float", "Pos", Some(axis))),
+                    right: Box::new(read(other, "float", "Pos", Some(axis))),
+                })
+            };
+            let hypot = |a: Expr, b: Expr| {
+                node(ExprKind::MethodCall {
+                    receiver: Box::new(a),
+                    method: "hypot".to_string(),
+                    args: vec![b],
+                })
+            };
+            return Some(hypot(hypot(diff(0), diff(1)), diff(2)));
+        }
+        _ => return None,
+    };
+    if !args.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "wrong arity for '{}': expected 0, found {}",
+                method,
+                args.len()
+            ),
+            span.clone(),
+        ));
+    }
+    if player_only && !is_player {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "{}() is only available on players; wrap the entity with player_ref(...)",
+                method
+            ),
+            span.clone(),
+        ));
+    }
+    Some(read(receiver, cast, key, index))
 }
 
 /// Join string-like values into one interpolated string. Literal parts stay in

@@ -1221,7 +1221,7 @@ command abcdefghij_two:
         let result = compile_source(
             r#"
 event chat(event: chat_event):
-    event.player.send_message(event.message)
+    event.player.tellraw(event.message)
 "#,
             &options,
         )
@@ -1320,7 +1320,7 @@ event chat(event: chat_event):
         let result = compile_source(
             r#"
 event player_interact_block(event: player_interact_block_event):
-    event.player.send_message(event.face)
+    event.player.tellraw(event.face)
 "#,
             &options,
         )

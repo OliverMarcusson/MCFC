@@ -13,7 +13,7 @@ data player.arcade_slot: int = 0
 
 event player_connect(event: agent_event):
     let player = event.player
-    player.send_message("Hello")
+    player.tellraw("Hello")
     player.data.coins = player.data.coins + 1
     player.actionbar("MCFC Event Arcade ready — use /arcade")
 
@@ -22,7 +22,7 @@ event block_break(event: block_break_event):
 
 event player_death:
     let player = single(selector("@s"))
-    player.send_message("you dead.")
+    player.tellraw("you dead.")
     player.data.arcade_hits = 0
 
 # Event Arcade: packet callbacks are quiet by default and instead change the
@@ -75,7 +75,7 @@ event inventory_close(event: inventory_close_event):
 
 command status:
     let player = single(selector("@s"))
-    player.send_message("Arcade score=$(player.data.arcade_score), blocks=$(player.data.arcade_blocks), hits=$(player.data.arcade_hits), slot=$(player.data.arcade_slot), events=$(player.data.arcade_events)")
+    player.tellraw("Arcade score=$(player.data.arcade_score), blocks=$(player.data.arcade_blocks), hits=$(player.data.arcade_hits), slot=$(player.data.arcade_slot), events=$(player.data.arcade_events)")
 
 command arcade:
     let player = single(selector("@s"))
@@ -96,7 +96,7 @@ fn run_all() -> void:
         player.data.coins = 7
         player.data.completed = true
         player.data.tests_passed = player.data.tests_passed + 1
-        player.send_message("data API: coins=7, completed=true")
+        player.tellraw("data API: coins=7, completed=true")
         player.actionbar("MCFC Bukkit-style API conformance running")
         player.playsound("minecraft:entity.experience_orb.pickup", "master")
 
@@ -114,24 +114,24 @@ fn run_all() -> void:
         let now = time.now()
         let roll = rand.int(1, 6)
         if now.ok and roll.ok:
-            player.send_message("mcfd services: unix=$(now.unix), roll=$(roll.value)")
+            player.tellraw("mcfd services: unix=$(now.unix), roll=$(roll.value)")
             player.data.tests_passed = player.data.tests_passed + 1
 
         let saved = kv.set("conformance", "pass")
         let stored = kv.get("conformance")
         if saved.ok and stored.ok:
-            player.send_message("mcfd KV: $(stored.value)")
+            player.tellraw("mcfd KV: $(stored.value)")
             player.data.tests_passed = player.data.tests_passed + 1
 
-        player.send_message("Use /trigger mcfcc_status for the command test, then chat, click an inventory slot, and break a block for agent callbacks.")
+        player.tellraw("Use /trigger mcfcc_status for the command test, then chat, click an inventory slot, and break a block for agent callbacks.")
 
 fn report() -> void:
     let player = single(selector("@p"))
     if exists(player):
-        player.send_message("Conformance pass count=$(player.data.tests_passed); mcfd checks add two when available.")
+        player.tellraw("Conformance pass count=$(player.data.tests_passed); mcfd checks add two when available.")
 
 fn cleanup() -> void:
     let player = single(selector("@p"))
     if exists(player):
         player.stopsound("master", "minecraft:entity.experience_orb.pickup")
-        player.send_message("Conformance cleanup complete")
+        player.tellraw("Conformance cleanup complete")

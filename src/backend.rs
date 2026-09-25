@@ -3709,52 +3709,6 @@ impl Backend {
                 }
                 return;
             }
-            "remove_at" => {
-                if let Some(rendered) =
-                    self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
-                {
-                    let element_ty = match &receiver.ty {
-                        Type::Array(element) => element.as_ref(),
-                        _ => &Type::Nbt,
-                    };
-                    if let Some(index) = args.first() {
-                        let macro_storage = rendered.macro_storage.clone().unwrap_or_else(|| {
-                            format!(
-                                "frames.d{}.{}.__path{}",
-                                depth,
-                                sanitize(&function.name),
-                                self.new_temp()
-                            )
-                        });
-                        let index_slot =
-                            local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
-                        self.compile_expr_into_slot(function, depth, index, &index_slot, lines);
-                        lines.push(format!(
-                            "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
-                            self.namespace,
-                            macro_storage,
-                            index_slot.numeric_name()
-                        ));
-                        self.compile_storage_read_from_path(
-                            RenderedStoragePath {
-                                path: format!("{}[$(index)]", rendered.path),
-                                macro_storage: Some(macro_storage.clone()),
-                            },
-                            element_ty,
-                            target,
-                            lines,
-                        );
-                        lines.push(self.storage_path_command(
-                            format!(
-                                "data remove storage {}:runtime {}[$(index)]",
-                                self.namespace, rendered.path
-                            ),
-                            Some(macro_storage),
-                        ));
-                    }
-                }
-                return;
-            }
             "has" => {
                 let receiver_slot = self.compile_storage_receiver(function, depth, receiver, lines);
                 lines.push(format!(
@@ -4372,6 +4326,19 @@ impl Backend {
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "game_time" | "world_time" | "border_size" if !self.functions.contains_key(callee) => {
+                let query = match callee {
+                    "game_time" => "time query gametime",
+                    "world_time" => "time query time",
+                    _ => "worldborder get",
+                };
+                lines.push(format!(
+                    "execute store result score {} mcfc run {}",
+                    target.numeric_name(),
+                    query
+                ));
+                true
+            }
             "random" => {
                 if args.is_empty() {
                     lines.push(format!(
@@ -7203,7 +7170,8 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Float | Type::Nbt | Type::TextDef => lines.push(format!(
+                Type::Float => self.float_to_text(source_slot.storage_path(), &target_path, lines),
+                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,
@@ -7443,6 +7411,67 @@ impl Backend {
         ));
     }
 
+    /// Write the text of the float at `source` to `target`. A macro prints
+    /// floats without a leading zero (`.5`, `-.5`), so a shared helper adds
+    /// it back. The helper uses fixed scratch storage, which is safe because
+    /// it never calls back into user code.
+    fn float_to_text(&mut self, source: &str, target: &str, lines: &mut Vec<String>) {
+        let ns = self.namespace.clone();
+        let scratch = format!("storage {ns}:runtime float_text");
+        let helpers = [
+            (
+                "float_text_raw",
+                "$data modify storage NS:runtime float_text.out set value \"$(v)\"",
+            ),
+            (
+                "float_text_zero",
+                "$data modify storage NS:runtime float_text.out set value \"0$(out)\"",
+            ),
+            (
+                "float_text_negative_zero",
+                "$data modify storage NS:runtime float_text.out set value \"-0$(rest)\"",
+            ),
+        ];
+        for (name, body) in helpers {
+            self.files.insert(
+                format!("data/{ns}/function/generated/{name}.mcfunction"),
+                body.replace("NS", &ns) + "\n",
+            );
+        }
+        let flag = "#float_text mcfc";
+        let main = [
+            format!("function {ns}:generated/float_text_raw with {scratch}"),
+            format!("data modify {scratch}.head set string {scratch}.out 0 1"),
+            format!(
+                "execute store success score {flag} run data modify {scratch}.head set value \".\""
+            ),
+            format!(
+                "execute if score {flag} matches 0 run function {ns}:generated/float_text_zero with {scratch}"
+            ),
+            format!("data modify {scratch}.head set string {scratch}.out 0 2"),
+            format!(
+                "execute store success score {flag} run data modify {scratch}.head set value \"-.\""
+            ),
+            format!(
+                "execute if score {flag} matches 0 run data modify {scratch}.rest set string {scratch}.out 1"
+            ),
+            format!(
+                "execute if score {flag} matches 0 run function {ns}:generated/float_text_negative_zero with {scratch}"
+            ),
+        ];
+        self.files.insert(
+            format!("data/{ns}/function/generated/float_text.mcfunction"),
+            main.join("\n") + "\n",
+        );
+        lines.push(format!(
+            "data modify {scratch}.v set from storage {ns}:runtime {source}"
+        ));
+        lines.push(format!("function {ns}:generated/float_text"));
+        lines.push(format!(
+            "data modify storage {ns}:runtime {target} set from {scratch}.out"
+        ));
+    }
+
     fn write_macro_placeholder_values(
         &mut self,
         function: &IrFunction,
@@ -7463,7 +7492,8 @@ impl Backend {
                     target_path,
                     source_slot.numeric_name()
                 )),
-                Type::String | Type::Float | Type::Nbt | Type::TextDef => lines.push(format!(
+                Type::Float => self.float_to_text(source_slot.storage_path(), &target_path, lines),
+                Type::String | Type::Nbt | Type::TextDef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}",
                     self.namespace,
                     target_path,

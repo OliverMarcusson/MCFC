@@ -250,7 +250,7 @@
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|push|pop|remove_at|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|send_message|send_title|send_actionbar|play_sound|stop_sound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:len|push|pop|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
         },
         {
           "name": "support.variable.member.mcfc",

@@ -36,8 +36,6 @@ When the receiver is context-sensitive, MCFC preserves executor and position by 
 | [`remove_tag(name: string)`](./methods/remove-tag) | `void` | Removes a scoreboard tag. |
 | [`has_tag(name: string)`](./methods/has-tag) | `bool` | Tests for a scoreboard tag. |
 
-Bukkit-style aliases are also available for display and sound calls: [`send_message`](./methods/send-message), [`send_title`](./methods/send-title), [`send_actionbar`](./methods/send-actionbar), [`play_sound`](./methods/play-sound), and [`stop_sound`](./methods/stop-sound).
-
 ## Fields And Surfaces
 
 | Field | Type | Notes |
@@ -115,3 +113,29 @@ fn mark_position() -> void:
     player.position.particle("minecraft:happy_villager", 8, player)
     player.position.setblock("minecraft:gold_block")
 ```
+
+## Reading Entity And Player Values
+
+These return numbers and text you can compute with. They read the entity's NBT, so they work on any `entity_ref`, and the player-only ones need a `player_ref`.
+
+| Method | Returns | Reads |
+| --- | --- | --- |
+| `e.x()`, `e.y()`, `e.z()` | `float` | `Pos` |
+| `e.yaw()`, `e.pitch()` | `float` | `Rotation`, in degrees |
+| `e.health()` | `float` | `Health` |
+| `e.distance_to(other)` | `float` | Both entities' `Pos`, combined in one `/compute` command |
+| `player.food()` | `int` | `foodLevel`, 0 to 20 |
+| `player.xp_level()` | `int` | `XpLevel` |
+| `player.game_mode()` | `int` | `playerGameType`: 0 survival, 1 creative, 2 adventure, 3 spectator |
+| `player.selected_slot()` | `int` | `SelectedItemSlot`, 0 to 8 |
+| `player.dimension()` | `string` | `Dimension`, such as `"minecraft:overworld"` |
+
+```mcfc
+fn main() -> void:
+    let player = player_ref(single(selector("@p")))
+    let pig = single(selector("@e[type=minecraft:pig,limit=1]"))
+    if player.distance_to(pig) < 8.0 and player.food() < 6:
+        player.tellraw("The pig looks tasty")
+```
+
+Each call reads the NBT again, so store a value in a `let` when you use it more than once.

@@ -1595,7 +1595,6 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "len" => Some("```mcfc\narray<T>.len() -> int\n```"),
         "push" => Some("```mcfc\narray<T>.push(value: T) -> void\n```"),
         "pop" => Some("```mcfc\narray<T>.pop() -> T\n```"),
-        "remove_at" => Some("```mcfc\narray<T>.remove_at(index: int) -> T\n```"),
         "has" => Some("```mcfc\ndict<T>.has(key: string) -> bool\n```"),
         "remove" => Some(
             "```mcfc\narray<T>.remove(index: int) -> T\ndict<T>.remove(key: string) -> void\nbossbar.remove() -> void\n```",
@@ -2163,11 +2162,6 @@ fn static_completion_items(
                 "remove",
                 "array<T>.remove(index: int) -> T",
                 "remove(${1:index})",
-            ),
-            (
-                "remove_at",
-                "array<T>.remove_at(index: int) -> T",
-                "remove_at(${1:index})",
             ),
             ("has", "dict<T>.has(key: string) -> bool", "has(${1:key})"),
             (
@@ -2908,11 +2902,6 @@ fn array_method_items() -> Vec<CompletionItem> {
             "remove(${1:index})",
         ),
         (
-            "remove_at",
-            "array<T>.remove_at(index: int) -> T",
-            "remove_at(${1:index})",
-        ),
-        (
             "insert",
             "array<T>.insert(index: int, value: T) -> void",
             "insert(${1:index}, ${2:value})",
@@ -3012,6 +3001,48 @@ fn dict_method_items() -> Vec<CompletionItem> {
 
 fn generic_entity_root_items() -> Vec<CompletionItem> {
     [
+        (
+            "x",
+            "entity.x() -> float",
+            "x()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "y",
+            "entity.y() -> float",
+            "y()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "z",
+            "entity.z() -> float",
+            "z()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "yaw",
+            "entity.yaw() -> float",
+            "yaw()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "pitch",
+            "entity.pitch() -> float",
+            "pitch()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "health",
+            "entity.health() -> float",
+            "health()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "distance_to",
+            "entity.distance_to(other: entity_ref) -> float",
+            "distance_to(${1:other})",
+            CompletionItemKind::METHOD,
+        ),
         (
             "teleport",
             "entity.teleport(destination: entity_ref|block_ref) -> void",
@@ -3196,6 +3227,23 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
         .into_iter()
         .map(|(label, detail, insert_text)| {
             snippet_item(label, CompletionItemKind::FIELD, detail, insert_text)
+        }),
+    );
+    items.extend(
+        [
+            ("food", "player.food() -> int", "food()"),
+            ("xp_level", "player.xp_level() -> int", "xp_level()"),
+            ("game_mode", "player.game_mode() -> int", "game_mode()"),
+            (
+                "selected_slot",
+                "player.selected_slot() -> int",
+                "selected_slot()",
+            ),
+            ("dimension", "player.dimension() -> string", "dimension()"),
+        ]
+        .into_iter()
+        .map(|(label, detail, insert_text)| {
+            snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
         }),
     );
     items
@@ -4714,7 +4762,7 @@ fn main() -> void:
         let values_items = completion_items(source, &analysis, source.find("values.").unwrap() + 7);
         assert!(values_items.iter().any(|item| item.label == "push"));
         assert!(values_items.iter().any(|item| item.label == "remove"));
-        assert!(values_items.iter().any(|item| item.label == "remove_at"));
+        assert!(values_items.iter().any(|item| item.label == "remove"));
         assert!(!values_items.iter().any(|item| item.label == "team"));
 
         let me_items = completion_items(source, &analysis, source.find("me.").unwrap() + 3);

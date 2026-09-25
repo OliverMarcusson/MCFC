@@ -11,5 +11,3 @@ fn announce(player: player_ref) -> void:
     player.title("Quest complete")
 ```
 
-Alias: [`send_title`](./send-title).
-

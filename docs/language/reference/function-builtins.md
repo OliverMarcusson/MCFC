@@ -24,6 +24,9 @@ Many builtins do not become runtime function calls. Instead, the compiler recogn
 | [`item(id: string)`](./builtins/item) | `item_def` | Creates an item builder. |
 | [`text()`](./builtins/text) | `text_def` | Creates an empty text component builder. |
 | [`text(value: string)`](./builtins/text) | `text_def` | Creates a text component builder with text. |
+| `game_time()` | `int` | Ticks the world has run, from `time query gametime`. |
+| `world_time()` | `int` | The world clock, from `time query time`. |
+| `border_size()` | `int` | The world border width in blocks, rounded, from `worldborder get`. |
 | [`block_type(id: string)`](./builtins/block-type) | `block_def` | Creates a block builder. |
 | [`bossbar(id: string, name: string\|text_def)`](./builtins/bossbar) | `bossbar` | Creates or references a bossbar handle. |
 | [`summon(id: string)`](./builtins/summon) | `entity_ref` | Summons an entity by id. |

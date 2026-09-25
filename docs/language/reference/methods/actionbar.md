@@ -11,5 +11,3 @@ fn status(player: player_ref) -> void:
     player.actionbar("Ready")
 ```
 
-Alias: [`send_actionbar`](./send-actionbar).
-

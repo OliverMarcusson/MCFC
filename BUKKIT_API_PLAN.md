@@ -29,11 +29,11 @@ data player.coins: int = 0
 
 event player_join:
     let player = single(selector("@s"))
-    player.send_message("Welcome!")
+    player.tellraw("Welcome!")
 
 command home:
     let player = single(selector("@s"))
-    player.send_message("Home requested")
+    player.tellraw("Home requested")
 
 task cleanup every_ticks(1200):
     debug("cleanup")

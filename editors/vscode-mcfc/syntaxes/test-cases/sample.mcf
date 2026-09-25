@@ -4,14 +4,14 @@ data player.coins: int = 0
 
 event player_join:
     let player = single(selector("@s"))
-    player.send_message("Welcome to MCFC")
+    player.tellraw("Welcome to MCFC")
 
 event chat(event: chat_event):
-    event.player.send_actionbar("chat: $(event.message)")
+    event.player.actionbar("chat: $(event.message)")
 
 command status:
     let player = single(selector("@s"))
-    player.send_message("coins=$(player.data.coins)")
+    player.tellraw("coins=$(player.data.coins)")
 
 task heartbeat every_ticks(20):
     debug("heartbeat")
@@ -109,7 +109,7 @@ fn main() -> void
         mcf "say $(random(values.len())) $(stack.count) $(me.hotbar[0].exists)"
 
     debug("entered gameplay branch")
-    let amount = values.remove_at(0)
+    let amount = values.remove(0)
     counts.remove("stone")
     mc "say plain command"
     mcf "say $(title) $(label) $(amount) $(stack_nbt) $(chest_nbt)"

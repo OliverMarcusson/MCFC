@@ -498,10 +498,10 @@ fn launch(level: int) -> void:
         let analysis = analyze_source(
             r#"data player.coins: int = 0
 event chat(event: chat_event):
-    event.player.send_message(event.message)
+    event.player.tellraw(event.message)
 command status:
     let player = single(selector("@s"))
-    player.send_message("ok")
+    player.tellraw("ok")
 "#,
         );
 

@@ -1,0 +1,177 @@
+# Exercises every feature added for Minecraft 26.3: floats, `%`, strings,
+# array methods, the new std modules, and player/world reads. Each check
+# prints `MCFCTEST PASS|FAIL <name> got=<value>` with /say, so results land
+# in latest.log. Runs once when a player is online; run it again with
+# /function mcfc_demo:run_tests.
+
+use std::array::{sort, sum}
+use std::str::{starts_with, ends_with, find, contains}
+use std::math::{gcd, lerp}
+
+fn tick() -> void:
+    if exists(single(selector("@a[tag=!mcfc_tested,limit=1]"))):
+        mc "tag @a add mcfc_tested"
+        run_tests()
+
+fn check(name: string, ok: bool, got: string) -> void:
+    if ok:
+        mcf "say MCFCTEST PASS $(name) got=$(got)"
+    else:
+        mcf "say MCFCTEST FAIL $(name) got=$(got)"
+
+fn near(a: float, b: float) -> bool:
+    return (a - b).abs() < 0.001
+
+# Returns its argument unchanged, so the compiler cannot fold it.
+fn runtime(s: string) -> string:
+    return s
+
+# Minecraft stops a tick after 65,536 commands, so each group gets its own
+# tick. The big sorts run last: if one hits the limit, the earlier results
+# are already in the log.
+fn run_tests() -> void:
+    mc "say MCFCTEST BEGIN"
+    floats()
+    sleep_ticks(1)
+    remainders()
+    strings()
+    sleep_ticks(1)
+    arrays()
+    sleep_ticks(1)
+    std_library()
+    sleep_ticks(1)
+    reads()
+    sleep_ticks(1)
+    sort_test(50)
+    sleep_ticks(1)
+    sort_test(100)
+    sleep_ticks(1)
+    sort_test(200)
+    mc "say MCFCTEST END"
+
+fn floats() -> void:
+    let x = 16.0
+    check("float_sqrt", near(x.sqrt(), 4.0), x.sqrt().to_string())
+    let y = (x * 0.5 + 2.0) / 4.0 - 1.0
+    check("float_arith", near(y, 1.5), y.to_string())
+    check("float_neg", near(-y, -1.5), (-y).to_string())
+    check("float_to_int_floor", int(-2.7) == -3, int(-2.7).to_string())
+    check("int_to_float", near(float(7) / 2.0, 3.5), (float(7) / 2.0).to_string())
+    check("float_pow", near(2.0.pow(10.0), 1024.0), 2.0.pow(10.0).to_string())
+    check("float_hypot", near(3.0.hypot(4.0), 5.0), 3.0.hypot(4.0).to_string())
+    check("float_floor", near((-1.5).floor(), -2.0), (-1.5).floor().to_string())
+    check("float_ceil", near(1.2.ceil(), 2.0), 1.2.ceil().to_string())
+    check("float_round", near(2.5.round(), 3.0), 2.5.round().to_string())
+    check("float_trunc", near((-1.7).trunc(), -1.0), (-1.7).trunc().to_string())
+    check("float_abs", near((-3.25).abs(), 3.25), (-3.25).abs().to_string())
+    check("float_min_max", near(1.0.min(2.0) + 1.0.max(2.0), 3.0), 1.0.max(2.0).to_string())
+    check("float_clamp", near(9.0.clamp(0.0, 5.0), 5.0), 9.0.clamp(0.0, 5.0).to_string())
+    # One of these two passes: it tells us whether sin/cos take radians or degrees.
+    check("float_sin_radians", near(1.5707964.sin(), 1.0), 1.5707964.sin().to_string())
+    check("float_sin_degrees", near(90.0.sin(), 1.0), 90.0.sin().to_string())
+    check("float_cos_zero", near(0.0.cos(), 1.0), 0.0.cos().to_string())
+    check("float_tan", near(0.7853982.tan(), 1.0), 0.7853982.tan().to_string())
+    check("float_lt", 1.5 < 2.5, "1.5<2.5")
+    check("float_not_lt", not (2.5 < 1.5), "2.5<1.5")
+    check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5")
+    check("float_gt", 2.5 > 1.5, "2.5>1.5")
+    check("float_eq", x == 16.0, x.to_string())
+    check("float_neq", x != 16.5, x.to_string())
+    check("float_small_diff", 1.0 < 1.25, "1.0<1.25")
+    check("float_text_zero", 0.5.to_string() == "0.5", 0.5.to_string())
+    check("float_text_negative", (-0.25).to_string() == "-0.25", (-0.25).to_string())
+    check("float_text_whole", 4.0.to_string() == "4", 4.0.to_string())
+
+fn remainders() -> void:
+    check("rem_const_neg", -7 % 3 == 2, (-7 % 3).to_string())
+    check("rem_const_negdiv", 7 % -3 == -2, (7 % -3).to_string())
+    let n = -7
+    check("rem_runtime", n % 3 == 2, (n % 3).to_string())
+    check("rem_float", near(5.5 % 2.0, 1.5), (5.5 % 2.0).to_string())
+    check("rem_float_neg", near(-5.5 % 2.0, 0.5), (-5.5 % 2.0).to_string())
+
+fn strings() -> void:
+    let name = runtime("Steve")
+    let n = 42
+    let line = "Hi " + name + " n=" + n.to_string() + " f=" + 1.5.to_string()
+    check("str_concat", line == "Hi Steve n=42 f=1.5", line)
+    check("str_len", line.len() == 19, line.len().to_string())
+    check("str_slice", line.slice(3, 8) == "Steve", line.slice(3, 8))
+    check("str_slice_neg", line.slice(-3) == "1.5", line.slice(-3))
+    let start = 3
+    let stop = 8
+    check("str_slice_dynamic", line.slice(start, stop) == "Steve", line.slice(start, stop))
+    check("str_slice_out_of_range", name.slice(2, 99) == "", name.slice(2, 99))
+    check("str_parse_int", "-17".parse_int() == -17, "-17".parse_int().to_string())
+    check("str_parse_int_bad", runtime("abc").parse_int() == 0, runtime("abc").parse_int().to_string())
+    let quoted = runtime("say \"hi\"")
+    let joined = "<" + quoted + ">"
+    check("str_quote_fallback", joined == "", joined.len().to_string())
+
+fn arrays() -> void:
+    let xs = [3, 1, 2]
+    xs.insert(0, 9)
+    let i = 2
+    xs.insert(i, 7)
+    check("arr_insert", xs.len() == 5 and xs[0] == 9 and xs[2] == 7, xs.len().to_string())
+    check("arr_first", xs.first() == 9, xs.first().to_string())
+    check("arr_last", xs.last() == 2, xs.last().to_string())
+    check("arr_contains", xs.contains(7), "7")
+    check("arr_not_contains", not xs.contains(8), "8")
+    check("arr_index_of", xs.index_of(1) == 3, xs.index_of(1).to_string())
+    check("arr_index_of_missing", xs.index_of(8) == -1, xs.index_of(8).to_string())
+    xs.reverse()
+    check("arr_reverse", xs[0] == 2 and xs[4] == 9, xs[0].to_string())
+    let words = ["a", "b"]
+    check("arr_contains_str", words.contains("b"), "b")
+    xs.clear()
+    check("arr_clear", xs.len() == 0, xs.len().to_string())
+
+fn sort_test(size: int) -> void:
+    mcf "say MCFCTEST INFO sort $(size) starting"
+    let big = [0]
+    big.clear()
+    let k = 0
+    while k < size:
+        big.push(random(1000) - 500)
+        k = k + 1
+    let total = sum(big)
+    let sorted = sort(big)
+    let ordered = true
+    let j = 1
+    while j < sorted.len():
+        if sorted[j - 1] > sorted[j]:
+            ordered = false
+        j = j + 1
+    check("std_sort_" + size.to_string(), ordered and sorted.len() == size, sorted.len().to_string())
+    check("std_sort_keeps_sum_" + size.to_string(), sum(sorted) == total, total.to_string())
+
+fn std_library() -> void:
+    check("std_sort_small", sort([3, 1, 2])[0] == 1, sort([3, 1, 2])[2].to_string())
+    check("std_min_max", std::array::min([4, -2, 9]) == -2 and std::array::max([4, -2, 9]) == 9, "-2,9")
+    check("std_starts_with", starts_with("minecraft:stone", "minecraft:"), "")
+    check("std_ends_with", ends_with("stone", "ne") and not ends_with("stone", "x"), "")
+    check("std_find", find("hello", "ll") == 2, find("hello", "ll").to_string())
+    check("std_find_missing", find("hello", "z") == -1, find("hello", "z").to_string())
+    check("std_contains_quote", contains(runtime("a\"b"), "\""), "")
+    check("std_gcd", gcd(12, -18) == 6, gcd(12, -18).to_string())
+    check("std_lerp", near(lerp(0.0, 10.0, 0.25), 2.5), lerp(0.0, 10.0, 0.25).to_string())
+
+fn reads() -> void:
+    let p = player_ref(single(selector("@a[limit=1]")))
+    let pos = p.x().to_string() + "," + p.y().to_string() + "," + p.z().to_string()
+    let rot = p.yaw().to_string() + "," + p.pitch().to_string()
+    mcf "say MCFCTEST INFO pos=$(pos) rot=$(rot)"
+    check("read_health", p.health() > 0.0, p.health().to_string())
+    check("read_food", p.food() >= 0 and p.food() <= 20, p.food().to_string())
+    check("read_xp", p.xp_level() >= 0, p.xp_level().to_string())
+    check("read_game_mode", p.game_mode() >= 0 and p.game_mode() <= 3, p.game_mode().to_string())
+    check("read_dimension", starts_with(p.dimension(), "minecraft:"), p.dimension())
+    check("read_selected_slot", p.selected_slot() >= 0 and p.selected_slot() <= 8, p.selected_slot().to_string())
+    mc "execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}"
+    let pig = single(selector("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"))
+    check("read_distance_to", near(p.distance_to(pig), 5.0), p.distance_to(pig).to_string())
+    mc "kill @e[type=minecraft:pig,tag=mcfc_test_pig]"
+    check("read_game_time", game_time() > 0, game_time().to_string())
+    check("read_world_time", world_time() >= 0, world_time().to_string())
+    check("read_border_size", border_size() > 0, border_size().to_string())

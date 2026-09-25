@@ -7,11 +7,11 @@ data player.coins: int = 0
 
 event player_join:
     let player = single(selector("@s"))
-    player.send_message("Welcome!")
+    player.tellraw("Welcome!")
 
 command status:
     let player = single(selector("@s"))
-    player.send_message("coins=$(player.data.coins)")
+    player.tellraw("coins=$(player.data.coins)")
 
 task heartbeat every_ticks(20):
     debug("heartbeat")
@@ -27,16 +27,6 @@ task heartbeat every_ticks(20):
 - `data player.name: int = 0` and `data player.name: bool = false` alias scoreboard-backed `player.state.name`.
 
 Handlers execute as the affected player. Use `single(selector("@s"))` to get a player reference.
-
-## Aliases
-
-These Bukkit-inspired aliases map to existing MCFC display and sound methods:
-
-- `send_message` -> `tellraw`
-- `send_title` -> `title`
-- `send_actionbar` -> `actionbar`
-- `play_sound` -> `playsound`
-- `stop_sound` -> `stopsound`
 
 ::: warning Vanilla limits
 Vanilla event handlers do not expose synthetic event objects and are not cancellable. Real command registration, event metadata, and cancellation require the experimental agent path.

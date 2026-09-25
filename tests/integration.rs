@@ -1384,30 +1384,6 @@ fn main() -> void:
 }
 
 #[test]
-fn compiles_array_remove_at() {
-    let source = r#"
-fn main() -> void:
-    let values = [3, 5, 8]
-    let first = values.remove_at(0)
-    let second = values.remove_at(1)
-    mcf "say $(first)"
-    mcf "say $(second)"
-    return
-"#;
-
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
-    let files = result.artifacts.files;
-    assert!(files.values().any(|file| {
-        file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]")
-    }));
-    assert!(
-        files
-            .values()
-            .any(|file| file.contains("execute store result storage mcfc:runtime"))
-    );
-}
-
-#[test]
 fn compiles_array_for_each() {
     let source = r#"
 fn main() -> void:
@@ -1589,7 +1565,7 @@ fn main() -> void:
     let empty = []
     let bad_mix = [1, "two"]
     let bad_index = arr["x"]
-    let bad_remove = arr.remove_at("x")
+    let bad_remove = arr.remove("x")
     let bad_remove_alias = arr.remove("x")
     let bad_key = dict[1]
     let bad_refs = [selector("@a")]
@@ -1606,7 +1582,7 @@ fn main() -> void:
     assert!(rendered.contains("dictionary key must have type 'string'"));
     assert!(rendered.contains("has_data(...) requires a storage-backed variable or path"));
     assert!(rendered.contains("push(...) value must be 'int', found 'string'"));
-    assert!(rendered.contains("remove_at(...) index must be 'int'"));
+    assert!(rendered.contains("remove(...) index must be 'int'"));
     assert!(rendered.contains("remove(...) index must be 'int'"));
     assert!(rendered.contains("dictionary key 'bad-key' is not storage-path-safe"));
     assert!(rendered.contains("dynamic nbt path indices require a storage-backed base"));
@@ -1846,7 +1822,7 @@ fn main() -> void:
     mcf "say $(flag and not ready)"
     mcf "say $(tick(action))"
     mcf "say $(values.remove(0))"
-    mcf "say $(values.remove_at(0))"
+    mcf "say $(values.remove(0))"
     mcf "say $(store[key][\"value\"])"
     mcf "say $(action.duration)"
     mcf "say $(player.state.quest_complete)"
@@ -2970,4 +2946,86 @@ fn main() -> void:
         .filter(|(path, _)| path.contains("std__array__sort"))
         .count();
     assert!(sort_files > 1, "sort should lower to loop blocks");
+}
+
+#[test]
+fn end_is_an_ordinary_name() {
+    let source = r#"
+fn main() -> void:
+    let end = 8
+    let span = end + 1
+"#;
+    compile_source(source, &CompileOptions::default()).expect("`end` should be a normal name");
+}
+
+#[test]
+fn entity_and_world_reads_lower_to_nbt_reads_and_queries() {
+    let source = r#"
+fn main() -> void:
+    let p = player_ref(single(selector("@a[limit=1]")))
+    let pig = single(selector("@e[type=minecraft:pig,limit=1]"))
+    let x = p.x()
+    let food = p.food()
+    let d = p.distance_to(pig)
+    let t = game_time()
+    let w = world_time()
+    let b = border_size()
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("reads should compile");
+    let files = &result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    for expected in [
+        "frames.d0.main.x set compute default float {type:\"storage\"",
+        "execute store result score $d0_main_food mcfc run data get storage",
+        "frames.d0.main.d set compute default float {type:\"length\",inputs:[{type:\"length\"",
+        "$d0_main_t mcfc run time query gametime",
+        "$d0_main_w mcfc run time query time",
+        "$d0_main_b mcfc run worldborder get",
+    ] {
+        assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
+    }
+    assert!(
+        files.values().any(|body| body.contains("Pos[0]"))
+            && files.values().any(|body| body.contains("foodLevel")),
+        "entity reads should target Pos and foodLevel"
+    );
+}
+
+#[test]
+fn player_only_reads_need_a_player() {
+    let source = r#"
+fn main() -> void:
+    let pig = single(selector("@e[type=minecraft:pig,limit=1]"))
+    let food = pig.food()
+"#;
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("food() is only available on players")
+    );
+}
+
+#[test]
+fn float_text_restores_the_leading_zero() {
+    let source = r#"
+fn main() -> void:
+    let half = 0.5
+    let text = "v=" + half.to_string()
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = &result.artifacts.files;
+    let helper = files
+        .get("data/mcfc/function/generated/float_text.mcfunction")
+        .expect("float text helper");
+    assert!(helper.contains("set value \".\""), "{helper}");
+    assert!(helper.contains("set value \"-.\""), "{helper}");
+    assert!(
+        files
+            .get("data/mcfc/function/generated/float_text_zero.mcfunction")
+            .unwrap()
+            .contains("set value \"0$(out)\"")
+    );
 }

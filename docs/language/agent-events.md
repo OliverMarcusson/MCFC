@@ -4,10 +4,10 @@ With `[helper.agent] enabled = true`, MCFC accepts typed event declarations for 
 
 ```mcfc
 event chat(event: chat_event):
-    event.player.send_message("You said: $(event.message)")
+    event.player.tellraw("You said: $(event.message)")
 
 event inventory_click(event: inventory_click_event):
-    event.player.send_message("slot=$(event.slot), button=$(event.button)")
+    event.player.tellraw("slot=$(event.slot), button=$(event.button)")
 ```
 
 The generated datapack remains valid without an attached agent. `mcfd` performs best-effort dynamic attachment and reports status separately.

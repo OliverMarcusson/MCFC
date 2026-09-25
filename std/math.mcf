@@ -43,3 +43,17 @@ pub fn pow(base: int, exponent: int) -> int:
         result = result * base
         i = i + 1
     return result
+
+# Greatest common divisor of `a` and `b`, always zero or positive.
+pub fn gcd(a: int, b: int) -> int:
+    let x = abs(a)
+    let y = abs(b)
+    while y != 0:
+        let r = x % y
+        x = y
+        y = r
+    return x
+
+# Point `t` of the way from `a` to `b`: 0.0 gives `a`, 1.0 gives `b`.
+pub fn lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t

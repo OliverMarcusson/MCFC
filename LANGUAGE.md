@@ -134,7 +134,10 @@ fn main() -> void:
     let hp = clamp(150, 0, 100)
 ```
 
-`std::math` provides `min`, `max`, `abs`, `sign`, `clamp`, `rem`, and `pow`.
+`std::math` provides `min`, `max`, `abs`, `sign`, `clamp`, `rem`, `pow`, `gcd`,
+and `lerp`. `std::array` provides `sum`, `min`, `max`, and `sort` for
+`array<int>`. `std::str` provides `starts_with`, `ends_with`, `find`, and
+`contains`.
 Functions that nothing reaches, including unused `std` functions, are dropped
 after type checking. The starting points are `main`, `tick`, event, command,
 and task handlers, `[[export]]` functions, and zero-argument `void` functions.

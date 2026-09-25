@@ -2906,6 +2906,68 @@ fn main() -> void:
     let reset = main
         .find("frames.d0.main.s set value \"\"")
         .expect("fallback reset");
-    let call = main.find("run function mcfc:generated/main__d0__string_").expect("macro call");
+    let call = main
+        .find("run function mcfc:generated/main__d0__string_")
+        .expect("macro call");
     assert!(copy < reset && reset < call, "wrong order in:\n{main}");
+}
+
+#[test]
+fn std_array_str_and_math_helpers_compile() {
+    let source = r#"
+use std::array::sort
+use std::str::{starts_with, contains}
+use std::math::{gcd, lerp}
+
+fn main() -> void:
+    let xs = sort([5, 3, 9, 1])
+    let total = std::array::sum(xs)
+    let a = starts_with("minecraft:stone", "minecraft:")
+    let d = contains("hello", "ll")
+    let g = gcd(12, -18)
+    let l = lerp(0.0, 10.0, 0.25)
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &CompileOptions::default(),
+    )
+    .expect("std should compile");
+    let mut names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .filter(|name| name.starts_with("std::"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "std::array::sort",
+            "std::array::sum",
+            "std::math::abs",
+            "std::math::gcd",
+            "std::math::lerp",
+            "std::str::contains",
+            "std::str::find",
+            "std::str::starts_with",
+        ]
+    );
+    let sort_files = result
+        .artifacts
+        .files
+        .iter()
+        .filter(|(path, _)| path.contains("std__array__sort"))
+        .count();
+    assert!(sort_files > 1, "sort should lower to loop blocks");
 }

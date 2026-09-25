@@ -35,7 +35,9 @@ pub struct LoadedModules {
 const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
     ("mod.mcf", include_str!("../std/mod.mcf")),
+    ("array.mcf", include_str!("../std/array.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
+    ("str.mcf", include_str!("../std/str.mcf")),
 ];
 
 fn std_source(file: &Path) -> Option<&'static str> {

@@ -1,0 +1,92 @@
+# Helpers for `array<int>`. MCFC has no generics yet, so these take ints only.
+
+# Sum of all elements; 0 for an empty array.
+pub fn sum(xs: array<int>) -> int:
+    let total = 0
+    for x in xs:
+        total = total + x
+    return total
+
+# Smallest element; 0 for an empty array.
+pub fn min(xs: array<int>) -> int:
+    if xs.len() == 0:
+        return 0
+    let best = xs[0]
+    for x in xs:
+        if x < best:
+            best = x
+    return best
+
+# Largest element; 0 for an empty array.
+pub fn max(xs: array<int>) -> int:
+    if xs.len() == 0:
+        return 0
+    let best = xs[0]
+    for x in xs:
+        if x > best:
+            best = x
+    return best
+
+# Sorted copy of `xs`, smallest first.
+#
+# Quicksort with a median-of-three pivot splits the array until every range
+# is 16 elements or fewer, then one insertion sort pass finishes the nearly
+# sorted result. Like Rust's `sort_unstable`, equal elements may swap places.
+# Ranges live on an explicit stack instead of recursion.
+pub fn sort(xs: array<int>) -> array<int>:
+    let n = xs.len()
+    let stack = [0, n - 1]
+    let t = 0
+    while stack.len() > 0:
+        let high = stack.pop()
+        let low = stack.pop()
+        if high - low >= 16:
+            let mid = low + (high - low) / 2
+            if xs[mid] < xs[low]:
+                t = xs[mid]
+                xs[mid] = xs[low]
+                xs[low] = t
+            if xs[high] < xs[low]:
+                t = xs[high]
+                xs[high] = xs[low]
+                xs[low] = t
+            if xs[high] < xs[mid]:
+                t = xs[high]
+                xs[high] = xs[mid]
+                xs[mid] = t
+            let pivot = xs[mid]
+            let i = low
+            let j = high
+            while i <= j:
+                while xs[i] < pivot:
+                    i = i + 1
+                while xs[j] > pivot:
+                    j = j - 1
+                if i <= j:
+                    t = xs[i]
+                    xs[i] = xs[j]
+                    xs[j] = t
+                    i = i + 1
+                    j = j - 1
+            # Push the larger half first so the smaller one is split next,
+            # which keeps the stack at O(log n) ranges.
+            if j - low > high - i:
+                stack.push(low)
+                stack.push(j)
+                stack.push(i)
+                stack.push(high)
+            else:
+                stack.push(i)
+                stack.push(high)
+                stack.push(low)
+                stack.push(j)
+    let k = 1
+    while k < n:
+        let value = xs[k]
+        let m = k - 1
+        while m >= 0 and xs[m] > value:
+            xs[m + 1] = xs[m]
+            m = m - 1
+        xs[m + 1] = value
+        k = k + 1
+    return xs

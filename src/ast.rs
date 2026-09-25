@@ -52,6 +52,8 @@ pub struct PlayerStateDef {
 pub struct Function {
     pub name: String,
     pub is_pub: bool,
+    /// `fn name<T, U>(...)`; each call compiles a copy with the types filled in.
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,

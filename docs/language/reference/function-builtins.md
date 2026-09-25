@@ -27,6 +27,7 @@ Many builtins do not become runtime function calls. Instead, the compiler recogn
 | `game_time()` | `int` | Ticks the world has run, from `time query gametime`. |
 | `world_time()` | `int` | The world clock, from `time query time`. |
 | `border_size()` | `int` | The world border width in blocks, rounded, from `worldborder get`. |
+| `gamerule(name: string)` | `int` | A game rule's value; `true` is `1`. The name must be a literal. |
 | [`block_type(id: string)`](./builtins/block-type) | `block_def` | Creates a block builder. |
 | [`bossbar(id: string, name: string\|text_def)`](./builtins/bossbar) | `bossbar` | Creates or references a bossbar handle. |
 | [`summon(id: string)`](./builtins/summon) | `entity_ref` | Summons an entity by id. |
@@ -38,6 +39,8 @@ Many builtins do not become runtime function calls. Instead, the compiler recogn
 | [`random()`](./builtins/random) | `int` | Returns a random integer. |
 | [`random(max: int)`](./builtins/random) | `int` | Returns a bounded random integer. |
 | [`random(min: int, max: int)`](./builtins/random) | `int` | Returns a random integer in a range. |
+| `random_weighted(weights: array<int>)` | `int` | An index into `weights`, chosen with each weight's share of the chance. `weights` must be a literal array such as `[3, 1]`. |
+| `random_binomial(n: int, p: float)` | `int` | How many of `n` tries succeed, each with chance `p`. |
 | [`int(value: nbt)`](./builtins/int) | `int` | Converts an NBT value to an `int`. |
 | [`bool(value: nbt)`](./builtins/bool) | `bool` | Converts an NBT value to a `bool`. |
 | [`string(value: nbt)`](./builtins/string) | `string` | Converts an NBT value to a `string`. |

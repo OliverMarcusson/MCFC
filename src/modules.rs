@@ -282,16 +282,29 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
 
     for (def, &module) in program.structs.iter_mut().zip(&struct_modules) {
         for field in &mut def.fields {
-            resolver.resolve_type(module, &mut field.ty, &field.span, &mut diagnostics);
+            resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
         }
         def.name = resolver.struct_name(module, &def.name);
     }
     for (function, &module) in program.functions.iter_mut().zip(&function_modules) {
+        let generics = &function.type_params;
         for param in &mut function.params {
-            resolver.resolve_type(module, &mut param.ty, &param.span, &mut diagnostics);
+            resolver.resolve_type(
+                module,
+                generics,
+                &mut param.ty,
+                &param.span,
+                &mut diagnostics,
+            );
         }
         let span = function.span.clone();
-        resolver.resolve_type(module, &mut function.return_type, &span, &mut diagnostics);
+        resolver.resolve_type(
+            module,
+            generics,
+            &mut function.return_type,
+            &span,
+            &mut diagnostics,
+        );
         resolver.walk_stmts(module, &mut function.body, &mut diagnostics);
         function.name = resolver.function_name(module, &function.name);
     }
@@ -524,18 +537,20 @@ impl Resolver {
     fn resolve_type(
         &self,
         module: usize,
+        generics: &[String],
         ty: &mut Type,
         span: &Span,
         diagnostics: &mut Diagnostics,
     ) {
         match ty {
+            Type::Struct(name) if generics.contains(name) => {}
             Type::Struct(name) => match self.resolve_struct(module, name) {
                 Ok(Some(resolved)) => *name = resolved,
                 Ok(None) => {}
                 Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
             },
             Type::Array(inner) | Type::Dict(inner) => {
-                self.resolve_type(module, inner, span, diagnostics)
+                self.resolve_type(module, generics, inner, span, diagnostics)
             }
             _ => {}
         }

@@ -10,10 +10,10 @@
 
 ## Verify Mappings
 
-Before changing hook targets, verify named 26.2 mappings against a Minecraft JAR:
+Before changing hook targets, verify named 26.3 mappings against a Minecraft JAR:
 
 ```powershell
-.\mcfd-agent\verify-26.2.ps1
+.\mcfd-agent\verify-26.3.ps1
 ```
 
 ## Self-test
@@ -31,5 +31,5 @@ The adapter instruments named vanilla server methods for chat, inventory, intera
 Subscribed MCFC event handlers are invoked on the server thread as the affected player. Declared no-argument commands can also receive real root-command routes.
 
 ::: warning Version pin
-The adapter is deliberately pinned to Minecraft `26.2` and has not been ported to 26.3 yet, while MCFC datapacks now target 26.3. Restart Minecraft after updating the agent so `mcfd` attaches the new JAR with the current pack subscriptions.
+The adapter is deliberately pinned to Minecraft `26.3`, the same version MCFC datapacks target. Restart Minecraft after updating the agent so `mcfd` attaches the new JAR with the current pack subscriptions.
 :::

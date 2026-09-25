@@ -30,13 +30,13 @@ Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 
 ## `std::array`
 
-These take `array<int>`. Other element types wait for generics.
+These are [generic](./statements/fn#generic-functions), so they work on `array<int>` and `array<float>`.
 
 | Function | Returns |
 | --- | --- |
-| `sum(xs: array<int>) -> int` | The total of all elements. |
-| `min(xs: array<int>) -> int` | The smallest element, or `0` for an empty array. |
-| `max(xs: array<int>) -> int` | The largest element, or `0` for an empty array. |
+| `sum<T>(xs: array<T>) -> T` | The total of all elements, or `0` for an empty array. |
+| `min<T>(xs: array<T>) -> T` | The smallest element, or `0` for an empty array. |
+| `max<T>(xs: array<T>) -> T` | The largest element, or `0` for an empty array. |
 
 To sort, use the built-in [`xs.sort()`](./types/array) method.
 

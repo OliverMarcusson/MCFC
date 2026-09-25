@@ -28,7 +28,7 @@ features:
   - title: Editor support
     details: The VS Code extension bundles syntax highlighting, project commands, manifest tooling, and a Rust language server.
   - title: Experimental agent hooks
-    details: mcfd-agent can add version-pinned Minecraft 26.2 event callbacks and root commands while keeping the vanilla fallback intact.
+    details: mcfd-agent can add version-pinned Minecraft 26.3 event callbacks and root commands while keeping the vanilla fallback intact.
 ---
 
 ## Start With A Project

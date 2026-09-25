@@ -246,7 +246,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|at|as|summon|debug|bossbar|int|float|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|random_weighted|random_binomial|gamerule|at|as|summon|debug|bossbar|int|float|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.method.mcfc",

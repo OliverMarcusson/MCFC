@@ -34,5 +34,5 @@ See the [event catalog reference](./reference/event-catalog) for event names, pa
 `command name:` always keeps its vanilla `/trigger mcfcc_name` fallback. When the agent is attached, the same declaration also reserves a real `/name` root command.
 
 ::: warning Experimental and version-pinned
-Agent callbacks are pinned to Minecraft `26.2`. Cancellable packet-entry events can call `event.cancel()`. Lifecycle callbacks such as damage, teleport, join, quit, and respawn are observation-only.
+Agent callbacks are pinned to Minecraft `26.3`. Cancellable packet-entry events can call `event.cancel()`. Lifecycle callbacks such as damage, teleport, join, quit, and respawn are observation-only.
 :::

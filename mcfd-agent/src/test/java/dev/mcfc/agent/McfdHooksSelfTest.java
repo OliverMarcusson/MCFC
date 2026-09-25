@@ -107,14 +107,8 @@ public final class McfdHooksSelfTest {
     public record FakeCommandPacket(String command) {
     }
 
-    public record FakeBlockInteractPacket(Hand hand, FakeHit hit) {
-        public Hand getHand() {
-            return hand;
-        }
-
-        public FakeHit getHitResult() {
-            return hit;
-        }
+    // Mirrors the 26.3 record ServerboundUseItemOnPacket(hand, hitResult).
+    public record FakeBlockInteractPacket(Hand hand, FakeHit hitResult) {
     }
 
     public record FakeHit(FakePos pos, Face face) {

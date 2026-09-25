@@ -26,6 +26,9 @@ struct RegistrySnapshot {
     particle_type: Vec<String>,
     sound_event: Vec<String>,
     mob_effect: Vec<String>,
+    biome: Vec<String>,
+    game_rule: Vec<String>,
+    environment_attribute: Vec<String>,
 }
 
 fn main() {
@@ -139,6 +142,9 @@ fn extract_snapshot_from_registry_data(input: &str) -> Result<RegistrySnapshot, 
         particle_type: read_string_array(object, "particle_type")?,
         sound_event: read_string_array(object, "sound_event")?,
         mob_effect: read_string_array(object, "mob_effect")?,
+        biome: read_string_array(object, "worldgen/biome")?,
+        game_rule: read_string_array(object, "game_rule")?,
+        environment_attribute: read_string_array(object, "environment_attribute")?,
     };
     normalize_snapshot(&mut snapshot);
     Ok(snapshot)
@@ -157,6 +163,9 @@ fn extract_snapshot_from_snapshot_file(input: &str) -> Result<RegistrySnapshot, 
         particle_type: read_string_array(object, "particle_type")?,
         sound_event: read_string_array(object, "sound_event")?,
         mob_effect: read_string_array(object, "mob_effect")?,
+        biome: read_string_array(object, "worldgen/biome")?,
+        game_rule: read_string_array(object, "game_rule")?,
+        environment_attribute: read_string_array(object, "environment_attribute")?,
     };
     normalize_snapshot(&mut snapshot);
     Ok(snapshot)
@@ -170,6 +179,9 @@ fn normalize_snapshot(snapshot: &mut RegistrySnapshot) {
     dedup_sorted(&mut snapshot.particle_type);
     dedup_sorted(&mut snapshot.sound_event);
     dedup_sorted(&mut snapshot.mob_effect);
+    dedup_sorted(&mut snapshot.biome);
+    dedup_sorted(&mut snapshot.game_rule);
+    dedup_sorted(&mut snapshot.environment_attribute);
 }
 
 fn dedup_sorted(values: &mut Vec<String>) {
@@ -216,6 +228,13 @@ fn render_registry_module(snapshot: &RegistrySnapshot) -> String {
     render_prefixed_slice(&mut output, "PARTICLE_IDS", &snapshot.particle_type);
     render_prefixed_slice(&mut output, "SOUND_EVENT_IDS", &snapshot.sound_event);
     render_prefixed_slice(&mut output, "EFFECT_IDS", &snapshot.mob_effect);
+    render_prefixed_slice(&mut output, "BIOME_IDS", &snapshot.biome);
+    render_prefixed_slice(&mut output, "GAME_RULE_IDS", &snapshot.game_rule);
+    render_prefixed_slice(
+        &mut output,
+        "ENVIRONMENT_ATTRIBUTE_IDS",
+        &snapshot.environment_attribute,
+    );
     output
 }
 

@@ -91,6 +91,36 @@ Special functions:
   remain ordinary helpers unless a zero-argument `tick() -> void` is also
   present.
 
+### Generic Functions
+
+Type parameters go in `<...>` after the name. Each one stands for any type, and
+a call works out what it is from the arguments:
+
+```mcfc
+fn biggest<T>(values: array<T>) -> T:
+    let best = values[0]
+    for value in values:
+        if value > best:
+            best = value
+    return best
+
+fn main() -> void:
+    let a = biggest([3, 9, 2])      # int
+    let b = biggest([1.5, 0.25])    # float
+```
+
+Rules:
+
+- every type parameter must appear in a parameter's type, so calls can infer it;
+  there is no `f::<int>(...)` syntax
+- arguments that bind the same parameter must agree, so `same(1, "x")` for
+  `fn same<T>(a: T, b: T)` is an error
+- there are no bounds. Each set of types a call uses compiles a separate copy
+  of the function, named like `biggest__int`, and that copy is type-checked on
+  its own. Using `>` on a `T` that turns out to be `string` is reported there,
+  with a note at the call naming the types
+- only functions are generic; structs are not
+
 ### Modules
 
 A project's root module is `src/main.mcf`. Other files join the build through
@@ -186,10 +216,7 @@ object. Use `single(selector("@s"))` to obtain the affected player. Real command
 registration, arbitrary event metadata, inventory events, and cancellation need
 the future agent backend and are not emulated by a vanilla datapack.
 
-### Agent-backed events and commands (experimental 26.2)
-
-The JVM adapter is still pinned to Minecraft 26.2 and has not been ported to
-26.3, the version MCFC datapacks now target.
+### Agent-backed events and commands (experimental 26.3)
 
 With `[helper.agent] enabled = true`, MCFC also accepts typed event declarations
 for the version-pinned JVM adapter. They run as the affected player and receive
@@ -582,9 +609,14 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `array<T>.contains(value: T) -> bool`
 - `array<T>.index_of(value: T) -> int`, or `-1` when missing
 - `array<T>.reverse() -> void`, in place
-- `array<int>.sort() -> void`, in place, smallest first
+- `array<int>.sort()` and `array<float>.sort()` return `void`; they sort in place, smallest first
 - `dict<T>.has(key: string) -> bool`
 - `dict<T>.remove(key: string) -> void`
+- `dict<T>.len() -> int`
+- `dict<T>.keys() -> array<string>`, in storage order
+
+`keys()` prints the dict through a macro and reads the keys out of the text. A
+string value anywhere in the dict that contains `'` or `"` makes it return `[]`.
 
 ## Player and Entity Surfaces
 
@@ -602,9 +634,20 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `heal(...)` is currently limited to known non-player `entity_ref` targets
 - `entity.x()`, `.y()`, `.z()`, `.yaw()`, `.pitch()`, and `.health()` return `float`
 - `entity.distance_to(other) -> float` measures between two entities
+- `entity.look_x()`, `.look_y()`, and `.look_z()` return the unit vector the
+  entity faces, as `float`
 - `player.food()`, `.xp_level()`, `.game_mode()`, and `.selected_slot()` return `int`,
   and `player.dimension()` returns `string`
 - `game_time()`, `world_time()`, and `border_size()` return `int`
+- `gamerule(name) -> int` reads a game rule; `true` is `1`. The name must be a literal.
+- `block.light() -> int` is the light level, 0 to 15
+- `block.biome() -> string` is the biome id, such as `"minecraft:plains"`
+- `block.in_biome(id) -> bool` accepts a biome id or a `#tag`
+- `block.environment(attribute) -> float` reads a numeric environment
+  attribute, such as `"gameplay/sky_light_level"`. The id must be a literal.
+- `random_weighted(weights) -> int` picks an index, each with its weight's
+  share of the chance. The weights must be a literal array of whole numbers.
+- `random_binomial(n: int, p: float) -> int` counts successes in `n` tries
 
 For runtime entities and blocks, `.nbt.*` is the explicit NBT namespace. Raw
 paths such as `pig.CustomName` and `block("~ ~ ~").CustomName` still work as a
@@ -816,7 +859,7 @@ with `mcfd agent status`. When the global service discovers an enabled pack, it
 automatically attempts one best-effort dynamic attachment to the unambiguous running
 Minecraft JVM for that instance. `mcfd agent attach <pid>` remains a diagnostic fallback.
 
-The current 26.2 adapter emits a versioned JSON record after each
+The current 26.3 adapter emits a versioned JSON record after each
 `[mcfd-agent] event=...` log line; mcfd parses that record and routes subscribed
 events to generated datapack functions on the server thread. This is still a
 best-effort, version-pinned adapter: restart Minecraft after installing a new

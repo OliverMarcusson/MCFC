@@ -251,7 +251,7 @@ fn validate_agent_manifest(options: &CompileOptions) -> Result<(), Diagnostics> 
     for event in &agent.events {
         if !observable.contains(&event.as_str()) {
             diagnostics.push(Diagnostic::new(
-                format!("unknown 26.2 agent event '{}'", event),
+                format!("unknown 26.3 agent event '{}'", event),
                 Span::new(1, 1),
             ));
         }
@@ -433,6 +433,7 @@ fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnost
         let mut merged = Function {
             name: "tick".to_string(),
             is_pub: false,
+            type_params: Vec::new(),
             params: Vec::new(),
             return_type: Type::Void,
             body: Vec::new(),
@@ -1379,5 +1380,69 @@ event player_interact_block(event: player_interact_block_event):
             .unwrap_err()
             .to_string();
         assert!(error.contains("expected player_state"));
+    }
+
+    #[test]
+    fn compiles_world_reads_random_distributions_and_dict_keys() {
+        let source = r#"
+fn main() -> void:
+    let spot = block("~ ~ ~")
+    let light = spot.light()
+    let biome = spot.biome()
+    let plains = spot.in_biome("plains")
+    let sky = spot.environment("gameplay/sky_light_level")
+    let rule = gamerule("max_entity_cramming")
+    let pick = random_weighted([3, 1])
+    let hits = random_binomial(10, 0.5)
+    let player = single(selector("@p"))
+    let dx = player.look_x()
+    let d = {"wood": 2}
+    let ks = d.keys()
+    let n = d.len()
+    return
+"#;
+        let result =
+            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let files = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(files.contains("function mcfc:generated/light_0_15"));
+        assert!(files.contains("predicate:{light:{light:{min:8}}}"));
+        assert!(files.contains("execute if biome ~ ~ ~ minecraft:plains run return run"));
+        assert!(files.contains("execute if biome $(pos) $(biome)"));
+        assert!(files.contains("attribute:\"minecraft:gameplay/sky_light_level\""));
+        assert!(files.contains("run gamerule max_entity_cramming"));
+        assert!(files.contains("distribution:[{data:0,weight:3},{data:1,weight:1}]"));
+        assert!(files.contains("{type:\"binomial\",n:10,p:"));
+        assert!(files.contains("Rotation[0]"));
+        assert!(files.contains("function mcfc:generated/dict_keys"));
+    }
+
+    #[test]
+    fn rejects_unknown_world_ids_and_bad_weights() {
+        let error = compile_source(
+            r#"
+fn main() -> void:
+    let spot = block("~ ~ ~")
+    let a = spot.in_biome("moon")
+    let b = spot.environment("visual/fog_color")
+    let c = gamerule("no_such_rule")
+    let d = random_weighted([1, -2])
+    let e = random_binomial(3, 4)
+    return
+"#,
+            &CompileOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unknown biome 'moon'"));
+        assert!(error.contains("unknown numeric environment attribute 'visual/fog_color'"));
+        assert!(error.contains("unknown game rule 'no_such_rule'"));
+        assert!(error.contains("random_weighted(...) needs a literal array of weights"));
+        assert!(error.contains("random_binomial(n, p) needs an 'int' and a 'float'"));
     }
 }

@@ -156,11 +156,13 @@ public final class McfdHooks {
     private static boolean readDecision(Object server, String namespace) {
         try {
             Object storage = invokeNoArgs(server, "getCommandStorage");
-            Class<?> idClass = Class.forName("net.minecraft.resources.ResourceLocation");
+            Class<?> idClass = Class.forName("net.minecraft.resources.Identifier");
             Object id = idClass.getMethod("parse", String.class).invoke(null, namespace + ":agent");
             Object root = storage.getClass().getMethod("get", idClass).invoke(storage, id);
-            Object decision = root.getClass().getMethod("getCompound", String.class).invoke(root, "decision");
-            return Boolean.TRUE.equals(decision.getClass().getMethod("getBoolean", String.class).invoke(decision, "cancel"));
+            Object decision = root.getClass().getMethod("getCompoundOrEmpty", String.class).invoke(root, "decision");
+            return Boolean.TRUE.equals(decision.getClass()
+                    .getMethod("getBooleanOr", String.class, boolean.class)
+                    .invoke(decision, "cancel", false));
         } catch (Throwable error) {
             System.err.println("[mcfd-agent] decision storage read failed namespace=" + namespace + " error=" + error);
             return false;
@@ -382,15 +384,20 @@ public final class McfdHooks {
                     + ",button:" + intValue(payload, "buttonNum") + "}";
         }
         if ("player_interact_block".equals(event)) {
-            Object hit = invokeQuietly(payload, "getHitResult");
+            Object hit = invokeQuietly(payload, "hitResult");
             Object position = invokeQuietly(hit, "getBlockPos");
             return base
-                    + ",hand:" + snbtString(enumName(invokeQuietly(payload, "getHand")))
+                    + ",hand:" + snbtString(enumName(invokeQuietly(payload, "hand")))
                     + ",face:" + snbtString(enumName(invokeQuietly(hit, "getDirection")))
                     + positionFields(position) + "}";
         }
-        if ("player_interact_item".equals(event) || "player_swing".equals(event)) {
-            return base + ",hand:" + snbtString(enumName(invokeQuietly(payload, "getHand"))) + "}";
+        if ("player_interact_item".equals(event)) {
+            return base + ",hand:" + snbtString(enumName(invokeQuietly(payload, "hand"))) + "}";
+        }
+        if ("player_swing".equals(event)) {
+            // 26.3 replaced the swing packet with a hand-less punch packet;
+            // punches are always the main hand.
+            return base + ",hand:" + snbtString("MAIN_HAND") + "}";
         }
         if ("entity_interact".equals(event)) {
             return base
@@ -420,10 +427,11 @@ public final class McfdHooks {
             return base + ",trade_index:" + intValue(payload, "getItem") + "}";
         }
         if ("sign_change".equals(event)) {
-            Object position = invokeQuietly(payload, "getPos");
-            Object lines = invokeQuietly(payload, "getLines");
+            Object position = invokeQuietly(payload, "pos");
+            Object lines = invokeQuietly(payload, "lines");
+            boolean front = "FRONT".equals(enumName(invokeQuietly(payload, "slot")));
             return base + positionFields(position)
-                    + ",front:" + boolValue(payload, "isFrontText")
+                    + ",front:" + (front ? "1b" : "0b")
                     + ",line_1:" + snbtString(arrayString(lines, 0))
                     + ",line_2:" + snbtString(arrayString(lines, 1))
                     + ",line_3:" + snbtString(arrayString(lines, 2))
@@ -476,11 +484,11 @@ public final class McfdHooks {
         return Boolean.TRUE.equals(value) ? "1b" : "0b";
     }
 
-    private static String arrayString(Object array, int index) {
-        if (array == null || !array.getClass().isArray() || index >= java.lang.reflect.Array.getLength(array)) {
+    private static String arrayString(Object values, int index) {
+        if (!(values instanceof java.util.List<?> list) || index >= list.size()) {
             return "";
         }
-        Object value = java.lang.reflect.Array.get(array, index);
+        Object value = list.get(index);
         return value == null ? "" : String.valueOf(value);
     }
 

@@ -148,7 +148,7 @@ Source lives under `docs/`; production output is generated under
 The Bukkit-style declarations are deliberately vanilla-safe. `event player_join`
 and `event player_death` run through generated datapack detectors, `command`
 always has a `/trigger mcfcc_<name>` fallback, and `task` generates a tick or
-scheduled function. With the opt-in 26.2 JVM agent, typed event callbacks and
+scheduled function. With the opt-in 26.3 JVM agent, typed event callbacks and
 real no-argument command roots are also available. See
 `examples/bukkit_api_conformance` for a runnable pack.
 

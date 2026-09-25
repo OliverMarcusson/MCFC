@@ -2379,6 +2379,21 @@ fn static_completion_items(
             "sleep_ticks(${1:20})",
         ),
         ("random", "random() -> int", "random()"),
+        (
+            "random_weighted",
+            "random_weighted(weights: array<int>) -> int",
+            "random_weighted([${1:3}, ${2:1}])",
+        ),
+        (
+            "random_binomial",
+            "random_binomial(n: int, p: float) -> int",
+            "random_binomial(${1:10}, ${2:0.5})",
+        ),
+        (
+            "gamerule",
+            "gamerule(name: string) -> int",
+            "gamerule(${1:\"max_entity_cramming\"})",
+        ),
         ("random(max)", "random(max: int) -> int", "random(${1:max})"),
         (
             "random(min, max)",
@@ -2987,6 +3002,8 @@ fn float_method_items() -> Vec<CompletionItem> {
 fn dict_method_items() -> Vec<CompletionItem> {
     [
         ("has", "dict<T>.has(key: string) -> bool", "has(${1:key})"),
+        ("keys", "dict<T>.keys() -> array<string>", "keys()"),
+        ("len", "dict<T>.len() -> int", "len()"),
         (
             "remove",
             "dict<T>.remove(key: string) -> void",
@@ -3042,6 +3059,24 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             "distance_to",
             "entity.distance_to(other: entity_ref) -> float",
             "distance_to(${1:other})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "look_x",
+            "entity.look_x() -> float",
+            "look_x()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "look_y",
+            "entity.look_y() -> float",
+            "look_y()",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "look_z",
+            "entity.look_z() -> float",
+            "look_z()",
             CompletionItemKind::METHOD,
         ),
         (
@@ -3291,6 +3326,18 @@ fn block_ref_items() -> Vec<CompletionItem> {
             "spawn_item",
             "block.spawn_item(stack: item_def) -> entity_ref",
             "spawn_item(${1:item(\"minecraft:apple\")})",
+        ),
+        ("light", "block.light() -> int", "light()"),
+        ("biome", "block.biome() -> string", "biome()"),
+        (
+            "in_biome",
+            "block.in_biome(biome: string) -> bool",
+            "in_biome(${1:\"minecraft:plains\"})",
+        ),
+        (
+            "environment",
+            "block.environment(attribute: string) -> float",
+            "environment(${1:\"gameplay/sky_light_level\"})",
         ),
     ]
     .into_iter()

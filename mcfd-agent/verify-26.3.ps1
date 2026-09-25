@@ -1,11 +1,11 @@
 param(
-    [string]$MinecraftJar = "C:\Users\Oliver\AppData\Roaming\PrismLauncher\libraries\com\mojang\minecraft\26.2\minecraft-26.2-client.jar"
+    [string]$MinecraftJar = "C:\Users\Oliver\AppData\Roaming\PrismLauncher\libraries\com\mojang\minecraft\26.3\minecraft-26.3-client.jar"
 )
 
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $MinecraftJar)) {
-    throw "Minecraft 26.2 JAR not found: $MinecraftJar. Pass -MinecraftJar <path>."
+    throw "Minecraft 26.3 JAR not found: $MinecraftJar. Pass -MinecraftJar <path>."
 }
 
 # Keep this list in step with McfdAgent.EventClassVisitor. This verifies named
@@ -15,7 +15,7 @@ $targets = @{
         'handleContainerClick', 'handleSetCreativeModeSlot', 'handleContainerButtonClick',
         'handlePlaceRecipe', 'handleContainerClose', 'handleChat', 'handleChatCommand',
         'handleSignedChatCommand', 'handlePlayerAction', 'handleUseItemOn', 'handleUseItem',
-        'handleInteract', 'handleAttack', 'handleSetCarriedItem', 'handleAnimate',
+        'handleInteract', 'handleAttack', 'handleSetCarriedItem', 'handlePunch',
         'handlePlayerCommand', 'handleClientCommand', 'handleRenameItem', 'handleSelectTrade',
         'handleSignUpdate', 'handleEditBook', 'handleSetBeaconPacket', 'handlePickItemFromBlock',
         'handlePickItemFromEntity', 'handleTeleportToEntityPacket', 'handleChangeGameMode',
@@ -39,10 +39,10 @@ foreach ($class in $targets.Keys) {
     }
     foreach ($method in $targets[$class]) {
         if ($methods -notmatch ("\b" + [regex]::Escape($method) + "\(")) {
-            throw "Missing 26.2 adapter target: $class.$method"
+            throw "Missing 26.3 adapter target: $class.$method"
         }
     }
     Write-Host "verified $class"
 }
 
-Write-Host 'mcfd-agent 26.2 mapping verification passed'
+Write-Host 'mcfd-agent 26.3 mapping verification passed'

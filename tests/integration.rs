@@ -2929,7 +2929,7 @@ fn main() -> void:
     assert_eq!(
         names,
         [
-            "std::array::sum",
+            "std::array::sum__int",
             "std::math::abs",
             "std::math::gcd",
             "std::math::lerp",
@@ -2949,7 +2949,7 @@ fn main() -> void:
 }
 
 #[test]
-fn sort_needs_an_int_array() {
+fn sort_needs_a_number_array() {
     let source = r#"
 fn main() -> void:
     let names = ["b", "a"]
@@ -2957,7 +2957,90 @@ fn main() -> void:
 "#;
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
     assert!(
-        error.to_string().contains("sort() needs 'array<int>'"),
+        error
+            .to_string()
+            .contains("sort() needs 'array<int>' or 'array<float>'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn generic_functions_compile_one_copy_per_type() {
+    let source = r#"
+fn biggest<T>(values: array<T>) -> T:
+    let best = values[0]
+    for value in values:
+        if value > best:
+            best = value
+    return best
+
+fn first<A, B>(a: A, b: B) -> A:
+    return a
+
+fn total<T>(xs: array<T>) -> T:
+    let sum = xs[0]
+    for i in 1..xs.len():
+        sum = sum + xs[i]
+    return sum
+
+fn main() -> void:
+    let a = biggest([3, 9, 2])
+    let b = biggest([1.5, 0.25])
+    let c = biggest([4, 1])
+    let d = first("hi", 4)
+    let fs = [2.5, 0.5]
+    fs.sort()
+    let t = total(fs)
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("generics compile");
+    let mut names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .filter(|name| name.contains("__"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "biggest__float",
+            "biggest__int",
+            "first__string__int",
+            "total__float",
+        ]
+    );
+    assert!(
+        result
+            .artifacts
+            .files
+            .keys()
+            .any(|path| path.ends_with("generated/fsort_step.mcfunction"))
+    );
+}
+
+#[test]
+fn generic_calls_report_bad_type_arguments() {
+    let source = r#"
+fn same<T>(a: T, b: T) -> T:
+    return a
+
+fn make<T>() -> array<T>:
+    return []
+
+fn main() -> void:
+    let a = same(1, "x")
+    let b = make()
+"#;
+    let error = compile_source(source, &CompileOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("arguments for 'same' give its type parameters different types"),
+        "{error}"
+    );
+    assert!(
+        error.contains("cannot tell what 'T' is in this call to 'make'"),
         "{error}"
     );
 }

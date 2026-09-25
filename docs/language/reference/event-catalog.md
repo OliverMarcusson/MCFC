@@ -29,7 +29,7 @@ event player_death:
 
 ## Agent-backed Events
 
-Agent events are version-pinned to Minecraft `26.2`. The generated datapack remains valid without the agent, and `mcfd` performs best-effort dynamic attachment.
+Agent events are version-pinned to Minecraft `26.3`. The generated datapack remains valid without the agent, and `mcfd` performs best-effort dynamic attachment.
 
 | Event | Payload type | Important fields | Cancellation |
 | --- | --- | --- | --- |
@@ -112,5 +112,5 @@ command status:
 ```
 
 ::: warning Experimental and version-pinned
-Agent callbacks are pinned to Minecraft `26.2`. Cancellable packet-entry events can call `event.cancel()`. Lifecycle callbacks such as damage, teleport, join, quit, and respawn are observation-only and reject cancellation.
+Agent callbacks are pinned to Minecraft `26.3`. Cancellable packet-entry events can call `event.cancel()`. Lifecycle callbacks such as damage, teleport, join, quit, and respawn are observation-only and reject cancellation.
 :::

@@ -19,7 +19,7 @@ import org.objectweb.asm.Opcodes;
 /**
  * Minimal, loader-safe entrypoint for the optional MCFC server agent.
  *
- * The first adapter targets the named 26.2 server classes. It observes chat,
+ * The first adapter targets the named 26.3 server classes. It observes chat,
  * inventory-click, player-action, and block-break entrypoints. A configured
  * event can be cancelled before vanilla receives it; all other hooks only log.
  */
@@ -93,7 +93,7 @@ public final class McfdAgent {
                 if (!visitor.hasChanges()) {
                     return null;
                 }
-                System.err.println("[mcfd-agent] installed 26.2 hooks in " + className
+                System.err.println("[mcfd-agent] installed 26.3 hooks in " + className
                         + ": " + visitor.installedHooks());
                 return writer.toByteArray();
             } catch (Throwable error) {
@@ -169,7 +169,7 @@ public final class McfdAgent {
                 if ("handleInteract".equals(name)) return cancellable("entity_interact");
                 if ("handleAttack".equals(name)) return cancellable("entity_attack");
                 if ("handleSetCarriedItem".equals(name)) return cancellable("item_held_change");
-                if ("handleAnimate".equals(name)) return cancellable("player_swing");
+                if ("handlePunch".equals(name)) return cancellable("player_swing");
                 if ("handlePlayerCommand".equals(name)) return cancellable("player_action_toggle");
                 if ("handleClientCommand".equals(name)) return cancellable("player_respawn_request");
                 if ("handleRenameItem".equals(name)) return cancellable("item_rename");

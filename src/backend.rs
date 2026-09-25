@@ -3385,6 +3385,20 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        // A missing element or key leaves a `set from` target unchanged, so
+        // start floats and strings at zero, as a failed `data get` does for ints.
+        let zero = match ty {
+            Type::Float => Some("0.0f"),
+            Type::String => Some("\"\""),
+            _ => None,
+        };
+        if let Some(zero) = zero {
+            lines.push(format!(
+                "data modify storage {}:runtime {} set value {zero}",
+                self.namespace,
+                target.storage_path()
+            ));
+        }
         let command = match ty {
             Type::Int | Type::Bool => format!(
                 "execute store result score {} mcfc run data get storage {}:runtime {} 1",
@@ -3509,6 +3523,10 @@ impl Backend {
                 self.compile_value_as_nbt(function, depth, receiver, target, lines);
                 return;
             }
+            "light" | "biome" | "in_biome" | "environment" if receiver.ty == Type::BlockRef => {
+                self.compile_block_query(function, depth, receiver, method, args, target, lines);
+                return;
+            }
             "clear" if receiver.ty == Type::ItemSlot => {
                 let slot_handle = self.compile_storage_receiver(function, depth, receiver, lines);
                 self.clear_item_slot_handle(function, depth, &slot_handle, lines);
@@ -3607,6 +3625,24 @@ impl Backend {
                     target.numeric_name(),
                     self.namespace,
                     receiver_slot.storage_path()
+                ));
+                return;
+            }
+            "keys" if matches!(receiver.ty, Type::Dict(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                self.write_dict_keys_helpers();
+                let ns = self.namespace.clone();
+                lines.push(format!(
+                    "data modify storage {ns}:runtime dict_keys set value {{text:\"\",keys:[]}}"
+                ));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime dict_keys.src set from storage {ns}:runtime {}",
+                    source.storage_path()
+                ));
+                lines.push(format!("function {ns}:generated/dict_keys"));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:runtime dict_keys.keys",
+                    target.storage_path()
                 ));
                 return;
             }
@@ -4383,6 +4419,56 @@ impl Backend {
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "gamerule" if !self.functions.contains_key(callee) => {
+                if let IrExprKind::String(name) = &args[0].kind {
+                    lines.push(format!(
+                        "execute store result score {} mcfc run gamerule {}",
+                        target.numeric_name(),
+                        name.trim_start_matches("minecraft:")
+                    ));
+                }
+                true
+            }
+            "random_weighted" if !self.functions.contains_key(callee) => {
+                let IrExprKind::ArrayLiteral(weights) = &args[0].kind else {
+                    return true;
+                };
+                let entries: Vec<String> = weights
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, weight)| match weight.kind {
+                        IrExprKind::Int(weight) => {
+                            Some(format!("{{data:{index},weight:{weight}}}"))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                lines.push(format!(
+                    "execute store result score {} mcfc run compute default integer {{type:\"weighted_list\",distribution:[{}]}}",
+                    target.numeric_name(),
+                    entries.join(",")
+                ));
+                true
+            }
+            "random_binomial" if !self.functions.contains_key(callee) => {
+                let n = match args[0].kind {
+                    IrExprKind::Int(value) => value.to_string(),
+                    _ => {
+                        let slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                        self.compile_expr_into_slot(function, depth, &args[0], &slot, lines);
+                        format!(
+                            "{{type:\"score\",target:{{type:\"fixed\",name:{}}},score:\"mcfc\"}}",
+                            slot.numeric_name()
+                        )
+                    }
+                };
+                let p = self.float_provider(function, depth, &args[1], lines);
+                lines.push(format!(
+                    "execute store result score {} mcfc run compute default integer {{type:\"binomial\",n:{n},p:{p}}}",
+                    target.numeric_name()
+                ));
+                true
+            }
             "game_time" | "world_time" | "border_size" if !self.functions.contains_key(callee) => {
                 let query = match callee {
                     "game_time" => "time query gametime",
@@ -6948,6 +7034,121 @@ impl Backend {
         )
     }
 
+    /// `light()`, `biome()`, `in_biome(id)` and `environment(attribute)` on
+    /// a `block_ref`. Each runs positioned at the block through its macro.
+    #[allow(clippy::too_many_arguments)]
+    fn compile_block_query(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        receiver: &IrExpr,
+        method: &str,
+        args: &[IrExpr],
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        let block = local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
+        self.compile_expr_into_slot(function, depth, receiver, &block, lines);
+        match method {
+            "light" => {
+                self.write_light_probe(0, 15);
+                lines.push("scoreboard players set #light mcfc 0".to_string());
+                lines.push(self.block_command(
+                    &block,
+                    format!("execute positioned $(pos) run function {ns}:generated/light_0_15"),
+                    true,
+                ));
+                lines.push(format!(
+                    "scoreboard players operation {} mcfc = #light mcfc",
+                    target.numeric_name()
+                ));
+            }
+            "biome" => {
+                let probe: Vec<String> = crate::minecraft_ids::BIOME_IDS
+                    .iter()
+                    .map(|id| {
+                        format!(
+                            "execute if biome ~ ~ ~ {id} run return run data modify storage {ns}:runtime biome_probe set value \"{id}\""
+                        )
+                    })
+                    .collect();
+                self.files.insert(
+                    format!("data/{ns}/function/generated/biome_probe.mcfunction"),
+                    probe.join("\n") + "\n",
+                );
+                lines.push(format!(
+                    "data modify storage {ns}:runtime biome_probe set value \"\""
+                ));
+                lines.push(self.block_command(
+                    &block,
+                    format!("execute positioned $(pos) run function {ns}:generated/biome_probe"),
+                    true,
+                ));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:runtime biome_probe",
+                    target.storage_path()
+                ));
+            }
+            "in_biome" => {
+                let id = local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                self.compile_expr_into_slot(function, depth, &args[0], &id, lines);
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {}.biome set from storage {ns}:runtime {}",
+                    block.storage_path(),
+                    id.storage_path()
+                ));
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(self.block_command(
+                    &block,
+                    format!(
+                        "execute if biome $(pos) $(biome) run scoreboard players set {} mcfc 1",
+                        target.numeric_name()
+                    ),
+                    true,
+                ));
+            }
+            _ => {
+                let IrExprKind::String(attribute) = &args[0].kind else {
+                    return;
+                };
+                let attribute = attribute.trim_start_matches("minecraft:");
+                lines.push(self.block_command(
+                    &block,
+                    format!(
+                        "data modify storage {ns}:runtime {} set compute block $(pos) float {{type:\"environment_attribute\",attribute:\"minecraft:{attribute}\"}}",
+                        target.storage_path()
+                    ),
+                    true,
+                ));
+            }
+        }
+    }
+
+    /// Binary search for the light level between `low` and `high`, one
+    /// `location_check` predicate per level of the tree. Leaves `#light`.
+    fn write_light_probe(&mut self, low: u8, high: u8) {
+        let ns = self.namespace.clone();
+        let body = if low == high {
+            format!("scoreboard players set #light mcfc {low}")
+        } else {
+            let mid = (low + high).div_ceil(2);
+            self.write_light_probe(mid, high);
+            self.write_light_probe(low, mid - 1);
+            format!(
+                "execute if predicate {{type:\"location_check\",predicate:{{light:{{light:{{min:{mid}}}}}}}}} run return run function {ns}:generated/light_{mid}_{high}\nfunction {ns}:generated/light_{low}_{}",
+                mid - 1
+            )
+        };
+        self.files.insert(
+            format!("data/{ns}/function/generated/light_{low}_{high}.mcfunction"),
+            body + "\n",
+        );
+    }
+
     fn block_command(&mut self, slot: &SlotRef, command: String, wrap_macro: bool) -> String {
         let storage = slot.storage_path();
         let macro_line = format!("$(prefix){}", command);
@@ -7468,65 +7669,218 @@ impl Backend {
         ));
     }
 
-    /// Write the shared merge sort for `array<int>`, which works on the
+    /// Write the helpers behind `dict.keys()`. No command lists a compound's
+    /// keys, so a macro prints the dict as SNBT text and a state machine
+    /// walks it one character at a time, slicing out each top-level key.
+    /// States: 0 expects a key, 1 is in a bare key, 2 in a quoted key, 3 in
+    /// a value, 4 in a quoted string inside a value, 5 skips to the `:` after
+    /// a quoted key. `#dk_q` is the open quote (1 `"`, 2 `'`), `#dk_esc` marks
+    /// a backslash, `#dk_depth` counts brackets inside a value.
+    fn write_dict_keys_helpers(&mut self) {
+        let ns = self.namespace.clone();
+        let s = format!("storage {ns}:runtime dict_keys");
+        let is = |c: &str| format!("execute if data storage {ns}:runtime dict_keys{{c:{c}}}");
+        let quote_open = |state: u8| {
+            vec![
+                format!("{} run scoreboard players set #dk_q mcfc 1", is("'\"'")),
+                format!("{} run scoreboard players set #dk_q mcfc 2", is("\"'\"")),
+                format!(
+                    "execute unless score #dk_q mcfc matches 0 run scoreboard players set #dk_state mcfc {state}"
+                ),
+            ]
+        };
+        let emit_key = format!(
+            "execute store result {s}.end int 1 run scoreboard players get #dk_pos mcfc\nfunction {ns}:generated/dict_keys_emit with {s}"
+        );
+        let mut s0 = vec![
+            format!("{} run return 0", is("\" \"")),
+            "scoreboard players set #dk_q mcfc 0".to_string(),
+            format!(
+                "{} run return run scoreboard players set #dk_state mcfc 9",
+                is("\"}\"")
+            ),
+        ];
+        s0.extend(quote_open(2));
+        s0.push("scoreboard players operation #dk_start mcfc = #dk_pos mcfc".to_string());
+        s0.push(
+            "execute if score #dk_state mcfc matches 2 run scoreboard players add #dk_start mcfc 1"
+                .to_string(),
+        );
+        s0.push(
+            "execute if score #dk_state mcfc matches 0 run scoreboard players set #dk_state mcfc 1"
+                .to_string(),
+        );
+        s0.push(format!(
+            "execute store result {s}.start int 1 run scoreboard players get #dk_start mcfc"
+        ));
+        let string_step = |close_state: u8, emit: bool| {
+            let mut lines = vec![
+                "execute if score #dk_esc mcfc matches 1 run return run scoreboard players set #dk_esc mcfc 0".to_string(),
+                format!("{} run return run scoreboard players set #dk_esc mcfc 1", is("\"\\\\\"")),
+                "scoreboard players set #dk_close mcfc 0".to_string(),
+                format!("execute if score #dk_q mcfc matches 1 {} run scoreboard players set #dk_close mcfc 1", is("'\"'").trim_start_matches("execute ")),
+                format!("execute if score #dk_q mcfc matches 2 {} run scoreboard players set #dk_close mcfc 1", is("\"'\"").trim_start_matches("execute ")),
+                "execute if score #dk_close mcfc matches 0 run return 0".to_string(),
+            ];
+            if emit {
+                lines.push(emit_key.clone());
+            }
+            lines.push(format!(
+                "scoreboard players set #dk_state mcfc {close_state}"
+            ));
+            lines
+        };
+        let mut s3 = vec!["scoreboard players set #dk_q mcfc 0".to_string()];
+        s3.extend(quote_open(4));
+        s3.push("execute unless score #dk_q mcfc matches 0 run return 0".to_string());
+        s3.push(format!(
+            "{} run return run scoreboard players add #dk_depth mcfc 1",
+            is("\"{\"")
+        ));
+        s3.push(format!(
+            "{} run return run scoreboard players add #dk_depth mcfc 1",
+            is("\"[\"")
+        ));
+        s3.push(format!("execute if score #dk_depth mcfc matches 0 {} run return run scoreboard players set #dk_state mcfc 9", is("\"}\"").trim_start_matches("execute ")));
+        s3.push(format!(
+            "{} run return run scoreboard players remove #dk_depth mcfc 1",
+            is("\"}\"")
+        ));
+        s3.push(format!(
+            "{} run return run scoreboard players remove #dk_depth mcfc 1",
+            is("\"]\"")
+        ));
+        s3.push(format!("execute if score #dk_depth mcfc matches 0 {} run scoreboard players set #dk_state mcfc 0", is("\",\"").trim_start_matches("execute ")));
+        let helpers: Vec<(&str, Vec<String>)> = vec![
+            (
+                "dict_keys",
+                vec![
+                    format!("function {ns}:generated/dict_keys_text with {s}"),
+                    // Drop the opening brace; an empty or unprintable dict has no keys.
+                    format!("execute unless data {s}{{text:\"\"}} run data modify {s}.text set string {s}.text 1"),
+                    format!("data modify {s}.orig set from {s}.text"),
+                    "scoreboard players set #dk_state mcfc 0".to_string(),
+                    "scoreboard players set #dk_pos mcfc 0".to_string(),
+                    "scoreboard players set #dk_esc mcfc 0".to_string(),
+                    "scoreboard players set #dk_depth mcfc 0".to_string(),
+                    format!("execute unless data {s}{{text:\"\"}} run function {ns}:generated/dict_keys_char"),
+                ],
+            ),
+            (
+                "dict_keys_text",
+                vec![format!("$data modify {s}.text set value '$(src)'")],
+            ),
+            (
+                "dict_keys_emit",
+                vec![format!("$data modify {s}.keys append string {s}.orig $(start) $(end)")],
+            ),
+            (
+                "dict_keys_char",
+                vec![
+                    format!("data modify {s}.c set string {s}.text 0 1"),
+                    format!("data modify {s}.text set string {s}.text 1"),
+                    format!("function {ns}:generated/dict_keys_state"),
+                    "scoreboard players add #dk_pos mcfc 1".to_string(),
+                    format!("execute unless score #dk_state mcfc matches 9 unless data {s}{{text:\"\"}} run function {ns}:generated/dict_keys_char"),
+                ],
+            ),
+            (
+                // One handler per character, so a state change waits for the next one.
+                "dict_keys_state",
+                (0..=5)
+                    .map(|state| {
+                        format!(
+                            "execute if score #dk_state mcfc matches {state} run return run function {ns}:generated/dict_keys_s{state}"
+                        )
+                    })
+                    .collect(),
+            ),
+            ("dict_keys_s0", s0),
+            (
+                "dict_keys_s5",
+                vec![
+                    format!("execute unless data {s}{{c:\":\"}} run return 0"),
+                    "scoreboard players set #dk_state mcfc 3".to_string(),
+                ],
+            ),
+            (
+                "dict_keys_s1",
+                vec![
+                    format!("execute unless data {s}{{c:\":\"}} run return 0"),
+                    emit_key.clone(),
+                    "scoreboard players set #dk_state mcfc 3".to_string(),
+                ],
+            ),
+            ("dict_keys_s2", string_step(5, true)),
+            ("dict_keys_s3", s3),
+            ("dict_keys_s4", string_step(3, false)),
+        ];
+        for (name, body) in helpers {
+            self.files.insert(
+                format!("data/{ns}/function/generated/{name}.mcfunction"),
+                body.join("\n") + "\n",
+            );
+        }
+    }
+
+    /// Write the shared merge sort for `array<int>` (`sort_*`) or
+    /// `array<float>` (`fsort_*`, comparing through `/compute`), which works on the
     /// `sort` storage compound: `src` is the input, `q` a queue of sorted runs,
     /// `a` and `b` the two runs being merged into `c`. `generated/sort_slice`
     /// does at most `SORT_STEPS_PER_TICK` steps, one element each, and sets
     /// `#sort_done` once `q[0]` holds the result. Each step reads or removes
     /// index 0 only, so no macros run. Callers swap their own state in and
     /// out, so sorts at different sites can be in progress at the same time.
-    fn write_sort_helpers(&mut self) {
+    fn write_sort_helpers(&mut self, float: bool) {
         let ns = self.namespace.clone();
         let s = format!("storage {ns}:runtime sort");
-        let helpers = [
+        let p = if float { "fsort" } else { "sort" };
+        let at = |path: &str| {
+            format!("{{type:\"storage\",storage:\"{ns}:runtime\",path:\"sort.{path}\"}}")
+        };
+        // `#sort_cmp` is below 0 when `left < right`.
+        let compare = |left: &str, right: &str| {
+            format!(
+                "execute store result score #sort_cmp mcfc run compute default float {{type:\"sub\",left:{},right:{}}}",
+                at(left),
+                at(right)
+            )
+        };
+        let (slice, run, step) = if float {
             (
-                "sort_slice",
+                vec![format!("function {ns}:generated/{p}_loop")],
                 vec![
-                    "scoreboard players set #sort_done mcfc 0".to_string(),
-                    format!("scoreboard players set #sort_budget mcfc {SORT_STEPS_PER_TICK}"),
+                    compare("src[0]", "last"),
+                    format!(
+                        "execute if score #sort_cmp mcfc matches ..-1 run data modify {s}.q append value []"
+                    ),
+                    format!("data modify {s}.q[-1] append from {s}.src[0]"),
+                    format!("data modify {s}.last set from {s}.src[0]"),
+                    format!("data remove {s}.src[0]"),
+                ],
+                vec![
+                    compare("b[0]", "a[0]"),
+                    format!(
+                        "execute if score #sort_cmp mcfc matches 0.. run data modify {s}.c append from {s}.a[0]"
+                    ),
+                    format!("execute if score #sort_cmp mcfc matches 0.. run data remove {s}.a[0]"),
+                    format!(
+                        "execute if score #sort_cmp mcfc matches ..-1 run data modify {s}.c append from {s}.b[0]"
+                    ),
+                    format!(
+                        "execute if score #sort_cmp mcfc matches ..-1 run data remove {s}.b[0]"
+                    ),
+                ],
+            )
+        } else {
+            (
+                vec![
                     format!("execute store result score #sort_last mcfc run data get {s}.last"),
-                    format!("function {ns}:generated/sort_loop"),
+                    format!("function {ns}:generated/{p}_loop"),
                     format!(
                         "execute store result {s}.last int 1 run scoreboard players get #sort_last mcfc"
                     ),
                 ],
-            ),
-            (
-                // Eight steps per call keeps the loop overhead low; steps
-                // after the sort is done return at once.
-                "sort_loop",
-                vec![
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    format!("function {ns}:generated/sort_unit"),
-                    "scoreboard players remove #sort_budget mcfc 8".to_string(),
-                    format!(
-                        "execute if score #sort_done mcfc matches 0 if score #sort_budget mcfc matches 1.. run function {ns}:generated/sort_loop"
-                    ),
-                ],
-            ),
-            (
-                "sort_unit",
-                vec![
-                    "execute if score #sort_done mcfc matches 1 run return 0".to_string(),
-                    format!(
-                        "execute if data {s}.src[0] run return run function {ns}:generated/sort_run"
-                    ),
-                    format!(
-                        "execute if data {s}.a[0] if data {s}.b[0] run return run function {ns}:generated/sort_step"
-                    ),
-                    format!("function {ns}:generated/sort_next"),
-                ],
-            ),
-            (
-                // Move one input element onto the last run, or start a new run
-                // when it is smaller than the previous element.
-                "sort_run",
                 vec![
                     format!("execute store result score #sort_b mcfc run data get {s}.src[0]"),
                     format!(
@@ -7536,9 +7890,6 @@ impl Backend {
                     "scoreboard players operation #sort_last mcfc = #sort_b mcfc".to_string(),
                     format!("data remove {s}.src[0]"),
                 ],
-            ),
-            (
-                "sort_step",
                 vec![
                     format!("execute store result score #sort_a mcfc run data get {s}.a[0]"),
                     format!("execute store result score #sort_b mcfc run data get {s}.b[0]"),
@@ -7555,11 +7906,55 @@ impl Backend {
                         "execute if score #sort_a mcfc > #sort_b mcfc run data remove {s}.b[0]"
                     ),
                 ],
+            )
+        };
+        let mut slice_lines = vec![
+            "scoreboard players set #sort_done mcfc 0".to_string(),
+            format!("scoreboard players set #sort_budget mcfc {SORT_STEPS_PER_TICK}"),
+        ];
+        slice_lines.extend(slice);
+        let helpers = [
+            ("slice", slice_lines),
+            (
+                // Eight steps per call keeps the loop overhead low; steps
+                // after the sort is done return at once.
+                "loop",
+                vec![
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    format!("function {ns}:generated/{p}_unit"),
+                    "scoreboard players remove #sort_budget mcfc 8".to_string(),
+                    format!(
+                        "execute if score #sort_done mcfc matches 0 if score #sort_budget mcfc matches 1.. run function {ns}:generated/{p}_loop"
+                    ),
+                ],
             ),
+            (
+                "unit",
+                vec![
+                    "execute if score #sort_done mcfc matches 1 run return 0".to_string(),
+                    format!(
+                        "execute if data {s}.src[0] run return run function {ns}:generated/{p}_run"
+                    ),
+                    format!(
+                        "execute if data {s}.a[0] if data {s}.b[0] run return run function {ns}:generated/{p}_step"
+                    ),
+                    format!("function {ns}:generated/{p}_next"),
+                ],
+            ),
+            // Move one input element onto the last run, or start a new run
+            // when it is smaller than the previous element.
+            ("run", run),
+            ("step", step),
             (
                 // Finish the current merge, then take the next two runs off
                 // the front of the queue. One run left means done.
-                "sort_next",
+                "next",
                 vec![
                     format!("data modify {s}.c append from {s}.a[]"),
                     format!("data modify {s}.c append from {s}.b[]"),
@@ -7579,7 +7974,7 @@ impl Backend {
         ];
         for (name, body) in helpers {
             self.files.insert(
-                format!("data/{ns}/function/generated/{name}.mcfunction"),
+                format!("data/{ns}/function/generated/{p}_{name}.mcfunction"),
                 body.join("\n") + "\n",
             );
         }
@@ -7601,7 +7996,13 @@ impl Backend {
         lines: &mut Vec<String>,
     ) {
         let ns = self.namespace.clone();
-        self.write_sort_helpers();
+        let float = receiver.ty == Type::Array(Box::new(Type::Float));
+        self.write_sort_helpers(float);
+        let (helper, lowest) = if float {
+            ("fsort", "-3.4e38f")
+        } else {
+            ("sort", "-2147483648")
+        };
         let state = string_slot(depth, &function.name, &format!("_sort{}", self.new_temp()));
         let mut prefix = Vec::new();
         if let Some(rendered) =
@@ -7627,7 +8028,7 @@ impl Backend {
         );
         let slice = [
             format!("data modify storage {ns}:runtime sort set from storage {ns}:runtime {state}"),
-            format!("function {ns}:generated/sort_slice"),
+            format!("function {ns}:generated/{helper}_slice"),
             format!("data modify storage {ns}:runtime {state} set from storage {ns}:runtime sort"),
         ];
         let (tick_path, tick_name) = self.new_block(function, depth, "sort_tick");
@@ -7641,7 +8042,7 @@ impl Backend {
         self.files.insert(tick_path, tick_lines.join("\n") + "\n");
 
         let mut stmt_lines = vec![format!(
-            "data modify storage {ns}:runtime {state} set value {{q:[[]],a:[],b:[],c:[],last:-2147483648}}"
+            "data modify storage {ns}:runtime {state} set value {{q:[[]],a:[],b:[],c:[],last:{lowest}}}"
         )];
         if let Some(rendered) =
             self.render_storage_expr_lvalue_path(function, depth, receiver, &mut stmt_lines)

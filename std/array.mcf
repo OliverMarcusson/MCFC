@@ -1,26 +1,24 @@
-# Helpers for `array<int>`. MCFC has no generics yet, so these take ints only.
+# Helpers for arrays. Each is generic, so `T` can be any element type that
+# supports the operators the helper uses: `+` for `sum`, `<` and `>` for
+# `min` and `max`. That means `int` and `float`.
 
-# Sum of all elements; 0 for an empty array.
-pub fn sum(xs: array<int>) -> int:
-    let total = 0
-    for x in xs:
-        total = total + x
+# Sum of all elements. An empty array gives 0.
+pub fn sum<T>(xs: array<T>) -> T:
+    let total = xs[0]
+    for i in 1..xs.len():
+        total = total + xs[i]
     return total
 
-# Smallest element; 0 for an empty array.
-pub fn min(xs: array<int>) -> int:
-    if xs.len() == 0:
-        return 0
+# Smallest element. An empty array gives 0.
+pub fn min<T>(xs: array<T>) -> T:
     let best = xs[0]
     for x in xs:
         if x < best:
             best = x
     return best
 
-# Largest element; 0 for an empty array.
-pub fn max(xs: array<int>) -> int:
-    if xs.len() == 0:
-        return 0
+# Largest element. An empty array gives 0.
+pub fn max<T>(xs: array<T>) -> T:
     let best = xs[0]
     for x in xs:
         if x > best:

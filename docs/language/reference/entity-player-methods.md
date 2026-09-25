@@ -124,6 +124,7 @@ These return numbers and text you can compute with. They read the entity's NBT, 
 | `e.yaw()`, `e.pitch()` | `float` | `Rotation`, in degrees |
 | `e.health()` | `float` | `Health` |
 | `e.distance_to(other)` | `float` | Both entities' `Pos`, combined in one `/compute` command |
+| `e.look_x()`, `e.look_y()`, `e.look_z()` | `float` | `Rotation`, as the unit vector the entity faces |
 | `player.food()` | `int` | `foodLevel`, 0 to 20 |
 | `player.xp_level()` | `int` | `XpLevel` |
 | `player.game_mode()` | `int` | `playerGameType`: 0 survival, 1 creative, 2 adventure, 3 spectator |

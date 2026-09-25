@@ -105,6 +105,7 @@ fn map_line_offsets(from: &str, to: &str, from_base: usize, to_base: usize, map:
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionInfo {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub range: TextRange,
@@ -119,9 +120,15 @@ impl FunctionInfo {
             .map(|(name, ty)| format!("{}: {}", name, ty.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
+        let generics = if self.type_params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", self.type_params.join(", "))
+        };
         format!(
-            "fn {}({}) -> {}",
+            "fn {}{}({}) -> {}",
             self.name,
+            generics,
             params,
             self.return_type.as_str()
         )
@@ -260,6 +267,7 @@ fn fallback_functions(program: &Program, source_map: &SourceMap) -> Vec<Function
         .iter()
         .map(|function| FunctionInfo {
             name: function.name.clone(),
+            type_params: function.type_params.clone(),
             params: function
                 .params
                 .iter()
@@ -336,6 +344,7 @@ fn collect_function_info(
     CollectedFunction {
         function: FunctionInfo {
             name: function.name.clone(),
+            type_params: function.type_params.clone(),
             params: function
                 .params
                 .iter()

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
@@ -121,7 +122,7 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
     vec![
         // JVM-agent event payloads. These are compiler-provided structs rather
         // than user declarations so every agent-enabled pack shares one stable
-        // 26.2 wire contract.
+        // 26.3 wire contract.
         (
             "agent_event",
             vec![
@@ -402,6 +403,60 @@ pub struct TypedParam {
 pub struct FunctionSignature {
     pub params: Vec<Type>,
     pub return_type: Type,
+    /// Type parameters of a generic function, which is never compiled itself.
+    pub type_params: Vec<String>,
+    /// Copies of a generic function that calls asked for: name to type
+    /// arguments and the first call's span.
+    pub instances: Arc<Mutex<BTreeMap<String, GenericCall>>>,
+}
+
+/// The type arguments of one copy of a generic function, and the first call
+/// that asked for it.
+pub type GenericCall = (Vec<Type>, Span);
+
+/// Replace type parameters with the types bound to them.
+fn substitute(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
+    match ty {
+        Type::Struct(name) => bindings.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        Type::Array(inner) => Type::Array(Box::new(substitute(inner, bindings))),
+        Type::Dict(inner) => Type::Dict(Box::new(substitute(inner, bindings))),
+        _ => ty.clone(),
+    }
+}
+
+/// Bind the type parameters in `param` by matching it against `arg`.
+/// Returns false on a mismatch with an earlier binding.
+fn bind_type_params(
+    param: &Type,
+    arg: &Type,
+    type_params: &[String],
+    bindings: &mut BTreeMap<String, Type>,
+) -> bool {
+    match (param, arg) {
+        (Type::Struct(name), _) if type_params.contains(name) => {
+            bindings.entry(name.clone()).or_insert_with(|| arg.clone()) == arg
+        }
+        (Type::Array(param), Type::Array(arg)) | (Type::Dict(param), Type::Dict(arg)) => {
+            bind_type_params(param, arg, type_params, bindings)
+        }
+        _ => true,
+    }
+}
+
+/// The name of one copy of a generic function, such as `max__int` or
+/// `first__array_float`. It must stay a valid function path.
+fn instance_name(function: &str, types: &[Type]) -> String {
+    let types: Vec<String> = types
+        .iter()
+        .map(|ty| {
+            ty.as_str()
+                .replace("::", "_")
+                .replace(['<', '>'], "_")
+                .trim_end_matches('_')
+                .to_lowercase()
+        })
+        .collect();
+    format!("{function}__{}", types.join("__"))
 }
 
 #[derive(Debug, Clone)]
@@ -671,16 +726,22 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
     }
 
     for function in &program.functions {
+        // Type parameters stand in for any type, so validate them as `int`.
+        let placeholders: BTreeMap<String, Type> = function
+            .type_params
+            .iter()
+            .map(|name| (name.clone(), Type::Int))
+            .collect();
         for param in &function.params {
             validate_declared_type(
-                &param.ty,
+                &substitute(&param.ty, &placeholders),
                 &struct_defs,
                 param.span.clone(),
                 &mut diagnostics,
             );
         }
         validate_declared_type(
-            &function.return_type,
+            &substitute(&function.return_type, &placeholders),
             &struct_defs,
             function.span.clone(),
             &mut diagnostics,
@@ -701,12 +762,116 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                     .map(|param| param.ty.clone())
                     .collect(),
                 return_type: function.return_type.clone(),
+                type_params: function.type_params.clone(),
+                instances: Arc::default(),
             },
         );
     }
 
     let mut functions = Vec::new();
     for function in &program.functions {
+        if function.type_params.is_empty() {
+            functions.push(type_check_function(
+                function,
+                &struct_defs,
+                &signatures,
+                host,
+                &mut diagnostics,
+            ));
+        }
+    }
+
+    // Compile each copy of a generic function that a call asked for. A copy
+    // can call more generic functions, so repeat until nothing new appears.
+    let generics: BTreeMap<&str, &Function> = program
+        .functions
+        .iter()
+        .filter(|function| !function.type_params.is_empty())
+        .map(|function| (function.name.as_str(), function))
+        .collect();
+    let mut compiled = BTreeSet::new();
+    loop {
+        let pending: Vec<(String, &Function, GenericCall)> = generics
+            .values()
+            .flat_map(|generic| {
+                signatures[&generic.name]
+                    .instances
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(name, call)| (name.clone(), *generic, call.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|(name, _, _)| !compiled.contains(name))
+            .collect();
+        if pending.is_empty() {
+            break;
+        }
+        for (name, generic, (types, call)) in pending {
+            compiled.insert(name.clone());
+            let bindings: BTreeMap<String, Type> =
+                generic.type_params.iter().cloned().zip(types).collect();
+            let errors_before = diagnostics.0.len();
+            let mut instance = generic.clone();
+            instance.name = name.clone();
+            instance.type_params.clear();
+            for param in &mut instance.params {
+                param.ty = substitute(&param.ty, &bindings);
+            }
+            instance.return_type = substitute(&generic.return_type, &bindings);
+            signatures.insert(
+                name,
+                FunctionSignature {
+                    params: instance
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    return_type: instance.return_type.clone(),
+                    type_params: Vec::new(),
+                    instances: Arc::default(),
+                },
+            );
+            functions.push(type_check_function(
+                &instance,
+                &struct_defs,
+                &signatures,
+                host,
+                &mut diagnostics,
+            ));
+            if diagnostics.0.len() > errors_before {
+                let types: Vec<String> = bindings
+                    .iter()
+                    .map(|(param, ty)| format!("{param} = {}", ty.as_str()))
+                    .collect();
+                diagnostics.push(Diagnostic::new(
+                    format!("'{}' does not work with {}", generic.name, types.join(", ")),
+                    call,
+                ));
+            }
+        }
+    }
+
+    detect_recursion(&functions, &mut diagnostics);
+    let call_depths = compute_call_depths(&functions, &mut diagnostics);
+
+    diagnostics.into_result(TypedProgram {
+        struct_defs,
+        functions,
+        function_signatures: signatures,
+        player_states: program.player_states.clone(),
+        call_depths,
+    })
+}
+
+fn type_check_function(
+    function: &Function,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    host: &HostModules,
+    diagnostics: &mut Diagnostics,
+) -> TypedFunction {
+    {
         let mut env = HashMap::new();
         let mut ref_env = HashMap::new();
         let mut locals = BTreeMap::new();
@@ -740,8 +905,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         let body = type_check_block(
             &function.body,
             &function.return_type,
-            &struct_defs,
-            &signatures,
+            struct_defs,
+            signatures,
             &mut env,
             &mut ref_env,
             &mut locals,
@@ -749,10 +914,10 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             0,
             false,
             host,
-            &mut diagnostics,
+            diagnostics,
         );
 
-        functions.push(TypedFunction {
+        TypedFunction {
             name: function.name.clone(),
             params,
             return_type: function.return_type.clone(),
@@ -763,19 +928,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 .map(|(name, kind)| (name.clone(), *kind))
                 .collect(),
             called_functions,
-        });
+        }
     }
-
-    detect_recursion(&functions, &mut diagnostics);
-    let call_depths = compute_call_depths(&functions, &mut diagnostics);
-
-    diagnostics.into_result(TypedProgram {
-        struct_defs,
-        functions,
-        function_signatures: signatures,
-        player_states: program.player_states.clone(),
-        call_depths,
-    })
 }
 
 /// Type-check a host call (`module.fn(args)`) appearing in statement position.
@@ -2124,9 +2278,8 @@ fn type_check_expr(
 
             let args: Vec<_> = args
                 .iter()
-                .enumerate()
-                .map(|(index, arg)| {
-                    let typed = type_check_expr(
+                .map(|arg| {
+                    type_check_expr(
                         arg,
                         struct_defs,
                         signatures,
@@ -2134,15 +2287,69 @@ fn type_check_expr(
                         ref_env,
                         called_functions,
                         diagnostics,
-                    );
-                    match signature.params.get(index) {
-                        Some(expected) => coerce_expr_to_expected_type(typed, expected),
-                        None => typed,
+                    )
+                })
+                .collect();
+            let (function, params, return_type) = if signature.type_params.is_empty() {
+                (
+                    function.clone(),
+                    signature.params.clone(),
+                    signature.return_type.clone(),
+                )
+            } else {
+                let mut bindings = BTreeMap::new();
+                for (param, arg) in signature.params.iter().zip(&args) {
+                    if !bind_type_params(param, &arg.ty, &signature.type_params, &mut bindings) {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "arguments for '{function}' give its type parameters different types"
+                            ),
+                            expr.span.clone(),
+                        ));
                     }
+                }
+                let mut types = Vec::new();
+                for name in &signature.type_params {
+                    match bindings.get(name) {
+                        Some(ty) => types.push(ty.clone()),
+                        None => {
+                            diagnostics.push(Diagnostic::new(
+                                format!(
+                                    "cannot tell what '{name}' is in this call to '{function}'; use it in a parameter"
+                                ),
+                                expr.span.clone(),
+                            ));
+                            types.push(Type::Void);
+                        }
+                    }
+                }
+                let instance = instance_name(function, &types);
+                signature
+                    .instances
+                    .lock()
+                    .unwrap()
+                    .entry(instance.clone())
+                    .or_insert((types, expr.span.clone()));
+                (
+                    instance,
+                    signature
+                        .params
+                        .iter()
+                        .map(|param| substitute(param, &bindings))
+                        .collect(),
+                    substitute(&signature.return_type, &bindings),
+                )
+            };
+            let args: Vec<_> = args
+                .into_iter()
+                .enumerate()
+                .map(|(index, typed)| match params.get(index) {
+                    Some(expected) => coerce_expr_to_expected_type(typed, expected),
+                    None => typed,
                 })
                 .collect();
             for (index, arg) in args.iter().enumerate() {
-                if let Some(expected) = signature.params.get(index) {
+                if let Some(expected) = params.get(index) {
                     if expected != &arg.ty {
                         diagnostics.push(Diagnostic::new(
                             format!(
@@ -2160,11 +2367,8 @@ fn type_check_expr(
 
             called_functions.insert(function.clone());
             TypedExpr {
-                kind: TypedExprKind::Call {
-                    function: function.clone(),
-                    args,
-                },
-                ty: signature.return_type.clone(),
+                kind: TypedExprKind::Call { function, args },
+                ty: return_type,
                 ref_kind: RefKind::Unknown,
             }
         }
@@ -2658,6 +2862,7 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
     if !matches!(
         ty,
         Type::Int
+            | Type::Float
             | Type::Bool
             | Type::String
             | Type::Nbt
@@ -2786,6 +2991,53 @@ fn type_check_builtin_call(
                 expr.span.clone(),
             ));
             Some(builtin_call_expr(function, args, Type::Void))
+        }
+        "gamerule" | "random_weighted" | "random_binomial"
+            if !signatures.contains_key(function) =>
+        {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            let arity = if function == "random_binomial" { 2 } else { 1 };
+            expect_arity(function, &args, arity, expr, diagnostics);
+            let problem = match (function, args.as_slice()) {
+                ("gamerule", [arg]) => match &arg.kind {
+                    TypedExprKind::String(name)
+                        if is_known_id(crate::minecraft_ids::GAME_RULE_IDS, name) =>
+                    {
+                        None
+                    }
+                    TypedExprKind::String(name) => Some(format!("unknown game rule '{name}'")),
+                    _ => Some("gamerule(...) needs a literal rule name".to_string()),
+                },
+                ("random_weighted", [arg]) => match &arg.kind {
+                    TypedExprKind::ArrayLiteral(items)
+                        if !items.is_empty()
+                            && items.iter().all(|item| {
+                                matches!(item.kind, TypedExprKind::Int(weight) if weight >= 0)
+                            }) =>
+                    {
+                        None
+                    }
+                    _ => Some(
+                        "random_weighted(...) needs a literal array of weights such as [3, 1]"
+                            .to_string(),
+                    ),
+                },
+                ("random_binomial", [n, p]) => (n.ty != Type::Int || p.ty != Type::Float)
+                    .then(|| "random_binomial(n, p) needs an 'int' and a 'float'".to_string()),
+                _ => None,
+            };
+            if let Some(problem) = problem {
+                diagnostics.push(Diagnostic::new(problem, expr.span.clone()));
+            }
+            Some(builtin_call_expr(function, args, Type::Int))
         }
         "game_time" | "world_time" | "border_size" if !signatures.contains_key(function) => {
             let args = type_check_args(
@@ -3586,11 +3838,20 @@ fn type_check_method_call(
             }
             Some(method_call_expr(receiver, method, args, Type::Nbt))
         }
+        "keys" if matches!(receiver.ty, Type::Dict(_)) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(
+                receiver,
+                method,
+                args,
+                Type::Array(Box::new(Type::String)),
+            ))
+        }
         "len" => {
             expect_arity(method, &args, 0, expr, diagnostics);
-            if !matches!(receiver.ty, Type::Array(_) | Type::String) {
+            if !matches!(receiver.ty, Type::Array(_) | Type::String | Type::Dict(_)) {
                 diagnostics.push(Diagnostic::new(
-                    "len() requires an 'array' or 'string' receiver",
+                    "len() requires an 'array', 'string' or 'dict' receiver",
                     expr.span.clone(),
                 ));
             }
@@ -3664,10 +3925,10 @@ fn type_check_method_call(
             };
             expect_arity(method, &args, arity, expr, diagnostics);
             let mutates = matches!(method, "clear" | "insert" | "reverse" | "sort");
-            if method == "sort" && element != Type::Int {
+            if method == "sort" && !matches!(element, Type::Int | Type::Float) {
                 diagnostics.push(Diagnostic::new(
                     format!(
-                        "sort() needs 'array<int>', found 'array<{}>'",
+                        "sort() needs 'array<int>' or 'array<float>', found 'array<{}>'",
                         element.as_str()
                     ),
                     expr.span.clone(),
@@ -3981,6 +4242,42 @@ fn type_check_method_call(
             expect_arity(method, &args, 1, expr, diagnostics);
             expect_arg_type(method, &args, 0, Type::String, "label", expr, diagnostics);
             Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "light" | "biome" | "in_biome" | "environment" if receiver.ty == Type::BlockRef => {
+            let (arity, ty) = match method {
+                "light" => (0, Type::Int),
+                "biome" => (0, Type::String),
+                "in_biome" => (1, Type::Bool),
+                _ => (1, Type::Float),
+            };
+            expect_arity(method, &args, arity, expr, diagnostics);
+            if arity == 1 {
+                expect_arg_type(method, &args, 0, Type::String, "id", expr, diagnostics);
+            }
+            if let Some(TypedExprKind::String(id)) = args.first().map(|arg| &arg.kind) {
+                let known = if method == "in_biome" {
+                    id.starts_with('#') || is_known_id(crate::minecraft_ids::BIOME_IDS, id)
+                } else {
+                    NUMERIC_ENVIRONMENT_ATTRIBUTES.contains(&id.trim_start_matches("minecraft:"))
+                };
+                if !known {
+                    let what = if method == "in_biome" {
+                        "biome"
+                    } else {
+                        "numeric environment attribute"
+                    };
+                    diagnostics.push(Diagnostic::new(
+                        format!("unknown {what} '{id}'"),
+                        expr.span.clone(),
+                    ));
+                }
+            } else if method == "environment" {
+                diagnostics.push(Diagnostic::new(
+                    "environment(...) needs a literal attribute id such as 'gameplay/sky_light_level'",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, ty))
         }
         "loot_insert" | "loot_spawn" | "setblock" => {
             expect_block_receiver(method, &receiver, expr, diagnostics);
@@ -5023,6 +5320,52 @@ fn entity_read_expr(
             };
             return Some(hypot(hypot(diff(0), diff(1)), diff(2)));
         }
+        "look_x" | "look_y" | "look_z" => {
+            if !args.is_empty() {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{method}': expected 0, found {}",
+                        args.len()
+                    ),
+                    span.clone(),
+                ));
+            }
+            // The unit vector the entity faces. Rotation is in degrees and
+            // /compute trigonometry takes radians. Yaw 0 faces +Z and pitch
+            // 90 faces straight down.
+            let radians = |index: i64| {
+                node(ExprKind::Binary {
+                    op: BinaryOp::Mul,
+                    left: Box::new(read(receiver, "float", "Rotation", Some(index))),
+                    right: Box::new(node(ExprKind::Float("0.017453292".to_string()))),
+                })
+            };
+            let call = |value: Expr, name: &str| {
+                node(ExprKind::MethodCall {
+                    receiver: Box::new(value),
+                    method: name.to_string(),
+                    args: Vec::new(),
+                })
+            };
+            let neg = |value: Expr| {
+                node(ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(value),
+                })
+            };
+            let mul = |left: Expr, right: Expr| {
+                node(ExprKind::Binary {
+                    op: BinaryOp::Mul,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                })
+            };
+            return Some(match method {
+                "look_x" => neg(mul(call(radians(0), "sin"), call(radians(1), "cos"))),
+                "look_y" => neg(call(radians(1), "sin")),
+                _ => mul(call(radians(0), "cos"), call(radians(1), "cos")),
+            });
+        }
         _ => return None,
     };
     if !args.is_empty() {
@@ -5189,6 +5532,39 @@ fn expect_entity_receiver(
 
 fn is_entity_ref_type(ty: &Type) -> bool {
     matches!(ty, Type::EntityRef | Type::PlayerRef)
+}
+
+/// Environment attributes that `/compute` can read as a number
+/// (`NumericalEnvironmentAttribute` in vanilla-mcdoc 26.3).
+const NUMERIC_ENVIRONMENT_ATTRIBUTES: &[&str] = &[
+    "visual/cloud_height",
+    "visual/fog_start_distance",
+    "visual/moon_angle",
+    "visual/star_angle",
+    "visual/sun_angle",
+    "visual/water_fog_start_distance",
+    "visual/cloud_fog_end_distance",
+    "visual/fog_end_distance",
+    "visual/sky_fog_end_distance",
+    "visual/water_fog_end_distance",
+    "visual/sky_light_factor",
+    "visual/star_brightness",
+    "audio/music_volume",
+    "gameplay/cat_waking_up_gift_chance",
+    "gameplay/creature_world_gen_spawn_probability",
+    "gameplay/surface_slime_spawn_chance",
+    "gameplay/turtle_egg_hatch_chance",
+    "gameplay/sky_light_level",
+];
+
+/// `ids` hold `minecraft:` names; `id` may leave the namespace out.
+fn is_known_id(ids: &[&str], id: &str) -> bool {
+    let full = if id.contains(':') {
+        id.to_string()
+    } else {
+        format!("minecraft:{id}")
+    };
+    ids.contains(&full.as_str())
 }
 
 fn expect_block_receiver(

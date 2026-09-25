@@ -202,6 +202,16 @@ impl Parser {
     fn parse_function(&mut self, is_pub: bool) -> Function {
         let start = self.expect(TokenKind::Fn, "expected 'fn'").span;
         let name = self.expect_identifier("expected function name");
+        let mut type_params = Vec::new();
+        if self.eat(&TokenKind::Lt) {
+            loop {
+                type_params.push(self.expect_identifier("expected type parameter name"));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt, "expected '>' after type parameters");
+        }
         self.expect(TokenKind::LeftParen, "expected '(' after function name");
 
         let mut params = Vec::new();
@@ -228,6 +238,7 @@ impl Parser {
         Function {
             name,
             is_pub,
+            type_params,
             params,
             return_type,
             body,

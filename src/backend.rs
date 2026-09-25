@@ -3476,6 +3476,13 @@ impl Backend {
                     })
                     .collect();
                 if let Some(bounds) = literal {
+                    // The source is already copied to a temp, so clearing the
+                    // target first is safe even for `s = s.slice(...)`.
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set value \"\"",
+                        self.namespace,
+                        target.storage_path()
+                    ));
                     lines.push(command(&bounds.join(" ")));
                 } else {
                     let placeholders: Vec<IrMacroPlaceholder> = args
@@ -3492,7 +3499,20 @@ impl Backend {
                         .map(|placeholder| format!("$({})", placeholder.key))
                         .collect();
                     let body = format!("${}", command(&bounds.join(" ")));
-                    self.call_macro(function, depth, "slice", body, &placeholders, lines);
+                    let fallback = Some(format!(
+                        "data modify storage {}:runtime {} set value \"\"",
+                        self.namespace,
+                        target.storage_path()
+                    ));
+                    self.call_macro(
+                        function,
+                        depth,
+                        "slice",
+                        body,
+                        &placeholders,
+                        fallback,
+                        lines,
+                    );
                 }
                 return;
             }
@@ -3512,7 +3532,15 @@ impl Backend {
                     "$scoreboard players set {} mcfc $(p1)",
                     target.numeric_name()
                 );
-                self.call_macro(function, depth, "parse_int", body, &placeholders, lines);
+                self.call_macro(
+                    function,
+                    depth,
+                    "parse_int",
+                    body,
+                    &placeholders,
+                    None,
+                    lines,
+                );
                 return;
             }
             "len" => {
@@ -7244,7 +7272,20 @@ impl Backend {
             target.storage_path(),
             quoted(&rewrite_macro_template(template, placeholders))
         );
-        self.call_macro(function, depth, "string", body, placeholders, lines);
+        let fallback = Some(format!(
+            "data modify storage {}:runtime {} set value \"\"",
+            self.namespace,
+            target.storage_path()
+        ));
+        self.call_macro(
+            function,
+            depth,
+            "string",
+            body,
+            placeholders,
+            fallback,
+            lines,
+        );
     }
 
     /// Build a `text(...)` component for an interpolated literal without splicing
@@ -7367,7 +7408,11 @@ impl Backend {
     }
 
     /// Write `body` as a generated macro function and call it with the
-    /// placeholder values.
+    /// placeholder values. `fallback` runs after the values are copied and
+    /// before the call, so it cannot clobber an argument that shares the
+    /// target slot. It is what remains when Minecraft skips an unparseable
+    /// macro line, such as a string value containing `"`.
+    #[allow(clippy::too_many_arguments)]
     fn call_macro(
         &mut self,
         function: &IrFunction,
@@ -7375,6 +7420,7 @@ impl Backend {
         label: &str,
         body: String,
         placeholders: &[IrMacroPlaceholder],
+        fallback: Option<String>,
         lines: &mut Vec<String>,
     ) {
         self.macro_counter += 1;
@@ -7390,6 +7436,7 @@ impl Backend {
         self.files.insert(path, body + "\n");
         let storage_base = macro_storage_base(depth, &function.name, macro_id);
         self.write_macro_placeholder_values(function, depth, &storage_base, placeholders, lines);
+        lines.extend(fallback);
         lines.push(format!(
             "function {}:{} with storage {}:runtime {}",
             self.namespace, relative, self.namespace, storage_base

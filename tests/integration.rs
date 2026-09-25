@@ -2888,3 +2888,24 @@ fn main() -> void:
             .contains("contains(...) value must be 'int', found 'string'")
     );
 }
+
+#[test]
+fn string_macros_reset_the_target_after_reading_their_inputs() {
+    let source = r#"
+fn main() -> void:
+    let s = "hi"
+    s = s + "!"
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    let copy = main.find(".p1 set from storage").expect("argument copy");
+    let reset = main
+        .find("frames.d0.main.s set value \"\"")
+        .expect("fallback reset");
+    let call = main.find("run function mcfc:generated/main__d0__string_").expect("macro call");
+    assert!(copy < reset && reset < call, "wrong order in:\n{main}");
+}

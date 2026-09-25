@@ -33,6 +33,13 @@ A chain of `+` becomes one macro command, the same way `"$(name)"` interpolation
 
 ## Limits
 
-Joined values and `to_string()` go through a Minecraft macro, so a value containing `"` or `\` breaks the generated command. `$(...)` interpolation has the same limit.
+Joining, `to_string()`, and `$(...)` interpolation go through a Minecraft macro, which pastes each value into a quoted string without escaping it. Vanilla has no command that escapes a string, so:
+
+- A value containing `"` makes the macro line invalid, and the result is `""`.
+- A value containing `\` is read as an escape, so `\n` becomes a newline.
+
+Player names and ids never contain these characters. Text players type, such as item names or chat, can.
+
+`slice` also gives `""` when an index is out of range.
 
 `slice` with literal indices is one `data modify ... set string` command. Indices computed at run time use a macro.

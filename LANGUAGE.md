@@ -568,8 +568,8 @@ A whole float expression lowers to a single `/compute` command (Minecraft 26.3).
 - `string.parse_int() -> int`, returning `0` when the text is not a whole number
 - `int.to_string()`, `float.to_string()`, and `string.to_string()` return `string`
 
-Joining and `to_string()` use a macro, so values containing `"` or `\` are not
-supported yet.
+Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
+`\` is read as an escape. `slice` gives `""` when an index is out of range.
 
 ### Collections
 

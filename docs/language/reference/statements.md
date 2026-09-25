@@ -7,6 +7,8 @@ Statements perform work, control flow, or introduce declarations. MCFC uses `:` 
 | Statement | Purpose |
 | --- | --- |
 | [`fn name(...) -> type:`](./statements/fn) | Declare a function. |
+| [`mod name` / `pub`](./statements/mod) | Declare a child module in another file; mark items public. |
+| [`use a::b::name`](./statements/use) | Import an item or module under a short name. |
 | [`data player.name: type = value`](./statements/data) | Declare scoreboard-backed player data. |
 | [`event name:`](./statements/event) | Declare an event handler. |
 | [`command name:`](./statements/command) | Declare a command handler. |

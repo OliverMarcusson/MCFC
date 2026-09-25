@@ -29,20 +29,34 @@ impl Parser {
         let mut structs = Vec::new();
         let mut player_states = Vec::new();
         let mut functions = Vec::new();
+        let mut mods = Vec::new();
+        let mut uses = Vec::new();
         self.skip_newlines();
 
         while !self.at(&TokenKind::Eof) {
+            // `pub`, `mod`, and `use` are contextual so they stay usable as identifiers in bodies.
+            let is_pub = self.at_word("pub");
+            if is_pub {
+                self.bump();
+            }
             if self.at(&TokenKind::Struct) {
-                structs.push(self.parse_struct());
+                structs.push(self.parse_struct(is_pub));
+            } else if self.at(&TokenKind::Fn) {
+                functions.push(self.parse_function(is_pub));
+            } else if self.at_word("mod") {
+                mods.push(self.parse_mod(is_pub));
+            } else if is_pub {
+                self.error_here("expected 'fn', 'struct', or 'mod' after 'pub'");
+                self.recover_top_level();
+            } else if self.at_word("use") {
+                self.parse_use(&mut uses);
             } else if self.at(&TokenKind::PlayerState) {
                 player_states.push(self.parse_player_state());
-            } else if self.at(&TokenKind::Fn) {
-                functions.push(self.parse_function());
             } else if self.at(&TokenKind::End) {
                 self.error_here("'end' is no longer used; close blocks with indentation");
                 self.bump();
             } else {
-                self.error_here("expected player_state, struct, or function definition");
+                self.error_here("expected player_state, struct, function, mod, or use declaration");
                 self.recover_top_level();
             }
             self.skip_newlines();
@@ -52,7 +66,78 @@ impl Parser {
             structs,
             player_states,
             functions,
+            mods,
+            uses,
         })
+    }
+
+    fn parse_mod(&mut self, is_pub: bool) -> ModDecl {
+        let span = self.bump().span;
+        let name = self.expect_identifier("expected module name");
+        self.expect_statement_break("expected newline after module declaration");
+        ModDecl { name, is_pub, span }
+    }
+
+    fn parse_use(&mut self, uses: &mut Vec<UseDecl>) {
+        self.bump();
+        let mut prefix = vec![self.expect_identifier("expected module path")];
+        while self.eat(&TokenKind::ColonColon) {
+            if self.eat(&TokenKind::LeftBrace) {
+                loop {
+                    self.parse_use_item(&prefix, uses);
+                    if !self.eat(&TokenKind::Comma) || self.at(&TokenKind::RightBrace) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RightBrace, "expected '}' after use list");
+                self.expect_statement_break("expected newline after use declaration");
+                return;
+            }
+            prefix.push(self.expect_identifier("expected path segment after '::'"));
+        }
+        let last = prefix.pop().unwrap_or_default();
+        let span = self.current_span();
+        let alias = self.parse_use_alias(&last);
+        uses.push(UseDecl {
+            path: [prefix, vec![last]].concat(),
+            alias,
+            span,
+        });
+        self.expect_statement_break("expected newline after use declaration");
+    }
+
+    fn parse_use_item(&mut self, prefix: &[String], uses: &mut Vec<UseDecl>) {
+        let span = self.current_span();
+        let name = self.expect_identifier("expected name in use list");
+        let alias = self.parse_use_alias(&name);
+        uses.push(UseDecl {
+            path: [prefix, &[name]].concat(),
+            alias,
+            span,
+        });
+    }
+
+    fn parse_use_alias(&mut self, name: &str) -> String {
+        if self.at_word("as") {
+            self.bump();
+            self.expect_identifier("expected name after 'as'")
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// Continues `first` with any `::segment` parts, e.g. `util::math::clamp`.
+    fn parse_path_rest(&mut self, first: String) -> String {
+        let mut path = first;
+        while self.eat(&TokenKind::ColonColon) {
+            path.push_str("::");
+            path.push_str(&self.expect_identifier("expected path segment after '::'"));
+        }
+        path
+    }
+
+    fn at_word(&self, word: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(name) if name == word)
     }
 
     fn parse_expression_only(mut self) -> Result<Expr, Diagnostics> {
@@ -65,7 +150,7 @@ impl Parser {
         self.diagnostics.into_result(expr)
     }
 
-    fn parse_struct(&mut self) -> StructDef {
+    fn parse_struct(&mut self, is_pub: bool) -> StructDef {
         let start = self.expect(TokenKind::Struct, "expected 'struct'").span;
         let name = self.expect_identifier("expected struct name");
         self.expect(TokenKind::Colon, "expected ':' after struct name");
@@ -86,6 +171,7 @@ impl Parser {
         self.expect(TokenKind::Dedent, "expected dedent after struct body");
         StructDef {
             name,
+            is_pub,
             fields,
             span: start,
         }
@@ -116,7 +202,7 @@ impl Parser {
         }
     }
 
-    fn parse_function(&mut self) -> Function {
+    fn parse_function(&mut self, is_pub: bool) -> Function {
         let start = self.expect(TokenKind::Fn, "expected 'fn'").span;
         let name = self.expect_identifier("expected function name");
         self.expect(TokenKind::LeftParen, "expected '(' after function name");
@@ -144,6 +230,7 @@ impl Parser {
 
         Function {
             name,
+            is_pub,
             params,
             return_type,
             body,
@@ -422,6 +509,7 @@ impl Parser {
             TokenKind::LeftBracket => self.parse_array_literal(token.span),
             TokenKind::LeftBrace => self.parse_dict_literal(token.span),
             TokenKind::Identifier(name) => {
+                let name = self.parse_path_rest(name);
                 if self.eat(&TokenKind::LeftParen) {
                     let args = self.parse_call_args();
                     Expr {
@@ -696,7 +784,7 @@ impl Parser {
                     Type::Dict(Box::new(value))
                 }
                 "bossbar" => Type::Bossbar,
-                _ => Type::Struct(name),
+                _ => Type::Struct(self.parse_path_rest(name)),
             },
             _ => {
                 self.diagnostics

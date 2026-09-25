@@ -165,7 +165,8 @@ include:
 - `[[export]]` mappings from datapack paths to MCFC functions
 
 The compiler supports both single-file builds and manifest-based project
-builds.
+builds. Projects start at `src/main.mcf` and split code into Rust-style modules
+with `mod`, `use`, and `pub`.
 
 ## Development
 

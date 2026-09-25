@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mcfc::compiler::{CompileOptions, compile_project, compile_source};
@@ -2199,14 +2199,16 @@ function = "bootstrap_tick"
 
 [[export]]
 path = "api/create"
-function = "api_create"
+function = "api::create"
 "#,
     )
     .unwrap();
 
     fs::write(
-        src_dir.join("bootstrap.mcf"),
+        src_dir.join("main.mcf"),
         r#"
+mod api
+
 fn bootstrap_load() -> void:
     mc "say load"
     return
@@ -2218,9 +2220,9 @@ fn bootstrap_tick() -> void:
     .unwrap();
 
     fs::write(
-        src_dir.join("api").join("create.mcf"),
+        src_dir.join("api").join("mod.mcf"),
         r#"
-fn api_create() -> void:
+pub fn create() -> void:
     mc "say create"
     return
 "#,
@@ -2282,7 +2284,7 @@ fn api_create() -> void:
         .files
         .get("data/sample/function/api/create.mcfunction")
         .unwrap();
-    assert!(wrapper.contains("function sample:generated/api_create__d0__entry"));
+    assert!(wrapper.contains("function sample:generated/api__create__d0__entry"));
     assert!(
         out.join("data")
             .join("sample")
@@ -2315,7 +2317,7 @@ function = "bootstrap_load"
     .unwrap();
 
     fs::write(
-        src_dir.join("bootstrap.mcf"),
+        src_dir.join("main.mcf"),
         r#"
 fn bootstrap_load() -> void:
     mc "say hello"
@@ -2341,6 +2343,102 @@ fn bootstrap_load() -> void:
             .join("bootstrap")
             .join("load.mcfunction")
             .exists()
+    );
+}
+
+#[test]
+fn project_errors_report_the_original_file_and_line() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        "mod b\n\nfn main() -> void:\n    return\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("b.mcf"),
+        "\npub fn run() -> void:\n    main()\n",
+    )
+    .unwrap();
+
+    let error = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &CompileOptions::default(),
+    )
+    .expect_err("root function used without 'use' should fail");
+
+    let expected = format!(
+        "error:{}:3:5: cannot find function 'main' in module 'b'",
+        Path::new("src").join("b.mcf").display()
+    );
+    assert!(error.starts_with(&expected), "{error}");
+}
+
+#[test]
+fn project_modules_resolve_use_super_and_privacy() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(src_dir.join("game")).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        r#"mod game
+use game::score::{add, Points as P}
+
+fn main() -> void:
+    let p = P { value: add(1, 2) }
+    game::score::reset(p)
+"#,
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("game").join("mod.mcf"),
+        r#"pub mod score
+
+fn base() -> int:
+    return 10
+"#,
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("game").join("score.mcf"),
+        r#"pub struct Points:
+    value: int
+
+pub fn add(a: int, b: int) -> int:
+    return a + b + super::base()
+
+pub fn reset(p: Points) -> void:
+    mc "say reset"
+"#,
+    )
+    .unwrap();
+    let options = CompileOptions::default();
+    let result = compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+        .expect("modules should resolve");
+    let names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    assert!(names.contains(&"game::score::add"), "{names:?}");
+    assert!(names.contains(&"game::base"), "{names:?}");
+
+    // `base` is private to `game`, so the root module cannot call it.
+    fs::write(
+        src_dir.join("main.mcf"),
+        "mod game\n\nfn main() -> void:\n    let x = game::base()\n",
+    )
+    .unwrap();
+    let error = compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+        .expect_err("private function should be rejected");
+    assert!(
+        error.contains("function 'base' is private to module 'game'"),
+        "{error}"
     );
 }
 

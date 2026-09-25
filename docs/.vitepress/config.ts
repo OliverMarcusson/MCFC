@@ -59,6 +59,8 @@ export default defineConfig({
             text: 'Statement Pages',
             items: [
               { text: 'fn', link: '/language/reference/statements/fn' },
+              { text: 'mod / pub', link: '/language/reference/statements/mod' },
+              { text: 'use', link: '/language/reference/statements/use' },
               { text: 'data', link: '/language/reference/statements/data' },
               { text: 'event', link: '/language/reference/statements/event' },
               { text: 'command', link: '/language/reference/statements/command' },

@@ -1,6 +1,5 @@
 TODOS:
 - Implement "mcfc new <project-name>" that initializes a mcfc project folder.
-- Implement importing and exporting functions between .mcf files.
 - Create a standard library std.mcf that exposes a rich library of common functions. Implement compiler not including functions that are not actually used in the output datapack.
 
 OVERHAUL:

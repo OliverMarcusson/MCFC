@@ -10,15 +10,14 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::analysis::{
-    AnalysisResult, analyze_source, analyze_source_with_host_modules, function_at_offset,
-    word_at_offset,
+    AnalysisResult, analyze_modules, analyze_source, function_at_offset, word_at_offset,
 };
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
 use crate::language_catalog::{AGENT_EVENTS, VANILLA_EVENTS, agent_event_payload_type};
 use crate::minecraft_ids::{MinecraftIdCategory, ids_for_category};
 use crate::minecraft_nbt_schema::{self, NbtSchemaCategory, NbtSchemaNode};
-use crate::project::{collect_source_files, find_manifest_in_ancestors, load_manifest};
+use crate::project::{find_manifest_in_ancestors, load_manifest};
 use crate::types::{RefKind, StructTypeDef};
 
 #[derive(Debug, Clone)]
@@ -714,11 +713,9 @@ impl Backend {
             .await
             .get(&config.manifest_path)?
             .clone();
-        let function = snapshot
-            .analysis
-            .functions
-            .iter()
-            .find(|function| function.name == name && !function.name.starts_with("__mcfc_"))?;
+        let function = snapshot.analysis.functions.iter().find(|function| {
+            is_named(&function.name, name) && !function.name.starts_with("__mcfc_")
+        })?;
         snapshot.segments.iter().find_map(|(path, segment)| {
             let local = segment.merged_to_local_range(function.name_range)?;
             Some(Location {
@@ -762,12 +759,9 @@ impl Backend {
         else {
             return Vec::new();
         };
-        if !snapshot
-            .analysis
-            .functions
-            .iter()
-            .any(|function| function.name == word && !function.name.starts_with("__mcfc_"))
-        {
+        if !snapshot.analysis.functions.iter().any(|function| {
+            is_named(&function.name, word) && !function.name.starts_with("__mcfc_")
+        }) {
             return Vec::new();
         }
         snapshot
@@ -1101,11 +1095,19 @@ fn format_mcfc(source: &str) -> String {
     output
 }
 
+/// Matches `word` against a function's own name, ignoring its module path
+/// (`util::double` matches `double`).
+// ponytail: first match wins when two modules share a name; resolve through
+// the cursor's module and imports if that ambiguity matters.
+fn is_named(function: &str, word: &str) -> bool {
+    function.rsplit("::").next() == Some(word)
+}
+
 fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
     if let Some(function) = analysis
         .functions
         .iter()
-        .find(|function| function.name == name)
+        .find(|function| is_named(&function.name, name))
     {
         return Some(function.signature());
     }
@@ -1233,46 +1235,33 @@ fn build_project_snapshot(
     config: &ProjectConfig,
     overrides: &HashMap<PathBuf, String>,
 ) -> std::result::Result<ProjectSnapshot, String> {
-    let files = collect_source_files(&config.source_root)?;
-    let mut merged_text = String::new();
-    let mut segments = HashMap::new();
-
-    for file in files {
-        let source = match overrides.get(&file) {
-            Some(source) => source.clone(),
-            None => fs::read_to_string(&file)
-                .map_err(|error| format!("failed to read '{}': {}", file.display(), error))?,
-        };
-        merged_text.push_str(&format!("# source: {}\n", file.display()));
-        let source_start = merged_text.len();
-        merged_text.push_str(&source);
-        if !source.ends_with('\n') {
-            merged_text.push('\n');
-        }
-        let source_end = merged_text.len();
-        merged_text.push('\n');
-
-        segments.insert(
-            file.clone(),
-            ProjectFileSegment {
-                source_start,
-                source_end,
-            },
-        );
-    }
-
-    if segments.is_empty() {
-        return Err(format!(
-            "no '.mcf' files found under '{}'",
-            config.source_root.display()
-        ));
-    }
+    let loaded = crate::modules::load(
+        &config.source_root.join("main.mcf"),
+        &|file| match overrides.get(file) {
+            Some(source) => Ok(source.clone()),
+            None => fs::read_to_string(file)
+                .map_err(|error| format!("failed to read '{}': {}", file.display(), error)),
+        },
+    )?;
+    let segments = loaded
+        .modules
+        .iter()
+        .map(|module| {
+            (
+                module.file.clone(),
+                ProjectFileSegment {
+                    source_start: module.source_start,
+                    source_end: module.source_end,
+                },
+            )
+        })
+        .collect();
 
     Ok(ProjectSnapshot {
         manifest_path: config.manifest_path.clone(),
         source_root: config.source_root.clone(),
-        analysis: analyze_source_with_host_modules(&merged_text, &config.host_modules),
-        merged_text,
+        analysis: analyze_modules(&loaded.merged, &config.host_modules, &loaded.modules),
+        merged_text: loaded.merged,
         segments,
     })
 }
@@ -1475,7 +1464,7 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
     if let Some(function) = analysis
         .functions
         .iter()
-        .find(|function| function.name == word)
+        .find(|function| is_named(&function.name, word))
     {
         return Some(format!("```mcfc\n{}\n```", function.signature()));
     }
@@ -5603,9 +5592,9 @@ fn main() -> void:
             &project.join("sample.mcfc.toml"),
             "namespace = \"sample\"\nsource_dir = \"src\"\n",
         );
-        let first = src_dir.join("alpha.mcf");
+        let first = src_dir.join("main.mcf");
         let second = src_dir.join("beta.mcf");
-        write_file(&first, "fn alpha() -> void\nend\n");
+        write_file(&first, "mod beta\nfn alpha() -> void\nend\n");
         write_file(&second, "fn beta() -> void\n    alpha()\nend");
 
         let snapshot = build_project_snapshot(
@@ -5636,23 +5625,25 @@ fn main() -> void:
         let base = temp_path();
         let project = base.join("project");
         let src_dir = project.join("src");
-        fs::create_dir_all(src_dir.join("lib")).unwrap();
+        fs::create_dir_all(&src_dir).unwrap();
         write_file(
             &project.join("sample.mcfc.toml"),
             "namespace = \"sample\"\nsource_dir = \"src\"\n",
         );
-        let helper = src_dir.join("lib").join("helper.mcf");
+        let helper = src_dir.join("helper.mcf");
         let main = src_dir.join("main.mcf");
         write_file(
             &helper,
             r#"
-struct Action:
+pub struct Action:
     kind: string
-fn helper() -> void:
+pub fn helper() -> void:
     return
 "#,
         );
-        let main_source = r#"
+        let main_source = r#"mod helper
+use helper::{helper, Action}
+
 fn main() -> void:
     helper()
 "#;
@@ -5671,25 +5662,37 @@ fn main() -> void:
             .segment_for_path(&main)
             .expect("main file should have segment");
         let main_text = fs::read_to_string(&main).unwrap();
-        let local_call_offset = main_text.find("helper").unwrap();
+        let local_call_offset = main_text.find("    helper()").unwrap() + 4;
         let merged_call_offset = main_segment.local_to_merged_offset(local_call_offset);
         let (word, _) = crate::analysis::word_at_offset(&snapshot.merged_text, merged_call_offset)
             .expect("word at helper call");
         let hover = super::hover_contents(&snapshot.analysis, merged_call_offset, &word)
             .expect("hover should resolve cross-file function");
-        assert!(hover.contains("fn helper() -> void"));
+        assert!(hover.contains("fn helper::helper() -> void"));
 
         let top_level_items = completion_items(
             &snapshot.merged_text,
             &snapshot.analysis,
             merged_call_offset,
         );
-        assert!(top_level_items.iter().any(|item| item.label == "helper"));
-        assert!(top_level_items.iter().any(|item| item.label == "Action"));
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "helper::helper")
+        );
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "helper::Action")
+        );
 
         let main_symbols = project_document_symbols(&main_text, &snapshot.analysis, main_segment);
         assert!(main_symbols.iter().any(|symbol| symbol.name == "main"));
-        assert!(!main_symbols.iter().any(|symbol| symbol.name == "helper"));
+        assert!(
+            !main_symbols
+                .iter()
+                .any(|symbol| symbol.name.ends_with("helper"))
+        );
 
         let mut overrides = HashMap::new();
         overrides.insert(helper.clone(), String::new());
@@ -5713,7 +5716,7 @@ fn main() -> void:
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains("unknown function"))
+                .any(|diagnostic| diagnostic.message.contains("cannot find 'helper'"))
         );
     }
 }

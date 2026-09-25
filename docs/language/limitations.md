@@ -5,7 +5,6 @@ MCFC is early-stage software. The backend prioritizes correctness, inspectable o
 Currently not supported:
 
 - recursion
-- modules/imports
 - implicit conversions, except builder-to-`nbt` coercions in NBT contexts
 - `entity_set.position`
 - richer object systems beyond structs and built-in handle types
@@ -16,6 +15,8 @@ Additional notes:
 - each `match` arm currently contains exactly one statement.
 - `sleep(...)` and `sleep_ticks(...)` are statement-only.
 - host calls are statement-only because they suspend execution.
+- modules have no `pub use` re-exports, `*` glob imports, or inline `mod name:` bodies.
+- `$(...)` placeholders in `mcf` need full paths from the root module, such as `$(util::double(x))`.
 - `entity.state.*` and `player.state.*` currently support only `int` and `bool`.
 
 ::: tip

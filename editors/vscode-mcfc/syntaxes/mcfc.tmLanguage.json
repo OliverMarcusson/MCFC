@@ -213,6 +213,10 @@
           "match": "\\b(?:if|match|else|while|for|in|break|continue|return|struct|player_state|data|event|command|task|async)\\b"
         },
         {
+          "name": "keyword.other.module.mcfc",
+          "match": "^(?:pub\\s+)?(?:mod|use)\\b|^pub\\b|\\b(?:self|super)(?=::)"
+        },
+        {
           "name": "storage.type.function.mcfc",
           "match": "\\bfn\\b"
         },

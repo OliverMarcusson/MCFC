@@ -85,11 +85,43 @@ Special functions:
 
 - `fn tick() -> void:` maps to the datapack tick function and runs once every
   game tick.
-- if multiple source files define `tick() -> void`, their bodies are merged in
-  deterministic source order.
+- if multiple modules define `tick() -> void`, their bodies are merged in
+  module-tree order.
 - parameterized functions named `tick`, such as `fn tick(action: Action) -> int:`,
   remain ordinary helpers unless a zero-argument `tick() -> void` is also
   present.
+
+### Modules
+
+A project's root module is `src/main.mcf`. Other files join the build through
+`mod` declarations, following Rust's layout: `mod util` in the root loads
+`src/util.mcf` or `src/util/mod.mcf`. Items are private unless marked `pub`.
+
+```mcfc
+# src/main.mcf
+mod util
+use util::double
+
+fn main() -> void:
+    let a = double(2)
+    let b = util::double(3)
+```
+
+```mcfc
+# src/util.mcf
+pub fn double(x: int) -> int:
+    return x * 2
+```
+
+- paths use `::`; `self::` and `super::` are relative to the current module
+- a path's first segment is looked up in the current module, then the root
+- `use a::b`, `use a::b as c`, and `use a::{b, c}` import functions, structs,
+  and modules; imports are private to their module
+- private items are visible to their own module and its descendants
+- child-module functions compile under their full path; a zero-argument `void`
+  function is exported as `namespace:util/name`
+
+See `docs/language/reference/statements/mod.md` and `use.md` for the full rules.
 
 ### Vanilla Bukkit-style declarations
 
@@ -840,7 +872,7 @@ Not supported yet:
 
 - recursion
 - implicit conversions
-- modules/imports
+- `pub use` re-exports, `*` glob imports, and inline module bodies
 - `entity_set.position`
 - richer object systems beyond structs plus the built-in handle types
 

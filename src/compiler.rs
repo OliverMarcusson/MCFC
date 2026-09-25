@@ -6,6 +6,7 @@ use crate::backend::{self, BackendOptions, BuildArtifacts, ExportedFunction};
 use crate::diagnostics::Diagnostics;
 use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{self, IrProgram};
+use crate::modules::{self, ModuleSource};
 use crate::optimizer;
 use crate::parser;
 use crate::project::{HelperConfig, collect_asset_files, collect_source_files, load_manifest};
@@ -22,6 +23,8 @@ pub struct CompileOptions {
     pub exports: Vec<ExportedFunction>,
     pub optimize: bool,
     pub helper: Option<HelperConfig>,
+    /// Module layout of a merged multi-file source; empty for a single source.
+    pub modules: Vec<ModuleSource>,
 }
 
 impl Default for CompileOptions {
@@ -36,6 +39,7 @@ impl Default for CompileOptions {
             exports: Vec::new(),
             optimize: true,
             helper: None,
+            modules: Vec::new(),
         }
     }
 }
@@ -71,6 +75,7 @@ pub fn compile_source(
     }
     validate_agent_manifest(options)?;
     let ast = parser::parse(&normalized_source)?;
+    let ast = modules::resolve(ast, &options.modules)?;
     let ast = normalize_special_functions(ast)?;
     let host_modules = HostModules::from_helper(options.helper.as_ref());
     let typed_program = types::type_check(&ast, &host_modules)?;
@@ -369,6 +374,7 @@ fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnost
         let first_index = tick_void_indices[0];
         let mut merged = Function {
             name: "tick".to_string(),
+            is_pub: false,
             params: Vec::new(),
             return_type: Type::Void,
             body: Vec::new(),
@@ -406,10 +412,8 @@ pub fn compile_file(
     out_dir: &Path,
     options: &CompileOptions,
 ) -> Result<CompileResult, String> {
-    let source = fs::read_to_string(input)
-        .map_err(|error| format!("failed to read '{}': {}", input.display(), error))?;
-    let compiled = compile_source(&source, options)
-        .map_err(|diagnostics| render_diagnostics(&diagnostics, &source))?;
+    let root = input.parent().unwrap_or(Path::new(""));
+    let (compiled, _) = compile_module_tree(input, root, options)?;
     write_output(out_dir, &compiled, options)?;
     Ok(compiled)
 }
@@ -428,15 +432,14 @@ pub fn compile_project(
     })?;
     let source_root = project_root.join(&manifest.source_dir);
     let asset_root = project_root.join(&manifest.asset_dir);
-    let sources = collect_source_files(&source_root)?;
-    if sources.is_empty() {
+    let root_file = source_root.join("main.mcf");
+    if !root_file.is_file() {
         return Err(format!(
-            "no '.mcf' files found under '{}'",
-            source_root.display()
+            "project root module '{}' not found; other files are loaded through 'mod' declarations",
+            root_file.display()
         ));
     }
 
-    let merged_source = merge_project_sources(&sources)?;
     let mut effective = options.clone();
     effective.namespace = manifest.namespace.clone();
     if !manifest.load.is_empty() {
@@ -457,8 +460,16 @@ pub fn compile_project(
         effective.helper = manifest.helper.clone();
     }
 
-    let mut compiled = compile_source(&merged_source, &effective)
-        .map_err(|diagnostics| render_diagnostics(&diagnostics, &merged_source))?;
+    let (mut compiled, modules) = compile_module_tree(&root_file, project_root, &effective)?;
+    for file in collect_source_files(&source_root)? {
+        if !modules.iter().any(|module| module.file == file) {
+            let shown = file.strip_prefix(project_root).unwrap_or(&file);
+            eprintln!(
+                "warning: '{}' is not part of the module tree; add a 'mod' declaration to include it",
+                shown.display()
+            );
+        }
+    }
     copy_project_assets(&asset_root, &mut compiled.artifacts)?;
     write_output(out_dir, &compiled, &effective)?;
     Ok(compiled)
@@ -509,32 +520,60 @@ fn write_debug_file(path: &Path, contents: String) -> Result<(), String> {
     fs::write(path, contents).map_err(|error| error.to_string())
 }
 
-fn render_diagnostics(diagnostics: &Diagnostics, source: &str) -> String {
-    diagnostics
-        .0
-        .iter()
-        .map(|diagnostic| diagnostic.render(source))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 pub fn canonicalize_output_path(out_dir: &Path) -> PathBuf {
     out_dir.to_path_buf()
 }
 
-fn merge_project_sources(files: &[PathBuf]) -> Result<String, String> {
-    let mut merged = String::new();
-    for file in files {
-        let source = fs::read_to_string(file)
-            .map_err(|error| format!("failed to read '{}': {}", file.display(), error))?;
-        merged.push_str(&format!("# source: {}\n", file.display()));
-        merged.push_str(&source);
-        if !source.ends_with('\n') {
-            merged.push('\n');
-        }
-        merged.push('\n');
-    }
-    Ok(merged)
+/// Compiles `root_file` plus every module it declares with `mod`.
+fn compile_module_tree(
+    root_file: &Path,
+    display_root: &Path,
+    options: &CompileOptions,
+) -> Result<(CompileResult, Vec<ModuleSource>), String> {
+    let loaded = modules::load(root_file, &|file| {
+        fs::read_to_string(file)
+            .map_err(|error| format!("failed to read '{}': {}", file.display(), error))
+    })?;
+    let options = CompileOptions {
+        modules: loaded.modules.clone(),
+        ..options.clone()
+    };
+    let compiled = compile_source(&loaded.merged, &options)
+        .map_err(|diagnostics| render_module_diagnostics(&diagnostics, &loaded, display_root))?;
+    Ok((compiled, loaded.modules))
+}
+
+fn render_module_diagnostics(
+    diagnostics: &Diagnostics,
+    loaded: &modules::LoadedModules,
+    display_root: &Path,
+) -> String {
+    let locate = |line: usize| {
+        let module = loaded
+            .modules
+            .iter()
+            .rev()
+            .find(|module| module.first_line <= line)
+            .unwrap_or(&loaded.modules[0]);
+        let shown = module
+            .file
+            .strip_prefix(display_root)
+            .unwrap_or(&module.file);
+        (
+            format!("{}:", shown.display()),
+            line.saturating_sub(module.first_line) + 1,
+        )
+    };
+    diagnostics
+        .0
+        .iter()
+        .map(|diagnostic| diagnostic.render_mapped(&loaded.merged, locate))
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+",
+        )
 }
 
 fn copy_project_assets(asset_root: &Path, artifacts: &mut BuildArtifacts) -> Result<(), String> {

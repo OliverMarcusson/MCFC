@@ -464,13 +464,15 @@ impl Backend {
             {
                 continue;
             }
+            // Module functions (`util::greet`) get nested paths (`util/greet`).
+            let public_path = function.name.replace("::", "/");
             let relative = format!(
                 "data/{}/function/{}.mcfunction",
-                self.namespace, function.name
+                self.namespace, public_path
             );
             if exports
                 .iter()
-                .any(|export| export.path.trim_matches('/') == function.name)
+                .any(|export| export.path.trim_matches('/') == public_path)
             {
                 continue;
             }

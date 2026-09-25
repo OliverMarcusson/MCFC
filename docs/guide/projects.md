@@ -1,6 +1,6 @@
 # Projects
 
-MCFC projects are configured with `mcfc.toml` or `*.mcfc.toml`. A project build merges all `.mcf` files from the source directory in deterministic order and copies assets into the generated datapack.
+MCFC projects are configured with `mcfc.toml` or `*.mcfc.toml`. A project build compiles `main.mcf` in the source directory, plus every file it reaches through `mod` declarations, and copies assets into the generated datapack.
 
 ## Basic Manifest
 
@@ -20,6 +20,27 @@ Fields:
 - `load`: additional generated load tag functions
 - `tick`: additional generated tick tag functions
 - `[[export]]`: mappings from datapack paths to MCFC functions
+
+## Multiple Source Files
+
+`src/main.mcf` is the root module. Split code into more files with [`mod`](../language/reference/statements/mod) and import from them with [`use`](../language/reference/statements/use):
+
+```text
+src/
+  main.mcf          # mod util
+  util.mcf          # pub fn double(x: int) -> int
+  combat/
+    mod.mcf         # pub mod damage
+    damage.mcf
+```
+
+A `.mcf` file that no `mod` declaration reaches is left out of the build, and the build prints a warning naming it. Errors name the file and line they come from:
+
+```text
+error:src/util.mcf:3:5: cannot find function 'greet' in module 'util'; it is defined in the root module, so import it with 'use greet'
+```
+
+To export a module function at a chosen path, use its full name: `function = "util::announce"`.
 
 ## Exports
 

@@ -5,11 +5,30 @@ pub struct Program {
     pub structs: Vec<StructDef>,
     pub player_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
+    pub mods: Vec<ModDecl>,
+    pub uses: Vec<UseDecl>,
+}
+
+/// `mod name` — declares a child module loaded from `name.mcf` or `name/mod.mcf`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModDecl {
+    pub name: String,
+    pub is_pub: bool,
+    pub span: Span,
+}
+
+/// `use a::b::c` / `use a::b as c` — one import; `use a::{b, c}` expands to several.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseDecl {
+    pub path: Vec<String>,
+    pub alias: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructDef {
     pub name: String,
+    pub is_pub: bool,
     pub fields: Vec<StructField>,
     pub span: Span,
 }
@@ -32,6 +51,7 @@ pub struct PlayerStateDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub name: String,
+    pub is_pub: bool,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,

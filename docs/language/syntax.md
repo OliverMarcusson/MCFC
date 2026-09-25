@@ -16,7 +16,7 @@ Rules:
 - duplicate function names are rejected
 - duplicate parameter names are rejected
 
-`fn tick() -> void:` is special: it maps to the datapack tick function and runs once every game tick. If multiple source files define zero-argument `tick() -> void`, their bodies are merged in deterministic source order.
+`fn tick() -> void:` is special: it maps to the datapack tick function and runs once every game tick. If multiple modules define zero-argument `tick() -> void`, their bodies are merged in module-tree order.
 
 ## Statements
 

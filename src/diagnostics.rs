@@ -105,6 +105,12 @@ impl Diagnostic {
     }
 
     pub fn render(&self, source: &str) -> String {
+        self.render_mapped(source, |line| (String::new(), line))
+    }
+
+    /// Like `render`, but `locate` maps a line of `source` to a `path:` prefix
+    /// and the line within that file (used for merged project sources).
+    pub fn render_mapped(&self, source: &str, locate: impl Fn(usize) -> (String, usize)) -> String {
         let source_file = SourceFile::new(source);
         let (line, column) = if self.span.range.start == self.span.range.end {
             (self.span.line, self.span.column)
@@ -112,12 +118,14 @@ impl Diagnostic {
             source_file.position(self.span.range.start)
         };
         let source_line = source_file.line_text(line);
+        let (prefix, local_line) = locate(line);
         format!(
-            "error:{}:{}: {}\n{:>6} | {}\n       | {}^",
-            line,
+            "error:{}{}:{}: {}\n{:>6} | {}\n       | {}^",
+            prefix,
+            local_line,
             column,
             self.message,
-            line,
+            local_line,
             source_line,
             " ".repeat(column.saturating_sub(1))
         )

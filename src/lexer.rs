@@ -36,6 +36,7 @@ pub enum TokenKind {
     DotDot,
     DotDotEq,
     Colon,
+    ColonColon,
     Comma,
     Dot,
     LeftParen,
@@ -208,7 +209,22 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 &source_file,
                 TokenKind::RightBrace,
             ),
-            ':' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Colon),
+            ':' => {
+                let start = cursor.position();
+                cursor.bump();
+                let kind = if cursor.peek() == Some(':') {
+                    cursor.bump();
+                    TokenKind::ColonColon
+                } else {
+                    TokenKind::Colon
+                };
+                push_token(
+                    &mut tokens,
+                    &source_file,
+                    kind,
+                    TextRange::new(start, cursor.position()),
+                );
+            }
             ',' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Comma),
             '+' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Plus),
             '*' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Star),

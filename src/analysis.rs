@@ -147,13 +147,40 @@ pub fn analyze_source_with_host_modules(
     source: &str,
     host_modules: &types::HostModules,
 ) -> AnalysisResult {
+    analyze_modules(source, host_modules, &[])
+}
+
+/// Analyze a merged multi-file source whose layout is described by `modules`.
+pub fn analyze_modules(
+    source: &str,
+    host_modules: &types::HostModules,
+    modules: &[crate::modules::ModuleSource],
+) -> AnalysisResult {
     // The editor consumes the public MCFC syntax, including Bukkit-style
     // declarations which are lowered before the compact parser sees them.
     let normalized = crate::compiler::normalize_bukkit_declarations_source(source);
     let source_map = SourceMap::from_sources(source, &normalized);
     match parser::parse(&normalized) {
         Ok(program) => {
-            let functions = collect_functions(&normalized, &program, &source_map);
+            let mut functions = collect_functions(&normalized, &program, &source_map);
+            let program = match crate::modules::resolve(program.clone(), modules) {
+                Ok(resolved) => resolved,
+                Err(diagnostics) => {
+                    return AnalysisResult {
+                        diagnostics: diagnostics.0,
+                        program: Some(program),
+                        typed_program: None,
+                        functions,
+                        locals: Vec::new(),
+                        source_map,
+                    };
+                }
+            };
+            // Functions were matched to tokens by source name; switch to the
+            // resolved `module::name` so they line up with typed locals.
+            for (info, function) in functions.iter_mut().zip(&program.functions) {
+                info.name = function.name.clone();
+            }
             match types::type_check(&program, host_modules) {
                 Ok(typed_program) => {
                     let locals = collect_locals(&typed_program);

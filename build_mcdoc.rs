@@ -4,8 +4,8 @@ use std::io::Read;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-pub const TARGET_MINECRAFT_VERSION: &str = "26.2";
-pub const TARGET_VANILLA_MCDOC_REF: &str = "8e0271a118f654031de11c688f64cb783c3bc6c7";
+pub const TARGET_MINECRAFT_VERSION: &str = "26.3";
+pub const TARGET_VANILLA_MCDOC_REF: &str = "ef1297a83278e98cf00357ffe9eb0d0c5c3cfc8b";
 
 const DEFAULT_ENTITY_SYMBOL: &str = "::java::world::entity::mob::MobBase";
 const DEFAULT_BLOCK_SYMBOL: &str = "::java::world::block::container::ContainerBase";

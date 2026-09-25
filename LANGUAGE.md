@@ -1,6 +1,6 @@
 # MCFC Language Guide
 
-`mcfc` is a statically typed language that compiles to a Minecraft datapack for Minecraft `26.2`.
+`mcfc` is a statically typed language that compiles to a Minecraft datapack for Minecraft `26.3`.
 
 The current language focuses on a compact core:
 
@@ -188,6 +188,9 @@ are Bukkit-inspired aliases for the existing `tellraw`, `title`, `actionbar`,
 `playsound`, and `stopsound` methods.
 
 ### Agent-backed events and commands (experimental 26.2)
+
+The JVM adapter is still pinned to Minecraft 26.2 and has not been ported to
+26.3, the version MCFC datapacks now target.
 
 With `[helper.agent] enabled = true`, MCFC also accepts typed event declarations
 for the version-pinned JVM adapter. They run as the affected player and receive

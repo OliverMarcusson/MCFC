@@ -16,7 +16,7 @@ The project currently provides:
 - `mcfc-lsp`, a language server for editor integration
 - a VS Code extension under `editors/vscode-mcfc`
 
-MCFC targets Minecraft `26.2` datapacks. The language guide in
+MCFC targets Minecraft `26.3` datapacks. The language guide in
 `LANGUAGE.md` is the canonical reference for syntax and behavior.
 
 ## Example

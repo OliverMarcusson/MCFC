@@ -1,6 +1,6 @@
 # Introduction
 
-MCFC is a statically typed language, compiler, and language server for building Minecraft datapacks from `.mcf` source files. It targets Minecraft `26.2` and focuses on a compact typed core that still produces inspectable vanilla datapack output.
+MCFC is a statically typed language, compiler, and language server for building Minecraft datapacks from `.mcf` source files. It targets Minecraft `26.3` and focuses on a compact typed core that still produces inspectable vanilla datapack output.
 
 The repository currently provides:
 

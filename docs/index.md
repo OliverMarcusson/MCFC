@@ -4,7 +4,7 @@ layout: home
 hero:
   name: MCFC
   text: Typed Minecraft datapacks without giving up vanilla.
-  tagline: A statically typed language, compiler, and language server for building Minecraft 26.2 datapacks from .mcf source files.
+  tagline: A statically typed language, compiler, and language server for building Minecraft 26.3 datapacks from .mcf source files.
   image:
     src: /MCFC-icon.png
     alt: MCFC icon

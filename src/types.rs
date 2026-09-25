@@ -1916,6 +1916,9 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
             );
+            if *op == BinaryOp::Add && left.ty == Type::String && right.ty == Type::String {
+                return concat_strings(vec![left, right]);
+            }
             let ty = match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
                     if left.ty == Type::Float || right.ty == Type::Float =>
@@ -3496,6 +3499,32 @@ fn type_check_method_call(
         diagnostics,
     );
     match method {
+        "to_string" if matches!(receiver.ty, Type::Int | Type::Float | Type::String) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(concat_strings(vec![receiver]))
+        }
+        "slice" if receiver.ty == Type::String => {
+            if !(1..=2).contains(&args.len()) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for 'slice': expected 1 or 2, found {}",
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            if args.iter().any(|arg| arg.ty != Type::Int) {
+                diagnostics.push(Diagnostic::new(
+                    "slice() requires 'int' indices",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::String))
+        }
+        "parse_int" if receiver.ty == Type::String => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Int))
+        }
         "sqrt" | "sin" | "cos" | "tan" | "abs" | "floor" | "ceil" | "round" | "trunc" | "pow"
         | "min" | "max" | "hypot" | "clamp"
             if receiver.ty == Type::Float =>
@@ -3540,9 +3569,9 @@ fn type_check_method_call(
         }
         "len" => {
             expect_arity(method, &args, 0, expr, diagnostics);
-            if !matches!(receiver.ty, Type::Array(_)) {
+            if !matches!(receiver.ty, Type::Array(_) | Type::String) {
                 diagnostics.push(Diagnostic::new(
-                    "len() requires an 'array' receiver",
+                    "len() requires an 'array' or 'string' receiver",
                     expr.span.clone(),
                 ));
             }
@@ -4874,6 +4903,49 @@ fn builtin_call_expr(function: &str, args: Vec<TypedExpr>, ty: Type) -> TypedExp
     }
 }
 
+/// Join string-like values into one interpolated string. Literal parts stay in
+/// the template and interpolated parts are spliced in, so `"a" + b + "c"`
+/// lowers to a single macro call instead of one per `+`.
+fn concat_strings(parts: Vec<TypedExpr>) -> TypedExpr {
+    let mut template = String::new();
+    let mut placeholders: Vec<MacroPlaceholder> = Vec::new();
+    for part in parts {
+        match part.kind {
+            TypedExprKind::String(value) => template.push_str(&value),
+            TypedExprKind::InterpolatedString {
+                template: inner,
+                placeholders: inner_placeholders,
+            } => {
+                template.push_str(&inner);
+                placeholders.extend(inner_placeholders);
+            }
+            _ => {
+                template.push_str("$(value)");
+                placeholders.push(MacroPlaceholder {
+                    key: String::new(),
+                    ty: part.ty.clone(),
+                    expr: part,
+                });
+            }
+        }
+    }
+    for (index, placeholder) in placeholders.iter_mut().enumerate() {
+        placeholder.key = format!("p{}", index + 1);
+    }
+    TypedExpr {
+        kind: if placeholders.is_empty() {
+            TypedExprKind::String(template)
+        } else {
+            TypedExprKind::InterpolatedString {
+                template,
+                placeholders,
+            }
+        },
+        ty: Type::String,
+        ref_kind: RefKind::Unknown,
+    }
+}
+
 fn method_call_expr(
     receiver: TypedExpr,
     method: &str,
@@ -5854,6 +5926,7 @@ fn collect_macro_placeholders(
         if !matches!(
             typed.ty,
             Type::Int
+                | Type::Float
                 | Type::Bool
                 | Type::String
                 | Type::EntitySet

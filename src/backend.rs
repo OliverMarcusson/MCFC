@@ -3457,6 +3457,64 @@ impl Backend {
                 self.clear_item_slot_handle(function, depth, &slot_handle, lines);
                 return;
             }
+            "slice" if receiver.ty == Type::String => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                let command = |bounds: &str| {
+                    format!(
+                        "data modify storage {ns}:runtime {} set string storage {ns}:runtime {} {}",
+                        target.storage_path(),
+                        source.storage_path(),
+                        bounds,
+                        ns = self.namespace
+                    )
+                };
+                let literal: Option<Vec<String>> = args
+                    .iter()
+                    .map(|arg| match arg.kind {
+                        IrExprKind::Int(value) => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                if let Some(bounds) = literal {
+                    lines.push(command(&bounds.join(" ")));
+                } else {
+                    let placeholders: Vec<IrMacroPlaceholder> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(index, arg)| IrMacroPlaceholder {
+                            key: format!("p{}", index + 1),
+                            expr: arg.clone(),
+                            ty: Type::Int,
+                        })
+                        .collect();
+                    let bounds: Vec<String> = placeholders
+                        .iter()
+                        .map(|placeholder| format!("$({})", placeholder.key))
+                        .collect();
+                    let body = format!("${}", command(&bounds.join(" ")));
+                    self.call_macro(function, depth, "slice", body, &placeholders, lines);
+                }
+                return;
+            }
+            "parse_int" if receiver.ty == Type::String => {
+                // A value that is not a whole number makes the macro line fail
+                // to parse, so the command never runs and the 0 stays.
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                let placeholders = [IrMacroPlaceholder {
+                    key: "p1".to_string(),
+                    expr: receiver.clone(),
+                    ty: Type::String,
+                }];
+                let body = format!(
+                    "$scoreboard players set {} mcfc $(p1)",
+                    target.numeric_name()
+                );
+                self.call_macro(function, depth, "parse_int", body, &placeholders, lines);
+                return;
+            }
             "len" => {
                 let receiver_slot = self.compile_storage_receiver(function, depth, receiver, lines);
                 lines.push(format!(
@@ -7073,32 +7131,13 @@ impl Backend {
             return;
         }
 
-        self.macro_counter += 1;
-        let macro_id = self.macro_counter;
-        let relative = format!(
-            "generated/{}__d{}__string_{}",
-            sanitize(&function.name),
-            depth,
-            macro_id
+        let body = format!(
+            "$data modify storage {}:runtime {} set value {}",
+            self.namespace,
+            target.storage_path(),
+            quoted(&rewrite_macro_template(template, placeholders))
         );
-        let path = format!("data/{}/function/{}.mcfunction", self.namespace, relative);
-        let rendered_value = quoted(&rewrite_macro_template(template, placeholders));
-        self.files.insert(
-            path,
-            format!(
-                "$data modify storage {}:runtime {} set value {}\n",
-                self.namespace,
-                target.storage_path(),
-                rendered_value
-            ),
-        );
-
-        let storage_base = macro_storage_base(depth, &function.name, macro_id);
-        self.write_macro_placeholder_values(function, depth, &storage_base, placeholders, lines);
-        lines.push(format!(
-            "function {}:{} with storage {}:runtime {}",
-            self.namespace, relative, self.namespace, storage_base
-        ));
+        self.call_macro(function, depth, "string", body, placeholders, lines);
     }
 
     /// Build a `text(...)` component for an interpolated literal without splicing
@@ -7140,6 +7179,36 @@ impl Backend {
             self.namespace,
             target.storage_path(),
             parts.join(",")
+        ));
+    }
+
+    /// Write `body` as a generated macro function and call it with the
+    /// placeholder values.
+    fn call_macro(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        label: &str,
+        body: String,
+        placeholders: &[IrMacroPlaceholder],
+        lines: &mut Vec<String>,
+    ) {
+        self.macro_counter += 1;
+        let macro_id = self.macro_counter;
+        let relative = format!(
+            "generated/{}__d{}__{}_{}",
+            sanitize(&function.name),
+            depth,
+            label,
+            macro_id
+        );
+        let path = format!("data/{}/function/{}.mcfunction", self.namespace, relative);
+        self.files.insert(path, body + "\n");
+        let storage_base = macro_storage_base(depth, &function.name, macro_id);
+        self.write_macro_placeholder_values(function, depth, &storage_base, placeholders, lines);
+        lines.push(format!(
+            "function {}:{} with storage {}:runtime {}",
+            self.namespace, relative, self.namespace, storage_base
         ));
     }
 

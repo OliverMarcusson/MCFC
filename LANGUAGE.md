@@ -372,6 +372,7 @@ Current operator support:
 - `and`, `or`, and `not` require `bool`
 - ordering comparisons currently support `int`, `float`, and `bool`
 - string equality supports only `==` and `!=`
+- `+` on two `string` values joins them
 
 ## Builtins and Methods
 
@@ -558,6 +559,17 @@ if below.is("minecraft:air"):
 `ceil()`, `round()`, `trunc()`, `pow(e)`, `min(y)`, `max(y)`, `clamp(low, high)`,
 and `hypot(y)`. Every argument is a `float` and every method returns `float`.
 A whole float expression lowers to a single `/compute` command (Minecraft 26.3).
+
+### String methods
+
+- `string.len() -> int`
+- `string.slice(start: int) -> string`
+- `string.slice(start: int, end: int) -> string`, with negative indices counting from the end
+- `string.parse_int() -> int`, returning `0` when the text is not a whole number
+- `int.to_string()`, `float.to_string()`, and `string.to_string()` return `string`
+
+Joining and `to_string()` use a macro, so values containing `"` or `\` are not
+supported yet.
 
 ### Collections
 

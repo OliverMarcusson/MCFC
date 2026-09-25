@@ -46,6 +46,7 @@ All arguments are `float`. The trigonometry methods follow Minecraft's `/compute
 - `float(n)` turns an `int` into a `float`.
 - `int(x)` turns a `float` into an `int`, rounding down: `int(2.7)` is `2`, `int(-2.7)` is `-3`.
 - `float(value)` also reads an `nbt` value.
+- `x.to_string()` gives text such as `"1.5"`.
 
 ## Limits
 

@@ -2785,3 +2785,48 @@ fn main() -> void:
         assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
     }
 }
+
+#[test]
+fn strings_concatenate_slice_measure_and_parse() {
+    let source = r#"
+fn main() -> void:
+    let name = "Steve"
+    let n = 42
+    let greeting = "Hi " + name + " x" + n.to_string()
+    let size = greeting.len()
+    let tail = greeting.slice(-3)
+    let mid = greeting.slice(n, size)
+    let parsed = "17".parse_int()
+    let joined = "a" + "b"
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let files = &result.artifacts.files;
+    let main = files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    for expected in [
+        "execute store result score $d0_main_size mcfc run data get storage",
+        "frames.d0.main.tail set string storage mcfc:runtime frames.d0.main.__tmp",
+        "scoreboard players set $d0_main_parsed mcfc 0",
+        "frames.d0.main.joined set value \"ab\"",
+    ] {
+        assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
+    }
+    let macros: Vec<&String> = files
+        .iter()
+        .filter(|(path, _)| {
+            path.contains("generated/main__d0__") && !path.ends_with("entry.mcfunction")
+        })
+        .map(|(_, body)| body)
+        .collect();
+    for expected in [
+        "set value \"Hi $(p1) x$(p2)\"",
+        " $(p1) $(p2)\n",
+        "$scoreboard players set $d0_main_parsed mcfc $(p1)",
+    ] {
+        assert!(
+            macros.iter().any(|body| body.contains(expected)),
+            "no macro contains '{expected}': {macros:?}"
+        );
+    }
+}

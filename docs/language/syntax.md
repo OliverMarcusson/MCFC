@@ -30,7 +30,7 @@ Supported expressions include literals, variables, calls, method calls, path acc
 
 Binary operators:
 
-- arithmetic: `+`, `-`, `*`, `/`, `%`
+- arithmetic: `+`, `-`, `*`, `/`, `%` (`+` also joins two strings)
 - logical: `and`, `or`
 - comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
 

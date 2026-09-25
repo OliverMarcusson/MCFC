@@ -2709,6 +2709,7 @@ fn completion_items_for_receiver(
     match receiver {
         Some(CompletionReceiver::Array) => array_method_items(),
         Some(CompletionReceiver::Float) => float_method_items(),
+        Some(CompletionReceiver::String) => string_method_items(),
         Some(CompletionReceiver::Dict) => dict_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
@@ -2919,6 +2920,24 @@ fn array_method_items() -> Vec<CompletionItem> {
     .collect()
 }
 
+fn string_method_items() -> Vec<CompletionItem> {
+    [
+        ("len", "string.len() -> int", "len()"),
+        (
+            "slice",
+            "string.slice(start: int, end: int) -> string",
+            "slice(${1:start}, ${2:end})",
+        ),
+        ("parse_int", "string.parse_int() -> int", "parse_int()"),
+        ("to_string", "string.to_string() -> string", "to_string()"),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text)| {
+        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+    })
+    .collect()
+}
+
 fn float_method_items() -> Vec<CompletionItem> {
     [
         ("sqrt", "float.sqrt() -> float", "sqrt()"),
@@ -2947,6 +2966,7 @@ fn float_method_items() -> Vec<CompletionItem> {
             "float.hypot(other: float) -> float",
             "hypot(${1:other})",
         ),
+        ("to_string", "float.to_string() -> string", "to_string()"),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {
@@ -3740,6 +3760,7 @@ fn nbt_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
 enum CompletionReceiver {
     Array,
     Float,
+    String,
     Dict,
     Struct(String),
     GenericEntityRef,
@@ -3958,6 +3979,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
     match ty {
         Type::Array(_) => Some(CompletionReceiver::Array),
         Type::Float => Some(CompletionReceiver::Float),
+        Type::String => Some(CompletionReceiver::String),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
         Type::EntityRef => Some(if ref_kind == RefKind::Player {

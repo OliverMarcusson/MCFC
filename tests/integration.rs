@@ -2691,3 +2691,28 @@ fn main() -> void:
         "nested host call should be rejected as a non-statement position"
     );
 }
+
+#[test]
+fn optimizer_folds_division_like_the_scoreboard() {
+    let source = r#"
+fn main() -> void:
+    let a = -7 / 2
+    let b = 7 / -2
+    let c = 7 / 2
+    let d = -8 / 2
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    for expected in [
+        "$d0_main_a mcfc -4",
+        "$d0_main_b mcfc -4",
+        "$d0_main_c mcfc 3",
+        "$d0_main_d mcfc -4",
+    ] {
+        assert!(main.contains(expected), "missing '{expected}' in:\n{main}");
+    }
+}

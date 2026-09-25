@@ -250,13 +250,24 @@ fn fold_expr(expr: IrExpr) -> IrExpr {
     IrExpr { ty, ref_kind, kind }
 }
 
+/// Scoreboard `/=` rounds toward negative infinity (Java's `floorDiv`), so
+/// folding must too: `-7 / 2` is `-4`, not Rust's truncated `-3`.
+fn floor_div(left: i64, right: i64) -> Option<i64> {
+    let quotient = left.checked_div(right)?;
+    if left % right != 0 && (left < 0) != (right < 0) {
+        Some(quotient - 1)
+    } else {
+        Some(quotient)
+    }
+}
+
 fn fold_binary(op: BinaryOp, left: &IrExpr, right: &IrExpr) -> Option<IrExprKind> {
     match (&left.kind, &right.kind) {
         (IrExprKind::Int(left), IrExprKind::Int(right)) => match op {
             BinaryOp::Add => Some(IrExprKind::Int(left + right)),
             BinaryOp::Sub => Some(IrExprKind::Int(left - right)),
             BinaryOp::Mul => Some(IrExprKind::Int(left * right)),
-            BinaryOp::Div if *right != 0 => Some(IrExprKind::Int(left / right)),
+            BinaryOp::Div if *right != 0 => floor_div(*left, *right).map(IrExprKind::Int),
             BinaryOp::Eq => Some(IrExprKind::Bool(left == right)),
             BinaryOp::NotEq => Some(IrExprKind::Bool(left != right)),
             BinaryOp::Lt => Some(IrExprKind::Bool(left < right)),

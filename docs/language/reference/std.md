@@ -37,9 +37,8 @@ These take `array<int>`. Other element types wait for generics.
 | `sum(xs: array<int>) -> int` | The total of all elements. |
 | `min(xs: array<int>) -> int` | The smallest element, or `0` for an empty array. |
 | `max(xs: array<int>) -> int` | The largest element, or `0` for an empty array. |
-| `sort(xs: array<int>) -> array<int>` | A sorted copy, smallest first. |
 
-`sort` returns a new array, so write `xs = sort(xs)`. It is a quicksort with a median-of-three pivot that stops splitting at 16 elements, followed by one insertion sort pass over the whole array. That is the same approach as Rust's `sort_unstable`, and equal elements may change places. Every comparison and swap reads or writes storage, so sorting 1,000 elements takes tens of thousands of commands; sort large arrays across several ticks.
+To sort, use the built-in [`xs.sort()`](./types/array) method.
 
 ## `std::str`
 

@@ -83,6 +83,7 @@ pub fn compile_source(
         prune_unreachable(types::type_check(&ast, &host_modules)?, &options.exports);
     let ir_program = ir::lower(&typed_program);
     validate_decision_handlers(&ir_program)?;
+    validate_suspending_calls(&ir_program)?;
     let ir_program = if options.optimize {
         optimizer::optimize(ir_program)
     } else {
@@ -145,6 +146,19 @@ fn prune_unreachable(mut program: TypedProgram, exports: &[ExportedFunction]) ->
         .call_depths
         .retain(|name, _| reachable.contains(name));
     program
+}
+
+fn validate_suspending_calls(program: &IrProgram) -> Result<(), Diagnostics> {
+    let mut diagnostics = Diagnostics::new();
+    for (caller, callee) in backend::misplaced_suspending_calls(program) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "'{callee}' can pause (it sleeps, sorts or waits on a host call), so '{caller}' must call it on its own line, as 'let x = {callee}(...)', 'x = {callee}(...)' or 'return {callee}(...)'"
+            ),
+            Span::new(1, 1),
+        ));
+    }
+    diagnostics.into_result(())
 }
 
 fn validate_decision_handlers(program: &IrProgram) -> Result<(), Diagnostics> {

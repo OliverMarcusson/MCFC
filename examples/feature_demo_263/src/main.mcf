@@ -4,7 +4,6 @@
 # in latest.log. Runs once when a player is online; run it again with
 # /function mcfc_demo:run_tests.
 
-use std::array::{sort, sum}
 use std::str::{starts_with, ends_with, find, contains}
 use std::math::{gcd, lerp}
 
@@ -26,9 +25,7 @@ fn near(a: float, b: float) -> bool:
 fn runtime(s: string) -> string:
     return s
 
-# Minecraft stops a tick after 65,536 commands, so each group gets its own
-# tick. The big sorts run last: if one hits the limit, the earlier results
-# are already in the log.
+# Each group gets its own tick so a failure in one does not hide the others.
 fn run_tests() -> void:
     mc "say MCFCTEST BEGIN"
     floats()
@@ -42,11 +39,10 @@ fn run_tests() -> void:
     sleep_ticks(1)
     reads()
     sleep_ticks(1)
-    sort_test(50)
-    sleep_ticks(1)
-    sort_test(100)
-    sleep_ticks(1)
-    sort_test(200)
+    sort_test(1000, 0)
+    sort_test(5000, 3)
+    sort_test(10000, 6)
+    progress("sorts done", 9)
     mc "say MCFCTEST END"
 
 fn floats() -> void:
@@ -127,27 +123,66 @@ fn arrays() -> void:
     xs.clear()
     check("arr_clear", xs.len() == 0, xs.len().to_string())
 
-fn sort_test(size: int) -> void:
-    mcf "say MCFCTEST INFO sort $(size) starting"
-    let big = [0]
-    big.clear()
+# Shows which sort step is running on a bossbar.
+fn progress(label: string, step: int) -> void:
+    let bar = bossbar("mcfc_demo:sort", "sorts")
+    bar.max = 9
+    bar.value = step
+    bar.name = label
+    bar.players = selector("@a")
+    bar.visible = true
+    mcf "say MCFCTEST INFO step $(step) $(label)"
+
+# Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
+# tick runs too many commands, and sort() spreads itself over ticks. All of it
+# pauses run_tests, so the sizes run one after another.
+fn sort_test(size: int, step: int) -> void:
+    let name = "sort " + size.to_string()
+    progress(name + ": filling", step)
+    let xs = [0]
+    xs.clear()
+    let total = 0
     let k = 0
     while k < size:
-        big.push(random(1000) - 500)
+        let x = random(1000) - 500
+        xs.push(x)
+        total = total + x
         k = k + 1
-    let total = sum(big)
-    let sorted = sort(big)
+        if k % 500 == 0:
+            sleep_ticks(1)
+    progress(name + ": sorting", step + 1)
+    let started = game_time()
+    xs.sort()
+    let ticks = game_time() - started
+    mcf "say MCFCTEST INFO sort $(size) took $(ticks) ticks"
+    progress(name + ": checking", step + 2)
     let ordered = true
+    let after = xs[0]
     let j = 1
-    while j < sorted.len():
-        if sorted[j - 1] > sorted[j]:
+    while j < xs.len():
+        if xs[j - 1] > xs[j]:
             ordered = false
+        after = after + xs[j]
         j = j + 1
-    check("std_sort_" + size.to_string(), ordered and sorted.len() == size, sorted.len().to_string())
-    check("std_sort_keeps_sum_" + size.to_string(), sum(sorted) == total, total.to_string())
+        if j % 200 == 0:
+            sleep_ticks(1)
+    check("sort_" + size.to_string(), ordered and xs.len() == size, xs.len().to_string())
+    check("sort_keeps_sum_" + size.to_string(), after == total, total.to_string())
 
 fn std_library() -> void:
-    check("std_sort_small", sort([3, 1, 2])[0] == 1, sort([3, 1, 2])[2].to_string())
+    let small = [3, 1, 2, 1]
+    small.sort()
+    check("sort_small", small[0] == 1 and small[1] == 1 and small[3] == 3, small[3].to_string())
+    let none = [0]
+    none.clear()
+    none.sort()
+    check("sort_empty", none.len() == 0, none.len().to_string())
+    let one = [7]
+    one.sort()
+    check("sort_one", one.len() == 1 and one[0] == 7, one[0].to_string())
+    let desc = [5, 4, 3, 2, 1]
+    desc.sort()
+    check("sort_descending", desc[0] == 1 and desc[4] == 5, desc[4].to_string())
     check("std_min_max", std::array::min([4, -2, 9]) == -2 and std::array::max([4, -2, 9]) == 9, "-2,9")
     check("std_starts_with", starts_with("minecraft:stone", "minecraft:"), "")
     check("std_ends_with", ends_with("stone", "ne") and not ends_with("stone", "x"), "")

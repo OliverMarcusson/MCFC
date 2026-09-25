@@ -28,6 +28,11 @@ pub struct ExportedFunction {
     pub function: String,
 }
 
+/// Merge sort steps per tick. Each moves one element and costs about 10
+/// commands, so a slice is about 10,000 commands: roughly 10 ms of the
+/// 50 ms tick, enough to finish fast without dropping ticks.
+const SORT_STEPS_PER_TICK: usize = 1000;
+
 pub fn generate(program: &IrProgram, options: &BackendOptions) -> BuildArtifacts {
     let mut backend = Backend::new(program, options.namespace.clone());
     backend.generate(program, options);
@@ -51,6 +56,8 @@ struct Backend {
     bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
+    /// Functions that can pause, see `suspending_functions`.
+    suspending: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +215,7 @@ impl Backend {
             uses_rpc: program_uses_rpc(program),
             bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
+            suspending: suspending_functions(program),
         }
     }
 
@@ -747,6 +755,36 @@ impl Backend {
     ) -> bool {
         for (index, stmt) in stmts.iter().enumerate() {
             let tail = continuation_after_stmts(&stmts[index + 1..], sleep_tail);
+            if let Some((call, callee)) = suspending_call(stmt, &self.suspending) {
+                self.emit_suspending_call(
+                    function,
+                    depth,
+                    stmt,
+                    call,
+                    callee,
+                    &tail,
+                    guard,
+                    loop_ctx,
+                    resume_context,
+                    lines,
+                );
+                return true;
+            }
+            if let IrStmt::Expr(expr) = stmt
+                && let Some(receiver) = sort_receiver(expr)
+            {
+                self.emit_sort(
+                    function,
+                    depth,
+                    receiver,
+                    &tail,
+                    guard,
+                    loop_ctx,
+                    resume_context,
+                    lines,
+                );
+                return true;
+            }
             match stmt {
                 IrStmt::Let { name, value, .. } => {
                     let mut stmt_lines = Vec::new();
@@ -800,6 +838,7 @@ impl Backend {
                         guard,
                         loop_ctx,
                         resume_context,
+                        Vec::new(),
                     );
                     let duration_name = self.new_temp();
                     let duration_slot =
@@ -836,6 +875,10 @@ impl Backend {
                             self.namespace, continuation_name, placeholder
                         ),
                     ));
+                    stmt_lines.push(format!(
+                        "scoreboard players set {} mcfc 1",
+                        susp_slot(depth, &function.name)
+                    ));
                     stmt_lines.push(format!("scoreboard players set {} mcfc 1", guard.ctrl_slot));
                     self.extend_guarded(lines, guard, stmt_lines);
                     return true;
@@ -854,8 +897,12 @@ impl Backend {
                         guard,
                         loop_ctx,
                         resume_context,
+                        Vec::new(),
                     );
-                    let mut stmt_lines = Vec::new();
+                    let mut stmt_lines = vec![format!(
+                        "scoreboard players set {} mcfc 1",
+                        susp_slot(depth, &function.name)
+                    )];
                     self.emit_host_call_dispatch(
                         function,
                         depth,
@@ -1501,6 +1548,7 @@ impl Backend {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_sleep_continuation(
         &mut self,
         function: &IrFunction,
@@ -1509,9 +1557,17 @@ impl Backend {
         guard: &Guard,
         loop_ctx: Option<&LoopContext>,
         resume_context: Option<&ContextResume>,
+        prefix: Vec<String>,
     ) -> String {
         let (path, name) = self.new_block(function, depth, "sleep_resume");
-        let mut lines = vec![format!("scoreboard players set {} mcfc 0", guard.ctrl_slot)];
+        let mut lines = vec![
+            format!("scoreboard players set {} mcfc 0", guard.ctrl_slot),
+            format!(
+                "scoreboard players set {} mcfc 0",
+                susp_slot(depth, &function.name)
+            ),
+        ];
+        lines.extend(prefix);
         self.emit_contextual_continuation_items(
             function,
             depth,
@@ -1521,6 +1577,7 @@ impl Backend {
             resume_context,
             &mut lines,
         );
+        lines.push(self.finish_line(function, depth));
         self.files.insert(
             path,
             if lines.is_empty() {
@@ -7411,6 +7468,346 @@ impl Backend {
         ));
     }
 
+    /// Write the shared merge sort for `array<int>`, which works on the
+    /// `sort` storage compound: `src` is the input, `q` a queue of sorted runs,
+    /// `a` and `b` the two runs being merged into `c`. `generated/sort_slice`
+    /// does at most `SORT_STEPS_PER_TICK` steps, one element each, and sets
+    /// `#sort_done` once `q[0]` holds the result. Each step reads or removes
+    /// index 0 only, so no macros run. Callers swap their own state in and
+    /// out, so sorts at different sites can be in progress at the same time.
+    fn write_sort_helpers(&mut self) {
+        let ns = self.namespace.clone();
+        let s = format!("storage {ns}:runtime sort");
+        let helpers = [
+            (
+                "sort_slice",
+                vec![
+                    "scoreboard players set #sort_done mcfc 0".to_string(),
+                    format!("scoreboard players set #sort_budget mcfc {SORT_STEPS_PER_TICK}"),
+                    format!("execute store result score #sort_last mcfc run data get {s}.last"),
+                    format!("function {ns}:generated/sort_loop"),
+                    format!(
+                        "execute store result {s}.last int 1 run scoreboard players get #sort_last mcfc"
+                    ),
+                ],
+            ),
+            (
+                // Eight steps per call keeps the loop overhead low; steps
+                // after the sort is done return at once.
+                "sort_loop",
+                vec![
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    format!("function {ns}:generated/sort_unit"),
+                    "scoreboard players remove #sort_budget mcfc 8".to_string(),
+                    format!(
+                        "execute if score #sort_done mcfc matches 0 if score #sort_budget mcfc matches 1.. run function {ns}:generated/sort_loop"
+                    ),
+                ],
+            ),
+            (
+                "sort_unit",
+                vec![
+                    "execute if score #sort_done mcfc matches 1 run return 0".to_string(),
+                    format!(
+                        "execute if data {s}.src[0] run return run function {ns}:generated/sort_run"
+                    ),
+                    format!(
+                        "execute if data {s}.a[0] if data {s}.b[0] run return run function {ns}:generated/sort_step"
+                    ),
+                    format!("function {ns}:generated/sort_next"),
+                ],
+            ),
+            (
+                // Move one input element onto the last run, or start a new run
+                // when it is smaller than the previous element.
+                "sort_run",
+                vec![
+                    format!("execute store result score #sort_b mcfc run data get {s}.src[0]"),
+                    format!(
+                        "execute if score #sort_b mcfc < #sort_last mcfc run data modify {s}.q append value []"
+                    ),
+                    format!("data modify {s}.q[-1] append from {s}.src[0]"),
+                    "scoreboard players operation #sort_last mcfc = #sort_b mcfc".to_string(),
+                    format!("data remove {s}.src[0]"),
+                ],
+            ),
+            (
+                "sort_step",
+                vec![
+                    format!("execute store result score #sort_a mcfc run data get {s}.a[0]"),
+                    format!("execute store result score #sort_b mcfc run data get {s}.b[0]"),
+                    format!(
+                        "execute if score #sort_a mcfc <= #sort_b mcfc run data modify {s}.c append from {s}.a[0]"
+                    ),
+                    format!(
+                        "execute if score #sort_a mcfc <= #sort_b mcfc run data remove {s}.a[0]"
+                    ),
+                    format!(
+                        "execute if score #sort_a mcfc > #sort_b mcfc run data modify {s}.c append from {s}.b[0]"
+                    ),
+                    format!(
+                        "execute if score #sort_a mcfc > #sort_b mcfc run data remove {s}.b[0]"
+                    ),
+                ],
+            ),
+            (
+                // Finish the current merge, then take the next two runs off
+                // the front of the queue. One run left means done.
+                "sort_next",
+                vec![
+                    format!("data modify {s}.c append from {s}.a[]"),
+                    format!("data modify {s}.c append from {s}.b[]"),
+                    format!("execute if data {s}.c[0] run data modify {s}.q append from {s}.c"),
+                    format!("data modify {s}.a set value []"),
+                    format!("data modify {s}.b set value []"),
+                    format!("data modify {s}.c set value []"),
+                    format!(
+                        "execute unless data {s}.q[1] run return run scoreboard players set #sort_done mcfc 1"
+                    ),
+                    format!("data modify {s}.a set from {s}.q[0]"),
+                    format!("data modify {s}.b set from {s}.q[1]"),
+                    format!("data remove {s}.q[0]"),
+                    format!("data remove {s}.q[0]"),
+                ],
+            ),
+        ];
+        for (name, body) in helpers {
+            self.files.insert(
+                format!("data/{ns}/function/generated/{name}.mcfunction"),
+                body.join("\n") + "\n",
+            );
+        }
+    }
+
+    /// Lower `xs.sort()`. The first slice runs right away; if the array is
+    /// not sorted by then, the function suspends and a per-site tick
+    /// function runs one slice per tick until it is, then resumes.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_sort(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        receiver: &IrExpr,
+        tail: &[ContinuationItem],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        self.write_sort_helpers();
+        let state = string_slot(depth, &function.name, &format!("_sort{}", self.new_temp()));
+        let mut prefix = Vec::new();
+        if let Some(rendered) =
+            self.render_storage_expr_lvalue_path(function, depth, receiver, &mut prefix)
+        {
+            prefix.push(self.storage_path_command(
+                format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:runtime {state}.q[0]",
+                    rendered.path
+                ),
+                rendered.macro_storage,
+            ));
+        }
+        prefix.push(format!("data remove storage {ns}:runtime {state}"));
+        let continuation = self.emit_sleep_continuation(
+            function,
+            depth,
+            tail,
+            guard,
+            loop_ctx,
+            resume_context,
+            prefix,
+        );
+        let slice = [
+            format!("data modify storage {ns}:runtime sort set from storage {ns}:runtime {state}"),
+            format!("function {ns}:generated/sort_slice"),
+            format!("data modify storage {ns}:runtime {state} set from storage {ns}:runtime sort"),
+        ];
+        let (tick_path, tick_name) = self.new_block(function, depth, "sort_tick");
+        let mut tick_lines = slice.to_vec();
+        tick_lines.push(format!(
+            "execute if score #sort_done mcfc matches 0 run schedule function {ns}:{tick_name} 1t"
+        ));
+        tick_lines.push(format!(
+            "execute if score #sort_done mcfc matches 1 run function {ns}:{continuation}"
+        ));
+        self.files.insert(tick_path, tick_lines.join("\n") + "\n");
+
+        let mut stmt_lines = vec![format!(
+            "data modify storage {ns}:runtime {state} set value {{q:[[]],a:[],b:[],c:[],last:-2147483648}}"
+        )];
+        if let Some(rendered) =
+            self.render_storage_expr_lvalue_path(function, depth, receiver, &mut stmt_lines)
+        {
+            stmt_lines.push(self.storage_path_command(
+                format!(
+                    "data modify storage {ns}:runtime {state}.src set from storage {ns}:runtime {}",
+                    rendered.path
+                ),
+                rendered.macro_storage,
+            ));
+        }
+        stmt_lines.extend(slice);
+        stmt_lines.push(format!(
+            "execute if score #sort_done mcfc matches 0 run schedule function {ns}:{tick_name} 1t"
+        ));
+        self.extend_guarded(lines, guard, stmt_lines);
+        self.suspend_or_continue(
+            function,
+            depth,
+            "if score #sort_done mcfc matches 0",
+            &continuation,
+            guard,
+            lines,
+        );
+    }
+
+    /// Lower a statement whose call can pause: `f()`, `let x = f()`,
+    /// `x = f()` or `return f()`. The rest of the function goes in a
+    /// continuation. If `f` pauses, it stores the continuation's name in its
+    /// frame and calls it when it finishes; otherwise the continuation runs
+    /// right away.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_suspending_call(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        stmt: &IrStmt,
+        call: &IrExpr,
+        callee: &str,
+        tail: &[ContinuationItem],
+        guard: &Guard,
+        loop_ctx: Option<&LoopContext>,
+        resume_context: Option<&ContextResume>,
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        let callee_depth = depth + 1;
+        let callee_susp = susp_slot(callee_depth, callee);
+        let resume = string_slot(callee_depth, callee, "__resume");
+        let result = return_slot(callee_depth, callee, &call.ty);
+        let bind = |target: SlotRef| match call.ty {
+            Type::Void => None,
+            Type::Int | Type::Bool => Some(format!(
+                "scoreboard players operation {} mcfc = {} mcfc",
+                target.numeric_name(),
+                result.numeric_name()
+            )),
+            _ => Some(format!(
+                "data modify storage {ns}:runtime {} set from storage {ns}:runtime {}",
+                target.storage_path(),
+                result.storage_path()
+            )),
+        };
+        let mut prefix = Vec::new();
+        match stmt {
+            IrStmt::Let { name, .. }
+            | IrStmt::Assign {
+                target: IrAssignTarget::Variable(name),
+                ..
+            } => prefix.extend(bind(local_slot(depth, &function.name, name, &call.ty))),
+            IrStmt::Return(_) => {
+                prefix.extend(bind(return_slot(depth, &function.name, &call.ty)));
+                prefix.push(format!(
+                    "scoreboard players set {} mcfc 1",
+                    control_slot(depth, &function.name)
+                ));
+            }
+            _ => {}
+        }
+        let continuation = self.emit_sleep_continuation(
+            function,
+            depth,
+            tail,
+            guard,
+            loop_ctx,
+            resume_context,
+            prefix,
+        );
+        let mut stmt_lines = vec![
+            format!("data remove storage {ns}:runtime {resume}"),
+            format!("scoreboard players set {callee_susp} mcfc 0"),
+        ];
+        let scratch = self.new_temp();
+        self.compile_expr_into_named_slot(function, depth, call, &scratch, &mut stmt_lines);
+        stmt_lines.push(format!(
+            "execute if score {callee_susp} mcfc matches 1 run data modify storage {ns}:runtime {resume}.fn set value \"{ns}:{continuation}\""
+        ));
+        self.extend_guarded(lines, guard, stmt_lines);
+        self.suspend_or_continue(
+            function,
+            depth,
+            &format!("if score {callee_susp} mcfc matches 1"),
+            &continuation,
+            guard,
+            lines,
+        );
+    }
+
+    /// When `condition` holds, suspend this function; otherwise run the
+    /// continuation now. The continuation finishes the whole function, so
+    /// afterwards the function counts as returned and enclosing blocks and
+    /// loops stop.
+    fn suspend_or_continue(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        condition: &str,
+        continuation: &str,
+        guard: &Guard,
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        let ctrl = control_slot(depth, &function.name);
+        let susp = susp_slot(depth, &function.name);
+        lines.push(guard.wrap(format!(
+            "execute {condition} run scoreboard players set {susp} mcfc 1"
+        )));
+        lines.push(guard.wrap(format!(
+            "execute {condition} run scoreboard players set {ctrl} mcfc 1"
+        )));
+        let (path, name) = self.new_block(function, depth, "continue_now");
+        self.files.insert(
+            path,
+            format!("function {ns}:{continuation}\nscoreboard players set {ctrl} mcfc 1\n"),
+        );
+        lines.push(guard.wrap(format!("function {ns}:{name}")));
+    }
+
+    /// The last line of every continuation: once the function has really
+    /// finished (not paused again), resume the caller that is waiting on it.
+    /// The stored name is removed before the call so it runs only once.
+    fn finish_line(&mut self, function: &IrFunction, depth: usize) -> String {
+        let ns = self.namespace.clone();
+        let resume = string_slot(depth, &function.name, "__resume");
+        let relative = format!("generated/{}__d{}__finish", sanitize(&function.name), depth);
+        self.files.insert(
+            format!("data/{ns}/function/{relative}.mcfunction"),
+            [
+                format!("data modify storage {ns}:runtime resume_call set from storage {ns}:runtime {resume}"),
+                format!("data remove storage {ns}:runtime {resume}"),
+                format!("function {ns}:generated/resume_caller with storage {ns}:runtime resume_call"),
+            ]
+            .join("\n")
+                + "\n",
+        );
+        self.files.insert(
+            format!("data/{ns}/function/generated/resume_caller.mcfunction"),
+            "$function $(fn)\n".to_string(),
+        );
+        format!(
+            "execute if score {} mcfc matches 0 if data storage {ns}:runtime {resume} run function {ns}:{relative}",
+            susp_slot(depth, &function.name)
+        )
+    }
+
     /// Write the text of the float at `source` to `target`. A macro prints
     /// floats without a leading zero (`.5`, `-.5`), so a shared helper adds
     /// it back. The helper uses fixed scratch storage, which is safe because
@@ -7642,6 +8039,204 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
             name: "__void".to_string(),
         },
     }
+}
+
+/// Set to 1 while the function is paused (sleeping, waiting on a host call,
+/// sorting or waiting on a paused callee), so its caller pauses too.
+fn susp_slot(depth: usize, function: &str) -> String {
+    format!("$d{}_{}__susp", depth, sanitize(function))
+}
+
+/// Functions that can pause: they sleep, wait on a host call, sort, or call a
+/// function that can. `async:` bodies pause on their own and don't count.
+pub(crate) fn suspending_functions(program: &IrProgram) -> BTreeSet<String> {
+    let mut set = BTreeSet::new();
+    loop {
+        let before = set.len();
+        for function in &program.functions {
+            if stmts_can_pause(&function.body, &set) {
+                set.insert(function.name.clone());
+            }
+        }
+        if set.len() == before {
+            return set;
+        }
+    }
+}
+
+fn stmts_can_pause(stmts: &[IrStmt], set: &BTreeSet<String>) -> bool {
+    let mut found = false;
+    visit_stmt_exprs(stmts, &mut |expr| found |= expr_calls_any(expr, set));
+    found
+        || stmts.iter().any(|stmt| match stmt {
+            IrStmt::Sleep { .. } | IrStmt::HostCall { .. } => true,
+            IrStmt::Expr(expr) => sort_receiver(expr).is_some(),
+            IrStmt::If {
+                then_body,
+                else_body,
+                ..
+            } => stmts_can_pause(then_body, set) || stmts_can_pause(else_body, set),
+            IrStmt::While { body, .. }
+            | IrStmt::For { body, .. }
+            | IrStmt::Context { body, .. } => stmts_can_pause(body, set),
+            _ => false,
+        })
+}
+
+/// Call `visit` on every expression directly in `stmts` (not in nested
+/// bodies, which the callers walk themselves).
+fn visit_stmt_exprs<'a>(stmts: &'a [IrStmt], visit: &mut dyn FnMut(&'a IrExpr)) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::Let { value, .. } | IrStmt::Expr(value) | IrStmt::Return(Some(value)) => {
+                visit(value)
+            }
+            IrStmt::Assign { target, value } => {
+                if let IrAssignTarget::Path(path) = target {
+                    visit(&path.base);
+                }
+                visit(value);
+            }
+            IrStmt::If { condition, .. } | IrStmt::While { condition, .. } => visit(condition),
+            IrStmt::For { kind, .. } => match kind {
+                IrForKind::Range { start, end, .. } => {
+                    visit(start);
+                    visit(end);
+                }
+                IrForKind::Each { iterable } => visit(iterable),
+            },
+            IrStmt::Context { anchor, .. } => visit(anchor),
+            IrStmt::MacroCommand { placeholders, .. } => {
+                placeholders.iter().for_each(|p| visit(&p.expr))
+            }
+            IrStmt::Sleep { duration, .. } => visit(duration),
+            IrStmt::HostCall { args, .. } => args.iter().for_each(&mut *visit),
+            _ => {}
+        }
+    }
+}
+
+/// The names of `set` functions called anywhere inside `expr`.
+fn calls_in_expr<'a>(expr: &'a IrExpr, set: &BTreeSet<String>, out: &mut Vec<&'a str>) {
+    let each = |exprs: &'a [IrExpr], out: &mut Vec<&'a str>| {
+        exprs.iter().for_each(|e| calls_in_expr(e, set, out))
+    };
+    match &expr.kind {
+        IrExprKind::Call { function, args } => {
+            if set.contains(function) {
+                out.push(function);
+            }
+            each(args, out);
+        }
+        IrExprKind::MethodCall { receiver, args, .. } => {
+            calls_in_expr(receiver, set, out);
+            each(args, out);
+        }
+        IrExprKind::ArrayLiteral(values) => each(values, out),
+        IrExprKind::DictLiteral(values) | IrExprKind::StructLiteral { fields: values, .. } => {
+            values.iter().for_each(|(_, v)| calls_in_expr(v, set, out))
+        }
+        IrExprKind::InterpolatedString { placeholders, .. } => placeholders
+            .iter()
+            .for_each(|p| calls_in_expr(&p.expr, set, out)),
+        IrExprKind::Binary { left, right, .. } => {
+            calls_in_expr(left, set, out);
+            calls_in_expr(right, set, out);
+        }
+        IrExprKind::At { anchor, value } | IrExprKind::As { anchor, value } => {
+            calls_in_expr(anchor, set, out);
+            calls_in_expr(value, set, out);
+        }
+        IrExprKind::Unary { expr, .. }
+        | IrExprKind::Single(expr)
+        | IrExprKind::Exists(expr)
+        | IrExprKind::HasData(expr)
+        | IrExprKind::Cast { expr, .. } => calls_in_expr(expr, set, out),
+        IrExprKind::Path(path) => calls_in_expr(&path.base, set, out),
+        _ => {}
+    }
+}
+
+fn expr_calls_any(expr: &IrExpr, set: &BTreeSet<String>) -> bool {
+    let mut out = Vec::new();
+    calls_in_expr(expr, set, &mut out);
+    !out.is_empty()
+}
+
+/// A statement that is exactly a call to a function that can pause, in one
+/// of the positions that can wait for it.
+fn suspending_call<'a>(stmt: &'a IrStmt, set: &BTreeSet<String>) -> Option<(&'a IrExpr, &'a str)> {
+    let value = match stmt {
+        IrStmt::Let { value, .. }
+        | IrStmt::Assign {
+            target: IrAssignTarget::Variable(_),
+            value,
+        }
+        | IrStmt::Expr(value)
+        | IrStmt::Return(Some(value)) => value,
+        _ => return None,
+    };
+    match &value.kind {
+        IrExprKind::Call { function, .. } if set.contains(function) => Some((value, function)),
+        _ => None,
+    }
+}
+
+fn sort_receiver(expr: &IrExpr) -> Option<&IrExpr> {
+    match &expr.kind {
+        IrExprKind::MethodCall {
+            receiver, method, ..
+        } if method == "sort" && matches!(receiver.ty, Type::Array(_)) => Some(receiver),
+        _ => None,
+    }
+}
+
+/// Calls to functions that can pause in places that cannot wait, such as
+/// inside a condition or another call's arguments. Returns (caller, callee).
+pub(crate) fn misplaced_suspending_calls(program: &IrProgram) -> Vec<(String, String)> {
+    fn walk(stmts: &[IrStmt], set: &BTreeSet<String>, out: &mut Vec<String>) {
+        for stmt in stmts {
+            let mut found = Vec::new();
+            if let Some((call, _)) = suspending_call(stmt, set) {
+                if let IrExprKind::Call { args, .. } = &call.kind {
+                    args.iter()
+                        .for_each(|arg| calls_in_expr(arg, set, &mut found));
+                }
+            } else {
+                visit_stmt_exprs(std::slice::from_ref(stmt), &mut |expr| {
+                    calls_in_expr(expr, set, &mut found)
+                });
+            }
+            out.extend(found.into_iter().map(str::to_string));
+            match stmt {
+                IrStmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    walk(then_body, set, out);
+                    walk(else_body, set, out);
+                }
+                IrStmt::While { body, .. }
+                | IrStmt::For { body, .. }
+                | IrStmt::Context { body, .. } => walk(body, set, out),
+                _ => {}
+            }
+        }
+    }
+    let set = suspending_functions(program);
+    let mut misplaced = Vec::new();
+    for function in &program.functions {
+        let mut callees = Vec::new();
+        walk(&function.body, &set, &mut callees);
+        callees.dedup();
+        misplaced.extend(
+            callees
+                .into_iter()
+                .map(|callee| (function.name.clone(), callee)),
+        );
+    }
+    misplaced
 }
 
 fn control_slot(depth: usize, function: &str) -> String {

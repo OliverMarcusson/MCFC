@@ -3649,7 +3649,7 @@ fn type_check_method_call(
                 ref_kind: RefKind::Unknown,
             })
         }
-        "clear" | "insert" | "reverse" | "first" | "last" | "contains" | "index_of"
+        "clear" | "insert" | "reverse" | "sort" | "first" | "last" | "contains" | "index_of"
             if matches!(receiver.ty, Type::Array(_)) =>
         {
             let Type::Array(element) = receiver.ty.clone() else {
@@ -3663,7 +3663,16 @@ fn type_check_method_call(
                 _ => (0, None),
             };
             expect_arity(method, &args, arity, expr, diagnostics);
-            let mutates = matches!(method, "clear" | "insert" | "reverse");
+            let mutates = matches!(method, "clear" | "insert" | "reverse" | "sort");
+            if method == "sort" && element != Type::Int {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "sort() needs 'array<int>', found 'array<{}>'",
+                        element.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
             if mutates && !is_storage_lvalue_expr(receiver_expr) {
                 diagnostics.push(Diagnostic::new(
                     format!(

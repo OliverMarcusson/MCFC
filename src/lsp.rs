@@ -2920,6 +2920,7 @@ fn array_method_items() -> Vec<CompletionItem> {
             "index_of(${1:value})",
         ),
         ("reverse", "array<T>.reverse() -> void", "reverse()"),
+        ("sort", "array<int>.sort() -> void", "sort()"),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {

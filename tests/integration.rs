@@ -2891,12 +2891,12 @@ fn main() -> void:
 #[test]
 fn std_array_str_and_math_helpers_compile() {
     let source = r#"
-use std::array::sort
 use std::str::{starts_with, contains}
 use std::math::{gcd, lerp}
 
 fn main() -> void:
-    let xs = sort([5, 3, 9, 1])
+    let xs = [5, 3, 9, 1]
+    xs.sort()
     let total = std::array::sum(xs)
     let a = starts_with("minecraft:stone", "minecraft:")
     let d = contains("hello", "ll")
@@ -2929,7 +2929,6 @@ fn main() -> void:
     assert_eq!(
         names,
         [
-            "std::array::sort",
             "std::array::sum",
             "std::math::abs",
             "std::math::gcd",
@@ -2939,13 +2938,28 @@ fn main() -> void:
             "std::str::starts_with",
         ]
     );
-    let sort_files = result
-        .artifacts
-        .files
-        .iter()
-        .filter(|(path, _)| path.contains("std__array__sort"))
-        .count();
-    assert!(sort_files > 1, "sort should lower to loop blocks");
+    assert!(
+        result
+            .artifacts
+            .files
+            .keys()
+            .any(|path| path.ends_with("generated/sort_step.mcfunction")),
+        "sort() should write the merge helpers"
+    );
+}
+
+#[test]
+fn sort_needs_an_int_array() {
+    let source = r#"
+fn main() -> void:
+    let names = ["b", "a"]
+    names.sort()
+"#;
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(
+        error.to_string().contains("sort() needs 'array<int>'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -3028,4 +3042,87 @@ fn main() -> void:
             .unwrap()
             .contains("set value \"0$(out)\"")
     );
+}
+
+fn generated(result: &mcfc::compiler::CompileResult, name: &str) -> String {
+    result
+        .artifacts
+        .files
+        .iter()
+        .find(|(path, _)| path.ends_with(&format!("generated/{name}.mcfunction")))
+        .map(|(_, body)| body.clone())
+        .unwrap_or_else(|| panic!("missing {name}"))
+}
+
+#[test]
+fn sleeping_callee_pauses_the_caller() {
+    let source = r#"
+fn wait() -> int:
+    sleep_ticks(1)
+    return 7
+
+fn main() -> void:
+    let x = wait()
+    mcf "say after $(x)"
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    let main = generated(&result, "main__d0__entry");
+    assert!(!main.contains("say after"), "the rest must wait:\n{main}");
+    assert!(
+        main.contains(
+            "frames.d1.wait.__resume.fn set value \"mcfc:generated/main__d0__sleep_resume_"
+        ),
+        "{main}"
+    );
+    assert!(
+        main.contains("scoreboard players set $d0_main__susp mcfc 1"),
+        "{main}"
+    );
+    let resume = result
+        .artifacts
+        .files
+        .iter()
+        .find(|(path, _)| path.contains("generated/wait__d1__sleep_resume_"))
+        .map(|(_, body)| body.clone())
+        .expect("wait resume");
+    assert!(
+        resume.ends_with("run function mcfc:generated/wait__d1__finish\n"),
+        "{resume}"
+    );
+}
+
+#[test]
+fn pausing_call_inside_an_expression_is_an_error() {
+    let source = r#"
+fn wait() -> int:
+    sleep_ticks(1)
+    return 7
+
+fn main() -> void:
+    if wait() > 3:
+        mc "say big"
+"#;
+    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("'wait' can pause"), "{error}");
+}
+
+#[test]
+fn sort_runs_in_slices_across_ticks() {
+    let source = r#"
+fn main() -> void:
+    let xs = [3, 1, 2]
+    xs.sort()
+    mc "say sorted"
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    assert!(generated(&result, "sort_slice").contains("#sort_budget mcfc 1000"));
+    let tick = result
+        .artifacts
+        .files
+        .iter()
+        .find(|(path, _)| path.contains("generated/main__d0__sort_tick_"))
+        .map(|(_, body)| body.clone())
+        .expect("sort tick");
+    assert!(tick.contains("matches 0 run schedule function mcfc:generated/main__d0__sort_tick_"));
+    assert!(!generated(&result, "main__d0__entry").contains("say sorted"));
 }

@@ -135,7 +135,7 @@ fn main() -> void:
 ```
 
 `std::math` provides `min`, `max`, `abs`, `sign`, `clamp`, `rem`, `pow`, `gcd`,
-and `lerp`. `std::array` provides `sum`, `min`, `max`, and `sort` for
+and `lerp`. `std::array` provides `sum`, `min`, and `max` for
 `array<int>`. `std::str` provides `starts_with`, `ends_with`, `find`, and
 `contains`.
 Functions that nothing reaches, including unused `std` functions, are dropped
@@ -582,6 +582,7 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `array<T>.contains(value: T) -> bool`
 - `array<T>.index_of(value: T) -> int`, or `-1` when missing
 - `array<T>.reverse() -> void`, in place
+- `array<int>.sort() -> void`, in place, smallest first
 - `dict<T>.has(key: string) -> bool`
 - `dict<T>.remove(key: string) -> void`
 
@@ -713,6 +714,23 @@ That means:
 - a plain `sleep(...)` in normal code pauses the current path
 - a `sleep(...)` inside `async:` pauses only that async branch
 - `sleep(...)` and `sleep_ticks(...)` are statement-only and cannot be used as values
+
+A function that sleeps, sorts, or waits on a host call can pause. Calling it
+pauses the caller too, and the caller carries on once the callee finishes:
+
+```mcfc
+fn wait_then_double(n: int) -> int:
+    sleep_ticks(20)
+    return n * 2
+
+fn main() -> void:
+    let x = wait_then_double(4)
+    debug("one second later, x is $(x)")
+```
+
+A call to a function that can pause has to be a statement of its own:
+`f()`, `let x = f()`, `x = f()`, or `return f()`. Inside a condition or
+another expression, it is a compile error.
 
 `random()` helpers return inclusive integer ranges because they map directly to Minecraft `random value`.
 

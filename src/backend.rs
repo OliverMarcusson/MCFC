@@ -458,6 +458,7 @@ impl Backend {
             if function.generated
                 || function.name == "main"
                 || function.name == "tick"
+                || function.name.starts_with("std::")
                 || is_bukkit_generated_function(&function.name)
                 || !function.params.is_empty()
                 || function.return_type != Type::Void

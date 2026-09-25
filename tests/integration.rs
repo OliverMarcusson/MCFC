@@ -1467,7 +1467,7 @@ fn compiles_has_data_with_dynamic_storage_nbt_paths() {
 fn probe(store: dict<nbt>, key: string, index: int) -> bool:
     return has_data(store[key].items[index].name)
 fn main() -> void:
-    return
+    let found = probe({"a": item("minecraft:stone").as_nbt()}, "a", 0)
 "#;
 
     let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
@@ -2440,6 +2440,50 @@ pub fn reset(p: Points) -> void:
         error.contains("function 'base' is private to module 'game'"),
         "{error}"
     );
+}
+
+#[test]
+fn std_is_available_and_unused_functions_are_pruned() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        r#"use std::math::clamp
+
+fn main() -> void:
+    let hp = clamp(150, 0, std::math::max(1, 100))
+
+fn unused(x: int) -> int:
+    return x
+"#,
+    )
+    .unwrap();
+
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &CompileOptions::default(),
+    )
+    .expect("std should resolve");
+    let mut names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["main", "std::math::clamp", "std::math::max"]);
+
+    fs::write(src_dir.join("main.mcf"), "mod std\n").unwrap();
+    let error = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &CompileOptions::default(),
+    )
+    .expect_err("std is reserved");
+    assert!(error.contains("'std' is reserved"), "{error}");
 }
 
 fn temp_path() -> PathBuf {

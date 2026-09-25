@@ -123,6 +123,22 @@ pub fn double(x: int) -> int:
 
 See `docs/language/reference/statements/mod.md` and `use.md` for the full rules.
 
+### Standard library
+
+The `std` module is available everywhere without a `mod` declaration:
+
+```mcfc
+use std::math::clamp
+
+fn main() -> void:
+    let hp = clamp(150, 0, 100)
+```
+
+`std::math` provides `min`, `max`, `abs`, `sign`, `clamp`, `rem`, and `pow`.
+Functions that nothing reaches, including unused `std` functions, are dropped
+after type checking. The starting points are `main`, `tick`, event, command,
+and task handlers, `[[export]]` functions, and zero-argument `void` functions.
+
 ### Vanilla Bukkit-style declarations
 
 MCFC includes a small vanilla-safe surface inspired by Bukkit/Paper. These

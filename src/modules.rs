@@ -31,8 +31,27 @@ pub struct LoadedModules {
     pub modules: Vec<ModuleSource>,
 }
 
+/// The standard library, compiled into the binary and loaded as module `std`.
+const STD_ROOT: &str = "<std>";
+const STD_FILES: &[(&str, &str)] = &[
+    ("mod.mcf", include_str!("../std/mod.mcf")),
+    ("math.mcf", include_str!("../std/math.mcf")),
+];
+
+fn std_source(file: &Path) -> Option<&'static str> {
+    let relative = file.strip_prefix(STD_ROOT).ok()?;
+    STD_FILES
+        .iter()
+        .find(|(name, _)| Path::new(name) == relative)
+        .map(|(_, source)| *source)
+}
+
+fn exists(file: &Path) -> bool {
+    std_source(file).is_some() || file.is_file()
+}
+
 /// Loads `root` plus every module reachable through `mod` declarations,
-/// depth-first, into one merged source.
+/// depth-first, into one merged source, followed by the `std` module.
 pub fn load(
     root: &Path,
     read: &dyn Fn(&Path) -> Result<String, String>,
@@ -42,6 +61,12 @@ pub fn load(
         modules: Vec::new(),
     };
     load_module(root, Vec::new(), read, &mut loaded)?;
+    load_module(
+        &Path::new(STD_ROOT).join("mod.mcf"),
+        vec!["std".to_string()],
+        read,
+        &mut loaded,
+    )?;
     Ok(loaded)
 }
 
@@ -51,7 +76,10 @@ fn load_module(
     read: &dyn Fn(&Path) -> Result<String, String>,
     loaded: &mut LoadedModules,
 ) -> Result<(), String> {
-    let source = read(file)?;
+    let source = match std_source(file) {
+        Some(source) => source.to_string(),
+        None => read(file)?,
+    };
     loaded
         .merged
         .push_str(&format!("# source: {}\n", file.display()));
@@ -82,9 +110,16 @@ fn load_module(
             continue; // `resolve` reports the duplicate declaration.
         }
         seen.push(name.clone());
+        if path.is_empty() && name == "std" {
+            return Err(format!(
+                "error:{}:{}: 'std' is reserved for the standard library",
+                file.display(),
+                line
+            ));
+        }
         let flat = dir.join(format!("{name}.mcf"));
         let nested = dir.join(&name).join("mod.mcf");
-        let child = match (flat.is_file(), nested.is_file()) {
+        let child = match (exists(&flat), exists(&nested)) {
             (true, false) => flat,
             (false, true) => nested,
             (true, true) => {
@@ -212,6 +247,13 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
                 decl.span.clone(),
             ));
         }
+    }
+    // `std` is implicitly a public child of the root, like Rust's prelude crate.
+    if let Some(std) = modules.iter().position(|module| module.path == ["std"]) {
+        modules[0]
+            .children
+            .entry("std".to_string())
+            .or_insert((std, true));
     }
     let function_modules: Vec<usize> = program
         .functions

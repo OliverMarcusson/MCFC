@@ -84,6 +84,7 @@ export default defineConfig({
               { text: 'function calls', link: '/language/reference/statements/call' }
             ]
           },
+          { text: 'Standard Library: std', link: '/language/reference/std' },
           { text: 'Raw Commands: mc', link: '/language/reference/raw-mc' },
           { text: 'Macro Commands: mcf', link: '/language/reference/macro-mcf' },
           { text: 'Built-in Types', link: '/language/reference/builtin-types' },

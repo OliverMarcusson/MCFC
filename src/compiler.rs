@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,7 +79,8 @@ pub fn compile_source(
     let ast = modules::resolve(ast, &options.modules)?;
     let ast = normalize_special_functions(ast)?;
     let host_modules = HostModules::from_helper(options.helper.as_ref());
-    let typed_program = types::type_check(&ast, &host_modules)?;
+    let typed_program =
+        prune_unreachable(types::type_check(&ast, &host_modules)?, &options.exports);
     let ir_program = ir::lower(&typed_program);
     validate_decision_handlers(&ir_program)?;
     let ir_program = if options.optimize {
@@ -101,6 +103,48 @@ pub fn compile_source(
         ir_program,
         artifacts,
     })
+}
+
+/// Drops functions nothing can reach, so unused helpers (and unused `std`
+/// functions) never reach the datapack. Everything is still type-checked first.
+/// Roots: `main`, `tick`, event/command/task handlers, `[[export]]` functions,
+/// and the zero-argument `void` functions the backend auto-exports.
+fn prune_unreachable(mut program: TypedProgram, exports: &[ExportedFunction]) -> TypedProgram {
+    let mut reachable: BTreeSet<String> = program
+        .functions
+        .iter()
+        .filter(|function| {
+            let auto_exported = function.params.is_empty()
+                && function.return_type == Type::Void
+                && !function.name.starts_with("std::");
+            function.name == "main"
+                || function.name == "tick"
+                || function.name.starts_with("__mcfc_")
+                || auto_exported
+                || exports
+                    .iter()
+                    .any(|export| export.function == function.name)
+        })
+        .map(|function| function.name.clone())
+        .collect();
+    let mut pending: Vec<String> = reachable.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        let Some(function) = program.functions.iter().find(|f| f.name == name) else {
+            continue;
+        };
+        for callee in &function.called_functions {
+            if reachable.insert(callee.clone()) {
+                pending.push(callee.clone());
+            }
+        }
+    }
+    program
+        .functions
+        .retain(|function| reachable.contains(&function.name));
+    program
+        .call_depths
+        .retain(|name, _| reachable.contains(name));
+    program
 }
 
 fn validate_decision_handlers(program: &IrProgram) -> Result<(), Diagnostics> {

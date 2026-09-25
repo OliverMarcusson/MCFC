@@ -759,9 +759,12 @@ impl Backend {
         else {
             return Vec::new();
         };
-        if !snapshot.analysis.functions.iter().any(|function| {
-            is_named(&function.name, word) && !function.name.starts_with("__mcfc_")
-        }) {
+        if !snapshot
+            .analysis
+            .functions
+            .iter()
+            .any(|function| is_named(&function.name, word) && !function.name.starts_with("__mcfc_"))
+        {
             return Vec::new();
         }
         snapshot

@@ -21,6 +21,7 @@ Generated files are deterministic and use reserved generated paths under the pac
 - `fn tick() -> void:` becomes the datapack tick entrypoint.
 - Exported functions get public wrapper `.mcfunction` files so Minecraft can call them directly.
 - Bukkit-style `event`, `command`, and `task` declarations lower to generated dispatcher functions.
+- Functions nothing can reach are dropped after type checking. The starting points are `main`, `tick`, `event`/`command`/`task` handlers, `[[export]]` functions, and your zero-argument `void` functions. Unused helpers and unused `std` functions therefore add nothing to the pack, although they are still checked for errors.
 - Functions in child modules compile under their full path. `util::double` uses generated names such as `generated/util__double__d0__entry` and scoreboard slots such as `$d0_util__double_x`. Its public wrapper, when it has one, is `data/<namespace>/function/util/double.mcfunction`.
 
 ## Value Representation

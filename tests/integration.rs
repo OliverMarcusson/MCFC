@@ -3483,6 +3483,159 @@ void main() {
 }
 
 #[test]
+fn datapack_entity_system_methods_lower_to_commands_and_predicates() {
+    let source = r#"
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    pig.setVelocity(0.25, 0.5, -0.75);
+    player.setAttribute("minecraft:gravity", 0.04);
+    var gravity = player.getAttribute("minecraft:gravity");
+    player.setRotation(90.0, 0.0);
+    player.lookAt(pig);
+    var yaw = pig.yawTo(player);
+    var pitch = pig.pitchTo(player);
+    var jumping = player.getCurrentInput().isJump();
+    player.addVelocity(0.1, 0.2, 0.3);
+    pig.addVelocity(0.0, 0.5, 0.0);
+    player.setHealth(10.0);
+    pig.setHealth(4.0);
+    player.setFoodLevel(14);
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("systems methods should compile");
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    for expected in [
+        "Motion set from storage",
+        "attribute $(selector) $(arg0) base set $(arg1)",
+        "attribute $(selector) $(arg0) get 1000",
+        "rotate $(selector) $(arg0) $(arg1)",
+        "rotate $(selector) facing entity $(arg0) feet",
+        "Rotation[0] 1000",
+        "Rotation[1] 1000",
+        "if predicate mcfc:mcfc_input_jump",
+        "run function mcfc:generated/impulse",
+        "unless entity @s[type=minecraft:player] store result entity @s Motion[1] double 0.0001",
+        "run function mcfc:generated/set_health",
+        "unless entity @s[type=minecraft:player] run data modify entity @s Health",
+        "mcfc_food_goal",
+        "minecraft:saturation",
+        "minecraft:hunger",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+    let predicate = result
+        .artifacts
+        .files
+        .get("data/mcfc/predicate/mcfc_input_jump.json")
+        .unwrap();
+    assert!(predicate.contains("\"jump\":true"));
+}
+
+/// Replays the scoreboard half of the generated impulse function and checks
+/// that the bit scores the enchantment reads add back up to the input.
+#[test]
+fn player_impulse_bits_reconstruct_the_velocity() {
+    let source = r#"
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    player.addVelocity(0.1, 0.2, 0.3);
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("addVelocity should compile");
+    let files = &result.artifacts.files;
+    let enchantment = files.get("data/mcfc/enchantment/impulse.json").unwrap();
+    assert_eq!(enchantment.matches("minecraft:apply_impulse").count(), 96);
+    assert!(enchantment.contains("\"name\":\"#impulse_0_31\""));
+    assert!(enchantment.contains("\"magnitude\":-214748.3648"));
+    let body = files
+        .get("data/mcfc/function/generated/impulse.mcfunction")
+        .unwrap();
+    let lines: Vec<&str> = body
+        .lines()
+        .filter(|line| line.contains("#impulse_0") && !line.contains("data get"))
+        .collect();
+    let in_range = |value: i64, range: &str| {
+        let (low, high) = range.split_once("..").unwrap_or((range, range));
+        low.parse().map_or(true, |low: i64| value >= low)
+            && high.parse().map_or(true, |high: i64| value <= high)
+    };
+    for input in [0i64, 1, -1, 1000, -98765, i32::MIN as i64, i32::MAX as i64] {
+        let mut scores = std::collections::HashMap::from([("#impulse_0".to_string(), input)]);
+        for line in &lines {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let mut index = 0;
+            let mut passed = true;
+            let mut success = None;
+            if tokens[0] == "execute" {
+                index = 1;
+                while tokens[index] != "run" {
+                    if tokens[index] == "if" {
+                        passed &= in_range(scores[tokens[index + 2]], tokens[index + 5]);
+                        index += 6;
+                    } else {
+                        success = Some(tokens[index + 3]);
+                        index += 5;
+                    }
+                }
+                index += 1;
+            }
+            if !passed {
+                continue;
+            }
+            let (name, amount) = (tokens[index + 3], tokens[index + 5].parse::<i64>().unwrap());
+            let score = scores.entry(name.to_string()).or_insert(0);
+            match tokens[index + 2] {
+                "set" => *score = amount,
+                "add" => *score += amount,
+                _ => *score -= amount,
+            }
+            if let Some(target) = success {
+                scores.insert(target.to_string(), 1);
+            }
+        }
+        let rebuilt: i64 = (0..32)
+            .map(|bit| {
+                let step = if bit == 31 {
+                    -(1i64 << 31)
+                } else {
+                    1i64 << bit
+                };
+                scores[&format!("#impulse_0_{bit}")] * step
+            })
+            .sum();
+        assert_eq!(rebuilt, input, "bits for {input}");
+    }
+}
+
+#[test]
+fn standard_attribute_enum_resolves_to_minecraft_ids() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        r#"import std.attribute.Attribute;
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    player.setAttribute(Attribute.GRAVITY, 0.04);
+}
+"#,
+    )
+    .unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("standard attribute enum should resolve");
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    assert!(output.contains("minecraft:gravity"));
+    fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
 fn float_text_restores_the_leading_zero() {
     let source = r#"
 void main() {

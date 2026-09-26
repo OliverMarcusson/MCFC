@@ -17,6 +17,15 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | `teleport(to: Entity \| Block)` | Moves the entity | `teleport` |
 | `damage(amount: int)` | Deals damage | `damage` |
 | `heal(amount: int)` | Restores health. Non-player references only. | NBT write |
+| `setVelocity(x: float, y: float, z: float)` | Replaces `Motion` on a known non-player entity. | NBT write |
+| `addVelocity(x: float, y: float, z: float)` | Adds world-space motion in blocks per tick. | `Motion` NBT, or a generated `apply_impulse` enchantment for players |
+| `setHealth(points: float)` | Sets health, capped at max health. Zero or less kills. | `Health` NBT, or a max-health cap and instant heal for players |
+| `setFoodLevel(level: int)` | Moves a player's food level toward `level` over ticks. | Status effects and a generated tick function |
+| `getAttribute(id: String \| Attribute)` | Reads an entity's effective attribute value as `float`, to 0.001 precision. | `attribute ... get` |
+| `setAttribute(id: String \| Attribute, value: float)` | Sets an entity's base attribute value. | `attribute ... base set` |
+| `setRotation(yaw: float, pitch: float)` | Sets rotation in degrees. | `rotate` |
+| `lookAt(target: Entity \| Block)` | Rotates to face a target's feet or a block position. | `rotate ... facing` |
+| `yawTo(target: Entity \| Block)`, `pitchTo(target: Entity \| Block)` | Reads the facing angle toward a target. | Temporary marker and `Rotation` NBT |
 | `effect(id, seconds: int, amplifier: int)` | Applies a status effect | `effect give` |
 | `give(id, count: int)`, `give(ItemStack)` | Gives items | `give` |
 | `clear(id, count: int)` | Removes items | `clear` |
@@ -70,6 +79,7 @@ Each call reads the entity's NBT again, so store the result in a `var` if you ne
 | `getYaw()`, `getPitch()` | `float`, in degrees |
 | `getLookX()`, `getLookY()`, `getLookZ()` | `float`, the unit vector the entity is facing |
 | `getHealth()` | `float` |
+| `getCurrentInput().isForward()`, `isBackward()`, `isLeft()`, `isRight()`, `isJump()`, `isSneak()`, `isSprint()` | `boolean`, current movement key state. Players only. |
 | `distanceTo(other: Entity)` | `float` |
 | `getFoodLevel()` | `int`, 0 to 20. Players only. |
 | `getLevel()` | `int`. Players only. |
@@ -87,3 +97,23 @@ void main() {
     }
 }
 ```
+
+## Movement, attributes, and input
+
+```mcfc
+import std.attribute.Attribute;
+
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    player.setAttribute(Attribute.GRAVITY, 0.04);
+    if (player.getCurrentInput().isJump()) {
+        pig.setVelocity(0.0, 0.5, 0.0);
+        player.lookAt(pig);
+    }
+}
+```
+
+`Attribute` is imported from `std.attribute`. It defines `MOVEMENT_SPEED`, `JUMP_STRENGTH`, `GRAVITY`, `STEP_HEIGHT`, `SCALE`, `SAFE_FALL_DISTANCE`, and `KNOCKBACK_RESISTANCE`. Pass a string ID for other attributes. `getAttribute` reads the effective value; `setAttribute` changes the base value, so modifiers can make a later read differ.
+
+Players ignore `Motion` writes, so `addVelocity` briefly equips an enchanted saddle and swaps game mode to fire `apply_impulse`. It does not apply to mounted or spectator players, and it uses the saddle slot. To push a player along their view, scale `getLookX()`, `getLookY()`, and `getLookZ()`. On players, `setHealth` lands on the next player tick and the max health cap lasts two ticks. `setFoodLevel` uses saturation or hunger until the requested level is observed; it can take several ticks and can interfere with existing hunger effects. The target is clamped to 0–20.

@@ -37,6 +37,7 @@ pub struct LoadedModules {
 /// The standard library, compiled into the binary and loaded as module `std`.
 const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
+    ("attribute.mcf", include_str!("../std/attribute.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),

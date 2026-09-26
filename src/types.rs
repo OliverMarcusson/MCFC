@@ -4382,6 +4382,47 @@ fn type_check_method_call(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
+    // Keep the input view tied to its player; it has no stored representation.
+    if let ExprKind::MethodCall {
+        receiver: player,
+        method: input,
+        args: input_args,
+    } = &receiver.kind
+        && input == "getCurrentInput"
+        && let Some(key) = method.strip_prefix("is")
+        && matches!(
+            key,
+            "Forward" | "Backward" | "Left" | "Right" | "Jump" | "Sneak" | "Sprint"
+        )
+    {
+        if !input_args.is_empty() || !args.is_empty() {
+            diagnostics.push(Diagnostic::new(
+                "getCurrentInput() and its checks take no arguments",
+                expr.span.clone(),
+            ));
+        }
+        let checked = type_check_expr(
+            player,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        );
+        if checked.ty != Type::PlayerRef && checked.ref_kind != RefKind::Player {
+            diagnostics.push(Diagnostic::new(
+                "getCurrentInput() requires a Player receiver",
+                expr.span.clone(),
+            ));
+        }
+        return Some(method_call_expr(
+            checked,
+            &format!("input_{}", key.to_ascii_lowercase()),
+            Vec::new(),
+            Type::Bool,
+        ));
+    }
     let recheck = |kind: ExprKind, called: &mut BTreeSet<String>, diagnostics: &mut Diagnostics| {
         let rewritten = Expr {
             kind,
@@ -5140,6 +5181,145 @@ fn type_check_method_call(
             expect_arity(method, &args, 1, expr, diagnostics);
             expect_arg_type(method, &args, 0, Type::Int, "amount", expr, diagnostics);
             Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "setVelocity" => {
+            if receiver.ref_kind != RefKind::NonPlayer {
+                diagnostics.push(Diagnostic::new(
+                    "setVelocity() requires a known non-player Entity; use addVelocity() for players",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 3, expr, diagnostics);
+            for (index, name) in ["x", "y", "z"].iter().enumerate() {
+                expect_arg_type(method, &args, index, Type::Float, name, expr, diagnostics);
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "addVelocity" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "addVelocity() requires an Entity receiver",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 3, expr, diagnostics);
+            for (index, name) in ["x", "y", "z"].iter().enumerate() {
+                expect_arg_type(method, &args, index, Type::Float, name, expr, diagnostics);
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "setHealth" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "setHealth() requires an Entity receiver",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::Float, "health", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "setFoodLevel" => {
+            if receiver.ty != Type::PlayerRef && receiver.ref_kind != RefKind::Player {
+                diagnostics.push(Diagnostic::new(
+                    "setFoodLevel() requires a Player receiver",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::Int, "food level", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "getAttribute" | "setAttribute" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires an Entity receiver"),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(
+                method,
+                &args,
+                if method == "getAttribute" { 1 } else { 2 },
+                expr,
+                diagnostics,
+            );
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| {
+                    ty == &Type::String
+                        || matches!(ty, Type::Enum(name) if name == "std::attribute::Attribute")
+                },
+                "a String or std.attribute.Attribute",
+                "attribute id",
+                expr,
+                diagnostics,
+            );
+            if method == "setAttribute" {
+                expect_arg_type(
+                    method,
+                    &args,
+                    1,
+                    Type::Float,
+                    "base value",
+                    expr,
+                    diagnostics,
+                );
+            }
+            Some(method_call_expr(
+                receiver,
+                method,
+                args,
+                if method == "getAttribute" {
+                    Type::Float
+                } else {
+                    Type::Void
+                },
+            ))
+        }
+        "setRotation" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 2, expr, diagnostics);
+            expect_arg_type(method, &args, 0, Type::Float, "yaw", expr, diagnostics);
+            expect_arg_type(method, &args, 1, Type::Float, "pitch", expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "lookAt" => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::BlockRef),
+                "an Entity or Block",
+                "target",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "yawTo" | "pitchTo" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires an Entity receiver"),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::BlockRef),
+                "an Entity or Block",
+                "target",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, method, args, Type::Float))
         }
         "clear" if receiver.ty == Type::ItemSlot => {
             expect_arity(method, &args, 0, expr, diagnostics);

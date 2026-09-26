@@ -1555,6 +1555,23 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "teleport" => Some("```mcfc\nentity.teleport(destination: Entity|Block) -> void\n```"),
         "damage" => Some("```mcfc\nentity.damage(amount: int) -> void\n```"),
         "heal" => Some("```mcfc\nentity.heal(amount: int) -> void\n```"),
+        "setVelocity" => {
+            Some("`Entity.setVelocity(x: float, y: float, z: float) -> void` (non-player entities)")
+        }
+        "getAttribute" => Some("`Entity.getAttribute(id: String|Attribute) -> float`"),
+        "setAttribute" => Some("`Entity.setAttribute(id: String|Attribute, value: float) -> void`"),
+        "setRotation" => Some("`Entity.setRotation(yaw: float, pitch: float) -> void`"),
+        "addVelocity" => Some("`Entity.addVelocity(x: float, y: float, z: float) -> void`"),
+        "lookAt" => Some("`Entity.lookAt(target: Entity|Block) -> void`"),
+        "yawTo" => Some("`Entity.yawTo(target: Entity|Block) -> float`"),
+        "pitchTo" => Some("`Entity.pitchTo(target: Entity|Block) -> float`"),
+        "setHealth" => {
+            Some("`Entity.setHealth(points: float) -> void` (players finish on a later tick)")
+        }
+        "setFoodLevel" => Some("`Player.setFoodLevel(level: int) -> void` (converges over ticks)"),
+        "getCurrentInput" => Some(
+            "`Player.getCurrentInput().isForward()` and the other movement key checks return boolean.",
+        ),
         "give" => Some(
             "```mcfc\nentity.give(itemId: String, count: int) -> void\nentity.give(stack: ItemStack) -> void\n```",
         ),
@@ -2573,6 +2590,20 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::Selector) => selector_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
+        Some(CompletionReceiver::PlayerInput) => [
+            "Forward", "Backward", "Left", "Right", "Jump", "Sneak", "Sprint",
+        ]
+        .into_iter()
+        .map(|direction| {
+            let method = format!("is{direction}");
+            snippet_item(
+                &method,
+                CompletionItemKind::METHOD,
+                &format!("player.getCurrentInput().{method}() -> boolean"),
+                &format!("{method}()"),
+            )
+        })
+        .collect(),
         Some(CompletionReceiver::EntityDef) => entity_def_items(),
         Some(CompletionReceiver::ItemDef) => item_def_items(),
         Some(CompletionReceiver::TextDef) => text_def_items(),
@@ -3002,6 +3033,60 @@ fn optional_method_items() -> Vec<CompletionItem> {
 fn generic_entity_root_items() -> Vec<CompletionItem> {
     [
         (
+            "setVelocity",
+            "entity.setVelocity(x: float, y: float, z: float) -> void",
+            "setVelocity(${1:x}, ${2:y}, ${3:z})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "getAttribute",
+            "entity.getAttribute(id: String|Attribute) -> float",
+            "getAttribute(${1:id})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setAttribute",
+            "entity.setAttribute(id: String|Attribute, value: float) -> void",
+            "setAttribute(${1:id}, ${2:value})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setHealth",
+            "entity.setHealth(points: float) -> void",
+            "setHealth(${1:points})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "addVelocity",
+            "entity.addVelocity(x: float, y: float, z: float) -> void",
+            "addVelocity(${1:x}, ${2:y}, ${3:z})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setRotation",
+            "entity.setRotation(yaw: float, pitch: float) -> void",
+            "setRotation(${1:yaw}, ${2:pitch})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "lookAt",
+            "entity.lookAt(target: Entity|Block) -> void",
+            "lookAt(${1:target})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "yawTo",
+            "entity.yawTo(target: Entity|Block) -> float",
+            "yawTo(${1:target})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "pitchTo",
+            "entity.pitchTo(target: Entity|Block) -> float",
+            "pitchTo(${1:target})",
+            CompletionItemKind::METHOD,
+        ),
+        (
             "getX",
             "entity.getX() -> float",
             "getX()",
@@ -3225,6 +3310,7 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
 
 fn player_entity_root_items() -> Vec<CompletionItem> {
     let mut items = generic_entity_root_items();
+    items.retain(|item| item.label != "setVelocity");
     for item in &mut items {
         match item.label.as_str() {
             "nbt" => item.detail = Some("player.nbt.* read namespace".to_string()),
@@ -3249,6 +3335,16 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
     );
     items.extend(
         [
+            (
+                "setFoodLevel",
+                "player.setFoodLevel(level: int) -> void",
+                "setFoodLevel(${1:level})",
+            ),
+            (
+                "getCurrentInput",
+                "player.getCurrentInput() -> input view",
+                "getCurrentInput()",
+            ),
             (
                 "getFoodLevel",
                 "player.getFoodLevel() -> int",
@@ -3941,6 +4037,7 @@ enum CompletionReceiver {
     Enum(String),
     GenericEntityRef,
     PlayerEntityRef,
+    PlayerInput,
     EntityDef,
     ItemDef,
     TextDef,
@@ -4088,6 +4185,13 @@ fn receiver_from_type(
             "inventory" | "hotbar" => {
                 return if current_is_player_ref || current_ref_kind == RefKind::Player {
                     receiver_from_type(Type::ItemSlot, RefKind::Unknown, rest, analysis)
+                } else {
+                    None
+                };
+            }
+            "getCurrentInput" if current_is_player_ref || current_ref_kind == RefKind::Player => {
+                return if rest.is_empty() {
+                    Some(CompletionReceiver::PlayerInput)
                 } else {
                     None
                 };

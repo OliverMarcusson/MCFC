@@ -54,6 +54,9 @@ struct Backend {
     block_builder_state_fields: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     helper: Option<HelperConfig>,
     uses_rpc: bool,
+    uses_food: bool,
+    uses_impulse: bool,
+    uses_health: bool,
     bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
@@ -221,6 +224,9 @@ impl Backend {
             block_builder_state_fields: collect_block_builder_state_fields(program),
             helper: None,
             uses_rpc: program_uses_rpc(program),
+            uses_food: false,
+            uses_impulse: false,
+            uses_health: false,
             bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
             suspending: suspending_functions(program),
@@ -252,6 +258,15 @@ impl Backend {
             for depth in 0..=self.max_depth {
                 self.emit_function_variant(function, depth);
             }
+        }
+        if self.uses_food {
+            self.emit_food_runtime();
+        }
+        if self.uses_impulse {
+            self.emit_impulse_runtime();
+        }
+        if self.uses_health {
+            self.emit_health_runtime();
         }
         self.emit_bukkit_runtime();
         // Agent-only packs do not otherwise need the RPC runtime, but mcfd must
@@ -296,6 +311,12 @@ impl Backend {
             if !values.contains(&tick) {
                 values.push(tick);
             }
+        }
+        if self.uses_food {
+            values.push(format!("{}:generated/food_tick", self.namespace));
+        }
+        if self.uses_health {
+            values.push(format!("{}:generated/health_tick", self.namespace));
         }
         if !self.bukkit.join_handlers.is_empty()
             || !self.bukkit.death_handlers.is_empty()
@@ -407,6 +428,214 @@ impl Backend {
             ),
             lines.join("\n") + "\n",
         );
+    }
+
+    fn emit_food_runtime(&mut self) {
+        let ns = &self.namespace;
+        let setup = format!("data/{ns}/function/generated/setup.mcfunction");
+        if let Some(body) = self.files.get_mut(&setup) {
+            body.push_str("scoreboard objectives add mcfc_food_goal dummy\n");
+            body.push_str("scoreboard objectives add mcfc_food_active dummy\n");
+            body.push_str("scoreboard objectives add mcfc_food_now dummy\n");
+        }
+        self.files.insert(
+            format!("data/{ns}/function/generated/food_tick.mcfunction"),
+            format!("execute as @a[scores={{mcfc_food_active=1..}}] run function {ns}:generated/food_player\n"),
+        );
+        self.files.insert(
+            format!("data/{ns}/function/generated/food_player.mcfunction"),
+            "execute store result score @s mcfc_food_now run data get entity @s foodLevel 1\n\
+execute if score @s mcfc_food_now < @s mcfc_food_goal run effect give @s minecraft:saturation 1 0 true\n\
+execute if score @s mcfc_food_now > @s mcfc_food_goal run effect give @s minecraft:hunger 1 255 true\n\
+execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set @s mcfc_food_active 0\n".to_string(),
+        );
+    }
+
+    /// Players ignore `Motion` writes, so `addVelocity` equips a saddle whose
+    /// enchantment fires `apply_impulse` once. The magnitude must be a constant,
+    /// so each local axis is split into 32 bits with one gated effect per bit.
+    fn emit_impulse_runtime(&mut self) {
+        let ns = self.namespace.clone();
+        let storage = |path: &str| {
+            format!("{{type:\"storage\",storage:\"{ns}:runtime\",path:\"mcfc_impulse.{path}\"}}")
+        };
+        let single = |kind: &str, input: &str| format!("{{type:\"{kind}\",input:{input}}}");
+        let many = |kind: &str, inputs: &[&str]| {
+            format!("{{type:\"{kind}\",inputs:[{}]}}", inputs.join(","))
+        };
+        let radians = |index: usize| {
+            many(
+                "mul",
+                &[&storage(&format!("rot[{index}]")), "0.017453292519943295"],
+            )
+        };
+        let (sin_yaw, cos_yaw) = (single("sin", &radians(0)), single("cos", &radians(0)));
+        let (sin_pitch, cos_pitch) = (single("sin", &radians(1)), single("cos", &radians(1)));
+        let (x, y, z) = (storage("x"), storage("y"), storage("z"));
+        let neg_x = single("negate", &x);
+        // World velocity projected onto the player's left, up and forward axes,
+        // the frame `apply_impulse` reads its direction in.
+        let local = [
+            many(
+                "add",
+                &[&many("mul", &[&x, &cos_yaw]), &many("mul", &[&z, &sin_yaw])],
+            ),
+            many(
+                "add",
+                &[
+                    &many("mul", &[&neg_x, &sin_yaw, &sin_pitch]),
+                    &many("mul", &[&y, &cos_pitch]),
+                    &many("mul", &[&z, &cos_yaw, &sin_pitch]),
+                ],
+            ),
+            many(
+                "add",
+                &[
+                    &many("mul", &[&neg_x, &sin_yaw, &cos_pitch]),
+                    &single("negate", &many("mul", &[&y, &sin_pitch])),
+                    &many("mul", &[&z, &cos_yaw, &cos_pitch]),
+                ],
+            ),
+        ];
+        let mut body = vec![format!(
+            "data modify storage {ns}:runtime mcfc_impulse.rot set from entity @s Rotation"
+        )];
+        let mut effects = vec![format!(
+            "{{\"effect\":{{\"type\":\"minecraft:run_function\",\"function\":\"{ns}:generated/impulse_reset\"}}}}"
+        )];
+        for (axis, provider) in local.iter().enumerate() {
+            let score = format!("#impulse_{axis}");
+            body.push(format!(
+                "data modify storage {ns}:runtime mcfc_impulse.local set compute default float {provider}"
+            ));
+            body.push(format!(
+                "execute store result score {score} mcfc run data get storage {ns}:runtime mcfc_impulse.local 10000"
+            ));
+            // Two's complement: bit 31 carries -2^31 and the rest hold value + 2^31.
+            body.push(format!("scoreboard players set {score}_31 mcfc 0"));
+            body.push(format!(
+                "execute if score {score} mcfc matches ..-1 run scoreboard players set {score}_31 mcfc 1"
+            ));
+            body.push(format!(
+                "execute if score {score}_31 mcfc matches 1 run scoreboard players add {score} mcfc 2147483647"
+            ));
+            body.push(format!(
+                "execute if score {score}_31 mcfc matches 1 run scoreboard players add {score} mcfc 1"
+            ));
+            for bit in (0..31).rev() {
+                let value = 1i64 << bit;
+                body.push(format!("scoreboard players set {score}_{bit} mcfc 0"));
+                body.push(format!(
+                    "execute if score {score} mcfc matches {value}.. store success score {score}_{bit} mcfc run scoreboard players remove {score} mcfc {value}"
+                ));
+            }
+            let mut direction = [0; 3];
+            direction[axis] = 1;
+            let direction = format!("[{},{},{}]", direction[0], direction[1], direction[2]);
+            for bit in 0..32 {
+                let step = if bit == 31 {
+                    -(1i64 << 31)
+                } else {
+                    1i64 << bit
+                };
+                let magnitude = step as f64 / 10000.0;
+                effects.push(format!(
+                    "{{\"requirements\":{{\"condition\":\"minecraft:value_check\",\"value\":{{\"type\":\"minecraft:score\",\"target\":{{\"type\":\"minecraft:fixed\",\"name\":\"{score}_{bit}\"}},\"score\":\"mcfc\"}},\"range\":1}},\"effect\":{{\"type\":\"minecraft:apply_impulse\",\"direction\":{direction},\"coordinate_scale\":[1,1,1],\"magnitude\":{magnitude}}}}}"
+                ));
+            }
+        }
+        body.push(format!(
+            "item replace entity @s saddle with minecraft:saddle[minecraft:equippable={{slot:\"saddle\",equip_sound:\"minecraft:intentionally_empty\"}},minecraft:enchantments={{\"{ns}:impulse\":1}}]"
+        ));
+        // Changing game mode re-evaluates equipment, which fires `location_changed`.
+        // Falling creative players go through adventure so they don't start flying.
+        body.extend(
+            [
+                "scoreboard players set #impulse_mode mcfc 0",
+                "execute if entity @s[gamemode=survival] run scoreboard players set #impulse_mode mcfc 1",
+                "execute if entity @s[gamemode=adventure] run scoreboard players set #impulse_mode mcfc 2",
+                "execute if entity @s[gamemode=creative] run scoreboard players set #impulse_mode mcfc 3",
+                "execute if score #impulse_mode mcfc matches 3 if predicate {condition:\"minecraft:entity_properties\",entity:\"this\",predicate:{flags:{is_on_ground:false,is_flying:false}}} run scoreboard players set #impulse_mode mcfc 4",
+                "execute if score #impulse_mode mcfc matches 1..3 run gamemode spectator",
+                "execute if score #impulse_mode mcfc matches 4 run gamemode adventure",
+                "execute if score #impulse_mode mcfc matches 1 run gamemode survival",
+                "execute if score #impulse_mode mcfc matches 2 run gamemode adventure",
+                "execute if score #impulse_mode mcfc matches 3..4 run gamemode creative",
+                "item replace entity @s saddle with minecraft:air",
+            ]
+            .map(String::from),
+        );
+        self.files.insert(
+            format!("data/{ns}/function/generated/impulse.mcfunction"),
+            body.join("\n") + "\n",
+        );
+        self.files.insert(
+            format!("data/{ns}/function/generated/impulse_reset.mcfunction"),
+            "item replace entity @s saddle with minecraft:air\n".to_string(),
+        );
+        self.files.insert(
+            format!("data/{ns}/enchantment/impulse.json"),
+            format!(
+                "{{\"description\":\"\",\"supported_items\":\"minecraft:saddle\",\"weight\":1,\"max_level\":1,\"min_cost\":{{\"base\":0,\"per_level_above_first\":0}},\"max_cost\":{{\"base\":0,\"per_level_above_first\":0}},\"anvil_cost\":0,\"slots\":[\"saddle\"],\"effects\":{{\"minecraft:location_changed\":[{}]}}}}\n",
+                effects.join(",")
+            ),
+        );
+    }
+
+    /// Caps max health at the target with a modifier, then heals to the cap.
+    /// The heal lands on a later player tick, so the cap stays for two ticks.
+    fn emit_health_runtime(&mut self) {
+        let ns = self.namespace.clone();
+        let setup = format!("data/{ns}/function/generated/setup.mcfunction");
+        if let Some(body) = self.files.get_mut(&setup) {
+            body.push_str("scoreboard objectives add mcfc_health_wait dummy\n");
+        }
+        let storage = |path: &str| {
+            format!("{{type:\"storage\",storage:\"{ns}:runtime\",path:\"mcfc_health.{path}\"}}")
+        };
+        let files = [
+            (
+                "set_health",
+                [
+                    format!("execute store result score #health mcfc run data get storage {ns}:runtime mcfc_health.target 1000"),
+                    "execute if score #health mcfc matches ..0 unless entity @s[gamemode=creative] unless entity @s[gamemode=spectator] run return run kill @s".to_string(),
+                    "execute if score #health mcfc matches ..0 run return 0".to_string(),
+                    format!("execute store result storage {ns}:runtime mcfc_health.max double 0.001 run attribute @s minecraft:max_health get 1000"),
+                    format!(
+                        "data modify storage {ns}:runtime mcfc_health.cap set compute default float {{type:\"sub\",left:{{type:\"div\",left:{{type:\"min\",inputs:[{},{}]}},right:{}}},right:1}}",
+                        storage("target"),
+                        storage("max"),
+                        storage("max")
+                    ),
+                    format!("attribute @s minecraft:max_health modifier remove {ns}:health_cap"),
+                    format!("function {ns}:generated/health_cap with storage {ns}:runtime mcfc_health"),
+                    "effect clear @s minecraft:instant_health".to_string(),
+                    "effect give @s minecraft:instant_health 1 28 true".to_string(),
+                    "scoreboard players set @s mcfc_health_wait 2".to_string(),
+                ]
+                .join("\n"),
+            ),
+            (
+                "health_cap",
+                format!("$attribute @s minecraft:max_health modifier add {ns}:health_cap $(cap) add_multiplied_total"),
+            ),
+            (
+                "health_tick",
+                format!("execute as @a[scores={{mcfc_health_wait=1..}}] run function {ns}:generated/health_wait"),
+            ),
+            (
+                "health_wait",
+                format!(
+                    "scoreboard players remove @s mcfc_health_wait 1\nexecute if score @s mcfc_health_wait matches 0 run attribute @s minecraft:max_health modifier remove {ns}:health_cap"
+                ),
+            ),
+        ];
+        for (name, body) in files {
+            self.files.insert(
+                format!("data/{ns}/function/generated/{name}.mcfunction"),
+                body + "\n",
+            );
+        }
     }
 
     fn emit_main_entry(&mut self) {
@@ -3448,6 +3677,224 @@ impl Backend {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn compile_entity_system_method(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        receiver: &IrExpr,
+        method: &str,
+        args: &[IrExpr],
+        target: &SlotRef,
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        let query = local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);
+        self.compile_expr_into_slot(function, depth, receiver, &query, lines);
+        let path = query.storage_path().to_string();
+        if let Some(key) = method.strip_prefix("input_") {
+            let predicate = format!("data/{ns}/predicate/mcfc_input_{key}.json");
+            self.files.insert(predicate, format!(
+                "{{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":{{\"type_specific\":{{\"type\":\"minecraft:player\",\"input\":{{\"{key}\":true}}}}}}}}"
+            ));
+            lines.push(format!(
+                "scoreboard players set {} mcfc 0",
+                target.numeric_name()
+            ));
+            lines.push(self.query_command(&query, format!(
+                "execute as $(selector) if predicate {ns}:mcfc_input_{key} run scoreboard players set {} mcfc 1",
+                target.numeric_name()
+            ), true));
+            return;
+        }
+        for (index, arg) in args.iter().enumerate() {
+            let slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
+            self.compile_expr_into_slot(function, depth, arg, &slot, lines);
+            let field = format!("arg{index}");
+            if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+                if index == 0
+                    && matches!(method, "getAttribute" | "setAttribute")
+                    && matches!(&arg.ty, Type::Enum(name) if name == "std::attribute::Attribute")
+                {
+                    const IDS: &[&str] = &[
+                        "movement_speed",
+                        "jump_strength",
+                        "gravity",
+                        "step_height",
+                        "scale",
+                        "safe_fall_distance",
+                        "knockback_resistance",
+                    ];
+                    for (value, id) in IDS.iter().enumerate() {
+                        lines.push(format!(
+                            "execute if score {} mcfc matches {value} run data modify storage {ns}:runtime {path}.{field} set value \"minecraft:{id}\"",
+                            slot.numeric_name()
+                        ));
+                    }
+                } else {
+                    lines.push(format!(
+                        "execute store result storage {ns}:runtime {path}.{field} int 1 run scoreboard players get {} mcfc",
+                        slot.numeric_name()
+                    ));
+                }
+            } else {
+                let source = if arg.ty == Type::BlockRef {
+                    format!("{}.pos", slot.storage_path())
+                } else if matches!(arg.ty, Type::EntityRef | Type::PlayerRef | Type::EntitySet) {
+                    format!("{}.selector", slot.storage_path())
+                } else {
+                    slot.storage_path().to_string()
+                };
+                lines.push(format!("data modify storage {ns}:runtime {path}.{field} set from storage {ns}:runtime {source}"));
+            }
+        }
+        match method {
+            "setVelocity" => {
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {path}.motion set value [0.0d,0.0d,0.0d]"
+                ));
+                for index in 0..3 {
+                    lines.push(format!(
+                        "execute store result storage {ns}:runtime {path}.motion[{index}] double 0.0001 run data get storage {ns}:runtime {path}.arg{index} 10000"
+                    ));
+                }
+                lines.push(self.query_command(&query, format!(
+                    "data modify entity $(selector) Motion set from storage {ns}:runtime {path}.motion"
+                ), true));
+            }
+            "addVelocity" => {
+                // Players ignore Motion writes, so they get a generated impulse;
+                // other entities get their Motion added to directly.
+                for index in 0..3 {
+                    let motion = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                    let delta = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                    lines.push(self.query_command(&query, format!(
+                        "execute as $(selector) unless entity @s[type=minecraft:player] store result score {} mcfc run data get entity @s Motion[{index}] 10000",
+                        motion.numeric_name()
+                    ), true));
+                    lines.push(format!(
+                        "execute store result score {} mcfc run data get storage {ns}:runtime {path}.arg{index} 10000",
+                        delta.numeric_name()
+                    ));
+                    lines.push(format!(
+                        "scoreboard players operation {} mcfc += {} mcfc",
+                        motion.numeric_name(),
+                        delta.numeric_name()
+                    ));
+                    lines.push(self.query_command(&query, format!(
+                        "execute as $(selector) unless entity @s[type=minecraft:player] store result entity @s Motion[{index}] double 0.0001 run scoreboard players get {} mcfc",
+                        motion.numeric_name()
+                    ), true));
+                }
+                self.uses_impulse = true;
+                for (index, axis) in ["x", "y", "z"].iter().enumerate() {
+                    lines.push(format!(
+                        "data modify storage {ns}:runtime mcfc_impulse.{axis} set from storage {ns}:runtime {path}.arg{index}"
+                    ));
+                }
+                lines.push(self.query_command(&query, format!(
+                    "execute as $(selector) if entity @s[type=minecraft:player] run function {ns}:generated/impulse"
+                ), true));
+            }
+            "setHealth" => {
+                self.uses_health = true;
+                lines.push(format!(
+                    "data modify storage {ns}:runtime mcfc_health.target set from storage {ns}:runtime {path}.arg0"
+                ));
+                for command in [
+                    format!(
+                        "execute as $(selector) if entity @s[type=minecraft:player] run function {ns}:generated/set_health"
+                    ),
+                    format!(
+                        "execute as $(selector) unless entity @s[type=minecraft:player] run data modify entity @s Health set from storage {ns}:runtime {path}.arg0"
+                    ),
+                ] {
+                    lines.push(self.query_command(&query, command, true));
+                }
+            }
+            "setFoodLevel" => {
+                self.uses_food = true;
+                for command in [
+                    format!("execute as $(selector) store result score @s mcfc_food_goal run data get storage {ns}:runtime {path}.arg0 1"),
+                    "execute as $(selector) if score @s mcfc_food_goal matches ..-1 run scoreboard players set @s mcfc_food_goal 0".to_string(),
+                    "execute as $(selector) if score @s mcfc_food_goal matches 21.. run scoreboard players set @s mcfc_food_goal 20".to_string(),
+                    "execute as $(selector) run scoreboard players set @s mcfc_food_active 1".to_string(),
+                ] {
+                    lines.push(self.query_command(&query, command, true));
+                }
+            }
+            "getAttribute" => {
+                let score = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    score.numeric_name()
+                ));
+                lines.push(self.query_command(&query, format!(
+                    "execute store result score {} mcfc run attribute $(selector) $(arg0) get 1000",
+                    score.numeric_name()
+                ), true));
+                lines.push(format!(
+                    "execute store result storage {ns}:runtime {} float 0.001 run scoreboard players get {} mcfc",
+                    target.storage_path(), score.numeric_name()
+                ));
+            }
+            "setAttribute" => lines.push(self.query_command(
+                &query,
+                "attribute $(selector) $(arg0) base set $(arg1)".to_string(),
+                true,
+            )),
+            "setRotation" => lines.push(self.query_command(
+                &query,
+                "rotate $(selector) $(arg0) $(arg1)".to_string(),
+                true,
+            )),
+            "lookAt" => lines.push(
+                self.query_command(
+                    &query,
+                    if args[0].ty == Type::BlockRef {
+                        "rotate $(selector) facing $(arg0)"
+                    } else {
+                        "rotate $(selector) facing entity $(arg0) feet"
+                    }
+                    .to_string(),
+                    true,
+                ),
+            ),
+            "yawTo" | "pitchTo" => {
+                let tag = format!("mcfc_angle_{}", self.new_temp());
+                let marker = format!("@e[type=minecraft:marker,tag={tag},sort=nearest,limit=1]");
+                lines.push(self.query_command(&query, format!(
+                    "execute at $(selector) run summon minecraft:marker ~ ~ ~ {{Tags:[\"{tag}\"]}}"
+                ), true));
+                let facing = if args[0].ty == Type::BlockRef {
+                    "facing $(arg0)".to_string()
+                } else {
+                    "facing entity $(arg0) feet".to_string()
+                };
+                lines.push(self.query_command(
+                    &query,
+                    format!("execute at $(selector) run tp {marker} ~ ~ ~ {facing}"),
+                    true,
+                ));
+                let score = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                lines.push(self.query_command(&query, format!(
+                    "execute at $(selector) store result score {} mcfc run data get entity {marker} Rotation[{}] 1000",
+                    score.numeric_name(), if method == "yawTo" { 0 } else { 1 }
+                ), true));
+                lines.push(format!(
+                    "execute store result storage {ns}:runtime {} float 0.001 run scoreboard players get {} mcfc",
+                    target.storage_path(), score.numeric_name()
+                ));
+                lines.push(self.query_command(
+                    &query,
+                    format!("execute at $(selector) run kill {marker}"),
+                    true,
+                ));
+            }
+            _ => {}
+        }
+    }
+
     fn compile_method_call(
         &mut self,
         function: &IrFunction,
@@ -3459,6 +3906,15 @@ impl Backend {
         lines: &mut Vec<String>,
     ) {
         match method {
+            "setVelocity" | "addVelocity" | "getAttribute" | "setAttribute" | "setRotation"
+            | "lookAt" | "yawTo" | "pitchTo" | "setHealth" | "setFoodLevel" | "input_forward"
+            | "input_backward" | "input_left" | "input_right" | "input_jump" | "input_sneak"
+            | "input_sprint" => {
+                self.compile_entity_system_method(
+                    function, depth, receiver, method, args, target, lines,
+                );
+                return;
+            }
             "get" if matches!(receiver.ty, Type::Array(_) | Type::Dict(_)) => {
                 let source = self.compile_storage_receiver(function, depth, receiver, lines);
                 let Some(key) = args.first() else { return };

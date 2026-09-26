@@ -1,0 +1,24 @@
+fn greet(name: string, times: int) -> string:
+    let out = ""
+    for i in 0..times:
+        out = "$(out)$(name)"
+    return out
+
+fn pick(flag: bool) -> string:
+    if flag:
+        return "yes"
+    return "no"
+
+fn main() -> void:
+    let g = greet("ab", 3)
+    mcf "say $(g)"
+    let p = pick(true)
+    let q = pick(false)
+    mcf "say $(p) $(q)"
+    let words = ["x", "yy", "zzz"]
+    let total = 0
+    for w in words:
+        total = total + w.len()
+        if w == "yy":
+            mcf "say found yy"
+    mcf "say total $(total)"

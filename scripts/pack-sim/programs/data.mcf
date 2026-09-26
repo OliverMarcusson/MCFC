@@ -1,0 +1,55 @@
+use std::math::clamp
+use std::math::gcd
+use std::math::pow
+use std::array::sum
+use std::array::max
+use std::str::contains
+use std::str::find
+
+struct Quest:
+    name: string
+    reward: int
+
+fn bump(q: Quest, by: int) -> Quest:
+    q.reward = q.reward + by
+    return q
+
+fn largest<T>(xs: array<T>) -> T:
+    return max(xs)
+
+fn main() -> void:
+    let q = Quest { name: "Mine", reward: 5 }
+    q = bump(q, 3)
+    mcf "say quest $(q.name) $(q.reward)"
+    let xs = [4, 9, 2, 7]
+    xs.push(11)
+    let popped = xs.pop()
+    let total_xs = sum(xs)
+    let big = largest(xs)
+    mcf "say arr $(total_xs) $(big) $(popped) $(xs.len())"
+    let first = xs.get(10).orElse(-1)
+    let second = xs.get(1).orElse(-1)
+    mcf "say opt $(first) $(second)"
+    let d = {"red": 1}
+    d["blue"] = 4
+    let missing = d.get("green").orElse(0)
+    let red = d["red"]
+    let blue = d["blue"]
+    mcf "say dict $(red) $(blue) $(missing) $(d.len())"
+    let c = clamp(50, 0, 20)
+    let g = gcd(12, -18)
+    let p = pow(3, 4)
+    mcf "say math $(c) $(g) $(p)"
+    let s = "hello world"
+    let has = contains(s, "wor")
+    let at = find(s, "o")
+    if has:
+        mcf "say str $(at) $(s.len())"
+    match "jump":
+        "jump" => mc "say leap"
+        "run" => mc "say go"
+        else => mc "say idle"
+    let total = 0
+    for i in 0..=5:
+        total = total + i
+    mcf "say incl $(total)"

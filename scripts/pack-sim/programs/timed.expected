@@ -1,0 +1,5 @@
+say before
+say async done
+say slow 10
+say sorted 1 2 9
+say flag 4

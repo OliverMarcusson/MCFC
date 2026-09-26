@@ -21,6 +21,14 @@ cargo build
 cargo build --bin mcfc-lsp
 ```
 
+Optimizer check. It builds the programs in `scripts/pack-sim/programs` with and without optimization, runs them in a small mcfunction simulator, and fails when output differs from the `.expected` file or the optimized build runs more commands than its budget in `check.py`:
+
+```powershell
+python scripts/pack-sim/check.py
+```
+
+When the optimizer gets faster, lower the budgets. `PROFILE=raw python scripts/pack-sim/mcsim.py <pack-dir>` prints the most executed lines.
+
 Manual compiler smoke test:
 
 ```powershell

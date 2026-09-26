@@ -1,0 +1,38 @@
+enum Stage:
+    NEW
+    MID
+    DONE
+
+fn score(stage: Stage) -> int:
+    switch stage:
+        case Stage.NEW:
+            return 1
+        case Stage.MID:
+            return 5
+        case Stage.DONE:
+            return 9
+
+fn clampish(v: int, lo: int, hi: int) -> int:
+    if v < lo:
+        return lo
+    else if v > hi:
+        return hi
+    else:
+        return v
+
+fn main() -> void:
+    let a = score(Stage.NEW) + score(Stage.MID) + score(Stage.DONE)
+    mcf "say stages $(a)"
+    let b = clampish(-3, 0, 10) + clampish(4, 0, 10) * 100 + clampish(77, 0, 10) * 10000
+    mcf "say clamp $(b)"
+    let d = {"a": 1, "b": 2}
+    d["c"] = 3
+    let t = d["a"] + d["b"] + d["c"]
+    mcf "say dict $(t)"
+    let arr = [5, 3, 8]
+    arr.push(1)
+    let m = 0
+    for v in arr:
+        if v > m:
+            m = v
+    mcf "say max $(m) len $(arr.len())"

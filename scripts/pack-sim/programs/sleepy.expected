@@ -1,0 +1,4 @@
+say loop 4 8
+say waited 11
+say resumed 1
+say done

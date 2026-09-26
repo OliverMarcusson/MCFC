@@ -1,0 +1,4 @@
+say stages 15
+say clamp 100400
+say dict 6
+say max 8 len 4

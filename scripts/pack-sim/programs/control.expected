@@ -1,0 +1,8 @@
+say classify -5 = -1
+say classify 0 = 0
+say classify 7 = 7
+say classify 23 = 99
+say classify 42 = 2
+say even 2
+say nested 42 103
+say sum 147

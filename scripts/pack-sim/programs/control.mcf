@@ -1,0 +1,55 @@
+fn classify(n: int) -> int:
+    if n < 0:
+        return -1
+    if n == 0:
+        return 0
+    let k = n
+    while k > 10:
+        k = k - 10
+        if k == 13:
+            return 99
+    return k
+
+fn find_first_even(limit: int) -> int:
+    let found = -1
+    for i in 1..limit:
+        if i % 2 == 1:
+            continue
+        if found == -1:
+            found = i
+            break
+    return found
+
+fn nested(a: int, b: int) -> int:
+    let total = 0
+    for i in 0..a:
+        for j in 0..b:
+            if j == 2:
+                break
+            if i == 1:
+                continue
+            total = total + i * 10 + j
+        if total > 50:
+            return total
+    return total
+
+fn main() -> void:
+    let xs = [-5, 0, 7, 23, 42]
+    for x in xs:
+        let c = classify(x)
+        mcf "say classify $(x) = $(c)"
+    let e = find_first_even(9)
+    mcf "say even $(e)"
+    let n1 = nested(3, 5)
+    let n2 = nested(9, 4)
+    mcf "say nested $(n1) $(n2)"
+    let s = 0
+    let i = 0
+    while true:
+        i = i + 1
+        if i > 20:
+            break
+        if i % 3 == 0:
+            continue
+        s = s + i
+    mcf "say sum $(s)"

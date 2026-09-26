@@ -46,6 +46,14 @@ const MATH_METHODS: &[&str] = &[
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
 const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
+/// The shared sidebar: `Sidebar.setLine(1, "Kills")` lowers to these builtins.
+pub(crate) const SIDEBAR_METHODS: &[(&str, &str)] = &[
+    ("setTitle", "sidebar_title"),
+    ("setLine", "sidebar_line"),
+    ("removeLine", "sidebar_remove_line"),
+    ("clear", "sidebar_clear"),
+];
+
 struct Annotation {
     name: String,
     args: Vec<(Option<String>, Expr)>,
@@ -1221,6 +1229,29 @@ impl Parser {
                     self.map_literal(args, span)
                 }
             }
+            TokenKind::Identifier(name)
+                if name == "Sidebar" && matches!(self.peek().kind, TokenKind::Dot) =>
+            {
+                self.bump();
+                let method = match &self.peek().kind {
+                    TokenKind::Identifier(method) => method.clone(),
+                    _ => String::new(),
+                };
+                self.bump();
+                let builtin = SIDEBAR_METHODS
+                    .iter()
+                    .find(|(java, _)| *java == method)
+                    .map(|(_, builtin)| *builtin);
+                if builtin.is_none() {
+                    self.error_at(
+                        "Sidebar has setTitle, setLine, removeLine and clear",
+                        span.clone(),
+                    );
+                }
+                self.expect(TokenKind::LeftParen, "expected '(' after Sidebar method");
+                let args = self.parse_call_args();
+                call(builtin.unwrap_or("sidebar_clear"), args, &span)
+            }
             TokenKind::Identifier(name) => {
                 if self.eat(&TokenKind::LeftParen) {
                     if let Some((ty, _)) = CASTS.iter().find(|(_, builtin)| *builtin == name) {
@@ -1331,8 +1362,7 @@ impl Parser {
                     self.error_at(&format!("use '.{java}(...)'"), span.clone());
                 }
                 let args = self.parse_call_args();
-                // ponytail: aliases apply to `module.fn()` calls too, so a module
-                // function named `size` or `add` is unreachable that way.
+                // Module calls such as `vec.add(a, b)` are mapped back in modules.rs.
                 let method = internal_method_name(&method, args.len()).to_string();
                 expr = Expr {
                     kind: ExprKind::MethodCall {

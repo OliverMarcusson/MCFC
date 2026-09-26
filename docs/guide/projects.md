@@ -17,7 +17,7 @@ Fields:
 - `source_dir`: directory containing `.mcf` files, default `src`
 - `asset_dir`: files copied into the datapack, default `assets`
 - `out_dir`: default output directory for project builds
-- `load`: additional generated load tag functions
+- `load`: functions for the `load:load` tag, replacing `main`
 - `tick`: additional generated tick tag functions
 - `[[export]]`: mappings from datapack paths to MCFC functions
 

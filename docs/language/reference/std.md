@@ -52,6 +52,35 @@ To sort, use the built-in [`xs.sort()`](./types#list) method.
 
 The `String` methods `startsWith`, `endsWith`, `indexOf` and `contains` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so `find` and `contains` cost a few commands per character. Unlike joining, they never paste the text into a command, so `"` and `\` are safe.
 
+## `std.vec`
+
+`Vec3` is a record of three floats, for velocities, directions and positions. Import the record and the module:
+
+```mcfc
+import std.vec;
+import std.vec.Vec3;
+
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var look = new Vec3(player.getLookX(), player.getLookY(), player.getLookZ());
+    var push = vec.scale(vec.normalize(vec.add(look, new Vec3(0.0, 1.0, 0.0))), 0.8);
+    player.addVelocity(push.x(), push.y(), push.z());
+}
+```
+
+| Function | Returns |
+| --- | --- |
+| `Vec3 add(Vec3 a, Vec3 b)`, `Vec3 sub(Vec3 a, Vec3 b)` | The component-wise sum or difference. |
+| `Vec3 scale(Vec3 v, float factor)` | `v` with every component multiplied by `factor`. |
+| `float dot(Vec3 a, Vec3 b)` | The dot product. |
+| `Vec3 cross(Vec3 a, Vec3 b)` | The cross product, perpendicular to both. |
+| `float length(Vec3 v)` | The length of `v`. |
+| `Vec3 normalize(Vec3 v)` | `v` scaled to length 1. The zero vector stays zero. |
+
+## `std.attribute`
+
+`Attribute` names the attributes you change most often, for `getAttribute` and `setAttribute`: `MOVEMENT_SPEED`, `JUMP_STRENGTH`, `GRAVITY`, `STEP_HEIGHT`, `SCALE`, `SAFE_FALL_DISTANCE` and `KNOCKBACK_RESISTANCE`. Pass a string ID such as `"minecraft:max_health"` for any other attribute.
+
 ## Under The Hood
 
 `std` is ordinary MCFC source compiled into the `mcfc` binary. Its functions lower like any other module function, for example `generated/std__math__clamp__d0__entry`. Unlike your own zero-argument `void` functions, `std` functions never get public `/function` wrappers.

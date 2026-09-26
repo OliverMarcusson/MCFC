@@ -258,6 +258,15 @@ class Sim:
         self.limit = 20_000_000
 
     # --- functions ---
+    def tag_functions(self, tag):
+        """Function ids in a tag, expanding nested `#tags` and skipping missing optional ones."""
+        for value in self.tags.get(tag, []):
+            fid = value["id"] if isinstance(value, dict) else value
+            if fid.startswith("#"):
+                yield from self.tag_functions(fid[1:])
+            else:
+                yield fid
+
     def run_function(self, fid, args=None):
         if fid not in self.funcs:
             raise Unsupported(f"missing function {fid}")
@@ -539,7 +548,7 @@ class Sim:
 
     # --- driver ---
     def load(self, ticks):
-        for fid in self.tags.get("minecraft:load", []):
+        for fid in self.tag_functions("minecraft:load"):
             self.run_function(fid)
         for _ in range(ticks):
             self.gametime += 1
@@ -551,7 +560,7 @@ class Sim:
                 else:
                     del self.schedule[fid]
                 self.run_function(fid)
-            for fid in self.tags.get("minecraft:tick", []):
+            for fid in self.tag_functions("minecraft:tick"):
                 self.run_function(fid)
 
 

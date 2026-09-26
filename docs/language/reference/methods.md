@@ -26,6 +26,8 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | `setRotation(yaw: float, pitch: float)` | Sets rotation in degrees. | `rotate` |
 | `lookAt(target: Entity \| Block)` | Rotates to face a target's feet or a block position. | `rotate ... facing` |
 | `yawTo(target: Entity \| Block)`, `pitchTo(target: Entity \| Block)` | Reads the facing angle toward a target. | Temporary marker and `Rotation` NBT |
+| `setOwner(owner: Entity)` | Links this entity to an owner. Works on any entity. | `mcfc_id` / `mcfc_owner` scores |
+| `getOwner()` | `Optional<Entity>`, the `setOwner` owner, or else the vanilla owner of a tamed animal or projectile. The result is valid until this line runs again. | Score scan, then `execute on owner` |
 | `getTargetBlock(maxDistance: float)` | `Optional<Block>`, the first block along the view that isn't replaceable (air, water, grass and similar). | Generated 0.1-block step function |
 | `getTargetEntity(maxDistance: float)` | `Optional<Entity>`, the first entity along the view. Blocks stop the ray. | Generated 0.1-block step function |
 | `effect(id, seconds: int, amplifier: int)` | Applies a status effect | `effect give` |
@@ -58,6 +60,31 @@ void celebrate(Player player) {
     player.playSound("minecraft:entity.player.levelup", "master");
 }
 ```
+
+## Sidebar
+
+`Sidebar` is the scoreboard sidebar every player sees. Lines are numbered from 0 at the top.
+
+```mcfc
+void showScore(Player player) {
+    Sidebar.setTitle("Arena");
+    Sidebar.setLine(0, "Red: 3");
+    Sidebar.setLine(1, "Blue: 5");
+    Sidebar.removeLine(2);
+    player.setSidebarLine(3, "Your coins: 12");
+}
+```
+
+| Call | Does |
+| --- | --- |
+| `Sidebar.setTitle(text)` | Sets the title. |
+| `Sidebar.setLine(line, text)` | Sets or replaces a line. |
+| `Sidebar.removeLine(line)` | Removes a line. |
+| `Sidebar.clear()` | Removes every line. |
+
+Players also have `setSidebarTitle(text)`, `setSidebarLine(line, text)`, `removeSidebarLine(line)` and `clearSidebar()` for a sidebar only that player sees. <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." /> Per-player sidebars need [`mcfd-agent`](/runtime/mcfd-agent) and `[helper.agent] enabled = true`; without it, the same calls change the shared `Sidebar`. A player's sidebar replaces the shared one on their screen and comes back when they rejoin. `clearSidebar()` removes it. Text is plain; formatting codes are not supported yet.
+
+The shared sidebar is the `mcfc_sidebar` objective with a blank number format. Line `n` is the fake player `mcfc.line.n` with score `-n`. It's displayed when the pack loads, so another pack displaying its own sidebar objective replaces it.
 
 ## Fields
 
@@ -99,6 +126,36 @@ void main() {
     }
 }
 ```
+
+## Display entities
+
+Block, item and text displays are animated by changing their transformation with an interpolation duration set. Changes made in the same tick count as one update, so set the duration and the new transform together:
+
+```mcfc
+import std.vec.Vec3;
+
+void main() {
+    var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
+    display.setInterpolationDuration(20);
+    display.setInterpolationDelay(0);
+    display.setScale(new Vec3(2.0, 2.0, 2.0));
+    display.setLeftRotation(3.14159, new Vec3(0.0, 1.0, 0.0));
+
+    // Or in one call: grow back to normal size over 40 ticks.
+    display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+}
+```
+
+| Method | Effect |
+| --- | --- |
+| `setTranslation(Vec3)`, `setScale(Vec3)` | Sets `transformation.translation` or `transformation.scale`. |
+| `setLeftRotation(angle: float, axis: Vec3)` | Sets `transformation.left_rotation`, `angle` radians around `axis`. |
+| `setInterpolationDuration(ticks: int)` | How long the next transform change takes. Set it in the same tick as the change. |
+| `setInterpolationDelay(ticks: int)` | Ticks to wait before interpolating (`start_interpolation`). |
+| `setTeleportDuration(ticks: int)` | Smooths `teleport` over up to 59 ticks. |
+| `animate(ticks: int, translation: Vec3, scale: Vec3)` | Sets translation, scale, duration, and a delay of 0 in one call. |
+
+`Vec3` comes from [`std.vec`](./std#std-vec). These methods need a display entity and are errors on a `Player`.
 
 ## Movement, attributes, and input
 

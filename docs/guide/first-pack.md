@@ -219,7 +219,7 @@ void remind(Player player) {
 
 ## What got generated
 
-Open the output folder. The files you'd call by hand are in `data/coins/function/`. Everything under `generated/` is internal. `main` is registered in the `minecraft:load` tag, and the task, events and command run from a generated tick function. See [How MCFC compiles](/language/reference/lowering) for the details.
+Open the output folder. The files you'd call by hand are in `data/coins/function/`. Everything under `generated/` is internal. `main` is registered in the `load:load` tag ([Lantern Load](https://github.com/LanternMC/load), so it loads in a predictable order next to other packs), and the task, events and command run from a generated tick function. See [How MCFC compiles](/language/reference/lowering) for the details.
 
 ## Next
 

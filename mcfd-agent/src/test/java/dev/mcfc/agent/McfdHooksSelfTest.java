@@ -8,7 +8,19 @@ public final class McfdHooksSelfTest {
     private McfdHooksSelfTest() {
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        require(Sidebars.uuid(new int[] {0x12345678, 0x9abcdef0, -1, 1})
+                        .equals(java.util.UUID.fromString("12345678-9abc-def0-ffff-ffff00000001")),
+                "UUID int arrays must decode like Minecraft's UUIDUtil");
+        if (args.length > 0) {
+            // A file listing the game jar and its libraries: every sidebar packet must build.
+            java.util.List<java.net.URL> urls = new ArrayList<>();
+            for (String jar : java.nio.file.Files.readAllLines(java.nio.file.Path.of(args[0]))) {
+                urls.add(java.nio.file.Path.of(jar.trim()).toUri().toURL());
+            }
+            Sidebars.checkPackets(new java.net.URLClassLoader(urls.toArray(new java.net.URL[0])));
+            System.out.println("sidebar packets build against the game jar");
+        }
         McfdHooks.configure("routes=demo:chat,player_interact_block;commands=demo:status");
         FakeServer server = new FakeServer();
         FakePlayer player = new FakePlayer(server, "Tester");

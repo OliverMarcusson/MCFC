@@ -1,0 +1,40 @@
+// 3D vectors on floats, for velocities, directions and positions.
+
+public record Vec3(float x, float y, float z) {}
+
+public Vec3 add(Vec3 a, Vec3 b) {
+    return new Vec3(a.x() + b.x(), a.y() + b.y(), a.z() + b.z());
+}
+
+public Vec3 sub(Vec3 a, Vec3 b) {
+    return new Vec3(a.x() - b.x(), a.y() - b.y(), a.z() - b.z());
+}
+
+public Vec3 scale(Vec3 v, float factor) {
+    return new Vec3(v.x() * factor, v.y() * factor, v.z() * factor);
+}
+
+public float dot(Vec3 a, Vec3 b) {
+    return a.x() * b.x() + a.y() * b.y() + a.z() * b.z();
+}
+
+public Vec3 cross(Vec3 a, Vec3 b) {
+    return new Vec3(
+        a.y() * b.z() - a.z() * b.y(),
+        a.z() * b.x() - a.x() * b.z(),
+        a.x() * b.y() - a.y() * b.x()
+    );
+}
+
+public float length(Vec3 v) {
+    return Math.sqrt(dot(v, v));
+}
+
+// The zero vector stays zero instead of dividing by zero.
+public Vec3 normalize(Vec3 v) {
+    var size = length(v);
+    if (size == 0.0) {
+        return v;
+    }
+    return scale(v, 1.0 / size);
+}

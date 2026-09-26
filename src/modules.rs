@@ -41,6 +41,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
+    ("vec.mcf", include_str!("../std/vec.mcf")),
 ];
 
 fn std_source(file: &Path) -> Option<&'static str> {
@@ -701,7 +702,20 @@ impl Resolver {
         } = &mut expr.kind
             && let Some(mut segments) = self.module_path_of(scope, receiver)
         {
-            segments.push(method.clone());
+            // The parser maps Java method names to internal ones (`add` to `insert`)
+            // before it knows the receiver is a module, so undo that for modules.
+            let name = crate::language_catalog::java_method_names(method)
+                .into_iter()
+                .find(|java| {
+                    let mut java_path = segments.clone();
+                    java_path.push(java.to_string());
+                    matches!(
+                        self.resolve_function(scope.module, &java_path.join("::")),
+                        Ok(Some(_))
+                    )
+                })
+                .map_or_else(|| method.clone(), str::to_string);
+            segments.push(name);
             let path = segments.join("::");
             let function = match self.resolve_function(scope.module, &path) {
                 Ok(Some(resolved)) => resolved,

@@ -4072,6 +4072,19 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             })
         }
+        "sidebar_title" | "sidebar_line" | "sidebar_remove_line" | "sidebar_clear" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            check_sidebar_args(function, &args, expr, diagnostics);
+            Some(builtin_call_expr(function, args, Type::Void))
+        }
         "__mcfc_event_block" => Some(TypedExpr {
             kind: TypedExprKind::Call {
                 function: function.to_string(),
@@ -5248,6 +5261,16 @@ fn type_check_method_call(
             expect_arg_type(method, &args, 0, Type::Int, "food level", expr, diagnostics);
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
+        "setSidebarTitle" | "setSidebarLine" | "removeSidebarLine" | "clearSidebar" => {
+            if receiver.ty != Type::PlayerRef && receiver.ref_kind != RefKind::Player {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires a Player receiver"),
+                    expr.span.clone(),
+                ));
+            }
+            check_sidebar_args(method, &args, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
         "getAttribute" | "setAttribute" => {
             if !is_entity_ref_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
@@ -5338,6 +5361,84 @@ fn type_check_method_call(
                 diagnostics,
             );
             Some(method_call_expr(receiver, method, args, Type::Float))
+        }
+        "setInterpolationDuration"
+        | "setInterpolationDelay"
+        | "setTeleportDuration"
+        | "setTranslation"
+        | "setScale"
+        | "setLeftRotation"
+        | "animate" => {
+            if !is_entity_ref_type(&receiver.ty) || receiver.ref_kind == RefKind::Player {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires a display Entity"),
+                    expr.span.clone(),
+                ));
+            }
+            let vec3 = |ty: &Type| matches!(ty, Type::Struct(name) if name == "std::vec::Vec3");
+            let params: &[&str] = match method {
+                "setTranslation" | "setScale" => &["vec"],
+                "setLeftRotation" => &["float", "vec"],
+                "animate" => &["int", "vec", "vec"],
+                _ => &["int"],
+            };
+            expect_arity(method, &args, params.len(), expr, diagnostics);
+            for (index, param) in params.iter().enumerate() {
+                match *param {
+                    "int" => {
+                        expect_arg_type(method, &args, index, Type::Int, "ticks", expr, diagnostics)
+                    }
+                    "float" => expect_arg_type(
+                        method,
+                        &args,
+                        index,
+                        Type::Float,
+                        "angle",
+                        expr,
+                        diagnostics,
+                    ),
+                    _ => expect_arg_matches(
+                        method,
+                        &args,
+                        index,
+                        vec3,
+                        "a std.vec.Vec3",
+                        "vector",
+                        expr,
+                        diagnostics,
+                    ),
+                }
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "setOwner" | "getOwner" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires an Entity receiver"),
+                    expr.span.clone(),
+                ));
+            }
+            if method == "getOwner" {
+                expect_arity(method, &args, 0, expr, diagnostics);
+                return Some(method_call_expr(
+                    receiver,
+                    method,
+                    args,
+                    Type::Optional(Box::new(Type::EntityRef)),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::EntityRef | Type::PlayerRef),
+                "an Entity",
+                "owner",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "getTargetBlock" | "getTargetEntity" => {
             if !is_entity_ref_type(&receiver.ty) {
@@ -6054,6 +6155,31 @@ fn removed_builtin_message(function: &str) -> String {
         display_call(function),
         replacement
     )
+}
+
+/// `Sidebar.*` and `player.*Sidebar*`: title `(String)`, line `(int, String)`,
+/// remove `(int)`, clear `()`.
+fn check_sidebar_args(name: &str, args: &[TypedExpr], expr: &Expr, diagnostics: &mut Diagnostics) {
+    let (has_line, has_text) = match name {
+        "sidebar_title" | "setSidebarTitle" => (false, true),
+        "sidebar_line" | "setSidebarLine" => (true, true),
+        "sidebar_remove_line" | "removeSidebarLine" => (true, false),
+        _ => (false, false),
+    };
+    expect_arity(
+        name,
+        args,
+        usize::from(has_line) + usize::from(has_text),
+        expr,
+        diagnostics,
+    );
+    if has_line {
+        expect_arg_type(name, args, 0, Type::Int, "line", expr, diagnostics);
+    }
+    if has_text {
+        let index = usize::from(has_line);
+        expect_arg_type(name, args, index, Type::String, "text", expr, diagnostics);
+    }
 }
 
 fn type_check_gameplay_call(

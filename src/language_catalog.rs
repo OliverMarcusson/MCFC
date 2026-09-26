@@ -264,6 +264,19 @@ pub fn internal_method_name(name: &str, arg_count: usize) -> &str {
     }
 }
 
+/// Every Java method name that maps to `internal`: `len` is both `size` and `length`.
+pub fn java_method_names(internal: &str) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = METHOD_NAMES
+        .iter()
+        .filter(|(_, name)| *name == internal)
+        .map(|(java, _)| *java)
+        .collect();
+    if matches!(internal, "push" | "insert") {
+        names.push("add");
+    }
+    names
+}
+
 /// The name to suggest when source uses an internal name directly.
 pub fn java_name_for(internal: &str, is_method: bool) -> Option<&'static str> {
     if is_method && matches!(internal, "push" | "insert") {

@@ -40,9 +40,16 @@ void main() {
     let load_tag = result
         .artifacts
         .files
+        .get("data/load/tags/function/load.json")
+        .unwrap();
+    assert!(load_tag.contains("\"mcfc:generated/load_status\""));
+    assert!(load_tag.contains("\"mcfc:main\""));
+    let minecraft_load = result
+        .artifacts
+        .files
         .get("data/minecraft/tags/function/load.json")
         .unwrap();
-    assert!(load_tag.contains("\"mcfc:main\""));
+    assert!(minecraft_load.contains("\"#load:_private/load\""));
     let main = result
         .artifacts
         .files
@@ -2578,7 +2585,7 @@ public void create() {
     let load_tag = result
         .artifacts
         .files
-        .get("data/minecraft/tags/function/load.json")
+        .get("data/load/tags/function/load.json")
         .unwrap();
     assert!(load_tag.contains("\"sample:bootstrap/load\""));
 
@@ -3601,6 +3608,30 @@ void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
 }
 
 #[test]
+fn ownership_links_use_ids_with_vanilla_owner_fallback() {
+    let source = r#"
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    pig.setOwner(player);
+    var owner = pig.getOwner();
+    if (owner.isPresent()) { owner.get().damage(1); }
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("ownership should compile");
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    for expected in [
+        "scoreboard objectives add mcfc_owner dummy",
+        "unless score @s mcfc_id matches 1.. run function mcfc:generated/assign_id",
+        "run scoreboard players operation @s mcfc_owner = $(arg0) mcfc_id",
+        "as @e if score @s mcfc_id = #owner mcfc_id run tag @s add mcfc_owner_",
+        "if score #owner mcfc_id matches 0 as $(selector) on owner run tag @s add mcfc_owner_",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
 fn raycasts_return_optional_block_and_entity() {
     let source = r#"
 void main() {
@@ -3706,6 +3737,92 @@ void main() {
             })
             .sum();
         assert_eq!(rebuilt, input, "bits for {input}");
+    }
+}
+
+#[test]
+fn display_entities_animate_through_setters_and_animate() {
+    let source = r#"
+import std.vec.Vec3;
+
+void main() {
+    var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
+    display.setInterpolationDuration(20);
+    display.setInterpolationDelay(0);
+    display.setTeleportDuration(5);
+    display.setTranslation(new Vec3(0.0, 1.0, 0.0));
+    display.setScale(new Vec3(2.0, 2.0, 2.0));
+    display.setLeftRotation(1.57, new Vec3(0.0, 1.0, 0.0));
+    display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("display methods should compile");
+    fs::remove_dir_all(project).unwrap();
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    for expected in [
+        "store result entity $(selector) interpolation_duration int 1",
+        "store result entity $(selector) start_interpolation int 1",
+        "store result entity $(selector) teleport_duration int 1",
+        "data modify entity $(selector) transformation.translation set from storage",
+        "data modify entity $(selector) transformation.scale set from storage",
+        "data modify entity $(selector) transformation.left_rotation.axis set from storage",
+        "data modify entity $(selector) start_interpolation set value 0",
+        "list0[1] set from storage",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn std_vec_functions_resolve_despite_java_method_aliases() {
+    // `add` and `length` are also list/string method aliases (`insert`, `len`).
+    let source = r#"
+import std.vec;
+import std.vec.Vec3;
+
+void main() {
+    var a = new Vec3(1.0, 2.0, 2.0);
+    var sum = vec.add(a, vec.scale(a, 2.0));
+    var size = vec.length(vec.normalize(vec.cross(sum, a)));
+    var d = vec.dot(a, vec.sub(sum, a));
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("std.vec should compile");
+    fs::remove_dir_all(project).unwrap();
+    let names = result.artifacts.files.keys().cloned().collect::<String>();
+    for function in ["add", "sub", "scale", "dot", "cross", "length", "normalize"] {
+        assert!(
+            names.contains(&format!("std__vec__{function}__")),
+            "missing std.vec.{function}"
+        );
     }
 }
 
@@ -3891,4 +4008,44 @@ void main() {
     assert!(generated.contains("tellraw $(selector)"));
     assert!(generated.contains("bossbar set $(id) max $(value)"));
     assert!(generated.contains("Probe"));
+}
+
+#[test]
+fn sidebars_are_shared_or_per_player_through_the_agent() {
+    let source = r#"
+void main() {
+    Sidebar.setTitle("Arena");
+    Sidebar.setLine(2, "Kills");
+    Sidebar.removeLine(3);
+    var player = (Player) Selector.of("@p").getFirst();
+    player.setSidebarLine(1, "Coins");
+    player.clearSidebar();
+}
+"#;
+    let shared = compile_source(source, &lowering()).expect("sidebars should compile");
+    let output = shared.artifacts.files.values().cloned().collect::<String>();
+    for expected in [
+        "scoreboard objectives setdisplay sidebar mcfc_sidebar",
+        "scoreboard objectives modify mcfc_sidebar displayname $(text)",
+        "execute store result score mcfc.line.$(line) mcfc_sidebar run data get storage",
+        "scoreboard players display name mcfc.line.$(line) mcfc_sidebar $(text)",
+        "scoreboard players reset mcfc.line.$(line) mcfc_sidebar",
+        "scoreboard players reset * mcfc_sidebar",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+    assert!(!output.contains("mcfc:agent sidebar"));
+
+    let agent = compile_source(source, &mcfd_http_options()).expect("agent sidebars compile");
+    let output = agent.artifacts.files.values().cloned().collect::<String>();
+    assert!(output.contains("data modify storage mcfc:agent sidebar append from storage"));
+    assert!(output.contains(".op set value \"line\""));
+    assert!(output.contains(".op set value \"clear\""));
+    assert!(output.contains("set from entity @s UUID"));
+    // The shared sidebar still works beside player ones.
+    assert!(output.contains("scoreboard objectives modify mcfc_sidebar displayname $(text)"));
+
+    let error = compile_source("void main() { Sidebar.setLine(\"x\", 1); }", &lowering())
+        .expect_err("wrong argument types are rejected");
+    assert!(format!("{error:?}").contains("line"));
 }

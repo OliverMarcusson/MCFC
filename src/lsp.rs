@@ -1519,6 +1519,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
         ),
         "Selector" => Some("```mcfc\nSelector.of(value: String) -> Selector\n```"),
+        "Sidebar" => Some(
+            "```mcfc\nSidebar.setTitle(text: String)\nSidebar.setLine(line: int, text: String)\nSidebar.removeLine(line: int)\nSidebar.clear()\n```\nThe sidebar every player sees. Line 0 is on top.",
+        ),
         "getFirst" => Some("```mcfc\nSelector.getFirst() -> Entity\nList<T>.getFirst() -> T\n```"),
         "findFirst" => Some("```mcfc\nSelector.findFirst() -> Optional<Entity>\n```"),
         "isPresent" => Some("```mcfc\nOptional<T>.isPresent() -> boolean\n```"),
@@ -1564,6 +1567,25 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "addVelocity" => Some("`Entity.addVelocity(x: float, y: float, z: float) -> void`"),
         "lookAt" => Some("`Entity.lookAt(target: Entity|Block) -> void`"),
         "yawTo" => Some("`Entity.yawTo(target: Entity|Block) -> float`"),
+        "setOwner" => Some("`Entity.setOwner(owner: Entity) -> void`"),
+        "setInterpolationDuration" => {
+            Some("`Display.setInterpolationDuration(ticks: int) -> void`")
+        }
+        "setInterpolationDelay" => Some("`Display.setInterpolationDelay(ticks: int) -> void`"),
+        "setTeleportDuration" => {
+            Some("`Display.setTeleportDuration(ticks: int) -> void` (0 to 59)")
+        }
+        "setTranslation" => Some("`Display.setTranslation(translation: Vec3) -> void`"),
+        "setScale" => Some("`Display.setScale(scale: Vec3) -> void`"),
+        "setLeftRotation" => {
+            Some("`Display.setLeftRotation(angle: float, axis: Vec3) -> void` (radians)")
+        }
+        "animate" => Some(
+            "`Display.animate(ticks: int, translation: Vec3, scale: Vec3) -> void`: interpolates to the new transform over `ticks`",
+        ),
+        "getOwner" => Some(
+            "`Entity.getOwner() -> Optional<Entity>`: the setOwner link, or the vanilla owner of a tamed animal or projectile",
+        ),
         "getTargetBlock" => Some(
             "`Entity.getTargetBlock(maxDistance: float) -> Optional<Block>`: first solid block along the view",
         ),
@@ -1575,6 +1597,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             Some("`Entity.setHealth(points: float) -> void` (players finish on a later tick)")
         }
         "setFoodLevel" => Some("`Player.setFoodLevel(level: int) -> void` (converges over ticks)"),
+        "setSidebarTitle" | "setSidebarLine" | "removeSidebarLine" | "clearSidebar" => Some(
+            "`Player.setSidebarTitle(text)`, `setSidebarLine(line, text)`, `removeSidebarLine(line)`, `clearSidebar()`: this player's own sidebar through mcfd-agent; the shared `Sidebar` without it",
+        ),
         "getCurrentInput" => Some(
             "`Player.getCurrentInput().isForward()` and the other movement key checks return boolean.",
         ),
@@ -3093,6 +3118,60 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             CompletionItemKind::METHOD,
         ),
         (
+            "animate",
+            "display.animate(ticks: int, translation: Vec3, scale: Vec3) -> void",
+            "animate(${1:ticks}, ${2:translation}, ${3:scale})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setTranslation",
+            "display.setTranslation(translation: Vec3) -> void",
+            "setTranslation(${1:translation})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setScale",
+            "display.setScale(scale: Vec3) -> void",
+            "setScale(${1:scale})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setLeftRotation",
+            "display.setLeftRotation(angle: float, axis: Vec3) -> void",
+            "setLeftRotation(${1:angle}, ${2:axis})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setInterpolationDuration",
+            "display.setInterpolationDuration(ticks: int) -> void",
+            "setInterpolationDuration(${1:ticks})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setInterpolationDelay",
+            "display.setInterpolationDelay(ticks: int) -> void",
+            "setInterpolationDelay(${1:ticks})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setTeleportDuration",
+            "display.setTeleportDuration(ticks: int) -> void",
+            "setTeleportDuration(${1:ticks})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "setOwner",
+            "entity.setOwner(owner: Entity) -> void",
+            "setOwner(${1:owner})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "getOwner",
+            "entity.getOwner() -> Optional<Entity>",
+            "getOwner()",
+            CompletionItemKind::METHOD,
+        ),
+        (
             "getTargetBlock",
             "entity.getTargetBlock(maxDistance: float) -> Optional<Block>",
             "getTargetBlock(${1:maxDistance})",
@@ -3357,6 +3436,26 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
                 "setFoodLevel",
                 "player.setFoodLevel(level: int) -> void",
                 "setFoodLevel(${1:level})",
+            ),
+            (
+                "setSidebarTitle",
+                "player.setSidebarTitle(text: String) -> void",
+                "setSidebarTitle(${1:\"Title\"})",
+            ),
+            (
+                "setSidebarLine",
+                "player.setSidebarLine(line: int, text: String) -> void",
+                "setSidebarLine(${1:0}, ${2:\"text\"})",
+            ),
+            (
+                "removeSidebarLine",
+                "player.removeSidebarLine(line: int) -> void",
+                "removeSidebarLine(${1:0})",
+            ),
+            (
+                "clearSidebar",
+                "player.clearSidebar() -> void",
+                "clearSidebar()",
             ),
             (
                 "getCurrentInput",

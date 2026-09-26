@@ -80,6 +80,9 @@ public final class McfdHooks {
                 return before((String) call[1], call[2], call[3]);
             case "command":
                 return handleCommand(call[2], call[3]);
+            case "tick":
+                Sidebars.tick(call[2]);
+                return Boolean.FALSE;
             default:
                 observe((String) call[1], call[2], call[3]);
                 return Boolean.FALSE;
@@ -345,7 +348,7 @@ public final class McfdHooks {
         }
     }
 
-    private static void runCommand(Object server, Object sender, String command) throws Exception {
+    static void runCommand(Object server, Object sender, String command) throws Exception {
         Object commands = invokeNoArgs(server, "getCommands");
         Object source = invokeNoArgs(sender, "createCommandSourceStack");
         for (java.lang.reflect.Method method : commands.getClass().getMethods()) {
@@ -366,7 +369,7 @@ public final class McfdHooks {
         throw new NoSuchMethodException(target.getClass().getName() + "." + name);
     }
 
-    private static Object fieldValue(Object target, String name) {
+    static Object fieldValue(Object target, String name) {
         if (target == null) {
             return null;
         }

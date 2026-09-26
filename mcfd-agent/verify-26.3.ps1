@@ -27,6 +27,9 @@ $targets = @{
     'net.minecraft.server.level.ServerPlayer' = @(
         'die', 'hurtServer', 'teleport', 'drop', 'onItemPickup', 'openMenu'
     )
+    'net.minecraft.server.MinecraftServer' = @(
+        'tickServer'
+    )
     'net.minecraft.server.players.PlayerList' = @(
         'placeNewPlayer', 'remove', 'respawn'
     )

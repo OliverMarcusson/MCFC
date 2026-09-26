@@ -58,6 +58,8 @@ struct Backend {
     uses_impulse: bool,
     uses_health: bool,
     uses_raycast: bool,
+    uses_ownership: bool,
+    uses_sidebar: bool,
     bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
@@ -231,6 +233,8 @@ impl Backend {
             uses_impulse: false,
             uses_health: false,
             uses_raycast: false,
+            uses_ownership: false,
+            uses_sidebar: false,
             bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
             suspending: suspending_functions(program),
@@ -275,6 +279,38 @@ impl Backend {
         if self.uses_raycast {
             self.emit_raycast_runtime();
         }
+        if self.uses_sidebar {
+            let setup = format!(
+                "data/{}/function/generated/setup.mcfunction",
+                self.namespace
+            );
+            if let Some(body) = self.files.get_mut(&setup) {
+                body.push_str(
+                    "scoreboard objectives add mcfc_sidebar dummy
+scoreboard objectives modify mcfc_sidebar numberformat blank
+scoreboard objectives setdisplay sidebar mcfc_sidebar
+",
+                );
+            }
+        }
+        if self.uses_ownership {
+            let ns = &self.namespace;
+            let setup = format!("data/{ns}/function/generated/setup.mcfunction");
+            if let Some(body) = self.files.get_mut(&setup) {
+                body.push_str(
+                    "scoreboard objectives add mcfc_id dummy
+scoreboard objectives add mcfc_owner dummy
+",
+                );
+            }
+            self.files.insert(
+                format!("data/{ns}/function/generated/assign_id.mcfunction"),
+                "scoreboard players add #next mcfc_id 1
+scoreboard players operation @s mcfc_id = #next mcfc_id
+"
+                .to_string(),
+            );
+        }
         self.emit_bukkit_runtime();
         // Agent-only packs do not otherwise need the RPC runtime, but mcfd must
         // still discover their descriptor in order to attach and route events.
@@ -299,14 +335,42 @@ impl Backend {
         );
     }
 
+    /// Lantern Load: `#minecraft:load` runs `#load:_private/load`, which resets
+    /// `load.status` and then runs `#load:load` in the same order every reload,
+    /// so this pack coexists with other packs using the convention.
     fn emit_load_tag(&mut self, override_values: Option<&[String]>) {
-        let values = override_values
-            .map(|items| items.to_vec())
-            .unwrap_or_else(|| vec![format!("{}:main", self.namespace)]);
-        self.files.insert(
-            "data/minecraft/tags/function/load.json".to_string(),
-            render_tag_file(&values),
+        let ns = &self.namespace;
+        let mut values = vec![format!("{ns}:generated/load_status")];
+        values.extend(
+            override_values
+                .map(|items| items.to_vec())
+                .unwrap_or_else(|| vec![format!("{ns}:main")]),
         );
+        for (path, contents) in [
+            (
+                "data/minecraft/tags/function/load.json",
+                render_tag_file(&["#load:_private/load".to_string()]),
+            ),
+            (
+                "data/load/tags/function/_private/load.json",
+                "{\n  \"values\": [\n    \"#load:_private/init\",\n    {\"id\": \"#load:pre_load\", \"required\": false},\n    {\"id\": \"#load:load\", \"required\": false},\n    {\"id\": \"#load:post_load\", \"required\": false}\n  ]\n}\n".to_string(),
+            ),
+            (
+                "data/load/tags/function/_private/init.json",
+                render_tag_file(&["load:_private/init".to_string()]),
+            ),
+            (
+                "data/load/function/_private/init.mcfunction",
+                "scoreboard objectives add load.status dummy\nscoreboard players reset * load.status\n".to_string(),
+            ),
+            ("data/load/tags/function/load.json", render_tag_file(&values)),
+            (
+                &format!("data/{ns}/function/generated/load_status.mcfunction"),
+                format!("scoreboard players set {ns} load.status 1\n"),
+            ),
+        ] {
+            self.files.insert(path.to_string(), contents);
+        }
     }
 
     fn emit_tick_tag(&mut self, program: &IrProgram, override_values: Option<&[String]>) {
@@ -4030,6 +4094,107 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                     true,
                 ));
             }
+            "setInterpolationDuration" | "setInterpolationDelay" | "setTeleportDuration" => {
+                let field = match method {
+                    "setInterpolationDuration" => "interpolation_duration",
+                    "setInterpolationDelay" => "start_interpolation",
+                    _ => "teleport_duration",
+                };
+                lines.push(self.query_command(&query, format!(
+                    "execute store result entity $(selector) {field} int 1 run data get storage {ns}:runtime {path}.arg0"
+                ), true));
+            }
+            "setTranslation" | "setScale" | "setLeftRotation" | "animate" => {
+                // Vec3 records are {x,y,z}; display transformations want [x,y,z].
+                let as_list = |index: usize, lines: &mut Vec<String>| {
+                    lines.push(format!(
+                        "data modify storage {ns}:runtime {path}.list{index} set value [0f,0f,0f]"
+                    ));
+                    for (slot, axis) in ["x", "y", "z"].iter().enumerate() {
+                        lines.push(format!(
+                            "data modify storage {ns}:runtime {path}.list{index}[{slot}] set from storage {ns}:runtime {path}.arg{index}.{axis}"
+                        ));
+                    }
+                };
+                let mut writes = Vec::new();
+                match method {
+                    "setTranslation" | "setScale" => {
+                        as_list(0, lines);
+                        let field = if method == "setScale" {
+                            "scale"
+                        } else {
+                            "translation"
+                        };
+                        writes.push(format!(
+                            "transformation.{field} set from storage {ns}:runtime {path}.list0"
+                        ));
+                    }
+                    "setLeftRotation" => {
+                        as_list(1, lines);
+                        writes.push(
+                            "transformation.left_rotation set value {angle:0f,axis:[0f,1f,0f]}"
+                                .to_string(),
+                        );
+                        writes.push(format!("transformation.left_rotation.angle set from storage {ns}:runtime {path}.arg0"));
+                        writes.push(format!("transformation.left_rotation.axis set from storage {ns}:runtime {path}.list1"));
+                    }
+                    _ => {
+                        as_list(1, lines);
+                        as_list(2, lines);
+                        writes.push(format!(
+                            "transformation.translation set from storage {ns}:runtime {path}.list1"
+                        ));
+                        writes.push(format!(
+                            "transformation.scale set from storage {ns}:runtime {path}.list2"
+                        ));
+                        writes.push(format!(
+                            "interpolation_duration set from storage {ns}:runtime {path}.arg0"
+                        ));
+                        writes.push("start_interpolation set value 0".to_string());
+                    }
+                }
+                for write in writes {
+                    lines.push(self.query_command(
+                        &query,
+                        format!("data modify entity $(selector) {write}"),
+                        true,
+                    ));
+                }
+            }
+            "setOwner" => {
+                // Links are scoreboard ids: any entity can hold a score, but only
+                // some have a vanilla `Owner` field.
+                self.uses_ownership = true;
+                for command in [
+                    format!("execute as $(arg0) unless score @s mcfc_id matches 1.. run function {ns}:generated/assign_id"),
+                    "execute as $(selector) run scoreboard players operation @s mcfc_owner = $(arg0) mcfc_id".to_string(),
+                ] {
+                    lines.push(self.query_command(&query, command, true));
+                }
+            }
+            "getOwner" => {
+                self.uses_ownership = true;
+                // ponytail: scans every entity for the owner's id; keep an id index
+                // in storage if packs with many links need it.
+                let tag = format!("mcfc_owner_{}", self.new_temp());
+                let out = target.storage_path();
+                lines.push(format!("tag @e[tag={tag}] remove {tag}"));
+                lines.push("scoreboard players set #owner mcfc_id 0".to_string());
+                lines.push(self.query_command(&query,
+                    "execute as $(selector) if score @s mcfc_owner matches 1.. run scoreboard players operation #owner mcfc_id = @s mcfc_owner".to_string(), true));
+                lines.push(format!(
+                    "execute if score #owner mcfc_id matches 1.. as @e if score @s mcfc_id = #owner mcfc_id run tag @s add {tag}"
+                ));
+                lines.push(self.query_command(&query, format!(
+                    "execute if score #owner mcfc_id matches 0 as $(selector) on owner run tag @s add {tag}"
+                ), true));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {out} set value {{present:0b}}"
+                ));
+                lines.push(format!(
+                    "execute if entity @e[tag={tag}] run data modify storage {ns}:runtime {out} set value {{present:1b,value:{{prefix:\"\",selector:\"@e[tag={tag},limit=1]\"}}}}"
+                ));
+            }
             "getTargetBlock" | "getTargetEntity" => {
                 self.uses_raycast = true;
                 let entity = method == "getTargetEntity";
@@ -4072,6 +4237,81 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         }
     }
 
+    /// The shared sidebar is the `mcfc_sidebar` objective; line `n` is the
+    /// fake player `mcfc.line.n` with score `-n`, so line 0 is on top. A player
+    /// receiver queues the change in `mcfc:agent sidebar` for mcfd-agent, which
+    /// sends that player their own sidebar; without the agent it falls back to
+    /// the shared one.
+    fn compile_sidebar(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        player: Option<&IrExpr>,
+        op: &str,
+        args: &[IrExpr],
+        lines: &mut Vec<String>,
+    ) {
+        let ns = self.namespace.clone();
+        let data = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+        let path = data.storage_path().to_string();
+        lines.push(format!(
+            "data modify storage {ns}:runtime {path} set value {{text:{{text:\"\"}}}}"
+        ));
+        for arg in args {
+            let slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
+            self.compile_expr_into_slot(function, depth, arg, &slot, lines);
+            lines.push(if arg.ty == Type::Int {
+                format!(
+                    "execute store result storage {ns}:runtime {path}.line int 1 run scoreboard players get {} mcfc",
+                    slot.numeric_name()
+                )
+            } else {
+                format!(
+                    "data modify storage {ns}:runtime {path}.text.text set from storage {ns}:runtime {}",
+                    slot.storage_path()
+                )
+            });
+        }
+        if let Some(player) = player.filter(|_| self.agent_enabled()) {
+            let query = local_slot(depth, &function.name, &self.new_temp(), &player.ty);
+            self.compile_expr_into_slot(function, depth, player, &query, lines);
+            let kind = op.trim_start_matches("sidebar_");
+            lines.push(format!(
+                "data modify storage {ns}:runtime {path}.op set value \"{kind}\""
+            ));
+            lines.push(format!(
+                "data modify storage {ns}:runtime {path}.text set from storage {ns}:runtime {path}.text.text"
+            ));
+            lines.push(self.query_command(&query, format!(
+                "execute as $(selector) run data modify storage {ns}:runtime {path}.uuid set from entity @s UUID"
+            ), true));
+            lines.push(format!(
+                "data modify storage mcfc:agent sidebar append from storage {ns}:runtime {path}"
+            ));
+            return;
+        }
+        self.uses_sidebar = true;
+        let command = match op {
+            "sidebar_title" => {
+                "scoreboard objectives modify mcfc_sidebar displayname $(text)".to_string()
+            }
+            "sidebar_line" => {
+                lines.push(self.inline_macro_command(&path, format!(
+                    "execute store result score mcfc.line.$(line) mcfc_sidebar run data get storage {ns}:runtime {path}.line -1"
+                )));
+                "scoreboard players display name mcfc.line.$(line) mcfc_sidebar $(text)".to_string()
+            }
+            "sidebar_remove_line" => {
+                "scoreboard players reset mcfc.line.$(line) mcfc_sidebar".to_string()
+            }
+            _ => {
+                lines.push("scoreboard players reset * mcfc_sidebar".to_string());
+                return;
+            }
+        };
+        lines.push(self.inline_macro_command(&path, command));
+    }
+
     fn compile_method_call(
         &mut self,
         function: &IrFunction,
@@ -4083,13 +4323,47 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         lines: &mut Vec<String>,
     ) {
         match method {
-            "setVelocity" | "addVelocity" | "getAttribute" | "setAttribute" | "setRotation"
-            | "lookAt" | "yawTo" | "pitchTo" | "setHealth" | "setFoodLevel" | "input_forward"
-            | "input_backward" | "input_left" | "input_right" | "input_jump" | "input_sneak"
-            | "input_sprint" | "getTargetBlock" | "getTargetEntity" => {
+            "setVelocity"
+            | "addVelocity"
+            | "getAttribute"
+            | "setAttribute"
+            | "setRotation"
+            | "lookAt"
+            | "yawTo"
+            | "pitchTo"
+            | "setHealth"
+            | "setFoodLevel"
+            | "input_forward"
+            | "input_backward"
+            | "input_left"
+            | "input_right"
+            | "input_jump"
+            | "input_sneak"
+            | "input_sprint"
+            | "getTargetBlock"
+            | "getTargetEntity"
+            | "setOwner"
+            | "getOwner"
+            | "setInterpolationDuration"
+            | "setInterpolationDelay"
+            | "setTeleportDuration"
+            | "setTranslation"
+            | "setScale"
+            | "setLeftRotation"
+            | "animate" => {
                 self.compile_entity_system_method(
                     function, depth, receiver, method, args, target, lines,
                 );
+                return;
+            }
+            "setSidebarTitle" | "setSidebarLine" | "removeSidebarLine" | "clearSidebar" => {
+                let op = match method {
+                    "setSidebarTitle" => "sidebar_title",
+                    "setSidebarLine" => "sidebar_line",
+                    "removeSidebarLine" => "sidebar_remove_line",
+                    _ => "sidebar_clear",
+                };
+                self.compile_sidebar(function, depth, Some(receiver), op, args, lines);
                 return;
             }
             "get" if matches!(receiver.ty, Type::Array(_) | Type::Dict(_)) => {
@@ -5810,6 +6084,10 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
             }
             "debug" => {
                 self.compile_debug_builtin(function, depth, args, lines);
+                true
+            }
+            "sidebar_title" | "sidebar_line" | "sidebar_remove_line" | "sidebar_clear" => {
+                self.compile_sidebar(function, depth, None, callee, args, lines);
                 true
             }
             "debug_marker" => {

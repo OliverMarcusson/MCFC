@@ -40,11 +40,13 @@ The agent only works with Minecraft 26.3. After updating it, restart Minecraft s
 
 The agent patches vanilla server methods. When an event fires, it logs a `[mcfd-agent] event=...` line followed by a JSON record, and `mcfd` picks that up. The matching MCFC handler then runs on the server thread as the affected player. Some events arrive as network packets before the server acts on them. For those, a handler can call `event.cancel()` to stop the action.
 
+Per-player sidebars go the other way. `player.setSidebarLine(...)` and the other [sidebar methods](/language/reference/methods#sidebar) append a request to `mcfc:agent sidebar`. Once per server tick the agent takes the queued requests and sends each player scoreboard packets for a client-only objective, the way Paper gives players their own scoreboard. The server's scoreboard never changes. The agent keeps each player's sidebar in memory until the server stops, and sends it again when they rejoin.
+
 The hook sites call the agent only through JDK types, so it also works under mod loaders such as Fabric.
 
 ## Developing the agent
 
 ```powershell
 .\mcfd-agent\verify-26.3.ps1   # check hook targets against a 26.3 JAR
-.\mcfd-agent\test.ps1          # dispatch and command-routing self-test
+.\mcfd-agent\test.ps1          # dispatch self-test; with a Prism 26.3 install, also builds sidebar packets
 ```

@@ -20,7 +20,7 @@ The return type comes first and every parameter has a type. Duplicate function o
 
 Two names are special:
 
-- `void main()` in the root module runs every time the datapack loads, including on `/reload`. It's added to the `minecraft:load` tag.
+- `void main()` in the root module runs every time the datapack loads, including on `/reload`. It's added to the Lantern Load `load:load` tag, which `minecraft:load` runs. Each load also sets the score `<namespace>` in `load.status` to 1, so other packs can check that yours loaded.
 - `void tick()` runs every game tick through the `minecraft:tick` tag. If several modules define `tick`, their bodies all run, in module order. A `tick` that takes parameters is an ordinary function.
 
 Every other zero-argument `void` function is also exported as `/function <namespace>:<name>`, so you can call it from chat. Function paths are lowercase: `resetArena` is exported as `<namespace>:reset_arena`.

@@ -57,9 +57,9 @@ public final class McfdAgent {
             mv.visitInsn(Opcodes.DUP);
             mv.visitInsn(Opcodes.ICONST_0 + index);
             Object value = values[index];
-            if (value instanceof Integer) {
-                mv.visitVarInsn(Opcodes.ALOAD, (Integer) value);
-            } else if (value == null) {
+            if (value instanceof Integer local && local >= 0) {
+                mv.visitVarInsn(Opcodes.ALOAD, local);
+            } else if (value == null || value instanceof Integer) {
                 mv.visitInsn(Opcodes.ACONST_NULL);
             } else {
                 mv.visitLdcInsn(value);
@@ -106,7 +106,8 @@ public final class McfdAgent {
                 "net/minecraft/server/network/ServerGamePacketListenerImpl",
                 "net/minecraft/server/level/ServerPlayerGameMode",
                 "net/minecraft/server/level/ServerPlayer",
-                "net/minecraft/server/players/PlayerList"));
+                "net/minecraft/server/players/PlayerList",
+                "net/minecraft/server/MinecraftServer"));
 
         boolean targets(String className) {
             return TARGETS.contains(className.replace('.', '/'));
@@ -243,6 +244,9 @@ public final class McfdAgent {
             if ("command".equals(hook.event)) {
                 return new CommandMethodVisitor(delegate, after);
             }
+            if ("tick".equals(hook.event)) {
+                return new TickMethodVisitor(delegate);
+            }
             if (!hook.cancellable) {
                 return new ObservationMethodVisitor(delegate, after, hook.event, hook.sourceLocal, hook.payloadLocal);
             }
@@ -289,6 +293,11 @@ public final class McfdAgent {
             if ("net/minecraft/server/level/ServerPlayerGameMode".equals(owner)
                     && "changeGameModeForPlayer".equals(name)) {
                 return observed("game_mode_change");
+            }
+            if ("net/minecraft/server/MinecraftServer".equals(owner)
+                    && "tickServer".equals(name)
+                    && "(Ljava/util/function/BooleanSupplier;)V".equals(descriptor)) {
+                return observed("tick");
             }
             if ("net/minecraft/server/players/PlayerList".equals(owner)) {
                 if ("placeNewPlayer".equals(name)) return observed("player_connect", 2, 1);
@@ -384,6 +393,19 @@ public final class McfdAgent {
                 visitInsn(Opcodes.RETURN);
             }
             visitLabel(continueVanilla);
+        }
+    }
+
+    /** Once per server tick: drains datapack requests such as player sidebars. */
+    private static final class TickMethodVisitor extends HookSiteVisitor {
+        TickMethodVisitor(MethodVisitor delegate) {
+            super(delegate, false);
+        }
+
+        @Override
+        void inject() {
+            emitDispatch(this, "tick", null, 0, -1);
+            visitInsn(Opcodes.POP);
         }
     }
 

@@ -1,4 +1,4 @@
-# How MCFC Lowers To `mcfunction`
+# How MCFC Compiles
 
 MCFC compiles `.mcf` source into a vanilla datapack. The backend writes generated `.mcfunction` files, scoreboard objectives, command-storage state, tags, schedules, and optional helper descriptors.
 
@@ -87,3 +87,7 @@ Vanilla-safe events lower to datapack detectors:
 
 Agent-backed events lower to generated `agent/event/<name>.mcfunction` entrypoints. `mcfd-agent` writes the current payload into command storage; the wrapper copies that payload into the typed event parameter slot before calling the handler. If the handler calls `event.cancel()`, MCFC writes a cancellation decision into the generated agent decision storage.
 
+
+## Optimization
+
+By default MCFC runs a conservative optimization pass. It folds literal expressions, removes self-assignments, drops `while false:` bodies, and simplifies `if` statements with literal conditions. Pass `--no-optimize` to see the output without these changes. `--emit-ir` writes the intermediate form to `debug/ir.txt`.

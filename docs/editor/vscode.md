@@ -1,18 +1,40 @@
 # VS Code
 
-The VS Code extension in `editors/vscode-mcfc` provides syntax highlighting, editor commands, manifest tooling, and a bundled Rust language server.
+The extension in `editors/vscode-mcfc` adds syntax highlighting and a language server for `.mcf` files and `mcfc.toml`. The language server shows errors as you type, and provides completion, hover, go to definition, rename and formatting. The extension bundles its own `mcfc` and `mcfc-lsp`, so it doesn't need anything on `PATH`.
 
-## Language Server Features
+## Install
 
-The bundled `mcfc-lsp` server provides:
+Build a VSIX for your platform (Windows x64 or Linux x64; macOS isn't supported) and install it:
 
-- compiler-backed diagnostics for `.mcf` source
-- diagnostics and completions for Bukkit-style `data`, `event`, `command`, and `task` declarations
-- symbols, semantic highlighting, folding ranges, selection ranges, formatting, document highlights, definitions, references, rename, and signature help
-- hovers and completions for functions, locals, types, methods, host modules, payload structs, vanilla events, and agent events
-- manifest diagnostics, symbols, and completions for `mcfc.toml`
+```powershell
+cd editors/vscode-mcfc
+npm install
+npm run package:win32-x64
+code --install-extension mcfc-syntax-win32-x64-0.1.0.vsix
+```
 
-## Local Testing
+## Commands
+
+Run these from the Command Palette:
+
+| Command | Does |
+| --- | --- |
+| MCFC: Build Project | `mcfc build` on the current project |
+| MCFC: Watch Project / Stop Watch | Rebuilds on save |
+| MCFC: Deploy Project | Copies the built pack into a world |
+| MCFC: Build and Deploy | Both |
+| MCFC: Open Generated Datapack | Opens the output folder |
+
+## Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `mcfc.deploy.datapacksDirectory` | none | A world's `datapacks` folder. Deploy is disabled until you set it. |
+| `mcfc.deploy.packName` | namespace | Folder name inside `datapacks` |
+| `mcfc.deploy.reloadCommand` | none | Shell command to run after deploying. `${datapackPath}` and `${workspaceFolder}` are replaced. |
+| `mcfc.cli.path` | bundled | Use a different `mcfc` binary |
+
+## Developing the extension
 
 ```powershell
 cargo build --bin mcfc-lsp
@@ -21,27 +43,4 @@ npm install
 npm run compile
 ```
 
-Then press `F5` in VS Code to launch an Extension Development Host. Open a `.mcf` source file or `mcfc.toml` manifest and confirm diagnostics, highlighting, and completions.
-
-## Project Commands
-
-The extension contributes:
-
-- MCFC: Build Project
-- MCFC: Watch Project
-- MCFC: Stop Watch
-- MCFC: Deploy Project
-- MCFC: Build and Deploy
-- MCFC: Open Generated Datapack
-
-Deployment is opt-in. Set `mcfc.deploy.datapacksDirectory` to a Minecraft world's `datapacks` directory. `mcfc.deploy.packName` defaults to the manifest namespace.
-
-## Packaging
-
-```bash
-npm run package
-npm run package:linux-x64
-npm run package:win32-x64
-```
-
-VSIX artifacts are platform-specific. Current packaged targets are Linux x64 and Windows x64. macOS is not currently supported.
+Press `F5` in VS Code to open an Extension Development Host with the extension loaded.

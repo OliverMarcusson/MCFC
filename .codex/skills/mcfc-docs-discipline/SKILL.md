@@ -1,6 +1,6 @@
 ---
 name: mcfc-docs-discipline
-description: Keep MCFC documentation continuously synchronized with language, compiler, runtime, LSP, examples, and generated datapack behavior. Use when changing MCFC syntax, types, builtins, methods, events, lowering, diagnostics, examples, VitePress docs, LANGUAGE.md, README language sections, src/language_catalog.rs, src/types.rs, src/backend.rs, src/parser.rs, src/analysis.rs, src/lsp.rs, tests, or any behavior that affects how users write .mcf code or how MCFC translates to mcfunction.
+description: Keep MCFC documentation continuously synchronized with language, compiler, runtime, LSP, examples, and generated datapack behavior. Use when changing MCFC syntax, types, builtins, methods, events, lowering, diagnostics, examples, VitePress docs, README, src/language_catalog.rs, src/types.rs, src/backend.rs, src/parser.rs, src/analysis.rs, src/lsp.rs, tests, or any behavior that affects how users write .mcf code or how MCFC translates to mcfunction.
 ---
 
 # MCFC Docs Discipline
@@ -26,44 +26,50 @@ Do not document aspirational behavior unless the user explicitly asks for future
 
 ## Documentation Targets
 
-Update all relevant surfaces:
+The reference is one page per area. Add a section (with an anchor) to the right page; do not create per-item pages.
 
-- `docs/language/reference/**`: canonical reference pages. Add or update a dedicated page for each keyword, type, builtin, method, event, or runtime concept touched.
-- `docs/language/reference/lowering.md`: update when generated mcfunction, scoreboard/storage representation, scheduling, macros, events, or helper transport changes.
-- `docs/language/*.md`: keep overview pages accurate and link to detailed reference pages.
-- `LANGUAGE.md`: keep the root language reference aligned with implemented behavior.
-- `README.md`: update only when the user-facing summary, quick examples, or advertised capability changed.
-- `examples/**` and `docs/examples/**`: update when examples demonstrate changed or newly preferred syntax.
+| Change | Page |
+| --- | --- |
+| Statement or declaration | `docs/language/reference/statements.md` |
+| Type, type method, operator | `docs/language/reference/types.md` |
+| Free function builtin | `docs/language/reference/builtins.md` |
+| Entity/player method or field | `docs/language/reference/methods.md` |
+| Builder field | `docs/language/reference/builders.md` |
+| Event or payload | `docs/language/reference/events.md` |
+| `std` function | `docs/language/reference/std.md` |
+| Generated mcfunction layout | `docs/language/reference/lowering.md` |
+| Something unsupported or with a sharp edge | `docs/language/limitations.md` |
+| Host call or capability | `docs/runtime/capabilities.md` |
 
-When adding a public language item, create both the aggregate entry and the leaf page.
+Also update, when affected:
+
+- `docs/language/tour.md` when a user-visible feature is added (one short section, link to the reference).
+- `docs/guide/cookbook.md` when a feature makes a common task easier.
+- `docs/guide/first-pack.md` only if its code stops compiling or a simpler form exists.
+- `README.md` only for install steps or the headline example.
+- `examples/**`; `docs/examples/index.md` imports their source, so it updates itself.
+
+`LANGUAGE.md` is only a pointer to the docs. Do not add content to it.
 
 ## Workflow
 
 1. Identify whether the change affects user-facing language behavior, generated datapack behavior, editor behavior, or examples.
-2. Read the implementation source of truth before writing docs.
+2. Read the implementation source of truth before writing docs. Test claims by compiling a small file; do not copy claims from older docs.
 3. Update the narrowest complete set of docs in the same change.
-4. Include "Under The Hood" notes where generated mcfunction behavior changes or where users must understand scoreboards, storage, macros, schedules, selectors, or agent dispatch.
-5. Keep examples concise and valid `mcfc` fences.
-6. Run `npm run docs:build` after docs edits.
-7. If compiler behavior changed, also run the relevant Rust tests or explain why they were not run.
+4. Every ` ```mcfc ` block must be a complete program. Mark the rare exception (multi-file examples) with `<!-- no-check -->` on the line before. Signatures go in tables, not code blocks.
+5. Run `cargo build --release && npm run docs:check && npm run docs:build`.
+6. If compiler behavior changed, also run the relevant Rust tests or explain why they were not run.
 
-## Reference Page Expectations
+## Writing Style
 
-Each dedicated reference page should include:
-
-- syntax or signature
-- what it does
-- one minimal example
-- constraints or type rules when relevant
-- an `Under The Hood` section when the lowering model affects user understanding
-
-Aggregate pages should link to leaf pages rather than duplicating all detail.
+- Plain technical prose: say what it does, what it takes, what it returns, and what breaks it. No marketing adjectives, no "powerful", no "seamless".
+- Lead with the example or table; keep prose to what the example does not show.
+- Mention generated commands only where a user needs them to predict cost or behavior.
 
 ## Final Response Checklist
 
 Mention:
 
 - which docs were updated
-- whether a new reference page was added
-- validation run, especially `npm run docs:build`
+- validation run: `npm run docs:check` and `npm run docs:build`
 - any known documentation gap intentionally left out

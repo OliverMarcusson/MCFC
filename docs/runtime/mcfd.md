@@ -1,48 +1,54 @@
 # mcfd
 
-`mcfd` is the optional host-bridge service for MCFC datapacks that use helper capabilities. It is a standalone Rust binary and does not require a mod loader.
+`mcfd` is the helper service behind [host calls](./host-bridge). It runs next to Minecraft, reads requests from the game log and writes answers back into the datapack. You only need it for packs that enable `[helper]` capabilities.
 
-## Build
+## Install
 
-```powershell
-cargo build -p mcfd --release
-```
-
-## Service Commands
-
-Install or start the helper:
+From a clone of the repository:
 
 ```powershell
+cargo install --path mcfd
 mcfd service install
 ```
 
-Check discovered packs and helper state:
+`service install` registers `mcfd` to start at logon, as the `MCFC mcfd` scheduled task, and starts it. If creating the task is denied, it falls back to a per-user Run entry.
 
-```powershell
-mcfd service status
-mcfd agent status
-```
-
-The Windows installer creates the `MCFC mcfd` user-logon Scheduled Task, then starts it with limited privileges. If task creation is denied, it falls back to a per-user Windows Run entry.
-
-## Discovery
-
-`mcfd` searches known Minecraft launcher locations for generated `mcfd.pack.toml` descriptors under world `datapacks/` directories. Custom instance roots can be added with the `MCFD_MINECRAFT_DIRS` environment variable as a semicolon-separated list.
-
-## Packaging
-
-Create the x64 installer with:
+As an alternative, build a Windows installer that also bundles the agent. This needs Inno Setup 6:
 
 ```powershell
 .\scripts\package-mcfd.ps1
 ```
 
-Inno Setup 6 is required. Releases are unsigned by default and include a `.sha256` checksum. Set `MCFD_SIGN_COMMAND` to a trusted command template containing `{file}` to sign the executable and installer during packaging.
+## Check it's working
+
+```powershell
+mcfd service status
+```
+
+This lists the packs `mcfd` found. It looks for `mcfd.pack.toml` files, which `mcfc` generates, in the world `datapacks/` folders of known launchers. For other instance folders, set `MCFD_MINECRAFT_DIRS` to a `;`-separated list of paths.
+
+In game, `mcfd.ping()` checks the whole round trip:
+
+```mcfc
+fn health() -> void:
+    let r = mcfd.ping()
+    if r.ok:
+        debug("mcfd connected")
+    else:
+        debug("mcfd not responding")
+```
 
 ## Troubleshooting
 
-- Rebuild and redeploy the datapack after manifest capability changes.
-- Confirm the generated `mcfd.pack.toml` exists in the deployed datapack.
-- Check `mcfd service status` for discovered packs.
-- Check Minecraft `logs/latest.log` if requests appear to time out.
-- Use `.env` beside the descriptor for per-pack secrets when an example expects it.
+| Symptom | Check |
+| --- | --- |
+| Every host call returns `ok = false` after a delay | `mcfd service status` shows the service running and lists the pack. |
+| The pack isn't listed | `mcfd.pack.toml` exists in the deployed datapack. Rebuild after changing capabilities. For a custom launcher folder, set `MCFD_MINECRAFT_DIRS`. |
+| HTTP is rejected | The domain is in `allow_domains`. |
+| Requests never arrive | Look in `logs/latest.log` for `[mcfc_rpc]` lines. |
+
+Per-pack secrets, such as a `bearer_token_env` value, can go in a `.env` file next to `mcfd.pack.toml`. Put it in the project's `assets/` folder so the build copies it there.
+
+## Signing releases
+
+`package-mcfd.ps1` produces unsigned builds with a `.sha256` checksum. To sign the executable and the installer, set `MCFD_SIGN_COMMAND` to a command that contains `{file}`.

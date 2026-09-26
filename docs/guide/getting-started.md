@@ -1,58 +1,35 @@
 # Getting Started
 
-MCFC is built from this repository with Cargo. Run commands from the repository root unless a page says otherwise.
+## Install
 
-## Build The Tools
-
-```powershell
-cargo build
-cargo build --bin mcfc-lsp
-```
-
-For day-to-day compiler use during development, `cargo run --bin mcfc -- ...` works without installing a binary globally.
-
-## Create A Project
-
-Create a manifest-based project:
+MCFC is built from source and needs [Rust](https://rustup.rs).
 
 ```powershell
-cargo run --bin mcfc -- new my-pack --helper none
+git clone https://github.com/OliverMarcusson/MCFC
+cargo install --path MCFC
 ```
 
-The project creator can also scaffold helper-enabled projects:
+This installs two binaries into `~/.cargo/bin`: `mcfc`, the compiler, and `mcfc-lsp`, the language server. Check that the install worked:
 
 ```powershell
-cargo run --bin mcfc -- new plain-pack --helper none
-cargo run --bin mcfc -- new helper-pack --helper mcfd
-cargo run --bin mcfc -- new agent-pack --helper mcfd-agent
+mcfc --help
 ```
 
-Use `--force` only with an existing empty target directory.
+MCFC targets Minecraft 26.3. Output and syntax still change between commits, so pin a commit for any pack you depend on.
 
-## Build The Datapack
-
-For a project with `out_dir = "dist"` in `mcfc.toml`:
+## Build a pack
 
 ```powershell
-cargo run --bin mcfc -- build my-pack --clean
+mcfc new my-pack --helper none
+mcfc build my-pack --clean
 ```
 
-For a single file:
+`build` writes the datapack to `my-pack/dist`. Copy that folder into `<world>/datapacks/` and run `/reload`. `fn main()` runs on every load.
 
-```powershell
-cargo run --bin mcfc -- build npc.mcf --out build/pack --clean
-```
+To rebuild after every save, run `mcfc watch my-pack`. See [CLI](./cli) for all flags.
 
-## Load In Minecraft
+## Next
 
-1. Copy the generated datapack directory into your world's `datapacks/` folder.
-2. Run `/reload` in Minecraft.
-3. Run a generated public wrapper if your pack exposes one:
-
-```text
-/function my_namespace:main
-```
-
-::: tip Helper projects
-If the project uses `mcfd`, install or start the helper with `mcfd service install` before testing host calls.
-:::
+- [Your First Pack](./first-pack) walks through state, tasks, events and commands in about 15 minutes.
+- [VS Code](/editor/vscode) sets up diagnostics and completion.
+- [Host Bridge](/runtime/host-bridge) covers HTTP, files and databases from a datapack, which need the optional `mcfd` helper.

@@ -3,39 +3,46 @@ layout: home
 
 hero:
   name: MCFC
-  text: Typed Minecraft datapacks without giving up vanilla.
-  tagline: A statically typed language, compiler, and language server for building Minecraft 26.3 datapacks from .mcf source files.
+  text: A typed language that compiles to Minecraft datapacks
+  tagline: Write .mcf source with functions, types, loops and per-player state. Get a vanilla datapack for Minecraft 26.3.
   image:
     src: /MCFC-icon.png
     alt: MCFC icon
   actions:
     - theme: brand
-      text: Get Started
+      text: Your First Pack
+      link: /guide/first-pack
+    - theme: alt
+      text: Install
       link: /guide/getting-started
     - theme: alt
-      text: Language Guide
-      link: /language/overview
+      text: Reference
+      link: /language/reference/statements
 
 features:
-  - title: Datapack-native
-    details: MCFC emits vanilla datapack files, including pack.mcmeta, generated functions, tags, and optional public wrappers.
-  - title: Typed gameplay code
-    details: Write functions, structs, state, selectors, inventory operations, bossbars, text components, and NBT-aware builder code with compiler diagnostics.
-  - title: Async Minecraft workflows
-    details: Use async blocks, sleep, sleep_ticks, tick functions, and scheduled generated functions for non-blocking gameplay flows.
-  - title: Optional host bridge
-    details: mcfd lets vanilla datapacks opt into HTTP, files, key-value storage, SQLite, real time, and randomness through manifest-gated capabilities.
-  - title: Editor support
-    details: The VS Code extension bundles syntax highlighting, project commands, manifest tooling, and a Rust language server.
-  - title: Experimental agent hooks
-    details: mcfd-agent can add version-pinned Minecraft 26.3 event callbacks and root commands while keeping the vanilla fallback intact.
+  - title: Vanilla output
+    details: The compiler writes plain .mcfunction files, tags and pack.mcmeta. No mod or plugin is needed to run the pack.
+  - title: Checked before you load it
+    details: Type errors, unknown methods and wrong arguments are reported with file and line, in the terminal and in VS Code.
+  - title: Waiting without blocking
+    details: sleep() and async blocks compile into scheduled functions, so a countdown is a for loop.
+  - title: Optional host access
+    details: With the mcfd helper, a pack can call HTTP APIs, read files, use SQLite, and get real time, each enabled per project.
 ---
 
-## Start With A Project
+```mcfc
+player_state coins: int = "Coins"
 
-```powershell
-cargo run -- new my-pack --helper none
-cargo run -- build my-pack --clean
+task payday every_ticks(20):
+    for player in selector("@a"):
+        player.state.coins = player.state.coins + 1
+        player.actionbar("Coins: $(player.state.coins)")
+
+command buy:
+    let player = single(selector("@s"))
+    if player.state.coins >= 10:
+        player.state.coins = player.state.coins - 10
+        player.give("minecraft:diamond", 1)
 ```
 
-MCFC is early-stage software. Generated output and language features are still evolving, so pin a commit when using it for a real pack.
+MCFC is early-stage. Syntax and output change between commits, so pin a commit for any pack you depend on.

@@ -1,28 +1,34 @@
 # Limitations
 
-MCFC is early-stage software. The backend prioritizes correctness, inspectable output, and deterministic code generation over aggressive optimization.
+What MCFC doesn't do yet, with workarounds where there are any.
 
-Currently not supported:
+## Language
 
-- recursion
-- implicit conversions, except builder-to-`nbt` coercions in NBT contexts
-- `entity_set.position`
-- richer object systems beyond structs and built-in handle types
+- **No recursion.** A function can't call itself, directly or indirectly. Use a `while` loop.
+- **No implicit conversions.** Use `float(n)`, `int(x)` and `to_string()`.
+- **No generic structs.** Only functions can be generic.
+- **Modules:** no `pub use` re-exports, no `*` globs and no inline `mod name:` bodies.
+- **`match`** works only on strings and allows one statement per arm. Use `switch` for anything else.
+- **`$(...)` in `mcf`** doesn't apply imports. Write `$(util::double(x))` with the full path.
 
-Additional notes:
+## Runtime values
 
-- `match` currently supports only `string` scrutinees.
-- each `match` arm currently contains exactly one statement.
-- `switch` accepts enum, `int`, and `string` values; enum switches require every constant or a `default` arm.
-- `sleep(...)` and `sleep_ticks(...)` are statement-only.
-- host calls are statement-only because they suspend execution.
-- modules have no `pub use` re-exports, `*` glob imports, or inline `mod name:` bodies.
-- `$(...)` placeholders in `mcf` need full paths from the root module, such as `$(util::double(x))`.
-- String, float, and struct `entity.state.*` and `player.state.*` paths require declarations; undeclared paths support `int` and `bool`.
-- `Optional<void>` is not valid. `orElse(...)` evaluates its fallback even when a value is present.
-- `find_first` needs a direct `selector(...)` expression, optionally wrapped in `at(...)` or `as(...)`, so MCFC can enforce `limit=1`.
-- Dictionary keys must use letters, digits, and `_`, with a non-digit first character. A dynamic key that violates this rule cannot name a stored dictionary entry.
+- **Strings aren't escaped** when they're joined or inserted with `$(...)`. A value containing `"` or `\` breaks the command. See [string limits](./reference/types#string).
+- **`block(...)` needs a literal string.** For computed positions, use `mcf` with the command you need.
+- **`find_first`** needs a literal `selector(...)`, not a variable.
+- **`has_data`** only works on storage values (arrays, dicts, structs), not on entity NBT.
+- **`heal`** only works on references known to be non-players, for example `@e[type=minecraft:pig]`. For players, use `effect("minecraft:instant_health", 1, 0)`.
+- **`entity_set.position`** isn't supported. Loop over the set and use each entity's `position`.
+- **`orElse(x)`** always evaluates `x`, even when the Optional has a value.
+- **Dict keys** may only use letters, digits and `_`, and can't start with a digit.
+- **Undeclared `player.state.*`** only holds `int` or `bool`. Declare other types with `player_state`.
 
-::: tip
-Use helper functions when a `match` arm needs more than one operation.
-:::
+## Statements
+
+- `sleep`, `sleep_ticks`, host calls and calls to functions that pause have to be statements of their own. See [Functions that pause](./reference/statements#functions-that-pause).
+- Put `async` and `sleep` in a helper function rather than directly in a `command` body.
+
+## Platform
+
+- Output targets Minecraft 26.3 only.
+- Vanilla events are limited to `player_join` and `player_death`. Other events need the [agent](/runtime/mcfd-agent).

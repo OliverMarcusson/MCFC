@@ -42,8 +42,10 @@ There is currently no `npm test` script for the VS Code extension.
 
 ```powershell
 npm install
+cargo build --release
+npm run docs:check   # compiles every mcfc code block in docs/
 npm run docs:build
 npm run docs:dev -- --host 127.0.0.1
 ```
 
-The production docs output is generated under `docs/.vitepress/dist/`.
+`docs:check` compiles each ```` ```mcfc ```` block as its own project, with every capability and the agent enabled. Put `<!-- no-check -->` on the line before a block that isn't a complete program, such as a multi-file example. The production docs output is generated under `docs/.vitepress/dist/`.

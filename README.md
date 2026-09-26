@@ -5,211 +5,57 @@
 <h1 align="center">MCFC</h1>
 
 <p align="center">
-  A statically typed language, compiler, and language server for building
-  Minecraft datapacks from <code>.mcf</code> source files.
+  A statically typed language that compiles <code>.mcf</code> source into
+  vanilla Minecraft 26.3 datapacks, with a language server for VS Code.
 </p>
 
-The project currently provides:
-
-- `mcfc`, a command-line datapack compiler
-- `mcfc`, a Rust library crate
-- `mcfc-lsp`, a language server for editor integration
-- a VS Code extension under `editors/vscode-mcfc`
-
-MCFC targets Minecraft `26.3` datapacks. The language guide in
-`LANGUAGE.md` is the canonical reference for syntax and behavior.
-
-## Example
-
 ```mcfc
-fn main() -> void:
-    let player = single(selector("@p"))
-    let bb = bossbar("mcfc:demo", "MCFC Bossbar")
+player_state coins: int = "Coins"
 
-    bb.value = 5
-    bb.max = 10
-    bb.visible = true
-    bb.players = player
+task payday every_ticks(20):
+    for player in selector("@a"):
+        player.state.coins = player.state.coins + 1
+        player.actionbar("Coins: $(player.state.coins)")
 
-    player.tellraw("Bossbar will disappear soon")
-
-    async:
-        sleep(5)
-        bb.remove()
-        player.position.setblock("minecraft:gold_block")
+command buy:
+    let player = single(selector("@s"))
+    if player.state.coins >= 10:
+        player.state.coins = player.state.coins - 10
+        player.give("minecraft:diamond", 1)
 ```
 
-MCFC uses indentation for block structure. The old `end` block terminator is no
-longer part of the supported syntax.
-
-## CLI Usage
-
-Create a new manifest-based project:
+## Install
 
 ```powershell
-cargo run -- new my-pack
+cargo install --path .
+mcfc new my-pack --helper none
+mcfc build my-pack --clean
 ```
 
-The project creator asks whether to use plain MCFC, `mcfd`, or `mcfd` plus the
-optional `mcfd-agent`. For scripts, pass the helper explicitly:
+Copy `my-pack/dist` into `<world>/datapacks/` and run `/reload`.
 
-```powershell
-cargo run -- new plain-pack --helper none
-cargo run -- new my-pack --helper mcfd
-cargo run -- new agent-pack --helper mcfd-agent
-```
+## Documentation
 
-Use `--force` only with an existing empty target directory.
+The docs are a VitePress site under [`docs/`](docs/). Run `npm install` and then `npm run docs:dev` to browse them locally.
 
-Build a single source file into a datapack directory:
+- [Your First Pack](docs/guide/first-pack.md) is a 15-minute tutorial.
+- [Cookbook](docs/guide/cookbook.md) has recipes for common tasks.
+- [Language Tour](docs/language/tour.md) covers the whole language on one page.
+- [Reference](docs/language/reference/statements.md) covers statements, types, builtins, events and std.
+- [Host Bridge](docs/runtime/host-bridge.md) covers HTTP, files and SQLite through the optional `mcfd` helper.
 
-```powershell
-cargo run -- build npc.mcf --out build/pack --clean
-```
+## Repository
 
-Build a project from a manifest or project directory:
+| Path | What |
+| --- | --- |
+| `src/` | Compiler, CLI and language server (`mcfc`, `mcfc-lsp`) |
+| `std/` | The `std` library, written in MCFC |
+| `tests/` | Regression suite |
+| `examples/` | Runnable packs |
+| `mcfd/`, `mcfd-agent/` | Optional host helper and Java agent |
+| `editors/vscode-mcfc/` | VS Code extension |
+| `docs/` | Documentation site |
 
-```powershell
-cargo run -- build path/to/mcfc.toml --out build/pack --clean
-```
+See [Contributing](docs/development/contributing.md) for the checks to run before committing.
 
-Watch a source file or project and rebuild on every save:
-
-```powershell
-cargo run -- watch path/to/project --out build/pack --clean
-```
-
-Common flags:
-
-- `--namespace <name>`: override the generated datapack namespace
-- `--helper <none|mcfd|mcfd-agent>`: choose a helper runtime for `mcfc new`
-- `--force`: allow `mcfc new` to use an existing empty directory
-- `--emit-ast`: write the typed program dump to `debug/typed_program.txt`
-- `--emit-ir`: write the lowered IR dump to `debug/ir.txt`
-- `--no-optimize`: disable the conservative IR optimization pass
-- `--clean`: remove the output directory before writing generated files
-
-The `watch` command keeps running, recompiles after `.mcf` saves, and prints
-compiler diagnostics without exiting so you can fix errors and continue.
-
-The compiler emits `pack.mcmeta`, generated functions under
-`data/<namespace>/function/`, and load/tick tags when needed.
-
-## mcfd Windows Installer
-
-`mcfd` is the optional host-bridge service for datapacks that use helper
-capabilities. Package a x64 installer with:
-
-```powershell
-.\scripts\package-mcfd.ps1
-```
-
-The installer creates the `MCFC mcfd` user-logon Scheduled Task, then starts it
-with limited privileges. On Windows configurations that deny task creation to the
-current user, it falls back to a per-user Windows Run entry. It places `mcfd` under
-`%ProgramFiles%\MCFC\mcfd`. Its bundled uninstaller removes the task,
-executable, and `%LocalAppData%\MCFC\mcfd` runtime data, but never removes Minecraft
-worlds, datapacks, generated descriptors, or logs. Inno Setup 6 is required to create
-the installer. Releases are unsigned by default and include a `.sha256`
-checksum; set `MCFD_SIGN_COMMAND` to a trusted command template containing `{file}` to
-sign the executable and installer during packaging.
-
-## Language Highlights
-
-- functions with typed parameters and return types
-- integer, boolean, string, array, dictionary, `Optional<T>`, struct, enum,
-  entity, block, bossbar, item, NBT, and typed persistent player/entity state values
-- `if`, `match`, `switch`, `while`, range `for`, and selector `for`
-- `as(...)` and `at(...)` context composition
-- raw Minecraft commands with `mc`
-- macro commands with `mcf`
-- non-blocking `async:` blocks with `sleep(...)` and `sleep_ticks(...)`
-- special `tick()` functions that compile to the datapack tick entrypoint
-- vanilla-first Bukkit-style `event`, `command`, `task`, and `data player.*`
-  declarations
-- public wrappers for no-argument `void` functions so they can be run with
-  `/function <namespace>:<function_name>`
-
-See `LANGUAGE.md` for the full guide.
-
-## Documentation Site
-
-The rich documentation site is built with VitePress:
-
-```powershell
-npm install
-npm run docs:dev
-npm run docs:build
-```
-
-Source lives under `docs/`; production output is generated under
-`docs/.vitepress/dist/`.
-
-The Bukkit-style declarations are deliberately vanilla-safe. `event player_join`
-and `event player_death` run through generated datapack detectors, `command`
-always has a `/trigger mcfcc_<name>` fallback, and `task` generates a tick or
-scheduled function. With the opt-in 26.3 JVM agent, typed event callbacks and
-real no-argument command roots are also available. See
-`examples/bukkit_api_conformance` for a runnable pack.
-
-## Project Manifests
-
-Project builds can use `mcfc.toml` or `*.mcfc.toml` manifests. Supported fields
-include:
-
-- `namespace`
-- `source_dir`
-- `asset_dir`
-- `out_dir`
-- `load` and `tick` function tags
-- `[[export]]` mappings from datapack paths to MCFC functions
-
-The compiler supports both single-file builds and manifest-based project
-builds. Projects start at `src/main.mcf` and split code into Rust-style modules
-with `mod`, `use`, and `pub`.
-
-## Development
-
-Run these commands from the repository root:
-
-```powershell
-cargo fmt -- --check
-cargo test -q
-cargo build
-cargo build --bin mcfc-lsp
-```
-
-Manual smoke test:
-
-```powershell
-cargo run -- build npc.mcf --out build/pack --clean
-```
-
-VS Code extension commands are run from `editors/vscode-mcfc`:
-
-```powershell
-npm install
-npm run compile
-npm run package
-```
-
-There is currently no `npm test` script for the VS Code extension.
-
-## Repository Layout
-
-- `src/cli.rs`: CLI entrypoint logic
-- `src/compiler.rs`: high-level compile pipeline
-- `src/lexer.rs`, `src/parser.rs`, `src/ast.rs`: frontend
-- `src/types.rs`, `src/analysis.rs`: type checking and analysis
-- `src/ir.rs`, `src/optimizer.rs`: lowering and optimization
-- `src/backend.rs`: datapack generation
-- `src/project.rs`: manifest discovery and project file collection
-- `src/lsp.rs`: language server implementation
-- `tests/integration.rs`: main regression suite
-- `editors/vscode-mcfc/`: VS Code extension
-- `LANGUAGE.md`: language reference
-
-## Status
-
-MCFC is early-stage software. Generated datapack output and language features
-are actively evolving, so pin commits when using it for a project.
+MCFC is early-stage. Syntax and output change between commits, so pin a commit for any pack you depend on.

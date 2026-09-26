@@ -1,37 +1,50 @@
 # mcfd-agent
 
-`mcfd-agent` is an optional Java instrumentation agent. It is not a mod and not a Bukkit/Paper plugin. It can be attached dynamically to a running Minecraft JVM through the JDK Attach API.
+`mcfd-agent` is an optional Java agent. It adds the [agent events](/language/reference/events#agent-events), such as chat, block break and interactions, some of them cancellable, and registers real `/name` commands for `command` declarations. It isn't a mod or a plugin. `mcfd` attaches it to the running Minecraft process.
 
-## Build
+Without the agent, a pack that uses agent events still loads. Its agent handlers don't run, and commands still work through `/trigger`.
+
+## Enable it
+
+1. Request the agent in `mcfc.toml`:
+
+   ```toml
+   [helper]
+   backend = "mcfd"
+
+   [helper.agent]
+   enabled = true
+   ```
+
+   `event` and `command` declarations are subscribed automatically.
+
+2. Build the agent. This needs a JDK:
+
+   ```powershell
+   .\mcfd-agent\build.ps1
+   ```
+
+3. Copy `mcfd-agent\dist\mcfd-agent.jar` and `mcfd-agent-attach.jar` into the folder that holds `mcfd.exe`. After `cargo install`, that's `~/.cargo/bin`. The Windows installer from `package-mcfd.ps1` already includes them.
+
+4. Start Minecraft, then check the agent:
+
+   ```powershell
+   mcfd agent status
+   ```
+
+   `mcfd` attaches to the running Minecraft process automatically. If it can't tell which process to use, attach by hand with `mcfd agent attach <pid>`.
+
+The agent only works with Minecraft 26.3. After updating it, restart Minecraft so `mcfd` attaches the new JAR.
+
+## How it works
+
+The agent patches vanilla server methods. When an event fires, it logs a `[mcfd-agent] event=...` line followed by a JSON record, and `mcfd` picks that up. The matching MCFC handler then runs on the server thread as the affected player. Some events arrive as network packets before the server acts on them. For those, a handler can call `event.cancel()` to stop the action.
+
+The hook sites call the agent only through JDK types, so it also works under mod loaders such as Fabric.
+
+## Developing the agent
 
 ```powershell
-.\mcfd-agent\build.ps1
+.\mcfd-agent\verify-26.3.ps1   # check hook targets against a 26.3 JAR
+.\mcfd-agent\test.ps1          # dispatch and command-routing self-test
 ```
-
-## Verify Mappings
-
-Before changing hook targets, verify named 26.3 mappings against a Minecraft JAR:
-
-```powershell
-.\mcfd-agent\verify-26.3.ps1
-```
-
-## Self-test
-
-Run the reflection dispatch self-test:
-
-```powershell
-.\mcfd-agent\test.ps1
-```
-
-## Runtime Behavior
-
-The adapter instruments named vanilla server methods for chat, inventory, interaction, lifecycle, player-state, and item events. It emits a human-readable `[mcfd-agent] event=...` line followed by a versioned JSON record that `mcfd` parses.
-
-Injected hook sites call the agent only through JDK types (a `java.util.function.Function` stored in the `mcfd.hooks` system property), so the agent also works under mod loaders such as Fabric, which refuse classes from jars attached after startup.
-
-Subscribed MCFC event handlers are invoked on the server thread as the affected player. Declared no-argument commands can also receive real root-command routes.
-
-::: warning Version pin
-The adapter is deliberately pinned to Minecraft `26.3`, the same version MCFC datapacks target. Restart Minecraft after updating the agent so `mcfd` attaches the new JAR with the current pack subscriptions.
-:::

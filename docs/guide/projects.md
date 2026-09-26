@@ -23,7 +23,7 @@ Fields:
 
 ## Multiple Source Files
 
-`src/main.mcf` is the root module. Split code into more files with [`mod`](../language/reference/statements/mod) and import from them with [`use`](../language/reference/statements/use):
+`src/main.mcf` is the root module. Split code into more files with [`mod`](../language/reference/statements#mod-and-pub) and import from them with [`use`](../language/reference/statements#use):
 
 ```text
 src/
@@ -79,5 +79,5 @@ commands = ["home"]
 ```
 
 ::: warning Capability gating
-A `module.fn(...)` host call is a compile error unless the matching capability is enabled in the project manifest.
+A `module.fn(...)` host call is a compile error unless the matching capability is enabled in the project manifest. See [Capabilities](/runtime/capabilities) for every call and [mcfd](/runtime/mcfd) for installing the helper.
 :::

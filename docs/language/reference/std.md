@@ -1,6 +1,6 @@
 # Standard Library: `std`
 
-Every file and project build can use the `std` module without declaring it. Import from it with [`use`](./statements/use) or call it by path:
+Every file and project build can use the `std` module without declaring it. Import from it with [`use`](./statements#use) or call it by path:
 
 ```mcfc
 use std::math::clamp
@@ -30,7 +30,7 @@ Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 
 ## `std::array`
 
-These are [generic](./statements/fn#generic-functions), so they work on `array<int>` and `array<float>`.
+These are [generic](./statements#generic-functions), so they work on `array<int>` and `array<float>`.
 
 | Function | Returns |
 | --- | --- |
@@ -38,7 +38,7 @@ These are [generic](./statements/fn#generic-functions), so they work on `array<i
 | `min<T>(xs: array<T>) -> T` | The smallest element, or `0` for an empty array. |
 | `max<T>(xs: array<T>) -> T` | The largest element, or `0` for an empty array. |
 
-To sort, use the built-in [`xs.sort()`](./types/array) method.
+To sort, use the built-in [`xs.sort()`](./types#array) method.
 
 ## `std::str`
 

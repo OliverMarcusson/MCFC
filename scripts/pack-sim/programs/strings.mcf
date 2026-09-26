@@ -1,24 +1,31 @@
-fn greet(name: string, times: int) -> string:
-    let out = ""
-    for i in 0..times:
-        out = "$(out)$(name)"
-    return out
+String greet(String name, int times) {
+    var out = "";
+    for (int i = 0; i < times; i++) {
+        out = "$(out)$(name)";
+    }
+    return out;
+}
 
-fn pick(flag: bool) -> string:
-    if flag:
-        return "yes"
-    return "no"
+String pick(boolean flag) {
+    if (flag) {
+        return "yes";
+    }
+    return "no";
+}
 
-fn main() -> void:
-    let g = greet("ab", 3)
-    mcf "say $(g)"
-    let p = pick(true)
-    let q = pick(false)
-    mcf "say $(p) $(q)"
-    let words = ["x", "yy", "zzz"]
-    let total = 0
-    for w in words:
-        total = total + w.len()
-        if w == "yy":
-            mcf "say found yy"
-    mcf "say total $(total)"
+void main() {
+    var g = greet("ab", 3);
+    mcf("say $(g)");
+    var p = pick(true);
+    var q = pick(false);
+    mcf("say $(p) $(q)");
+    var words = List.of("x", "yy", "zzz");
+    var total = 0;
+    for (var w : words) {
+        total = total + w.size();
+        if (w == "yy") {
+            mcf("say found yy");
+        }
+    }
+    mcf("say total $(total)");
+}

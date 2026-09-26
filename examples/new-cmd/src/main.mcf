@@ -1,4 +1,6 @@
-fn main() -> void:
-    let player = single(selector("@p"))
-    if exists(player):
-        player.tellraw("MCFC is live.")
+void main() {
+    var player = single(selector("@p"));
+    if (exists(player)) {
+        player.tellraw("MCFC is live.");
+    }
+}

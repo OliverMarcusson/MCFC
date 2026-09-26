@@ -317,7 +317,7 @@ public final class McfdHooks {
             runCommand(server, server,
                     "data modify storage " + namespace + ":agent command set value {command:"
                             + snbtString(command) + ",sender:{kind:\"player\",name:"
-                            + snbtString(playerName) + ",permission_level:0,player:{prefix:\"\",selector:"
+                            + snbtString(playerName) + ",permissionLevel:0,player:{prefix:\"\",selector:"
                             + snbtString(selector) + "}},args:" + args + "}");
             if (playerName.isEmpty() || !playerName.matches("[A-Za-z0-9_]{1,16}")) {
                 throw new IllegalStateException("invalid player scoreboard name for command dispatch");
@@ -390,7 +390,7 @@ public final class McfdHooks {
             String event, Object source, Object payload, boolean cancelled, String playerName) {
         String selector = playerName.matches("[A-Za-z0-9_]{1,16}")
                 ? "@a[name=" + playerName + "]" : "@s";
-        String base = "{player:{prefix:\"\",selector:" + snbtString(selector) + "},player_name:" + snbtString(playerName)
+        String base = "{player:{prefix:\"\",selector:" + snbtString(selector) + "},playerName:" + snbtString(playerName)
                 + ",source:" + snbtString(typeName(source))
                 + ",payload:" + snbtString(typeName(payload))
                 + ",cancelled:" + (cancelled ? "1b" : "0b");
@@ -399,8 +399,8 @@ public final class McfdHooks {
         }
         if ("inventory_click".equals(event)) {
             return base
-                    + ",container_id:" + intValue(payload, "containerId")
-                    + ",state_id:" + intValue(payload, "stateId")
+                    + ",containerId:" + intValue(payload, "containerId")
+                    + ",stateId:" + intValue(payload, "stateId")
                     + ",slot:" + intValue(payload, "slotNum")
                     + ",button:" + intValue(payload, "buttonNum") + "}";
         }
@@ -422,30 +422,30 @@ public final class McfdHooks {
         }
         if ("entity_interact".equals(event)) {
             return base
-                    + ",target_id:" + intValue(payload, "entityId")
+                    + ",targetId:" + intValue(payload, "entityId")
                     + ",hand:" + snbtString(enumName(invokeQuietly(payload, "hand")))
                     + ",secondary:" + boolValue(payload, "usingSecondaryAction") + "}";
         }
         if ("entity_attack".equals(event)) {
-            return base + ",target_id:" + intValue(payload, "entityId") + "}";
+            return base + ",targetId:" + intValue(payload, "entityId") + "}";
         }
         if ("item_held_change".equals(event)) {
             return base + ",slot:" + intValue(payload, "getSlot") + "}";
         }
         if ("inventory_close".equals(event)) {
-            return base + ",container_id:" + intValue(payload, "getContainerId") + "}";
+            return base + ",containerId:" + intValue(payload, "getContainerId") + "}";
         }
         if ("player_action_toggle".equals(event)) {
             return base
                     + ",action:" + snbtString(enumName(invokeQuietly(payload, "getAction")))
-                    + ",entity_id:" + intValue(payload, "getId")
+                    + ",entityId:" + intValue(payload, "getId")
                     + ",data:" + intValue(payload, "getData") + "}";
         }
         if ("item_rename".equals(event)) {
             return base + ",name:" + snbtString(stringValue(payload, "getName")) + "}";
         }
         if ("trade_select".equals(event)) {
-            return base + ",trade_index:" + intValue(payload, "getItem") + "}";
+            return base + ",tradeIndex:" + intValue(payload, "getItem") + "}";
         }
         if ("sign_change".equals(event)) {
             Object position = invokeQuietly(payload, "pos");
@@ -453,16 +453,16 @@ public final class McfdHooks {
             boolean front = "FRONT".equals(enumName(invokeQuietly(payload, "slot")));
             return base + positionFields(position)
                     + ",front:" + (front ? "1b" : "0b")
-                    + ",line_1:" + snbtString(arrayString(lines, 0))
-                    + ",line_2:" + snbtString(arrayString(lines, 1))
-                    + ",line_3:" + snbtString(arrayString(lines, 2))
-                    + ",line_4:" + snbtString(arrayString(lines, 3)) + "}";
+                    + ",line1:" + snbtString(arrayString(lines, 0))
+                    + ",line2:" + snbtString(arrayString(lines, 1))
+                    + ",line3:" + snbtString(arrayString(lines, 2))
+                    + ",line4:" + snbtString(arrayString(lines, 3)) + "}";
         }
         if ("recipe_place".equals(event)) {
             return base
-                    + ",container_id:" + intValue(payload, "containerId")
+                    + ",containerId:" + intValue(payload, "containerId")
                     + ",recipe:" + snbtString(String.valueOf(invokeQuietly(payload, "recipe")))
-                    + ",use_max_items:" + boolValue(payload, "useMaxItems") + "}";
+                    + ",useMaxItems:" + boolValue(payload, "useMaxItems") + "}";
         }
         if ("game_mode_request".equals(event)) {
             return base + ",mode:" + snbtString(enumName(invokeQuietly(payload, "mode"))) + "}";

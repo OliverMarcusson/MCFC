@@ -1,288 +1,321 @@
-# Exercises every feature added for Minecraft 26.3: floats, `%`, strings,
-# array methods, the new std modules, player/world reads, generics, float
-# sort, dict keys, look direction, light/biome/environment, game rules, and
-# weighted/binomial random. Each check
-# prints `MCFCTEST PASS|FAIL <name> got=<value>` with /say, so results land
-# in latest.log. Runs once when a player is online; run it again with
-# /function mcfc_demo:run_tests.
+// Exercises every feature added for Minecraft 26.3: floats, `%`, strings,
+// array methods, the new std modules, player/world reads, generics, float
+// sort, dict keys, look direction, light/biome/environment, game rules, and
+// weighted/binomial random. Each check
+// prints `MCFCTEST PASS|FAIL <name> got=<value>` with /say, so results land
+// in latest.log. Runs once when a player is online; run it again with
+// /function mcfc_demo:run_tests.
 
-use std::str::{starts_with, ends_with, find, contains}
-use std::math::{gcd, lerp}
+import std.str.startsWith;
+import std.str.endsWith;
+import std.str.find;
+import std.str.contains;
+import std.math.gcd;
+import std.math.lerp;
 
-fn tick() -> void:
-    if exists(single(selector("@a[tag=!mcfc_tested,limit=1]"))):
-        mc "tag @a add mcfc_tested"
-        run_tests()
+void tick() {
+    if (exists(single(selector("@a[tag=!mcfc_tested,limit=1]")))) {
+        mc("tag @a add mcfc_tested");
+        runTests();
+    }
+}
 
-fn check(name: string, ok: bool, got: string) -> void:
-    if ok:
-        mcf "say MCFCTEST PASS $(name) got=$(got)"
-    else:
-        mcf "say MCFCTEST FAIL $(name) got=$(got)"
+void check(String name, boolean ok, String got) {
+    if (ok) {
+        mcf("say MCFCTEST PASS $(name) got=$(got)");
+    } else {
+        mcf("say MCFCTEST FAIL $(name) got=$(got)");
+    }
+}
 
-fn near(a: float, b: float) -> bool:
-    return (a - b).abs() < 0.001
+boolean near(float a, float b) {
+    return (a - b).abs() < 0.001;
+}
 
-# Returns its argument unchanged, so the compiler cannot fold it.
-fn runtime(s: string) -> string:
-    return s
+// Returns its argument unchanged, so the compiler cannot fold it.
+String runtime(String s) {
+    return s;
+}
 
-# Each group gets its own tick so a failure in one does not hide the others.
-fn run_tests() -> void:
-    mc "say MCFCTEST BEGIN"
-    floats()
-    sleep_ticks(1)
-    remainders()
-    strings()
-    sleep_ticks(1)
-    arrays()
-    sleep_ticks(1)
-    std_library()
-    sleep_ticks(1)
-    reads()
-    sleep_ticks(1)
-    new_features()
-    sleep_ticks(1)
-    float_sort_test(3000)
-    sort_test(1000, 0)
-    sort_test(5000, 3)
-    sort_test(10000, 6)
-    progress("sorts done", 9)
-    mc "say MCFCTEST END"
+// Each group gets its own tick so a failure in one does not hide the others.
+void runTests() {
+    mc("say MCFCTEST BEGIN");
+    floats();
+    sleepTicks(1);
+    remainders();
+    strings();
+    sleepTicks(1);
+    arrays();
+    sleepTicks(1);
+    stdLibrary();
+    sleepTicks(1);
+    reads();
+    sleepTicks(1);
+    newFeatures();
+    sleepTicks(1);
+    floatSortTest(3000);
+    sortTest(1000, 0);
+    sortTest(5000, 3);
+    sortTest(10000, 6);
+    progress("sorts done", 9);
+    mc("say MCFCTEST END");
+}
 
-fn floats() -> void:
-    let x = 16.0
-    check("float_sqrt", near(x.sqrt(), 4.0), x.sqrt().to_string())
-    let y = (x * 0.5 + 2.0) / 4.0 - 1.0
-    check("float_arith", near(y, 1.5), y.to_string())
-    check("float_neg", near(-y, -1.5), (-y).to_string())
-    check("float_to_int_floor", int(-2.7) == -3, int(-2.7).to_string())
-    check("int_to_float", near(float(7) / 2.0, 3.5), (float(7) / 2.0).to_string())
-    check("float_pow", near(2.0.pow(10.0), 1024.0), 2.0.pow(10.0).to_string())
-    check("float_hypot", near(3.0.hypot(4.0), 5.0), 3.0.hypot(4.0).to_string())
-    check("float_floor", near((-1.5).floor(), -2.0), (-1.5).floor().to_string())
-    check("float_ceil", near(1.2.ceil(), 2.0), 1.2.ceil().to_string())
-    check("float_round", near(2.5.round(), 3.0), 2.5.round().to_string())
-    check("float_trunc", near((-1.7).trunc(), -1.0), (-1.7).trunc().to_string())
-    check("float_abs", near((-3.25).abs(), 3.25), (-3.25).abs().to_string())
-    check("float_min_max", near(1.0.min(2.0) + 1.0.max(2.0), 3.0), 1.0.max(2.0).to_string())
-    check("float_clamp", near(9.0.clamp(0.0, 5.0), 5.0), 9.0.clamp(0.0, 5.0).to_string())
-    # One of these two passes: it tells us whether sin/cos take radians or degrees.
-    check("float_sin_radians", near(1.5707964.sin(), 1.0), 1.5707964.sin().to_string())
-    check("float_sin_degrees", near(90.0.sin(), 1.0), 90.0.sin().to_string())
-    check("float_cos_zero", near(0.0.cos(), 1.0), 0.0.cos().to_string())
-    check("float_tan", near(0.7853982.tan(), 1.0), 0.7853982.tan().to_string())
-    check("float_lt", 1.5 < 2.5, "1.5<2.5")
-    check("float_not_lt", not (2.5 < 1.5), "2.5<1.5")
-    check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5")
-    check("float_gt", 2.5 > 1.5, "2.5>1.5")
-    check("float_eq", x == 16.0, x.to_string())
-    check("float_neq", x != 16.5, x.to_string())
-    check("float_small_diff", 1.0 < 1.25, "1.0<1.25")
-    check("float_text_zero", 0.5.to_string() == "0.5", 0.5.to_string())
-    check("float_text_negative", (-0.25).to_string() == "-0.25", (-0.25).to_string())
-    check("float_text_whole", 4.0.to_string() == "4", 4.0.to_string())
+void floats() {
+    var x = 16.0;
+    check("float_sqrt", near(x.sqrt(), 4.0), x.sqrt().toString());
+    var y = (x * 0.5 + 2.0) / 4.0 - 1.0;
+    check("float_arith", near(y, 1.5), y.toString());
+    check("float_neg", near(-y, -1.5), (-y).toString());
+    check("float_to_int_floor", (int) -2.7 == -3, ((int) -2.7).toString());
+    check("int_to_float", near((float) 7 / 2.0, 3.5), ((float) 7 / 2.0).toString());
+    check("float_pow", near(2.0.pow(10.0), 1024.0), 2.0.pow(10.0).toString());
+    check("float_hypot", near(3.0.hypot(4.0), 5.0), 3.0.hypot(4.0).toString());
+    check("float_floor", near((-1.5).floor(), -2.0), (-1.5).floor().toString());
+    check("float_ceil", near(1.2.ceil(), 2.0), 1.2.ceil().toString());
+    check("float_round", near(2.5.round(), 3.0), 2.5.round().toString());
+    check("float_trunc", near((-1.7).trunc(), -1.0), (-1.7).trunc().toString());
+    check("float_abs", near((-3.25).abs(), 3.25), (-3.25).abs().toString());
+    check("float_min_max", near(1.0.min(2.0) + 1.0.max(2.0), 3.0), 1.0.max(2.0).toString());
+    check("float_clamp", near(9.0.clamp(0.0, 5.0), 5.0), 9.0.clamp(0.0, 5.0).toString());
+    // One of these two passes: it tells us whether sin/cos take radians or degrees.
+    check("float_sin_radians", near(1.5707964.sin(), 1.0), 1.5707964.sin().toString());
+    check("float_sin_degrees", near(90.0.sin(), 1.0), 90.0.sin().toString());
+    check("float_cos_zero", near(0.0.cos(), 1.0), 0.0.cos().toString());
+    check("float_tan", near(0.7853982.tan(), 1.0), 0.7853982.tan().toString());
+    check("float_lt", 1.5 < 2.5, "1.5<2.5");
+    check("float_not_lt", !(2.5 < 1.5), "2.5<1.5");
+    check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5");
+    check("float_gt", 2.5 > 1.5, "2.5>1.5");
+    check("float_eq", x == 16.0, x.toString());
+    check("float_neq", x != 16.5, x.toString());
+    check("float_small_diff", 1.0 < 1.25, "1.0<1.25");
+    check("float_text_zero", 0.5.toString() == "0.5", 0.5.toString());
+    check("float_text_negative", (-0.25).toString() == "-0.25", (-0.25).toString());
+    check("float_text_whole", 4.0.toString() == "4", 4.0.toString());
+}
 
-fn remainders() -> void:
-    check("rem_const_neg", -7 % 3 == 2, (-7 % 3).to_string())
-    check("rem_const_negdiv", 7 % -3 == -2, (7 % -3).to_string())
-    let n = -7
-    check("rem_runtime", n % 3 == 2, (n % 3).to_string())
-    check("rem_float", near(5.5 % 2.0, 1.5), (5.5 % 2.0).to_string())
-    check("rem_float_neg", near(-5.5 % 2.0, 0.5), (-5.5 % 2.0).to_string())
+void remainders() {
+    check("rem_const_neg", -7 % 3 == 2, (-7 % 3).toString());
+    check("rem_const_negdiv", 7 % -3 == -2, (7 % -3).toString());
+    var n = -7;
+    check("rem_runtime", n % 3 == 2, (n % 3).toString());
+    check("rem_float", near(5.5 % 2.0, 1.5), (5.5 % 2.0).toString());
+    check("rem_float_neg", near(-5.5 % 2.0, 0.5), (-5.5 % 2.0).toString());
+}
 
-fn strings() -> void:
-    let name = runtime("Steve")
-    let n = 42
-    let line = "Hi " + name + " n=" + n.to_string() + " f=" + 1.5.to_string()
-    check("str_concat", line == "Hi Steve n=42 f=1.5", line)
-    check("str_len", line.len() == 19, line.len().to_string())
-    check("str_slice", line.slice(3, 8) == "Steve", line.slice(3, 8))
-    check("str_slice_neg", line.slice(-3) == "1.5", line.slice(-3))
-    let start = 3
-    let stop = 8
-    check("str_slice_dynamic", line.slice(start, stop) == "Steve", line.slice(start, stop))
-    check("str_slice_out_of_range", name.slice(2, 99) == "", name.slice(2, 99))
-    check("str_parse_int", "-17".parse_int() == -17, "-17".parse_int().to_string())
-    check("str_parse_int_bad", runtime("abc").parse_int() == 0, runtime("abc").parse_int().to_string())
-    let quoted = runtime("say \"hi\"")
-    let joined = "<" + quoted + ">"
-    check("str_quote_fallback", joined == "", joined.len().to_string())
+void strings() {
+    var name = runtime("Steve");
+    var n = 42;
+    var line = "Hi " + name + " n=" + n.toString() + " f=" + 1.5.toString();
+    check("str_concat", line == "Hi Steve n=42 f=1.5", line);
+    check("str_len", line.length() == 19, line.length().toString());
+    check("str_slice", line.substring(3, 8) == "Steve", line.substring(3, 8));
+    check("str_slice_neg", line.substring(-3) == "1.5", line.substring(-3));
+    var start = 3;
+    var stop = 8;
+    check("str_slice_dynamic", line.substring(start, stop) == "Steve", line.substring(start, stop));
+    check("str_slice_out_of_range", name.substring(2, 99) == "", name.substring(2, 99));
+    check("str_parse_int", "-17".parseInt() == -17, "-17".parseInt().toString());
+    check("str_parse_int_bad", runtime("abc").parseInt() == 0, runtime("abc").parseInt().toString());
+    var quoted = runtime("say \"hi\"");
+    var joined = "<" + quoted + ">";
+    check("str_quote_fallback", joined == "", joined.length().toString());
+}
 
-fn arrays() -> void:
-    let xs = [3, 1, 2]
-    xs.insert(0, 9)
-    let i = 2
-    xs.insert(i, 7)
-    check("arr_insert", xs.len() == 5 and xs[0] == 9 and xs[2] == 7, xs.len().to_string())
-    check("arr_first", xs.first() == 9, xs.first().to_string())
-    check("arr_last", xs.last() == 2, xs.last().to_string())
-    check("arr_contains", xs.contains(7), "7")
-    check("arr_not_contains", not xs.contains(8), "8")
-    check("arr_index_of", xs.index_of(1) == 3, xs.index_of(1).to_string())
-    check("arr_index_of_missing", xs.index_of(8) == -1, xs.index_of(8).to_string())
-    xs.reverse()
-    check("arr_reverse", xs[0] == 2 and xs[4] == 9, xs[0].to_string())
-    let words = ["a", "b"]
-    check("arr_contains_str", words.contains("b"), "b")
-    xs.clear()
-    check("arr_clear", xs.len() == 0, xs.len().to_string())
+void arrays() {
+    var xs = List.of(3, 1, 2);
+    xs.add(0, 9);
+    var i = 2;
+    xs.add(i, 7);
+    check("arr_insert", xs.size() == 5 && xs[0] == 9 && xs[2] == 7, xs.size().toString());
+    check("arr_first", xs.getFirst() == 9, xs.getFirst().toString());
+    check("arr_last", xs.getLast() == 2, xs.getLast().toString());
+    check("arr_contains", xs.contains(7), "7");
+    check("arr_not_contains", !xs.contains(8), "8");
+    check("arr_index_of", xs.indexOf(1) == 3, xs.indexOf(1).toString());
+    check("arr_index_of_missing", xs.indexOf(8) == -1, xs.indexOf(8).toString());
+    xs.reverse();
+    check("arr_reverse", xs[0] == 2 && xs[4] == 9, xs[0].toString());
+    var words = List.of("a", "b");
+    check("arr_contains_str", words.contains("b"), "b");
+    xs.clear();
+    check("arr_clear", xs.size() == 0, xs.size().toString());
+}
 
-# Shows which sort step is running on a bossbar.
-fn progress(label: string, step: int) -> void:
-    let bar = bossbar("mcfc_demo:sort", "sorts")
-    bar.max = 9
-    bar.value = step
-    bar.name = label
-    bar.players = selector("@a")
-    bar.visible = true
-    mcf "say MCFCTEST INFO step $(step) $(label)"
+// Shows which sort step is running on a bossbar.
+void progress(String label, int step) {
+    var bar = new BossBar("mcfc_demo:sort", "sorts");
+    bar.max = 9;
+    bar.value = step;
+    bar.name = label;
+    bar.players = selector("@a");
+    bar.visible = true;
+    mcf("say MCFCTEST INFO step $(step) $(label)");
+}
 
-# Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
-# tick runs too many commands, and sort() spreads itself over ticks. All of it
-# pauses run_tests, so the sizes run one after another.
-fn sort_test(size: int, step: int) -> void:
-    let name = "sort " + size.to_string()
-    progress(name + ": filling", step)
-    let xs = [0]
-    xs.clear()
-    let total = 0
-    let k = 0
-    while k < size:
-        let x = random(1000) - 500
-        xs.push(x)
-        total = total + x
-        k = k + 1
-        if k % 500 == 0:
-            sleep_ticks(1)
-    progress(name + ": sorting", step + 1)
-    let started = game_time()
-    xs.sort()
-    let ticks = game_time() - started
-    mcf "say MCFCTEST INFO sort $(size) took $(ticks) ticks"
-    progress(name + ": checking", step + 2)
-    let ordered = true
-    let after = xs[0]
-    let j = 1
-    while j < xs.len():
-        if xs[j - 1] > xs[j]:
-            ordered = false
-        after = after + xs[j]
-        j = j + 1
-        if j % 200 == 0:
-            sleep_ticks(1)
-    check("sort_" + size.to_string(), ordered and xs.len() == size, xs.len().to_string())
-    check("sort_keeps_sum_" + size.to_string(), after == total, total.to_string())
+// Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
+// tick runs too many commands, and sort() spreads itself over ticks. All of it
+// pauses run_tests, so the sizes run one after another.
+void sortTest(int size, int step) {
+    var name = "sort " + size.toString();
+    progress(name + ": filling", step);
+    var xs = List.of(0);
+    xs.clear();
+    var total = 0;
+    var k = 0;
+    while (k < size) {
+        var x = random(1000) - 500;
+        xs.add(x);
+        total = total + x;
+        k = k + 1;
+        if (k % 500 == 0) {
+            sleepTicks(1);
+        }
+    }
+    progress(name + ": sorting", step + 1);
+    var started = gameTime();
+    xs.sort();
+    var ticks = gameTime() - started;
+    mcf("say MCFCTEST INFO sort $(size) took $(ticks) ticks");
+    progress(name + ": checking", step + 2);
+    var ordered = true;
+    var after = xs[0];
+    var j = 1;
+    while (j < xs.size()) {
+        if (xs[j - 1] > xs[j]) {
+            ordered = false;
+        }
+        after = after + xs[j];
+        j = j + 1;
+        if (j % 200 == 0) {
+            sleepTicks(1);
+        }
+    }
+    check("sort_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
+    check("sort_keeps_sum_" + size.toString(), after == total, total.toString());
+}
 
-fn std_library() -> void:
-    let small = [3, 1, 2, 1]
-    small.sort()
-    check("sort_small", small[0] == 1 and small[1] == 1 and small[3] == 3, small[3].to_string())
-    let none = [0]
-    none.clear()
-    none.sort()
-    check("sort_empty", none.len() == 0, none.len().to_string())
-    let one = [7]
-    one.sort()
-    check("sort_one", one.len() == 1 and one[0] == 7, one[0].to_string())
-    let desc = [5, 4, 3, 2, 1]
-    desc.sort()
-    check("sort_descending", desc[0] == 1 and desc[4] == 5, desc[4].to_string())
-    check("std_min_max", std::array::min([4, -2, 9]) == -2 and std::array::max([4, -2, 9]) == 9, "-2,9")
-    check("std_starts_with", starts_with("minecraft:stone", "minecraft:"), "")
-    check("std_ends_with", ends_with("stone", "ne") and not ends_with("stone", "x"), "")
-    check("std_find", find("hello", "ll") == 2, find("hello", "ll").to_string())
-    check("std_find_missing", find("hello", "z") == -1, find("hello", "z").to_string())
-    check("std_contains_quote", contains(runtime("a\"b"), "\""), "")
-    check("std_gcd", gcd(12, -18) == 6, gcd(12, -18).to_string())
-    check("std_lerp", near(lerp(0.0, 10.0, 0.25), 2.5), lerp(0.0, 10.0, 0.25).to_string())
+void stdLibrary() {
+    var small = List.of(3, 1, 2, 1);
+    small.sort();
+    check("sort_small", small[0] == 1 && small[1] == 1 && small[3] == 3, small[3].toString());
+    var none = List.of(0);
+    none.clear();
+    none.sort();
+    check("sort_empty", none.size() == 0, none.size().toString());
+    var one = List.of(7);
+    one.sort();
+    check("sort_one", one.size() == 1 && one[0] == 7, one[0].toString());
+    var desc = List.of(5, 4, 3, 2, 1);
+    desc.sort();
+    check("sort_descending", desc[0] == 1 && desc[4] == 5, desc[4].toString());
+    check("std_min_max", std.list.min(List.of(4, -2, 9)) == -2 && std.list.max(List.of(4, -2, 9)) == 9, "-2,9");
+    check("std_starts_with", startsWith("minecraft:stone", "minecraft:"), "");
+    check("std_ends_with", endsWith("stone", "ne") && !endsWith("stone", "x"), "");
+    check("std_find", find("hello", "ll") == 2, find("hello", "ll").toString());
+    check("std_find_missing", find("hello", "z") == -1, find("hello", "z").toString());
+    check("std_contains_quote", contains(runtime("a\"b"), "\""), "");
+    check("std_gcd", gcd(12, -18) == 6, gcd(12, -18).toString());
+    check("std_lerp", near(lerp(0.0, 10.0, 0.25), 2.5), lerp(0.0, 10.0, 0.25).toString());
+}
 
-fn reads() -> void:
-    let p = player_ref(single(selector("@a[limit=1]")))
-    let pos = p.x().to_string() + "," + p.y().to_string() + "," + p.z().to_string()
-    let rot = p.yaw().to_string() + "," + p.pitch().to_string()
-    mcf "say MCFCTEST INFO pos=$(pos) rot=$(rot)"
-    check("read_health", p.health() > 0.0, p.health().to_string())
-    check("read_food", p.food() >= 0 and p.food() <= 20, p.food().to_string())
-    check("read_xp", p.xp_level() >= 0, p.xp_level().to_string())
-    check("read_game_mode", p.game_mode() >= 0 and p.game_mode() <= 3, p.game_mode().to_string())
-    check("read_dimension", starts_with(p.dimension(), "minecraft:"), p.dimension())
-    check("read_selected_slot", p.selected_slot() >= 0 and p.selected_slot() <= 8, p.selected_slot().to_string())
-    mc "execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}"
-    let pig = single(selector("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"))
-    check("read_distance_to", near(p.distance_to(pig), 5.0), p.distance_to(pig).to_string())
-    mc "kill @e[type=minecraft:pig,tag=mcfc_test_pig]"
-    check("read_game_time", game_time() > 0, game_time().to_string())
-    check("read_world_time", world_time() >= 0, world_time().to_string())
-    check("read_border_size", border_size() > 0, border_size().to_string())
+void reads() {
+    var p = (Player) single(selector("@a[limit=1]"));
+    var pos = p.x().toString() + "," + p.y().toString() + "," + p.z().toString();
+    var rot = p.yaw().toString() + "," + p.pitch().toString();
+    mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
+    check("read_health", p.health() > 0.0, p.health().toString());
+    check("read_food", p.food() >= 0 && p.food() <= 20, p.food().toString());
+    check("read_xp", p.xpLevel() >= 0, p.xpLevel().toString());
+    check("read_game_mode", p.gameMode() >= 0 && p.gameMode() <= 3, p.gameMode().toString());
+    check("read_dimension", startsWith(p.dimension(), "minecraft:"), p.dimension());
+    check("read_selected_slot", p.selectedSlot() >= 0 && p.selectedSlot() <= 8, p.selectedSlot().toString());
+    mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
+    var pig = single(selector("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"));
+    check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
+    mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
+    check("read_game_time", gameTime() > 0, gameTime().toString());
+    check("read_world_time", worldTime() >= 0, worldTime().toString());
+    check("read_border_size", borderSize() > 0, borderSize().toString());
+}
 
-# A generic helper: one copy is compiled for each element type it is called with.
-fn pick<T>(xs: array<T>, index: int) -> T:
-    return xs[index]
+// A generic helper: one copy is compiled for each element type it is called with.
+<T> T pick(List<T> xs, int index) {
+    return xs[index];
+}
 
-fn new_features() -> void:
-    check("generic_int", pick([4, 5, 6], 1) == 5, pick([4, 5, 6], 1).to_string())
-    check("generic_float", near(pick([0.5, 1.5], 1), 1.5), pick([0.5, 1.5], 1).to_string())
-    check("generic_string", pick(["a", "b"], 0) == "a", pick(["a", "b"], 0))
-    let fs = [2.5, -1.25, 0.5, 2.5, 100.0]
-    check("std_sum_float", near(std::array::sum(fs), 104.25), std::array::sum(fs).to_string())
-    check("std_max_float", near(std::array::max(fs), 100.0), std::array::max(fs).to_string())
-    fs.sort()
-    check("sort_float_small", near(fs[0], -1.25) and near(fs[4], 100.0), fs[0].to_string())
-    let d = {"wood": 2, "stone": 4}
-    d["gold"] = 7
-    let keys = d.keys()
-    check("dict_len", d.len() == 3, d.len().to_string())
-    check("dict_keys", keys.len() == 3 and keys.contains("gold") and keys.contains("wood"), keys.len().to_string())
-    check("gamerule", gamerule("max_entity_cramming") >= 0, gamerule("max_entity_cramming").to_string())
-    check("random_weighted_zero", random_weighted([0, 5]) == 1, "1")
-    let w = random_weighted([3, 1])
-    check("random_weighted_range", w >= 0 and w <= 1, w.to_string())
-    check("random_binomial_all", random_binomial(10, 1.0) == 10, random_binomial(10, 1.0).to_string())
-    check("random_binomial_none", random_binomial(10, 0.0) == 0, random_binomial(10, 0.0).to_string())
-    mc "execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}"
-    let pig = single(selector("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]"))
-    check("look_west", near(pig.look_x(), -1.0) and near(pig.look_z(), 0.0), pig.look_x().to_string())
-    mc "data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]"
-    check("look_up", near(pig.look_y(), 1.0), pig.look_y().to_string())
-    mc "kill @e[type=minecraft:pig,tag=mcfc_look_pig]"
-    let p = single(selector("@a[limit=1]"))
-    at(p):
-        let here = block("~ ~ ~")
-        let light = here.light()
-        let biome = here.biome()
-        check("block_light", light >= 0 and light <= 15, light.to_string())
-        # A light block emits level 15, so the air it fills reads 15.
-        mc "setblock ~ ~3 ~ minecraft:light[level=15]"
-        let lit = block("~ ~3 ~").light()
-        mc "setblock ~ ~3 ~ minecraft:air"
-        check("block_light_15", lit == 15, lit.to_string())
-        check("block_biome", starts_with(biome, "minecraft:"), biome)
-        check("block_in_biome", here.in_biome(biome), biome)
-        check("block_not_in_void", not here.in_biome("minecraft:the_void"), biome)
-        let sky = here.environment("gameplay/sky_light_level")
-        check("block_environment", sky >= 0.0 and sky <= 15.0, sky.to_string())
+void newFeatures() {
+    check("generic_int", pick(List.of(4, 5, 6), 1) == 5, pick(List.of(4, 5, 6), 1).toString());
+    check("generic_float", near(pick(List.of(0.5, 1.5), 1), 1.5), pick(List.of(0.5, 1.5), 1).toString());
+    check("generic_string", pick(List.of("a", "b"), 0) == "a", pick(List.of("a", "b"), 0));
+    var fs = List.of(2.5, -1.25, 0.5, 2.5, 100.0);
+    check("std_sum_float", near(std.list.sum(fs), 104.25), std.list.sum(fs).toString());
+    check("std_max_float", near(std.list.max(fs), 100.0), std.list.max(fs).toString());
+    fs.sort();
+    check("sort_float_small", near(fs[0], -1.25) && near(fs[4], 100.0), fs[0].toString());
+    var d = Map.of("wood", 2, "stone", 4);
+    d["gold"] = 7;
+    var keys = d.keySet();
+    check("dict_len", d.size() == 3, d.size().toString());
+    check("dict_keys", keys.size() == 3 && keys.contains("gold") && keys.contains("wood"), keys.size().toString());
+    check("gamerule", gamerule("max_entity_cramming") >= 0, gamerule("max_entity_cramming").toString());
+    check("random_weighted_zero", randomWeighted(List.of(0, 5)) == 1, "1");
+    var w = randomWeighted(List.of(3, 1));
+    check("random_weighted_range", w >= 0 && w <= 1, w.toString());
+    check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
+    check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
+    mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
+    var pig = single(selector("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]"));
+    check("look_west", near(pig.lookX(), -1.0) && near(pig.lookZ(), 0.0), pig.lookX().toString());
+    mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
+    check("look_up", near(pig.lookY(), 1.0), pig.lookY().toString());
+    mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
+    var p = single(selector("@a[limit=1]"));
+    at (p) {
+        var here = block("~ ~ ~");
+        var light = here.light();
+        var biome = here.biome();
+        check("block_light", light >= 0 && light <= 15, light.toString());
+        // A light block emits level 15, so the air it fills reads 15.
+        mc("setblock ~ ~3 ~ minecraft:light[level=15]");
+        var lit = block("~ ~3 ~").light();
+        mc("setblock ~ ~3 ~ minecraft:air");
+        check("block_light_15", lit == 15, lit.toString());
+        check("block_biome", startsWith(biome, "minecraft:"), biome);
+        check("block_in_biome", here.inBiome(biome), biome);
+        check("block_not_in_void", !here.inBiome("minecraft:the_void"), biome);
+        var sky = here.environment("gameplay/sky_light_level");
+        check("block_environment", sky >= 0.0 && sky <= 15.0, sky.toString());
+    }
+}
 
-# Fill, sort and check `size` floats, like sort_test.
-fn float_sort_test(size: int) -> void:
-    let xs = [0.5]
-    xs.clear()
-    let k = 0
-    while k < size:
-        xs.push(float(random(1000) - 500) * 0.25)
-        k = k + 1
-        if k % 500 == 0:
-            sleep_ticks(1)
-    let started = game_time()
-    xs.sort()
-    let ticks = game_time() - started
-    mcf "say MCFCTEST INFO float sort $(size) took $(ticks) ticks"
-    let ordered = true
-    let j = 1
-    while j < xs.len():
-        if xs[j - 1] > xs[j]:
-            ordered = false
-        j = j + 1
-        if j % 200 == 0:
-            sleep_ticks(1)
-    check("sort_float_" + size.to_string(), ordered and xs.len() == size, xs.len().to_string())
+// Fill, sort and check `size` floats, like sort_test.
+void floatSortTest(int size) {
+    var xs = List.of(0.5);
+    xs.clear();
+    var k = 0;
+    while (k < size) {
+        xs.add((float) (random(1000) - 500) * 0.25);
+        k = k + 1;
+        if (k % 500 == 0) {
+            sleepTicks(1);
+        }
+    }
+    var started = gameTime();
+    xs.sort();
+    var ticks = gameTime() - started;
+    mcf("say MCFCTEST INFO float sort $(size) took $(ticks) ticks");
+    var ordered = true;
+    var j = 1;
+    while (j < xs.size()) {
+        if (xs[j - 1] > xs[j]) {
+            ordered = false;
+        }
+        j = j + 1;
+        if (j % 200 == 0) {
+            sleepTicks(1);
+        }
+    }
+    check("sort_float_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
+}

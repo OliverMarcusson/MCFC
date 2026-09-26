@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{BinaryOp, ContextKind, PathSegment, SleepUnit, Type, UnaryOp};
 use crate::ir::{
-    IrAssignTarget, IrCapture, IrExpr, IrExprKind, IrForKind, IrFunction, IrMacroPlaceholder,
-    IrPathExpr, IrProgram, IrStmt,
+    IrAssignTarget, IrCapture, IrExpr, IrExprKind, IrFunction, IrMacroPlaceholder, IrPathExpr,
+    IrProgram, IrStmt,
 };
 use crate::project::HelperConfig;
 use crate::types::{CastKind, RefKind};
@@ -482,7 +482,7 @@ impl Backend {
                 continue;
             }
             // Module functions (`util::greet`) get nested paths (`util/greet`).
-            let public_path = function.name.replace("::", "/");
+            let public_path = crate::parser::resource_name(&function.name).replace("::", "/");
             let relative = format!(
                 "data/{}/function/{}.mcfunction",
                 self.namespace, public_path
@@ -618,7 +618,7 @@ impl Backend {
             let mut contents = String::new();
             if let Some(info) = self.functions.get(&command.handler)
                 && info.params.len() == 2
-                && info.params[0].1 == Type::Struct("command_sender".to_string())
+                && info.params[0].1 == Type::Struct("CommandSender".to_string())
                 && info.params[1].1 == Type::Array(Box::new(Type::String))
             {
                 let sender = local_slot(0, &command.handler, &info.params[0].0, &info.params[0].1);
@@ -1124,32 +1124,71 @@ impl Backend {
                         )));
                     }
                 }
-                IrStmt::While { condition, body } => {
+                IrStmt::While {
+                    condition,
+                    body,
+                    step,
+                } => {
                     let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
                     let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
                     let (cond_path, cond_name) = self.new_block(function, depth, "while_cond");
                     let (body_path, body_name) = self.new_block(function, depth, "while_body");
+                    let step_block =
+                        (!step.is_empty()).then(|| self.new_block(function, depth, "while_step"));
 
                     let loop_ctx = LoopContext {
                         break_slot: break_slot.clone(),
                         continue_slot: continue_slot.clone(),
-                        continue_target: cond_name.clone(),
+                        continue_target: step_block
+                            .as_ref()
+                            .map_or(&cond_name, |(_, name)| name)
+                            .clone(),
                     };
                     let loop_guard = guard.within_loop(&loop_ctx);
-                    let mut body_sleep_tail = vec![
-                        ContinuationItem::Call {
-                            function_name: cond_name.clone(),
-                            allow_continue: true,
-                        },
-                        ContinuationItem::ClearScore(break_slot.clone()),
-                        ContinuationItem::ClearScore(continue_slot.clone()),
-                    ];
-                    body_sleep_tail.extend(tail.clone());
+                    let cond_tail = |target: &str| {
+                        let mut items = vec![
+                            ContinuationItem::Call {
+                                function_name: target.to_string(),
+                                allow_continue: true,
+                            },
+                            ContinuationItem::ClearScore(break_slot.clone()),
+                            ContinuationItem::ClearScore(continue_slot.clone()),
+                        ];
+                        items.extend(tail.clone());
+                        items
+                    };
+                    let body_sleep_tail = cond_tail(&loop_ctx.continue_target);
+                    if let Some((step_path, _)) = &step_block {
+                        let mut step_lines = vec![loop_guard.wrap_allow_continue(format!(
+                            "scoreboard players set {} mcfc 0",
+                            continue_slot
+                        ))];
+                        self.emit_stmt_list(
+                            function,
+                            depth,
+                            step,
+                            &loop_guard,
+                            None,
+                            resume_context,
+                            &cond_tail(&cond_name),
+                            &mut step_lines,
+                        );
+                        step_lines.push(loop_guard.wrap_allow_continue(format!(
+                            "function {}:{}",
+                            self.namespace, cond_name
+                        )));
+                        self.files
+                            .insert(step_path.clone(), step_lines.join("\n") + "\n");
+                    }
 
-                    let mut cond_lines = vec![loop_guard.wrap_allow_continue(format!(
-                        "scoreboard players set {} mcfc 0",
-                        continue_slot
-                    ))];
+                    // With a step block, the step clears the continue flag instead.
+                    let mut cond_lines = Vec::new();
+                    if step_block.is_none() {
+                        cond_lines.push(loop_guard.wrap_allow_continue(format!(
+                            "scoreboard players set {} mcfc 0",
+                            continue_slot
+                        )));
+                    }
                     let mut cond_eval = Vec::new();
                     let run_body = format!("function {}:{}", self.namespace, body_name);
                     let run_body = if matches!(condition.kind, IrExprKind::Bool(true)) {
@@ -1194,19 +1233,68 @@ impl Backend {
                     );
                     lines.push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
                 }
-                IrStmt::For { name, kind, body } => match kind {
-                    IrForKind::Range {
-                        start,
-                        end,
-                        inclusive,
-                    } => {
+                IrStmt::For {
+                    name,
+                    iterable,
+                    body,
+                } => match &iterable.ty {
+                    Type::EntitySet => {
+                        let query_name = self.new_temp();
+                        let mut init_lines = Vec::new();
+                        self.compile_expr_into_named_slot(
+                            function,
+                            depth,
+                            iterable,
+                            &query_name,
+                            &mut init_lines,
+                        );
+                        self.extend_guarded(lines, guard, init_lines);
+
+                        let (body_path, body_name) = self.new_block(function, depth, "for_each");
+                        let mut body_lines = vec![
+                            format!(
+                                "data modify storage {}:runtime {}.prefix set value \"\"",
+                                self.namespace,
+                                string_slot(depth, &function.name, name)
+                            ),
+                            format!(
+                                "data modify storage {}:runtime {}.selector set value \"@s\"",
+                                self.namespace,
+                                string_slot(depth, &function.name, name)
+                            ),
+                        ];
+                        self.emit_stmt_list(
+                            function,
+                            depth,
+                            body,
+                            guard,
+                            loop_ctx,
+                            resume_context,
+                            &tail,
+                            &mut body_lines,
+                        );
+                        self.files.insert(body_path, body_lines.join("\n") + "\n");
+                        lines.push(guard.wrap(self.query_command(
+                            &local_slot(depth, &function.name, &query_name, &Type::EntitySet),
+                            format!(
+                                "execute as $(selector) run function {}:{}",
+                                self.namespace, body_name
+                            ),
+                            true,
+                        )));
+                    }
+                    Type::Array(element) => {
+                        let snapshot_name = self.new_temp();
+                        let index_name = self.new_temp();
+                        let len_name = self.new_temp();
                         let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
                         let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
-                        let end_name = self.new_temp();
-                        let (cond_path, cond_name) = self.new_block(function, depth, "for_cond");
-                        let (body_path, body_name) = self.new_block(function, depth, "for_body");
-                        let (step_path, step_name) = self.new_block(function, depth, "for_step");
-
+                        let (cond_path, cond_name) =
+                            self.new_block(function, depth, "for_each_cond");
+                        let (body_path, body_name) =
+                            self.new_block(function, depth, "for_each_body");
+                        let (step_path, step_name) =
+                            self.new_block(function, depth, "for_each_step");
                         let loop_ctx = LoopContext {
                             break_slot: break_slot.clone(),
                             continue_slot: continue_slot.clone(),
@@ -1227,17 +1315,26 @@ impl Backend {
                         self.compile_expr_into_named_slot(
                             function,
                             depth,
-                            start,
-                            name,
+                            iterable,
+                            &snapshot_name,
                             &mut init_lines,
                         );
-                        self.compile_expr_into_named_slot(
-                            function,
-                            depth,
-                            end,
-                            &end_name,
-                            &mut init_lines,
-                        );
+                        init_lines.push(format!(
+                            "scoreboard players set {} mcfc 0",
+                            numeric_slot(depth, &function.name, &index_name)
+                        ));
+                        init_lines.push(format!(
+                            "execute store result score {} mcfc run data get storage {}:runtime {}",
+                            numeric_slot(depth, &function.name, &len_name),
+                            self.namespace,
+                            local_slot(
+                                depth,
+                                &function.name,
+                                &snapshot_name,
+                                &Type::Array(element.clone())
+                            )
+                            .storage_path()
+                        ));
                         self.extend_guarded(lines, guard, init_lines);
                         lines.push(
                             guard.wrap(format!("scoreboard players set {} mcfc 0", break_slot)),
@@ -1246,29 +1343,23 @@ impl Backend {
                             guard.wrap(format!("scoreboard players set {} mcfc 0", continue_slot)),
                         );
 
-                        let cmp_op = if *inclusive {
-                            BinaryOp::Lte
-                        } else {
-                            BinaryOp::Lt
-                        };
                         let cond_expr = IrExpr {
                             ty: Type::Bool,
                             ref_kind: RefKind::Unknown,
                             kind: IrExprKind::Binary {
-                                op: cmp_op,
+                                op: BinaryOp::Lt,
                                 left: Box::new(IrExpr {
                                     ty: Type::Int,
                                     ref_kind: RefKind::Unknown,
-                                    kind: IrExprKind::Variable(name.clone()),
+                                    kind: IrExprKind::Variable(index_name.clone()),
                                 }),
                                 right: Box::new(IrExpr {
                                     ty: Type::Int,
                                     ref_kind: RefKind::Unknown,
-                                    kind: IrExprKind::Variable(end_name.clone()),
+                                    kind: IrExprKind::Variable(len_name.clone()),
                                 }),
                             },
                         };
-
                         let mut cond_lines = Vec::new();
                         let mut cond_eval = Vec::new();
                         let clauses =
@@ -1282,6 +1373,47 @@ impl Backend {
                         )));
 
                         let mut body_lines = Vec::new();
+                        let macro_storage = format!(
+                            "frames.d{}.{}.__for_each{}",
+                            depth,
+                            sanitize(&function.name),
+                            self.new_temp()
+                        );
+                        body_lines.push(format!(
+                                "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
+                                self.namespace,
+                                macro_storage,
+                                numeric_slot(depth, &function.name, &index_name)
+                            ));
+                        let loop_slot = local_slot(depth, &function.name, name, element.as_ref());
+                        let command = match element.as_ref() {
+                            Type::Int | Type::Bool | Type::Enum(_) => format!(
+                                "execute store result score {} mcfc run data get storage {}:runtime {}[$(index)] 1",
+                                loop_slot.numeric_name(),
+                                self.namespace,
+                                local_slot(
+                                    depth,
+                                    &function.name,
+                                    &snapshot_name,
+                                    &Type::Array(element.clone())
+                                )
+                                .storage_path()
+                            ),
+                            _ => format!(
+                                "data modify storage {}:runtime {} set from storage {}:runtime {}[$(index)]",
+                                self.namespace,
+                                loop_slot.storage_path(),
+                                self.namespace,
+                                local_slot(
+                                    depth,
+                                    &function.name,
+                                    &snapshot_name,
+                                    &Type::Array(element.clone())
+                                )
+                                .storage_path()
+                            ),
+                        };
+                        body_lines.push(self.storage_path_command(command, Some(macro_storage)));
                         self.emit_stmt_list(
                             function,
                             depth,
@@ -1303,7 +1435,7 @@ impl Backend {
                         ))];
                         step_lines.push(loop_guard.wrap_allow_continue(format!(
                             "scoreboard players add {} mcfc 1",
-                            numeric_slot(depth, &function.name, name)
+                            numeric_slot(depth, &function.name, &index_name)
                         )));
                         step_lines.push(loop_guard.wrap_allow_continue(format!(
                             "function {}:{}",
@@ -1311,240 +1443,12 @@ impl Backend {
                         )));
 
                         self.files.insert(cond_path, cond_lines.join("\n") + "\n");
-                        self.files.insert(
-                            body_path,
-                            if body_lines.is_empty() {
-                                "# empty for body\n".to_string()
-                            } else {
-                                body_lines.join("\n") + "\n"
-                            },
-                        );
+                        self.files.insert(body_path, body_lines.join("\n") + "\n");
                         self.files.insert(step_path, step_lines.join("\n") + "\n");
-
                         lines
                             .push(guard.wrap(format!("function {}:{}", self.namespace, cond_name)));
                     }
-                    IrForKind::Each { iterable } => match &iterable.ty {
-                        Type::EntitySet => {
-                            let query_name = self.new_temp();
-                            let mut init_lines = Vec::new();
-                            self.compile_expr_into_named_slot(
-                                function,
-                                depth,
-                                iterable,
-                                &query_name,
-                                &mut init_lines,
-                            );
-                            self.extend_guarded(lines, guard, init_lines);
-
-                            let (body_path, body_name) =
-                                self.new_block(function, depth, "for_each");
-                            let mut body_lines = vec![
-                                format!(
-                                    "data modify storage {}:runtime {}.prefix set value \"\"",
-                                    self.namespace,
-                                    string_slot(depth, &function.name, name)
-                                ),
-                                format!(
-                                    "data modify storage {}:runtime {}.selector set value \"@s\"",
-                                    self.namespace,
-                                    string_slot(depth, &function.name, name)
-                                ),
-                            ];
-                            self.emit_stmt_list(
-                                function,
-                                depth,
-                                body,
-                                guard,
-                                loop_ctx,
-                                resume_context,
-                                &tail,
-                                &mut body_lines,
-                            );
-                            self.files.insert(body_path, body_lines.join("\n") + "\n");
-                            lines.push(guard.wrap(self.query_command(
-                                &local_slot(depth, &function.name, &query_name, &Type::EntitySet),
-                                format!(
-                                    "execute as $(selector) run function {}:{}",
-                                    self.namespace, body_name
-                                ),
-                                true,
-                            )));
-                        }
-                        Type::Array(element) => {
-                            let snapshot_name = self.new_temp();
-                            let index_name = self.new_temp();
-                            let len_name = self.new_temp();
-                            let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
-                            let continue_slot =
-                                numeric_slot(depth, &function.name, &self.new_temp());
-                            let (cond_path, cond_name) =
-                                self.new_block(function, depth, "for_each_cond");
-                            let (body_path, body_name) =
-                                self.new_block(function, depth, "for_each_body");
-                            let (step_path, step_name) =
-                                self.new_block(function, depth, "for_each_step");
-                            let loop_ctx = LoopContext {
-                                break_slot: break_slot.clone(),
-                                continue_slot: continue_slot.clone(),
-                                continue_target: step_name.clone(),
-                            };
-                            let loop_guard = guard.within_loop(&loop_ctx);
-                            let mut body_sleep_tail = vec![
-                                ContinuationItem::Call {
-                                    function_name: step_name.clone(),
-                                    allow_continue: true,
-                                },
-                                ContinuationItem::ClearScore(break_slot.clone()),
-                                ContinuationItem::ClearScore(continue_slot.clone()),
-                            ];
-                            body_sleep_tail.extend(tail.clone());
-
-                            let mut init_lines = Vec::new();
-                            self.compile_expr_into_named_slot(
-                                function,
-                                depth,
-                                iterable,
-                                &snapshot_name,
-                                &mut init_lines,
-                            );
-                            init_lines.push(format!(
-                                "scoreboard players set {} mcfc 0",
-                                numeric_slot(depth, &function.name, &index_name)
-                            ));
-                            init_lines.push(format!(
-                                "execute store result score {} mcfc run data get storage {}:runtime {}",
-                                numeric_slot(depth, &function.name, &len_name),
-                                self.namespace,
-                                local_slot(
-                                    depth,
-                                    &function.name,
-                                    &snapshot_name,
-                                    &Type::Array(element.clone())
-                                )
-                                .storage_path()
-                            ));
-                            self.extend_guarded(lines, guard, init_lines);
-                            lines.push(
-                                guard.wrap(format!("scoreboard players set {} mcfc 0", break_slot)),
-                            );
-                            lines.push(
-                                guard.wrap(format!(
-                                    "scoreboard players set {} mcfc 0",
-                                    continue_slot
-                                )),
-                            );
-
-                            let cond_expr = IrExpr {
-                                ty: Type::Bool,
-                                ref_kind: RefKind::Unknown,
-                                kind: IrExprKind::Binary {
-                                    op: BinaryOp::Lt,
-                                    left: Box::new(IrExpr {
-                                        ty: Type::Int,
-                                        ref_kind: RefKind::Unknown,
-                                        kind: IrExprKind::Variable(index_name.clone()),
-                                    }),
-                                    right: Box::new(IrExpr {
-                                        ty: Type::Int,
-                                        ref_kind: RefKind::Unknown,
-                                        kind: IrExprKind::Variable(len_name.clone()),
-                                    }),
-                                },
-                            };
-                            let mut cond_lines = Vec::new();
-                            let mut cond_eval = Vec::new();
-                            let clauses =
-                                self.compile_condition(function, depth, &cond_expr, &mut cond_eval);
-                            self.extend_guarded(&mut cond_lines, &loop_guard, cond_eval);
-                            cond_lines.push(loop_guard.wrap(format!(
-                                "execute {} run function {}:{}",
-                                clauses.join(" "),
-                                self.namespace,
-                                body_name
-                            )));
-
-                            let mut body_lines = Vec::new();
-                            let macro_storage = format!(
-                                "frames.d{}.{}.__for_each{}",
-                                depth,
-                                sanitize(&function.name),
-                                self.new_temp()
-                            );
-                            body_lines.push(format!(
-                                "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
-                                self.namespace,
-                                macro_storage,
-                                numeric_slot(depth, &function.name, &index_name)
-                            ));
-                            let loop_slot =
-                                local_slot(depth, &function.name, name, element.as_ref());
-                            let command = match element.as_ref() {
-                                Type::Int | Type::Bool | Type::Enum(_) => format!(
-                                    "execute store result score {} mcfc run data get storage {}:runtime {}[$(index)] 1",
-                                    loop_slot.numeric_name(),
-                                    self.namespace,
-                                    local_slot(
-                                        depth,
-                                        &function.name,
-                                        &snapshot_name,
-                                        &Type::Array(element.clone())
-                                    )
-                                    .storage_path()
-                                ),
-                                _ => format!(
-                                    "data modify storage {}:runtime {} set from storage {}:runtime {}[$(index)]",
-                                    self.namespace,
-                                    loop_slot.storage_path(),
-                                    self.namespace,
-                                    local_slot(
-                                        depth,
-                                        &function.name,
-                                        &snapshot_name,
-                                        &Type::Array(element.clone())
-                                    )
-                                    .storage_path()
-                                ),
-                            };
-                            body_lines
-                                .push(self.storage_path_command(command, Some(macro_storage)));
-                            self.emit_stmt_list(
-                                function,
-                                depth,
-                                body,
-                                &loop_guard,
-                                Some(&loop_ctx),
-                                resume_context,
-                                &body_sleep_tail,
-                                &mut body_lines,
-                            );
-                            body_lines.push(loop_guard.wrap_allow_continue(format!(
-                                "function {}:{}",
-                                self.namespace, loop_ctx.continue_target
-                            )));
-
-                            let mut step_lines = vec![loop_guard.wrap_allow_continue(format!(
-                                "scoreboard players set {} mcfc 0",
-                                continue_slot
-                            ))];
-                            step_lines.push(loop_guard.wrap_allow_continue(format!(
-                                "scoreboard players add {} mcfc 1",
-                                numeric_slot(depth, &function.name, &index_name)
-                            )));
-                            step_lines.push(loop_guard.wrap_allow_continue(format!(
-                                "function {}:{}",
-                                self.namespace, cond_name
-                            )));
-
-                            self.files.insert(cond_path, cond_lines.join("\n") + "\n");
-                            self.files.insert(body_path, body_lines.join("\n") + "\n");
-                            self.files.insert(step_path, step_lines.join("\n") + "\n");
-                            lines.push(
-                                guard.wrap(format!("function {}:{}", self.namespace, cond_name)),
-                            );
-                        }
-                        _ => {}
-                    },
+                    _ => {}
                 },
             }
         }
@@ -3629,7 +3533,7 @@ impl Backend {
                 ));
                 return;
             }
-            "cancel" if matches!(&receiver.ty, Type::Struct(name) if name == "agent_event" || name.ends_with("_event")) =>
+            "cancel" if matches!(&receiver.ty, Type::Struct(name) if name == "AgentEvent" || name.ends_with("Event")) =>
             {
                 lines.push(format!(
                     "data modify storage {}:agent decision.cancel set value 1b",
@@ -7826,7 +7730,7 @@ impl Backend {
     }
 
     fn function_entry_name(&self, function: &str, depth: usize) -> String {
-        format!("generated/{}__d{}__entry", sanitize(function), depth)
+        format!("generated/{}__d{}__entry", path_name(function), depth)
     }
 
     fn emit_macro_command(
@@ -7848,7 +7752,7 @@ impl Backend {
         let macro_id = self.macro_counter;
         let relative = format!(
             "generated/{}__d{}__macro_{}",
-            sanitize(&function.name),
+            path_name(&function.name),
             depth,
             macro_id
         );
@@ -8094,7 +7998,7 @@ impl Backend {
         let macro_id = self.macro_counter;
         let relative = format!(
             "generated/{}__d{}__{}_{}",
-            sanitize(&function.name),
+            path_name(&function.name),
             depth,
             label,
             macro_id
@@ -8629,7 +8533,11 @@ impl Backend {
     fn finish_line(&mut self, function: &IrFunction, depth: usize) -> String {
         let ns = self.namespace.clone();
         let resume = string_slot(depth, &function.name, "__resume");
-        let relative = format!("generated/{}__d{}__finish", sanitize(&function.name), depth);
+        let relative = format!(
+            "generated/{}__d{}__finish",
+            path_name(&function.name),
+            depth
+        );
         self.files.insert(
             format!("data/{ns}/function/{relative}.mcfunction"),
             [
@@ -8785,7 +8693,7 @@ impl Backend {
         self.block_counter += 1;
         let relative = format!(
             "generated/{}__d{}__{}_{}",
-            sanitize(&function.name),
+            path_name(&function.name),
             depth,
             label,
             self.block_counter
@@ -8983,9 +8891,10 @@ fn stmts_can_pause(stmts: &[IrStmt], set: &BTreeSet<String>) -> bool {
                 else_body,
                 ..
             } => stmts_can_pause(then_body, set) || stmts_can_pause(else_body, set),
-            IrStmt::While { body, .. }
-            | IrStmt::For { body, .. }
-            | IrStmt::Context { body, .. } => stmts_can_pause(body, set),
+            IrStmt::While { body, step, .. } => {
+                stmts_can_pause(body, set) || stmts_can_pause(step, set)
+            }
+            IrStmt::For { body, .. } | IrStmt::Context { body, .. } => stmts_can_pause(body, set),
             _ => false,
         })
 }
@@ -9005,13 +8914,7 @@ fn visit_stmt_exprs<'a>(stmts: &'a [IrStmt], visit: &mut dyn FnMut(&'a IrExpr)) 
                 visit(value);
             }
             IrStmt::If { condition, .. } | IrStmt::While { condition, .. } => visit(condition),
-            IrStmt::For { kind, .. } => match kind {
-                IrForKind::Range { start, end, .. } => {
-                    visit(start);
-                    visit(end);
-                }
-                IrForKind::Each { iterable } => visit(iterable),
-            },
+            IrStmt::For { iterable, .. } => visit(iterable),
             IrStmt::Context { anchor, .. } => visit(anchor),
             IrStmt::MacroCommand { placeholders, .. } => {
                 placeholders.iter().for_each(|p| visit(&p.expr))
@@ -9124,9 +9027,11 @@ pub(crate) fn misplaced_suspending_calls(program: &IrProgram) -> Vec<(String, St
                     walk(then_body, set, out);
                     walk(else_body, set, out);
                 }
-                IrStmt::While { body, .. }
-                | IrStmt::For { body, .. }
-                | IrStmt::Context { body, .. } => walk(body, set, out),
+                IrStmt::While { body, step, .. } => {
+                    walk(body, set, out);
+                    walk(step, set, out);
+                }
+                IrStmt::For { body, .. } | IrStmt::Context { body, .. } => walk(body, set, out),
                 _ => {}
             }
         }
@@ -9169,6 +9074,12 @@ fn string_slot(depth: usize, function: &str, name: &str) -> String {
 
 fn string_return_slot(depth: usize, function: &str) -> String {
     format!("frames.d{}.{}.__ret", depth, sanitize(function))
+}
+
+/// A function name as a resource path segment: `onJoin` -> `on_join`.
+// ponytail: `fooBar` and `foo_bar` share a path; reject the pair if that bites.
+fn path_name(function: &str) -> String {
+    crate::parser::resource_name(&sanitize(function))
 }
 
 fn sanitize(value: &str) -> String {
@@ -9489,7 +9400,8 @@ fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) 
         | crate::ast::ExprKind::Path(_)
         | crate::ast::ExprKind::ArrayLiteral(_)
         | crate::ast::ExprKind::DictLiteral(_)
-        | crate::ast::ExprKind::StructLiteral { .. } => None,
+        | crate::ast::ExprKind::StructLiteral { .. }
+        | crate::ast::ExprKind::New { .. } => None,
     }
 }
 
@@ -9701,9 +9613,11 @@ fn collect_block_builder_state_fields_from_stmts(
                 collect_block_builder_state_fields_from_stmts(function_name, then_body, fields);
                 collect_block_builder_state_fields_from_stmts(function_name, else_body, fields);
             }
-            IrStmt::While { body, .. }
-            | IrStmt::Context { body, .. }
-            | IrStmt::For { body, .. } => {
+            IrStmt::While { body, step, .. } => {
+                collect_block_builder_state_fields_from_stmts(function_name, body, fields);
+                collect_block_builder_state_fields_from_stmts(function_name, step, fields);
+            }
+            IrStmt::Context { body, .. } | IrStmt::For { body, .. } => {
                 collect_block_builder_state_fields_from_stmts(function_name, body, fields);
             }
             IrStmt::Async { function, .. } => {
@@ -9804,18 +9718,17 @@ fn collect_objectives_from_stmts(stmts: &[IrStmt], names: &mut BTreeMap<String, 
                 collect_objectives_from_stmts(then_body, names);
                 collect_objectives_from_stmts(else_body, names);
             }
-            IrStmt::While { condition, body } => {
+            IrStmt::While {
+                condition,
+                body,
+                step,
+            } => {
                 collect_objectives_from_expr(condition, names);
                 collect_objectives_from_stmts(body, names);
+                collect_objectives_from_stmts(step, names);
             }
-            IrStmt::For { kind, body, .. } => {
-                match kind {
-                    IrForKind::Range { start, end, .. } => {
-                        collect_objectives_from_expr(start, names);
-                        collect_objectives_from_expr(end, names);
-                    }
-                    IrForKind::Each { iterable } => collect_objectives_from_expr(iterable, names),
-                }
+            IrStmt::For { iterable, body, .. } => {
+                collect_objectives_from_expr(iterable, names);
                 collect_objectives_from_stmts(body, names);
             }
             IrStmt::Context { anchor, body, .. } => {
@@ -10049,9 +9962,11 @@ pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
                     || contains_statements(then_body)
                     || contains_statements(else_body)
             }
-            IrStmt::While { condition, body } => {
-                contains_expr(condition) || contains_statements(body)
-            }
+            IrStmt::While {
+                condition,
+                body,
+                step,
+            } => contains_expr(condition) || contains_statements(body) || contains_statements(step),
             IrStmt::For { body, .. } | IrStmt::Context { body, .. } => contains_statements(body),
             IrStmt::Async { function, .. } => contains_statements(&function.body),
             IrStmt::Return(Some(value)) => contains_expr(value),
@@ -10063,23 +9978,23 @@ pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
 
 fn agent_event_type(event: &str) -> Option<&'static str> {
     match event {
-        "chat" => Some("chat_event"),
-        "inventory_click" => Some("inventory_click_event"),
-        "player_action" => Some("player_action_event"),
-        "block_break" => Some("block_break_event"),
-        "player_interact_block" => Some("player_interact_block_event"),
-        "player_interact_item" => Some("player_interact_item_event"),
-        "entity_interact" => Some("entity_interact_event"),
-        "entity_attack" => Some("entity_attack_event"),
-        "item_held_change" => Some("item_held_change_event"),
-        "inventory_close" => Some("inventory_close_event"),
-        "player_swing" => Some("player_swing_event"),
-        "player_action_toggle" => Some("player_action_toggle_event"),
-        "item_rename" => Some("item_rename_event"),
-        "trade_select" => Some("trade_select_event"),
-        "sign_change" => Some("sign_change_event"),
-        "recipe_place" => Some("recipe_place_event"),
-        "game_mode_request" => Some("game_mode_request_event"),
+        "chat" => Some("ChatEvent"),
+        "inventory_click" => Some("InventoryClickEvent"),
+        "player_action" => Some("PlayerActionEvent"),
+        "block_break" => Some("BlockBreakEvent"),
+        "player_interact_block" => Some("PlayerInteractBlockEvent"),
+        "player_interact_item" => Some("PlayerInteractItemEvent"),
+        "entity_interact" => Some("EntityInteractEvent"),
+        "entity_attack" => Some("EntityAttackEvent"),
+        "item_held_change" => Some("ItemHeldChangeEvent"),
+        "inventory_close" => Some("InventoryCloseEvent"),
+        "player_swing" => Some("PlayerSwingEvent"),
+        "player_action_toggle" => Some("PlayerActionToggleEvent"),
+        "item_rename" => Some("ItemRenameEvent"),
+        "trade_select" => Some("TradeSelectEvent"),
+        "sign_change" => Some("SignChangeEvent"),
+        "recipe_place" => Some("RecipePlaceEvent"),
+        "game_mode_request" => Some("GameModeRequestEvent"),
         "player_respawn_request"
         | "book_edit"
         | "beacon_effect"
@@ -10094,7 +10009,7 @@ fn agent_event_type(event: &str) -> Option<&'static str> {
         | "player_item_drop"
         | "player_item_pickup"
         | "inventory_open"
-        | "game_mode_change" => Some("agent_event"),
+        | "game_mode_change" => Some("AgentEvent"),
         _ => None,
     }
 }
@@ -10167,9 +10082,8 @@ fn stmt_uses_rpc(stmt: &IrStmt) -> bool {
             else_body,
             ..
         } => stmts_use_rpc(then_body) || stmts_use_rpc(else_body),
-        IrStmt::While { body, .. } | IrStmt::For { body, .. } | IrStmt::Context { body, .. } => {
-            stmts_use_rpc(body)
-        }
+        IrStmt::While { body, step, .. } => stmts_use_rpc(body) || stmts_use_rpc(step),
+        IrStmt::For { body, .. } | IrStmt::Context { body, .. } => stmts_use_rpc(body),
         IrStmt::Async { function, .. } => stmts_use_rpc(&function.body),
         _ => false,
     }

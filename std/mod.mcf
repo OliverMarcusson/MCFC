@@ -1,5 +1,0 @@
-# MCFC standard library. Available in every project as `std`; only the
-# functions a pack actually calls are compiled into it.
-pub mod array
-pub mod math
-pub mod str

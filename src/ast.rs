@@ -6,7 +6,6 @@ pub struct Program {
     pub enums: Vec<EnumDef>,
     pub player_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
-    pub mods: Vec<ModDecl>,
     pub uses: Vec<UseDecl>,
 }
 
@@ -18,15 +17,7 @@ pub struct EnumDef {
     pub span: Span,
 }
 
-/// `mod name` — declares a child module loaded from `name.mcf` or `name/mod.mcf`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModDecl {
-    pub name: String,
-    pub is_pub: bool,
-    pub span: Span,
-}
-
-/// `use a::b::c` / `use a::b as c` — one import; `use a::{b, c}` expands to several.
+/// `import a.b.c;` imports `c` under its own name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UseDecl {
     pub path: Vec<String>,
@@ -68,12 +59,14 @@ pub enum StateOwner {
 pub struct Function {
     pub name: String,
     pub is_pub: bool,
-    /// `fn name<T, U>(...)`; each call compiles a copy with the types filled in.
+    /// `<T, U> R name(...)`; each call compiles a copy with the types filled in.
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
     pub span: Span,
+    /// Byte offset just past the closing `}`.
+    pub end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,24 +106,24 @@ impl Type {
         match self {
             Type::Int => "int".to_string(),
             Type::Float => "float".to_string(),
-            Type::Bool => "bool".to_string(),
-            Type::String => "string".to_string(),
-            Type::Array(element) => format!("array<{}>", element.as_str()),
-            Type::Dict(value) => format!("dict<{}>", value.as_str()),
+            Type::Bool => "boolean".to_string(),
+            Type::String => "String".to_string(),
+            Type::Array(element) => format!("List<{}>", element.as_str()),
+            Type::Dict(value) => format!("Map<String, {}>", value.as_str()),
             Type::Optional(value) => format!("Optional<{}>", value.as_str()),
-            Type::Struct(name) => name.clone(),
-            Type::Enum(name) => name.clone(),
-            Type::Bossbar => "bossbar".to_string(),
-            Type::EntitySet => "entity_set".to_string(),
-            Type::EntityRef => "entity_ref".to_string(),
-            Type::PlayerRef => "player_ref".to_string(),
-            Type::BlockRef => "block_ref".to_string(),
-            Type::EntityDef => "entity_def".to_string(),
-            Type::BlockDef => "block_def".to_string(),
-            Type::ItemDef => "item_def".to_string(),
-            Type::TextDef => "text_def".to_string(),
-            Type::ItemSlot => "item_slot".to_string(),
-            Type::Nbt => "nbt".to_string(),
+            Type::Struct(name) => name.replace("::", "."),
+            Type::Enum(name) => name.replace("::", "."),
+            Type::Bossbar => "BossBar".to_string(),
+            Type::EntitySet => "Selector".to_string(),
+            Type::EntityRef => "Entity".to_string(),
+            Type::PlayerRef => "Player".to_string(),
+            Type::BlockRef => "Block".to_string(),
+            Type::EntityDef => "EntityData".to_string(),
+            Type::BlockDef => "BlockData".to_string(),
+            Type::ItemDef => "ItemStack".to_string(),
+            Type::TextDef => "Component".to_string(),
+            Type::ItemSlot => "ItemSlot".to_string(),
+            Type::Nbt => "Nbt".to_string(),
             Type::Void => "void".to_string(),
         }
     }
@@ -144,8 +137,10 @@ pub struct Stmt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StmtKind {
+    /// `var name = value;` (no `ty`) or `T name = value;`.
     Let {
         name: String,
+        ty: Option<Type>,
         value: Expr,
     },
     Assign {
@@ -157,20 +152,21 @@ pub enum StmtKind {
         then_body: Vec<Stmt>,
         else_body: Vec<Stmt>,
     },
+    /// `step` runs after each iteration and on `continue` (a C-style `for` update).
     While {
         condition: Expr,
         body: Vec<Stmt>,
+        step: Vec<Stmt>,
     },
+    /// `for (T name : iterable)`; `ty` is `None` for `var`.
     For {
         name: String,
-        kind: ForKind,
+        ty: Option<Type>,
+        iterable: Expr,
         body: Vec<Stmt>,
     },
-    Match {
-        value: Expr,
-        arms: Vec<MatchArm>,
-        else_body: Vec<Stmt>,
-    },
+    /// A `{ ... }` scope, also what a C-style `for` desugars to.
+    Block(Vec<Stmt>),
     Switch {
         value: Expr,
         arms: Vec<SwitchArm>,
@@ -211,24 +207,6 @@ pub enum AssignTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForKind {
-    Range {
-        start: Expr,
-        end: Expr,
-        inclusive: bool,
-    },
-    Each {
-        iterable: Expr,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MatchArm {
-    pub pattern: String,
-    pub body: Vec<Stmt>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchArm {
     pub pattern: Expr,
     pub body: Vec<Stmt>,
@@ -263,6 +241,11 @@ pub enum ExprKind {
     StructLiteral {
         name: String,
         fields: Vec<(String, Expr)>,
+    },
+    /// `new Name(args)`: a record (positional fields) or a builtin builder type.
+    New {
+        name: String,
+        args: Vec<Expr>,
     },
     Variable(String),
     Unary {

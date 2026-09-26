@@ -335,43 +335,57 @@ rand = true
 
 fn main_template(config: &NewProjectConfig) -> String {
     match config.helper {
-        HelperRuntime::None => r#"fn main() -> void:
-    let player = single(selector("@p"))
-    if exists(player):
-        player.tellraw("MCFC is live.")
+        HelperRuntime::None => r#"void main() {
+    var player = single(selector("@p"));
+    if (exists(player)) {
+        player.tellraw("MCFC is live.");
+    }
+}
 "#
         .to_string(),
-        HelperRuntime::Mcfd => r#"fn main() -> void:
-    let player = single(selector("@p"))
-    let now = time.now()
-    let roll = rand.int(1, 6)
-    if exists(player):
-        if now.ok and roll.ok:
-            player.tellraw("MCFC is live. unix=$(now.unix), roll=$(roll.value)")
-        else:
-            player.tellraw("MCFC is live, but mcfd did not answer yet.")
+        HelperRuntime::Mcfd => r#"void main() {
+    var player = single(selector("@p"));
+    var now = time.now();
+    var roll = rand.int(1, 6);
+    if (exists(player)) {
+        if (now.ok && roll.ok) {
+            player.tellraw("MCFC is live. unix=$(now.unix), roll=$(roll.value)");
+        } else {
+            player.tellraw("MCFC is live, but mcfd did not answer yet.");
+        }
+    }
+}
 "#
         .to_string(),
-        HelperRuntime::McfdAgent => r#"# The command has a vanilla /trigger fallback.
-# With mcfd-agent attached, it is also available as a root command.
-command status:
-    let player = single(selector("@s"))
-    player.tellraw("MCFC agent project is live.")
+        HelperRuntime::McfdAgent => r#"// The command has a vanilla /trigger fallback.
+// With mcfd-agent attached, it is also available as a root command.
+@Command("status")
+void status() {
+    var player = single(selector("@s"));
+    player.tellraw("MCFC agent project is live.");
+}
 
-# This callback runs when the optional mcfd-agent is attached.
-event chat(event: chat_event):
-    let player = single(selector("@s"))
-    if event.message == "roll":
-        let roll = rand.int(1, 6)
-        if roll.ok:
-            player.tellraw("agent roll=$(roll.value)")
+// This callback runs when the optional mcfd-agent is attached.
+@Event(CHAT)
+void onChat(ChatEvent event) {
+    var player = single(selector("@s"));
+    if (event.message == "roll") {
+        var roll = rand.int(1, 6);
+        if (roll.ok) {
+            player.tellraw("agent roll=$(roll.value)");
+        }
+    }
+}
 
-fn main() -> void:
-    let player = single(selector("@p"))
-    let now = time.now()
-    if exists(player):
-        if now.ok:
-            player.tellraw("MCFC is live. Try /trigger mcfcc_status or say roll after the agent attaches.")
+void main() {
+    var player = single(selector("@p"));
+    var now = time.now();
+    if (exists(player)) {
+        if (now.ok) {
+            player.tellraw("MCFC is live. Try /trigger mcfcc_status or say roll after the agent attaches.");
+        }
+    }
+}
 "#
         .to_string(),
     }
@@ -646,10 +660,10 @@ out_dir = "dist"
 "#,
         )
         .unwrap();
-        fs::write(src.join("main.mcf"), "fn main() -> void:\n    return\n").unwrap();
+        fs::write(src.join("main.mcf"), "void main() {\n    return;\n}\n").unwrap();
         fs::write(
             nested.join("helper.mcf"),
-            "fn helper() -> void:\n    return\n",
+            "void helper() {\n    return;\n}\n",
         )
         .unwrap();
         fs::write(project.join("assets.json"), "{}\n").unwrap();

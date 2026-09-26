@@ -1,126 +1,68 @@
-# MCFC syntax highlighting fixture
+// MCFC syntax highlighting fixture
+/* block comment */
+import util.math.clamp;
 
-player_state coins: int = "coins"
+@PlayerState("Coins")
+int coins;
 
-enum Mode:
-    IDLE
-    RUNNING
+@EntityState
+String title;
 
-event player_join:
-    let player = single(selector("@s"))
-    player.tellraw("Welcome to MCFC")
+enum Mode { IDLE, RUNNING }
 
-event chat(event: chat_event):
-    event.player.actionbar("chat: $(event.message)")
+record Reward(String item, int count) {}
 
-command status:
-    let player = single(selector("@s"))
-    player.tellraw("coins=$(player.state.coins)")
+@Event(PLAYER_JOIN)
+void onPlayerJoin(Player player) {
+    player.tellraw("Welcome to MCFC");
+}
 
-task heartbeat every_ticks(20):
-    debug("heartbeat")
+@Event(CHAT)
+void onChat(ChatEvent event) {
+    event.player.actionbar("chat: $(event.message)");
+}
 
-fn classify(value: int) -> string
-    if value == 0:
-        return 'zero'
-    else if value < 10 and not false:
-        return "small"
-    else:
-        return "large"
+@Command("status")
+void status(Player player) {
+    player.tellraw("coins=$(player.state.coins)");
+}
 
-fn main() -> void
-    let mode = Mode.IDLE
-    let player = single(selector("@p"))
-    let me = player_ref(player)
-    let pig = single(selector("@e[type=pig,limit=1]"))
-    let chest = block("0 64 0")
-    let values = [1, 2, 3]
-    let counts = {"wood": 12, "stone": 4}
-    let roll = random(1, 20)
-    let label = classify(roll)
-    let title = text("MCFC Demo")
-    let bb = bossbar("mcfc:test", "Boss")
+@Every(ticks = 20)
+void heartbeat() {
+    mc("say heartbeat");
+}
 
-    let pig_builder = entity("minecraft:pig")
-    pig_builder.name = "Builder Pig"
-    pig_builder.no_ai = true
-    let pig_nbt = pig_builder.as_nbt()
+public <T> T first(List<T> values) {
+    return values.getFirst();
+}
 
-    let chest_type = block_type("minecraft:chest")
-    chest_type.states.facing = "north"
-    chest_type.lock = "mcfc-lock"
-    let chest_nbt = chest_type.as_nbt()
-
-    let stack = item("minecraft:apple")
-    stack.count = 3
-    stack.name = "Quest Apple"
-    let stack_nbt = stack.as_nbt()
-
-    for i in 0..=10:
-        values.push(i)
-        if i == 5:
-            continue
-
-    for pig in selector("@e[type=pig]"):
-        pig.CustomName = "Highlighted"
-
-    player.tags.mcfc_demo = true
-    pig.add_tag("elite")
-    pig.effect("speed", 10, 1)
-    pig.offhand.item = stack
-    pig.teleport(block("~ ~1 ~"))
-    pig.damage(2)
-    pig.heal(1)
-    pig.give(stack)
-    pig.clear("minecraft:apple", 1)
-    pig.loot_give("minecraft:chests/simple_dungeon")
-    pig.tellraw("hello @s")
-    pig.title("Warning")
-    pig.actionbar("Incoming")
-    pig.playsound("minecraft:entity.experience_orb.pickup", "master")
-    pig.stopsound("master", "minecraft:entity.experience_orb.pickup")
-    pig.debug_entity("nearest pig")
-
-    chest.loot_insert("minecraft:chests/simple_dungeon")
-    chest.loot_spawn("minecraft:chests/simple_dungeon")
-    chest.debug_marker("chest marker", "minecraft:gold_block")
-    chest.particle("minecraft:flame", 4, me)
-    chest.setblock(chest_type)
-    chest.fill(block("1 65 1"), "minecraft:glass")
-    let spawned_item = chest.spawn_item(stack)
-    let spawned_pig = chest.summon(pig_builder, pig_nbt)
-
-    bb.value = 5
-    bb.max = 10
-    bb.visible = true
-    bb.players = pig
-    bb.name = "Boss Updated"
-
-    if me.inventory[0].exists:
-        me.inventory[0].count = me.inventory[0].count + 1
-        me.hotbar[0].clear()
-
-    switch mode:
-        case Mode.IDLE:
-            mcf "say idle"
-        case Mode.RUNNING:
-            mcf "say running"
-
-    match label:
-        "small" => mcf "say $(label) $(values.len())"
-        "large" => mcf "say $(random(100)) $(me.inventory[0].id)"
-        else => mcf "say $(counts.has(\"stone\")) $(spawned_item.team)"
-
-    async:
-        sleep_ticks(5)
-        bb.remove()
-        pig.position.setblock("minecraft:gold_block")
-        player.position.particle("minecraft:happy_villager", 8, me)
-        spawned_pig.position.particle("minecraft:cloud", 3, me)
-        mcf "say $(random(values.len())) $(stack.count) $(me.hotbar[0].exists)"
-
-    debug("entered gameplay branch")
-    let amount = values.remove(0)
-    counts.remove("stone")
-    mc "say plain command"
-    mcf "say $(title) $(label) $(amount) $(stack_nbt) $(chest_nbt)"
+int score(Mode mode, float speed) {
+    var reward = new Reward("minecraft:apple", 2);
+    List<int> values = List.of(1, 2, 3);
+    Map<String, int> totals = Map.of("a", 1);
+    boolean ready = !false && (values.size() > 0 || totals.containsKey("a"));
+    for (int i = 0; i < 3; i++) {
+        if (i == 1) {
+            continue;
+        }
+    }
+    for (Player p : selector("@a")) {
+        p.addTag("seen");
+    }
+    switch (mode) {
+        case Mode.IDLE -> mcf("say $(reward.item)");
+        default -> {
+            sleepTicks(20);
+        }
+    }
+    async {
+        sleep(1);
+    }
+    as (single(selector("@p"))) {
+        mc("say hi");
+    }
+    var stack = new ItemStack("minecraft:stick");
+    var who = (Player) single(selector("@p"));
+    who.state.coins += 1;
+    return (int) speed;
+}

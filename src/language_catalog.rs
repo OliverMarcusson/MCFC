@@ -41,23 +41,23 @@ pub const AGENT_EVENTS: &[&str] = &[
 
 pub fn agent_event_payload_type(kind: &str) -> Option<&'static str> {
     Some(match kind {
-        "chat" => "chat_event",
-        "inventory_click" => "inventory_click_event",
-        "player_action" => "player_action_event",
-        "block_break" => "block_break_event",
-        "player_interact_block" => "player_interact_block_event",
-        "player_interact_item" => "player_interact_item_event",
-        "entity_interact" => "entity_interact_event",
-        "entity_attack" => "entity_attack_event",
-        "item_held_change" => "item_held_change_event",
-        "inventory_close" => "inventory_close_event",
-        "player_swing" => "player_swing_event",
-        "player_action_toggle" => "player_action_toggle_event",
-        "item_rename" => "item_rename_event",
-        "trade_select" => "trade_select_event",
-        "sign_change" => "sign_change_event",
-        "recipe_place" => "recipe_place_event",
-        "game_mode_request" => "game_mode_request_event",
+        "chat" => "ChatEvent",
+        "inventory_click" => "InventoryClickEvent",
+        "player_action" => "PlayerActionEvent",
+        "block_break" => "BlockBreakEvent",
+        "player_interact_block" => "PlayerInteractBlockEvent",
+        "player_interact_item" => "PlayerInteractItemEvent",
+        "entity_interact" => "EntityInteractEvent",
+        "entity_attack" => "EntityAttackEvent",
+        "item_held_change" => "ItemHeldChangeEvent",
+        "inventory_close" => "InventoryCloseEvent",
+        "player_swing" => "PlayerSwingEvent",
+        "player_action_toggle" => "PlayerActionToggleEvent",
+        "item_rename" => "ItemRenameEvent",
+        "trade_select" => "TradeSelectEvent",
+        "sign_change" => "SignChangeEvent",
+        "recipe_place" => "RecipePlaceEvent",
+        "game_mode_request" => "GameModeRequestEvent",
         "player_respawn_request"
         | "book_edit"
         | "beacon_effect"
@@ -72,7 +72,92 @@ pub fn agent_event_payload_type(kind: &str) -> Option<&'static str> {
         | "player_item_drop"
         | "player_item_pickup"
         | "inventory_open"
-        | "game_mode_change" => "agent_event",
+        | "game_mode_change" => "AgentEvent",
         _ => return None,
     })
+}
+
+/// Builtin functions users write in camelCase, with the name the compiler uses.
+pub const FUNCTION_NAMES: &[(&str, &str)] = &[
+    ("sleepTicks", "sleep_ticks"),
+    ("gameTime", "game_time"),
+    ("worldTime", "world_time"),
+    ("borderSize", "border_size"),
+    ("findFirst", "find_first"),
+    ("hasData", "has_data"),
+    ("randomWeighted", "random_weighted"),
+    ("randomBinomial", "random_binomial"),
+    ("debugEntity", "debug_entity"),
+    ("debugMarker", "debug_marker"),
+    ("lootGive", "loot_give"),
+    ("lootInsert", "loot_insert"),
+    ("lootSpawn", "loot_spawn"),
+];
+
+/// Methods users write with Java names, with the name the compiler uses.
+/// `add` is `push` with one argument and `insert` with two.
+pub const METHOD_NAMES: &[(&str, &str)] = &[
+    ("size", "len"),
+    ("length", "len"),
+    ("removeLast", "pop"),
+    ("getFirst", "first"),
+    ("getLast", "last"),
+    ("indexOf", "index_of"),
+    ("containsKey", "has"),
+    ("keySet", "keys"),
+    ("substring", "slice"),
+    ("parseInt", "parse_int"),
+    ("toString", "to_string"),
+    ("addTag", "add_tag"),
+    ("removeTag", "remove_tag"),
+    ("hasTag", "has_tag"),
+    ("asNbt", "as_nbt"),
+    ("distanceTo", "distance_to"),
+    ("gameMode", "game_mode"),
+    ("inBiome", "in_biome"),
+    ("lookX", "look_x"),
+    ("lookY", "look_y"),
+    ("lookZ", "look_z"),
+    ("selectedSlot", "selected_slot"),
+    ("spawnItem", "spawn_item"),
+    ("xpLevel", "xp_level"),
+    ("lootGive", "loot_give"),
+    ("lootInsert", "loot_insert"),
+    ("lootSpawn", "loot_spawn"),
+    ("debugEntity", "debug_entity"),
+    ("debugMarker", "debug_marker"),
+];
+
+pub fn internal_function_name(name: &str) -> &str {
+    FUNCTION_NAMES
+        .iter()
+        .find(|(java, _)| *java == name)
+        .map_or(name, |(_, internal)| internal)
+}
+
+pub fn internal_method_name(name: &str, arg_count: usize) -> &str {
+    match (name, arg_count) {
+        ("add", 2) => "insert",
+        ("add", _) => "push",
+        _ => METHOD_NAMES
+            .iter()
+            .find(|(java, _)| *java == name)
+            .map_or(name, |(_, internal)| internal),
+    }
+}
+
+/// The name to suggest when source uses an internal name directly.
+pub fn java_name_for(internal: &str, is_method: bool) -> Option<&'static str> {
+    if is_method && matches!(internal, "push" | "insert") {
+        return Some("add");
+    }
+    let table = if is_method {
+        METHOD_NAMES
+    } else {
+        FUNCTION_NAMES
+    };
+    table
+        .iter()
+        .find(|(_, name)| *name == internal)
+        .map(|(java, _)| *java)
 }

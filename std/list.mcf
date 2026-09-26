@@ -1,0 +1,34 @@
+// Helpers for arrays. Each is generic, so `T` can be any element type that
+// supports the operators the helper uses: `+` for `sum`, `<` and `>` for
+// `min` and `max`. That means `int` and `float`.
+
+// Sum of all elements. An empty array gives 0.
+public <T> T sum(List<T> xs) {
+    var total = xs[0];
+    for (int i = 1; i < xs.size(); i++) {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+// Smallest element. An empty array gives 0.
+public <T> T min(List<T> xs) {
+    var best = xs[0];
+    for (var x : xs) {
+        if (x < best) {
+            best = x;
+        }
+    }
+    return best;
+}
+
+// Largest element. An empty array gives 0.
+public <T> T max(List<T> xs) {
+    var best = xs[0];
+    for (var x : xs) {
+        if (x > best) {
+            best = x;
+        }
+    }
+    return best;
+}

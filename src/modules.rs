@@ -1,12 +1,14 @@
-//! Rust-style modules: loading the `mod` tree from disk and resolving `::` paths.
+//! Modules: every `.mcf` file is a module named by its path, like a Java
+//! package (`src/game/util.mcf` is `game.util`), and `import` / `a.b.c(...)`
+//! paths are resolved here.
 //!
 //! Files are merged into one source (so the rest of the pipeline is unchanged),
 //! then `resolve` renames every item in a child module to its full path, e.g.
-//! `fn double` in `src/util.mcf` becomes `util::double`, and rewrites calls,
-//! struct literals, and types to those names. Root-module items keep their bare
+//! `double` in `src/util.mcf` becomes `util::double`, and rewrites calls,
+//! records, and types to those names. Root-module items keep their bare
 //! names, so single-file programs compile exactly as before.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast::*;
@@ -17,6 +19,7 @@ use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 pub struct ModuleSource {
     /// Path from the root module; empty for the root.
     pub path: Vec<String>,
+    /// The module's file, or its directory when only subdirectories hold code.
     pub file: PathBuf,
     /// Merged-source line (1-based) holding the file's first line.
     pub first_line: usize,
@@ -34,8 +37,7 @@ pub struct LoadedModules {
 /// The standard library, compiled into the binary and loaded as module `std`.
 const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
-    ("mod.mcf", include_str!("../std/mod.mcf")),
-    ("array.mcf", include_str!("../std/array.mcf")),
+    ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
 ];
@@ -48,28 +50,85 @@ fn std_source(file: &Path) -> Option<&'static str> {
         .map(|(_, source)| *source)
 }
 
-fn exists(file: &Path) -> bool {
-    std_source(file).is_some() || file.is_file()
-}
-
-/// Loads `root` plus every module reachable through `mod` declarations,
-/// depth-first, into one merged source, followed by the `std` module.
+/// Loads `root` as the root module and each of `files` as the module its path
+/// below `root`'s directory names, followed by `std`, into one merged source.
 pub fn load(
     root: &Path,
+    files: &[PathBuf],
     read: &dyn Fn(&Path) -> Result<String, String>,
 ) -> Result<LoadedModules, String> {
+    let dir = root.parent().unwrap_or(Path::new(""));
+    // BTreeMap order puts every directory module before the modules inside it.
+    let mut entries: BTreeMap<Vec<String>, PathBuf> = BTreeMap::new();
+    for file in files.iter().filter(|file| file.as_path() != root) {
+        let path = module_path(dir, file)?;
+        if path[0] == "std" {
+            return Err(format!(
+                "error:{}: 'std' is reserved for the standard library",
+                file.display()
+            ));
+        }
+        entries.insert(path, file.clone());
+    }
+    for (name, _) in STD_FILES {
+        let file = Path::new(STD_ROOT).join(name);
+        entries.insert(
+            module_path(Path::new(STD_ROOT), &file)?.into_iter().fold(
+                vec!["std".to_string()],
+                |mut path, segment| {
+                    path.push(segment);
+                    path
+                },
+            ),
+            file,
+        );
+    }
+    let paths: Vec<Vec<String>> = entries.keys().cloned().collect();
+    for path in paths {
+        for len in 1..path.len() {
+            let parent = path[..len].to_vec();
+            let folder = if parent[0] == "std" {
+                Path::new(STD_ROOT).to_path_buf()
+            } else {
+                parent
+                    .iter()
+                    .fold(dir.to_path_buf(), |dir, segment| dir.join(segment))
+            };
+            entries.entry(parent).or_insert(folder);
+        }
+    }
+
     let mut loaded = LoadedModules {
         merged: String::new(),
         modules: Vec::new(),
     };
     load_module(root, Vec::new(), read, &mut loaded)?;
-    load_module(
-        &Path::new(STD_ROOT).join("mod.mcf"),
-        vec!["std".to_string()],
-        read,
-        &mut loaded,
-    )?;
+    for (path, file) in entries {
+        load_module(&file, path, read, &mut loaded)?;
+    }
     Ok(loaded)
+}
+
+/// `dir/game/util.mcf` -> `["game", "util"]`.
+fn module_path(dir: &Path, file: &Path) -> Result<Vec<String>, String> {
+    let relative = file.strip_prefix(dir).unwrap_or(file).with_extension("");
+    let path: Vec<String> = relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let valid = |segment: &String| {
+        segment.starts_with(|ch: char| ch == '_' || ch.is_ascii_alphabetic())
+            && segment
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    };
+    if path.is_empty() || !path.iter().all(valid) {
+        return Err(format!(
+            "error:{}: module file and folder names must be identifiers",
+            file.display()
+        ));
+    }
+    Ok(path)
 }
 
 fn load_module(
@@ -78,15 +137,17 @@ fn load_module(
     read: &dyn Fn(&Path) -> Result<String, String>,
     loaded: &mut LoadedModules,
 ) -> Result<(), String> {
+    let is_file = std_source(file).is_some() || file.extension().is_some_and(|ext| ext == "mcf");
     let source = match std_source(file) {
         Some(source) => source.to_string(),
-        None => read(file)?,
+        None if is_file => read(file)?,
+        None => String::new(),
     };
     loaded
         .merged
-        .push_str(&format!("# source: {}\n", file.display()));
+        .push_str(&format!("// source: {}\n", file.display()));
     loaded.modules.push(ModuleSource {
-        path: path.clone(),
+        path,
         file: file.to_path_buf(),
         first_line: loaded.merged.matches('\n').count() + 1,
         source_start: loaded.merged.len(),
@@ -99,82 +160,7 @@ fn load_module(
     }
     loaded.modules[index].source_end = loaded.merged.len();
     loaded.merged.push('\n');
-
-    // Like Rust: the root and `mod.mcf` own their directory; `foo.mcf` owns `foo/`.
-    let dir = if path.is_empty() || file.file_stem().is_some_and(|stem| stem == "mod") {
-        file.parent().unwrap_or(Path::new("")).to_path_buf()
-    } else {
-        file.with_extension("")
-    };
-    let mut seen = Vec::new();
-    for (line, name) in declared_mods(&source) {
-        if seen.contains(&name) {
-            continue; // `resolve` reports the duplicate declaration.
-        }
-        seen.push(name.clone());
-        if path.is_empty() && name == "std" {
-            return Err(format!(
-                "error:{}:{}: 'std' is reserved for the standard library",
-                file.display(),
-                line
-            ));
-        }
-        let flat = dir.join(format!("{name}.mcf"));
-        let nested = dir.join(&name).join("mod.mcf");
-        let child = match (exists(&flat), exists(&nested)) {
-            (true, false) => flat,
-            (false, true) => nested,
-            (true, true) => {
-                return Err(format!(
-                    "error:{}:{}: module '{}' is defined in both '{}' and '{}'",
-                    file.display(),
-                    line,
-                    name,
-                    flat.display(),
-                    nested.display()
-                ));
-            }
-            (false, false) => {
-                return Err(format!(
-                    "error:{}:{}: file not found for module '{}'; create '{}' or '{}'",
-                    file.display(),
-                    line,
-                    name,
-                    flat.display(),
-                    nested.display()
-                ));
-            }
-        };
-        let mut child_path = path.clone();
-        child_path.push(name);
-        load_module(&child, child_path, read, loaded)?;
-    }
     Ok(())
-}
-
-/// Top-level `mod name` / `pub mod name` lines, as (line number, name).
-fn declared_mods(source: &str) -> Vec<(usize, String)> {
-    source
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| !line.starts_with(char::is_whitespace))
-        .filter_map(|(index, line)| {
-            let line = line.split('#').next()?.trim();
-            let line = line
-                .strip_prefix("pub ")
-                .map(str::trim_start)
-                .unwrap_or(line);
-            let name = line.strip_prefix("mod ")?.trim();
-            let valid = name
-                .chars()
-                .next()
-                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
-                && name
-                    .chars()
-                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
-            valid.then(|| (index + 1, name.to_string()))
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +185,8 @@ struct Module {
 struct Resolver {
     modules: Vec<Module>,
     enum_names: HashSet<String>,
+    /// Record name -> field names in declaration order, for `new R(...)`.
+    record_fields: HashMap<String, Vec<String>>,
 }
 
 /// Renames child-module items to their full paths and resolves every path.
@@ -226,37 +214,12 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
             .unwrap_or(0)
     };
 
-    for decl in &program.mods {
-        let owner = module_of(&decl.span);
-        let mut path = modules[owner].path.clone();
-        path.push(decl.name.clone());
-        let Some(child) = modules.iter().position(|module| module.path == path) else {
-            diagnostics.push(Diagnostic::new(
-                format!(
-                    "module '{}' was not loaded; 'mod' declarations need a file or project build",
-                    decl.name
-                ),
-                decl.span.clone(),
-            ));
-            continue;
-        };
-        if modules[owner]
-            .children
-            .insert(decl.name.clone(), (child, decl.is_pub))
-            .is_some()
-        {
-            diagnostics.push(Diagnostic::new(
-                format!("module '{}' is declared twice", decl.name),
-                decl.span.clone(),
-            ));
+    // Every module is visible from everywhere, like a Java package.
+    for index in 1..modules.len() {
+        let name = modules[index].path.last().cloned().unwrap_or_default();
+        if let Some(parent) = modules[index].parent {
+            modules[parent].children.insert(name, (index, true));
         }
-    }
-    // `std` is implicitly a public child of the root, like Rust's prelude crate.
-    if let Some(std) = modules.iter().position(|module| module.path == ["std"]) {
-        modules[0]
-            .children
-            .entry("std".to_string())
-            .or_insert((std, true));
     }
     let function_modules: Vec<usize> = program
         .functions
@@ -280,6 +243,7 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
     let mut resolver = Resolver {
         modules,
         enum_names: HashSet::new(),
+        record_fields: HashMap::new(),
     };
     resolver.enum_names = program
         .enums
@@ -299,6 +263,8 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
             resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
         }
         def.name = resolver.struct_name(module, &def.name);
+        let fields = def.fields.iter().map(|field| field.name.clone()).collect();
+        resolver.record_fields.insert(def.name.clone(), fields);
     }
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
         def.name = resolver.struct_name(module, &def.name);
@@ -322,7 +288,18 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
             &span,
             &mut diagnostics,
         );
-        resolver.walk_stmts(module, &mut function.body, &mut diagnostics);
+        let mut locals: HashSet<String> = function
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        collect_locals(&function.body, &mut locals);
+        let scope = Scope {
+            module,
+            generics,
+            locals: &locals,
+        };
+        resolver.walk_stmts(&scope, &mut function.body, &mut diagnostics);
         function.name = resolver.function_name(module, &function.name);
     }
 
@@ -358,7 +335,7 @@ impl Resolver {
         if module == 0 {
             "the root module".to_string()
         } else {
-            format!("module '{}'", self.modules[module].path.join("::"))
+            format!("module '{}'", self.modules[module].path.join("."))
         }
     }
 
@@ -384,7 +361,7 @@ impl Resolver {
                 Ok(())
             } else {
                 Err(format!(
-                    "{} '{}' is private to {}; mark it 'pub'",
+                    "{} '{}' is private to {}; mark it 'public'",
                     kind,
                     name,
                     self.display_path(module)
@@ -416,22 +393,13 @@ impl Resolver {
         Ok(found)
     }
 
-    /// Resolves `a::b::c` from `from`. The first segment is looked up in the
-    /// current module, then the root module; `self` and `super` work as in Rust.
+    /// Resolves `a.b.c` from `from`. The first segment is looked up in the
+    /// current module, then the root module.
     fn resolve_path(&self, from: usize, segments: &[String]) -> Result<Vec<Target>, String> {
         let mut module = from;
-        let mut index = 0;
-        while index + 1 < segments.len() && matches!(segments[index].as_str(), "self" | "super") {
-            if segments[index] == "super" {
-                module = self.modules[module]
-                    .parent
-                    .ok_or("'super' cannot be used in the root module")?;
-            }
-            index += 1;
-        }
-        let first = &segments[index];
+        let first = &segments[0];
         let mut found = self.lookup(module, first, from)?;
-        if found.is_empty() && index == 0 && from != 0 {
+        if found.is_empty() && from != 0 {
             found = self.lookup(0, first, from)?;
         }
         if found.is_empty() {
@@ -441,14 +409,14 @@ impl Resolver {
                 self.display_path(module)
             ));
         }
-        for segment in &segments[index + 1..] {
+        for (index, segment) in segments[1..].iter().enumerate() {
             let Some(next) = found.iter().find_map(|target| match target {
                 Target::Module(module) => Some(*module),
                 _ => None,
             }) else {
                 return Err(format!(
                     "'{}' is not a module",
-                    segments[..index + 1].join("::")
+                    segments[..index + 1].join(".")
                 ));
             };
             module = next;
@@ -460,7 +428,6 @@ impl Resolver {
                     self.display_path(module)
                 ));
             }
-            index += 1;
         }
         Ok(found)
     }
@@ -469,7 +436,7 @@ impl Resolver {
         let targets = self.resolve_path(module, &decl.path)?;
         let entry = &mut self.modules[module];
         let alias = &decl.alias;
-        // Modules, functions, and structs are separate namespaces, as in Rust.
+        // Modules, functions, and records are separate namespaces.
         let imported = entry.imports.get(alias).map(Vec::as_slice).unwrap_or(&[]);
         let clash = targets.iter().any(|target| match target {
             Target::Module(_) => {
@@ -509,7 +476,7 @@ impl Resolver {
             }
             if from != 0 && self.modules[0].functions.contains_key(name) {
                 return Err(format!(
-                    "cannot find function '{name}' in {}; it is defined in the root module, so import it with 'use {name}'",
+                    "cannot find function '{name}' in {}; it is defined in the root module, so add 'import {name};'",
                     self.display_path(from)
                 ));
             }
@@ -521,7 +488,7 @@ impl Resolver {
                 Target::Function(name) => Some(Some(name)),
                 _ => None,
             })
-            .ok_or_else(|| format!("'{name}' is not a function"))
+            .ok_or_else(|| format!("'{}' is not a function", name.replace("::", ".")))
     }
 
     fn resolve_struct(&self, from: usize, name: &str) -> Result<Option<String>, String> {
@@ -536,7 +503,7 @@ impl Resolver {
             }
             if from != 0 && self.modules[0].structs.contains_key(name) {
                 return Err(format!(
-                    "cannot find struct '{name}' in {}; it is defined in the root module, so import it with 'use {name}'",
+                    "cannot find record '{name}' in {}; it is defined in the root module, so add 'import {name};'",
                     self.display_path(from)
                 ));
             }
@@ -548,7 +515,7 @@ impl Resolver {
                 Target::Struct(name) => Some(Some(name)),
                 _ => None,
             })
-            .ok_or_else(|| format!("'{name}' is not a struct"))
+            .ok_or_else(|| format!("'{}' is not a record", name.replace("::", ".")))
     }
 
     fn resolve_type(
@@ -566,81 +533,81 @@ impl Resolver {
                 Ok(None) => {}
                 Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
             },
-            Type::Array(inner) | Type::Dict(inner) => {
+            Type::Array(inner) | Type::Dict(inner) | Type::Optional(inner) => {
                 self.resolve_type(module, generics, inner, span, diagnostics)
             }
             _ => {}
         }
     }
 
-    fn walk_stmts(&self, module: usize, stmts: &mut [Stmt], diagnostics: &mut Diagnostics) {
+    fn walk_stmts(&self, scope: &Scope, stmts: &mut [Stmt], diagnostics: &mut Diagnostics) {
         for stmt in stmts {
-            self.walk_stmt(module, stmt, diagnostics);
+            self.walk_stmt(scope, stmt, diagnostics);
         }
     }
 
-    fn walk_stmt(&self, module: usize, stmt: &mut Stmt, diagnostics: &mut Diagnostics) {
+    fn walk_stmt(&self, scope: &Scope, stmt: &mut Stmt, diagnostics: &mut Diagnostics) {
         match &mut stmt.kind {
-            StmtKind::Let { value, .. } => self.walk_expr(module, value, diagnostics),
+            StmtKind::Let { ty, value, .. } => {
+                if let Some(ty) = ty {
+                    self.resolve_type(scope.module, scope.generics, ty, &stmt.span, diagnostics);
+                }
+                self.walk_expr(scope, value, diagnostics);
+            }
             StmtKind::Assign { target, value } => {
                 if let AssignTarget::Path(path) = target {
-                    self.walk_path(module, path, diagnostics);
+                    self.walk_path(scope, path, diagnostics);
                 }
-                self.walk_expr(module, value, diagnostics);
+                self.walk_expr(scope, value, diagnostics);
             }
             StmtKind::If {
                 condition,
                 then_body,
                 else_body,
             } => {
-                self.walk_expr(module, condition, diagnostics);
-                self.walk_stmts(module, then_body, diagnostics);
-                self.walk_stmts(module, else_body, diagnostics);
+                self.walk_expr(scope, condition, diagnostics);
+                self.walk_stmts(scope, then_body, diagnostics);
+                self.walk_stmts(scope, else_body, diagnostics);
             }
-            StmtKind::While { condition, body } => {
-                self.walk_expr(module, condition, diagnostics);
-                self.walk_stmts(module, body, diagnostics);
-            }
-            StmtKind::For { kind, body, .. } => {
-                match kind {
-                    ForKind::Range { start, end, .. } => {
-                        self.walk_expr(module, start, diagnostics);
-                        self.walk_expr(module, end, diagnostics);
-                    }
-                    ForKind::Each { iterable } => self.walk_expr(module, iterable, diagnostics),
-                }
-                self.walk_stmts(module, body, diagnostics);
-            }
-            StmtKind::Match {
-                value,
-                arms,
-                else_body,
+            StmtKind::While {
+                condition,
+                body,
+                step,
             } => {
-                self.walk_expr(module, value, diagnostics);
-                for arm in arms {
-                    self.walk_stmts(module, &mut arm.body, diagnostics);
+                self.walk_expr(scope, condition, diagnostics);
+                self.walk_stmts(scope, body, diagnostics);
+                self.walk_stmts(scope, step, diagnostics);
+            }
+            StmtKind::For {
+                ty, iterable, body, ..
+            } => {
+                if let Some(ty) = ty {
+                    self.resolve_type(scope.module, scope.generics, ty, &stmt.span, diagnostics);
                 }
-                self.walk_stmts(module, else_body, diagnostics);
+                self.walk_expr(scope, iterable, diagnostics);
+                self.walk_stmts(scope, body, diagnostics);
             }
             StmtKind::Switch {
                 value,
                 arms,
                 default_body,
             } => {
-                self.walk_expr(module, value, diagnostics);
+                self.walk_expr(scope, value, diagnostics);
                 for arm in arms {
-                    self.walk_expr(module, &mut arm.pattern, diagnostics);
-                    self.walk_stmts(module, &mut arm.body, diagnostics);
+                    self.walk_expr(scope, &mut arm.pattern, diagnostics);
+                    self.walk_stmts(scope, &mut arm.body, diagnostics);
                 }
-                self.walk_stmts(module, default_body, diagnostics);
+                self.walk_stmts(scope, default_body, diagnostics);
             }
             StmtKind::Context { anchor, body, .. } => {
-                self.walk_expr(module, anchor, diagnostics);
-                self.walk_stmts(module, body, diagnostics);
+                self.walk_expr(scope, anchor, diagnostics);
+                self.walk_stmts(scope, body, diagnostics);
             }
-            StmtKind::Async { body } => self.walk_stmts(module, body, diagnostics),
+            StmtKind::Async { body } | StmtKind::Block(body) => {
+                self.walk_stmts(scope, body, diagnostics)
+            }
             StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
-                self.walk_expr(module, value, diagnostics)
+                self.walk_expr(scope, value, diagnostics)
             }
             // ponytail: `$(...)` placeholders are parsed later by the type checker,
             // so calls inside them must use the full path from the root module.
@@ -653,77 +620,234 @@ impl Resolver {
         }
     }
 
-    fn walk_path(&self, module: usize, path: &mut PathExpr, diagnostics: &mut Diagnostics) {
-        if path.segments.len() == 1
-            && let ExprKind::Variable(name) = &mut path.base.kind
-            && let Ok(Some(resolved)) = self.resolve_struct(module, name)
-            && self.enum_names.contains(&resolved)
-        {
-            *name = resolved;
-            return;
+    /// The segments of `a.b` when `a` names a module rather than a local.
+    fn module_path_of(&self, scope: &Scope, expr: &Expr) -> Option<Vec<String>> {
+        let mut segments = Vec::new();
+        let mut current = expr;
+        loop {
+            match &current.kind {
+                ExprKind::Variable(name) => {
+                    segments.push(name.clone());
+                    break;
+                }
+                ExprKind::Path(path) => {
+                    for segment in path.segments.iter().rev() {
+                        let PathSegment::Field(name) = segment else {
+                            return None;
+                        };
+                        segments.push(name.clone());
+                    }
+                    current = &path.base;
+                }
+                _ => return None,
+            }
         }
-        self.walk_expr(module, &mut path.base, diagnostics);
+        segments.reverse();
+        let first = &segments[0];
+        if scope.locals.contains(first) {
+            return None;
+        }
+        let names_module = |module: usize| {
+            self.lookup(module, first, scope.module)
+                .ok()
+                .is_some_and(|targets| targets.iter().any(|t| matches!(t, Target::Module(_))))
+        };
+        (names_module(scope.module) || names_module(0)).then_some(segments)
+    }
+
+    fn walk_path(&self, scope: &Scope, path: &mut PathExpr, diagnostics: &mut Diagnostics) {
+        // `Mode.SURVIVAL`, or `game.Mode.SURVIVAL` through a module.
+        let fields: Vec<String> = path
+            .segments
+            .iter()
+            .map_while(|segment| match segment {
+                PathSegment::Field(name) => Some(name.clone()),
+                PathSegment::Index(_) => None,
+            })
+            .collect();
+        if let ExprKind::Variable(base) = &path.base.kind
+            && !scope.locals.contains(base)
+        {
+            for taken in 0..fields.len() {
+                let name = std::iter::once(base.clone())
+                    .chain(fields[..taken].iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                if let Ok(Some(resolved)) = self.resolve_struct(scope.module, &name)
+                    && self.enum_names.contains(&resolved)
+                {
+                    path.base.kind = ExprKind::Variable(resolved);
+                    path.segments.drain(..taken);
+                    return;
+                }
+            }
+        }
+        self.walk_expr(scope, &mut path.base, diagnostics);
         for segment in &mut path.segments {
             if let PathSegment::Index(index) = segment {
-                self.walk_expr(module, index, diagnostics);
+                self.walk_expr(scope, index, diagnostics);
             }
         }
     }
 
-    fn walk_expr(&self, module: usize, expr: &mut Expr, diagnostics: &mut Diagnostics) {
+    fn walk_expr(&self, scope: &Scope, expr: &mut Expr, diagnostics: &mut Diagnostics) {
         let span = expr.span.clone();
+        // `util.double(x)` calls a function in module `util`.
+        if let ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } = &mut expr.kind
+            && let Some(mut segments) = self.module_path_of(scope, receiver)
+        {
+            segments.push(method.clone());
+            let path = segments.join("::");
+            let function = match self.resolve_function(scope.module, &path) {
+                Ok(Some(resolved)) => resolved,
+                Ok(None) => path,
+                Err(message) => {
+                    diagnostics.push(Diagnostic::new(message, span.clone()));
+                    path
+                }
+            };
+            expr.kind = ExprKind::Call {
+                function,
+                args: std::mem::take(args),
+            };
+            if let ExprKind::Call { args, .. } = &mut expr.kind {
+                for arg in args {
+                    self.walk_expr(scope, arg, diagnostics);
+                }
+            }
+            return;
+        }
         match &mut expr.kind {
             ExprKind::Call { function, args } => {
-                match self.resolve_function(module, function) {
+                match self.resolve_function(scope.module, function) {
                     Ok(Some(resolved)) => *function = resolved,
                     Ok(None) => {}
                     Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
                 }
                 for arg in args {
-                    self.walk_expr(module, arg, diagnostics);
+                    self.walk_expr(scope, arg, diagnostics);
                 }
             }
             ExprKind::StructLiteral { name, fields } => {
-                match self.resolve_struct(module, name) {
-                    Ok(Some(resolved)) => *name = resolved,
-                    Ok(None) => {}
-                    Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
-                }
+                self.resolve_record_name(scope, name, &span, diagnostics);
                 for (_, value) in fields {
-                    self.walk_expr(module, value, diagnostics);
+                    self.walk_expr(scope, value, diagnostics);
                 }
             }
-            ExprKind::Variable(name) if name.contains("::") => diagnostics.push(Diagnostic::new(
-                format!("'{name}' is a path; only functions and structs can be named with '::'"),
-                span.clone(),
-            )),
+            ExprKind::New { name, args } => {
+                self.resolve_record_name(scope, name, &span, diagnostics);
+                for arg in args.iter_mut() {
+                    self.walk_expr(scope, arg, diagnostics);
+                }
+                // `new R(a, b)` is the record literal with fields in declaration order.
+                if let Some(fields) = self.record_fields.get(name) {
+                    if fields.len() != args.len() {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "record '{}' has {} fields, found {} arguments",
+                                name.replace("::", "."),
+                                fields.len(),
+                                args.len()
+                            ),
+                            span.clone(),
+                        ));
+                    }
+                    expr.kind = ExprKind::StructLiteral {
+                        name: std::mem::take(name),
+                        fields: fields.iter().cloned().zip(std::mem::take(args)).collect(),
+                    };
+                }
+            }
             ExprKind::ArrayLiteral(items) => {
                 for item in items {
-                    self.walk_expr(module, item, diagnostics);
+                    self.walk_expr(scope, item, diagnostics);
                 }
             }
             ExprKind::DictLiteral(entries) => {
                 for (_, value) in entries {
-                    self.walk_expr(module, value, diagnostics);
+                    self.walk_expr(scope, value, diagnostics);
                 }
             }
-            ExprKind::Unary { expr, .. } => self.walk_expr(module, expr, diagnostics),
+            ExprKind::Unary { expr, .. } => self.walk_expr(scope, expr, diagnostics),
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(module, left, diagnostics);
-                self.walk_expr(module, right, diagnostics);
+                self.walk_expr(scope, left, diagnostics);
+                self.walk_expr(scope, right, diagnostics);
             }
             ExprKind::MethodCall { receiver, args, .. } => {
-                self.walk_expr(module, receiver, diagnostics);
+                self.walk_expr(scope, receiver, diagnostics);
                 for arg in args {
-                    self.walk_expr(module, arg, diagnostics);
+                    self.walk_expr(scope, arg, diagnostics);
                 }
             }
-            ExprKind::Path(path) => self.walk_path(module, path, diagnostics),
+            ExprKind::Path(path) => self.walk_path(scope, path, diagnostics),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::String(_)
             | ExprKind::Variable(_) => {}
+        }
+    }
+
+    fn resolve_record_name(
+        &self,
+        scope: &Scope,
+        name: &mut String,
+        span: &Span,
+        diagnostics: &mut Diagnostics,
+    ) {
+        match self.resolve_struct(scope.module, name) {
+            Ok(Some(resolved)) => *name = resolved,
+            Ok(None) => {}
+            Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
+        }
+    }
+}
+
+struct Scope<'a> {
+    module: usize,
+    generics: &'a [String],
+    /// Every parameter and local name in the function; these shadow modules.
+    locals: &'a HashSet<String>,
+}
+
+fn collect_locals(stmts: &[Stmt], locals: &mut HashSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Let { name, .. } => {
+                locals.insert(name.clone());
+            }
+            StmtKind::For { name, body, .. } => {
+                locals.insert(name.clone());
+                collect_locals(body, locals);
+            }
+            StmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_locals(then_body, locals);
+                collect_locals(else_body, locals);
+            }
+            StmtKind::While { body, step, .. } => {
+                collect_locals(body, locals);
+                collect_locals(step, locals);
+            }
+            StmtKind::Switch {
+                arms, default_body, ..
+            } => {
+                for arm in arms {
+                    collect_locals(&arm.body, locals);
+                }
+                collect_locals(default_body, locals);
+            }
+            StmtKind::Context { body, .. } | StmtKind::Async { body } | StmtKind::Block(body) => {
+                collect_locals(body, locals)
+            }
+            _ => {}
         }
     }
 }

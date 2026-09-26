@@ -30,12 +30,14 @@ This lists the packs `mcfd` found. It looks for `mcfd.pack.toml` files, which `m
 In game, `mcfd.ping()` checks the whole round trip:
 
 ```mcfc
-fn health() -> void:
-    let r = mcfd.ping()
-    if r.ok:
-        debug("mcfd connected")
-    else:
-        debug("mcfd not responding")
+void health() {
+    var r = mcfd.ping();
+    if (r.ok) {
+        debug("mcfd connected");
+    } else {
+        debug("mcfd not responding");
+    }
+}
 ```
 
 ## Troubleshooting

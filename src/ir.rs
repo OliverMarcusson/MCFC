@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::ast::{BinaryOp, ContextKind, Type};
 use crate::types::{
-    CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind, TypedForKind,
+    CastKind, MacroPlaceholder, RefKind, TypedAssignTarget, TypedExpr, TypedExprKind,
     TypedFunction, TypedPathExpr, TypedProgram, TypedStmt, TypedStmtKind,
 };
 
@@ -46,13 +46,15 @@ pub enum IrStmt {
         then_body: Vec<IrStmt>,
         else_body: Vec<IrStmt>,
     },
+    /// `step` runs after the body and on `continue` (a C-style `for` update).
     While {
         condition: IrExpr,
         body: Vec<IrStmt>,
+        step: Vec<IrStmt>,
     },
     For {
         name: String,
-        kind: IrForKind,
+        iterable: IrExpr,
         body: Vec<IrStmt>,
     },
     Context {
@@ -100,18 +102,6 @@ pub struct IrCapture {
 pub enum IrAssignTarget {
     Variable(String),
     Path(IrPathExpr),
-}
-
-#[derive(Debug, Clone)]
-pub enum IrForKind {
-    Range {
-        start: IrExpr,
-        end: IrExpr,
-        inclusive: bool,
-    },
-    Each {
-        iterable: IrExpr,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -297,13 +287,22 @@ fn lower_stmt_with_ctx(ctx: &mut LowerCtx, stmt: &TypedStmt, owner: &str) -> IrS
             then_body: ctx.lower_stmts(then_body, owner),
             else_body: ctx.lower_stmts(else_body, owner),
         },
-        TypedStmtKind::While { condition, body } => IrStmt::While {
+        TypedStmtKind::While {
+            condition,
+            body,
+            step,
+        } => IrStmt::While {
             condition: lower_expr(condition),
             body: ctx.lower_stmts(body, owner),
+            step: ctx.lower_stmts(step, owner),
         },
-        TypedStmtKind::For { name, kind, body } => IrStmt::For {
+        TypedStmtKind::For {
+            name,
+            iterable,
+            body,
+        } => IrStmt::For {
             name: name.clone(),
-            kind: lower_for_kind(kind),
+            iterable: lower_expr(iterable),
             body: ctx.lower_stmts(body, owner),
         },
         TypedStmtKind::Context { kind, anchor, body } => IrStmt::Context {
@@ -348,23 +347,6 @@ fn lower_assign_target(target: &TypedAssignTarget) -> IrAssignTarget {
     match target {
         TypedAssignTarget::Variable(name) => IrAssignTarget::Variable(name.clone()),
         TypedAssignTarget::Path(path) => IrAssignTarget::Path(lower_path_expr(path)),
-    }
-}
-
-fn lower_for_kind(kind: &TypedForKind) -> IrForKind {
-    match kind {
-        TypedForKind::Range {
-            start,
-            end,
-            inclusive,
-        } => IrForKind::Range {
-            start: lower_expr(start),
-            end: lower_expr(end),
-            inclusive: *inclusive,
-        },
-        TypedForKind::Each { iterable } => IrForKind::Each {
-            iterable: lower_expr(iterable),
-        },
     }
 }
 

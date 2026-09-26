@@ -1,5 +1,5 @@
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::ir::{IrAssignTarget, IrExpr, IrExprKind, IrForKind, IrFunction, IrProgram, IrStmt};
+use crate::ir::{IrAssignTarget, IrExpr, IrExprKind, IrFunction, IrProgram, IrStmt};
 
 pub fn optimize(mut program: IrProgram) -> IrProgram {
     for function in &mut program.functions {
@@ -52,9 +52,10 @@ fn contains_control_flow(stmts: &[IrStmt]) -> bool {
             else_body,
             ..
         } => contains_control_flow(then_body) || contains_control_flow(else_body),
-        IrStmt::While { body, .. } | IrStmt::For { body, .. } | IrStmt::Context { body, .. } => {
-            contains_control_flow(body)
+        IrStmt::While { body, step, .. } => {
+            contains_control_flow(body) || contains_control_flow(step)
         }
+        IrStmt::For { body, .. } | IrStmt::Context { body, .. } => contains_control_flow(body),
         IrStmt::Async { .. }
         | IrStmt::Let { .. }
         | IrStmt::Assign { .. }
@@ -90,7 +91,11 @@ fn optimize_stmt(stmt: IrStmt) -> Option<IrStmt> {
             then_body: optimize_stmts(then_body),
             else_body: optimize_stmts(else_body),
         }),
-        IrStmt::While { condition, body } => {
+        IrStmt::While {
+            condition,
+            body,
+            step,
+        } => {
             let condition = fold_expr(condition);
             if matches!(condition.kind, IrExprKind::Bool(false)) {
                 return None;
@@ -98,11 +103,16 @@ fn optimize_stmt(stmt: IrStmt) -> Option<IrStmt> {
             Some(IrStmt::While {
                 condition,
                 body: optimize_stmts(body),
+                step: optimize_stmts(step),
             })
         }
-        IrStmt::For { name, kind, body } => Some(IrStmt::For {
+        IrStmt::For {
             name,
-            kind: optimize_for_kind(kind),
+            iterable,
+            body,
+        } => Some(IrStmt::For {
+            name,
+            iterable: fold_expr(iterable),
             body: optimize_stmts(body),
         }),
         IrStmt::Context { kind, anchor, body } => Some(IrStmt::Context {
@@ -146,23 +156,6 @@ fn optimize_stmt(stmt: IrStmt) -> Option<IrStmt> {
         IrStmt::Break | IrStmt::Continue | IrStmt::Return(None) | IrStmt::RawCommand(_) => {
             Some(stmt)
         }
-    }
-}
-
-fn optimize_for_kind(kind: IrForKind) -> IrForKind {
-    match kind {
-        IrForKind::Range {
-            start,
-            end,
-            inclusive,
-        } => IrForKind::Range {
-            start: fold_expr(start),
-            end: fold_expr(end),
-            inclusive,
-        },
-        IrForKind::Each { iterable } => IrForKind::Each {
-            iterable: fold_expr(iterable),
-        },
     }
 }
 

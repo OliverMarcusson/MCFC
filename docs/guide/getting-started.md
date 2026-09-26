@@ -24,7 +24,7 @@ mcfc new my-pack --helper none
 mcfc build my-pack --clean
 ```
 
-`build` writes the datapack to `my-pack/dist`. Copy that folder into `<world>/datapacks/` and run `/reload`. `fn main()` runs on every load.
+`build` writes the datapack to `my-pack/dist`. Copy that folder into `<world>/datapacks/` and run `/reload`. `void main()` runs on every load.
 
 To rebuild after every save, run `mcfc watch my-pack`. See [CLI](./cli) for all flags.
 

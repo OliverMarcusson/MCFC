@@ -31,18 +31,24 @@ features:
 ---
 
 ```mcfc
-player_state coins: int = "Coins"
+@PlayerState("Coins")
+int coins;
 
-task payday every_ticks(20):
-    for player in selector("@a"):
-        player.state.coins = player.state.coins + 1
-        player.actionbar("Coins: $(player.state.coins)")
+@Every(ticks = 20)
+void payday() {
+    for (var player : selector("@a")) {
+        player.state.coins = player.state.coins + 1;
+        player.actionbar("Coins: $(player.state.coins)");
+    }
+}
 
-command buy:
-    let player = single(selector("@s"))
-    if player.state.coins >= 10:
-        player.state.coins = player.state.coins - 10
-        player.give("minecraft:diamond", 1)
+@Command("buy")
+void buy(Player player) {
+    if (player.state.coins >= 10) {
+        player.state.coins = player.state.coins - 10;
+        player.give("minecraft:diamond", 1);
+    }
+}
 ```
 
 MCFC is early-stage. Syntax and output change between commits, so pin a commit for any pack you depend on.

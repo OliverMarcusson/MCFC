@@ -5,13 +5,15 @@ The host bridge lets a vanilla datapack reach outside Minecraft through an optio
 Host calls use `module.fn(...)` syntax and suspend like `sleep`.
 
 ```mcfc
-fn on_join(player: player_ref) -> void:
-    let r = http.get("https://api.example.com/motd")
-    if r.ok:
-        player.tellraw(r.body)
+void onJoin(Player player) {
+    var r = http.get("https://api.example.com/motd");
+    if (r.ok) {
+        player.tellraw(r.body);
+    }
+}
 ```
 
-Because host calls suspend, they are statement-only. They may appear as a `let` initializer or a bare statement, but not nested inside another expression.
+Because host calls suspend, they are statement-only. They may appear as a `var` initializer or a bare statement, but not nested inside another expression.
 
 ## Manifest Gating
 

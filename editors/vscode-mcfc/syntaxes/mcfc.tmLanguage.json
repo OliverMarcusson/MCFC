@@ -7,13 +7,13 @@
       "include": "#comments"
     },
     {
-      "include": "#mcf-command"
-    },
-    {
       "include": "#strings"
     },
     {
       "include": "#annotations"
+    },
+    {
+      "include": "#declarations"
     },
     {
       "include": "#builtins"
@@ -44,8 +44,13 @@
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.number-sign.mcfc",
-          "match": "#.*$"
+          "name": "comment.line.double-slash.mcfc",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.mcfc",
+          "begin": "/\\*",
+          "end": "\\*/"
         }
       ]
     },
@@ -53,7 +58,7 @@
       "patterns": [
         {
           "name": "constant.character.escape.mcfc",
-          "match": "\\\\(?:[\"'\\\\nt]|.)"
+          "match": "\\\\(?:[\"\\\\nt]|.)"
         }
       ]
     },
@@ -89,106 +94,28 @@
               "include": "#escapes"
             }
           ]
-        },
-        {
-          "name": "string.quoted.single.mcfc",
-          "begin": "'",
-          "beginCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.begin.mcfc"
-            }
-          },
-          "end": "'",
-          "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.end.mcfc"
-            }
-          },
-          "patterns": [
-            {
-              "include": "#macro-placeholders"
-            },
-            {
-              "include": "#escapes"
-            }
-          ]
-        }
-      ]
-    },
-    "mcf-command": {
-      "patterns": [
-        {
-          "name": "meta.command.macro.mcfc",
-          "begin": "\\b(mcf)\\s*(\")",
-          "beginCaptures": {
-            "1": {
-              "name": "keyword.other.command.macro.mcfc"
-            },
-            "2": {
-              "name": "punctuation.definition.string.begin.mcfc"
-            }
-          },
-          "end": "\"",
-          "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.end.mcfc"
-            }
-          },
-          "patterns": [
-            {
-              "include": "#macro-placeholders"
-            },
-            {
-              "include": "#escapes"
-            }
-          ],
-          "contentName": "string.quoted.double.macro.mcfc"
-        },
-        {
-          "name": "meta.command.macro.mcfc",
-          "begin": "\\b(mcf)\\s*(')",
-          "beginCaptures": {
-            "1": {
-              "name": "keyword.other.command.macro.mcfc"
-            },
-            "2": {
-              "name": "punctuation.definition.string.begin.mcfc"
-            }
-          },
-          "end": "'",
-          "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.string.end.mcfc"
-            }
-          },
-          "patterns": [
-            {
-              "include": "#macro-placeholders"
-            },
-            {
-              "include": "#escapes"
-            }
-          ],
-          "contentName": "string.quoted.single.macro.mcfc"
         }
       ]
     },
     "annotations": {
-      "patterns": []
-    },
-    "functions": {
       "patterns": [
         {
-          "name": "meta.function.definition.mcfc",
-          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "name": "meta.annotation.mcfc",
+          "match": "(@)(Event|Command|Every|After|PlayerState|EntityState|Book|[A-Za-z_][A-Za-z0-9_]*)\\b(?:\\s*\\(\\s*([A-Z][A-Z0-9_]*)\\s*\\))?",
           "captures": {
-            "1": {
-              "name": "keyword.declaration.function.mcfc"
-            },
-            "2": {
-              "name": "entity.name.function.mcfc"
-            }
+            "1": { "name": "punctuation.definition.annotation.mcfc" },
+            "2": { "name": "storage.type.annotation.mcfc" },
+            "3": { "name": "variable.other.enummember.mcfc" }
           }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.record.definition.mcfc",
+          "match": "\\b(record)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.declaration.record.mcfc" }, "2": { "name": "entity.name.type.record.mcfc" } }
         },
         {
           "name": "meta.enum.definition.mcfc",
@@ -196,14 +123,37 @@
           "captures": { "1": { "name": "keyword.declaration.enum.mcfc" }, "2": { "name": "entity.name.type.enum.mcfc" } }
         },
         {
+          "name": "meta.import.mcfc",
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_.]*)",
+          "captures": { "1": { "name": "keyword.other.import.mcfc" }, "2": { "name": "entity.name.namespace.mcfc" } }
+        },
+        {
+          "name": "meta.function.definition.mcfc",
+          "match": "^\\s*(?:(public)\\s+)?(?:<[^>]*>\\s*)?([A-Za-z_][A-Za-z0-9_]*(?:<[^()]*>)?)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "storage.modifier.mcfc" },
+            "2": { "name": "storage.type.mcfc" },
+            "3": { "name": "entity.name.function.mcfc" }
+          }
+        },
+        {
+          "name": "meta.new.mcfc",
+          "match": "\\b(new)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "keyword.operator.new.mcfc" }, "2": { "name": "entity.name.type.mcfc" } }
+        },
+        {
+          "name": "meta.cast.mcfc",
+          "match": "\\((int|float|boolean|String|Player)\\)",
+          "captures": { "1": { "name": "storage.type.mcfc" } }
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
           "name": "meta.switch.case.mcfc",
           "match": "\\b(case)\\s+([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)",
           "captures": { "1": { "name": "keyword.control.mcfc" }, "2": { "name": "entity.name.type.enum.mcfc" }, "3": { "name": "variable.other.enummember.mcfc" } }
-        },
-        {
-          "name": "meta.declaration.mcfc",
-          "match": "\\b(event|command|task)\\s+([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": { "1": { "name": "keyword.declaration.mcfc" }, "2": { "name": "entity.name.function.mcfc" } }
         },
         {
           "name": "entity.name.function.call.mcfc",
@@ -215,27 +165,23 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|switch|case|default|else|while|for|in|break|continue|return|struct|enum|player_state|entity_state|event|command|task|async)\\b"
+          "match": "\\b(?:if|else|switch|case|default|while|for|break|continue|return|async)\\b"
         },
         {
           "name": "keyword.other.module.mcfc",
-          "match": "^(?:pub\\s+)?(?:mod|use)\\b|^pub\\b|\\b(?:self|super)(?=::)"
-        },
-        {
-          "name": "storage.type.function.mcfc",
-          "match": "\\bfn\\b"
+          "match": "\\b(?:import|public)\\b"
         },
         {
           "name": "storage.modifier.declaration.mcfc",
-          "match": "\\blet\\b"
+          "match": "\\b(?:var|record|enum)\\b"
+        },
+        {
+          "name": "keyword.operator.new.mcfc",
+          "match": "\\bnew\\b"
         },
         {
           "name": "keyword.other.command.mcfc",
-          "match": "\\b(?:mc|mcf)\\b"
-        },
-        {
-          "name": "keyword.operator.word.mcfc",
-          "match": "\\b(?:and|or|not)\\b"
+          "match": "\\b(?:mc|mcf)\\b(?=\\s*\\()"
         }
       ]
     },
@@ -243,7 +189,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|float|bool|string|array|dict|Optional|entity_set|entity_ref|player_ref|block_ref|entity_def|block_def|item_def|text_def|item_slot|bossbar|nbt|void|agent_event|chat_event|inventory_click_event|player_action_event|block_break_event|player_interact_block_event|player_interact_item_event|entity_interact_event|entity_attack_event|item_held_change_event|inventory_close_event|player_swing_event|player_action_toggle_event|item_rename_event|trade_select_event|sign_change_event|recipe_place_event|game_mode_request_event)\\b"
+          "match": "\\b(?:int|float|boolean|String|void|List|Map|Optional|Selector|Entity|Player|Block|EntityData|BlockData|ItemStack|Component|ItemSlot|BossBar|Nbt|CommandSender|[A-Z][A-Za-z0-9]*Event)\\b"
         }
       ]
     },
@@ -251,15 +197,20 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|find_first|player_ref|exists|has_data|block|block_type|entity|item|text|sleep|sleep_ticks|random|random_weighted|random_binomial|gamerule|at|as|summon|debug|bossbar|int|float|bool|string|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+          "match": "\\b(?:selector|single|findFirst|exists|hasData|block|sleep|sleepTicks|random|randomWeighted|randomBinomial|gamerule|at|as|summon|debug|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.builtin.mcfc",
+          "match": "\\b(?:List|Map)\\.(of)\\b(?=\\s*\\()",
+          "captures": { "1": { "name": "support.function.builtin.mcfc" } }
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:len|get|isPresent|orElse|push|pop|has|remove|effect|add_tag|remove_tag|has_tag|teleport|damage|heal|give|clear|loot_give|tellraw|title|actionbar|playsound|stopsound|debug_entity|loot_insert|loot_spawn|debug_marker|particle|setblock|fill|is|summon|spawn_item|as_nbt)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b(?:size|length|get|isPresent|orElse|add|removeLast|remove|containsKey|keySet|getFirst|getLast|indexOf|contains|substring|parseInt|toString|effect|addTag|removeTag|hasTag|teleport|damage|heal|give|clear|lootGive|tellraw|title|actionbar|playsound|stopsound|debugEntity|lootInsert|lootSpawn|debugMarker|particle|setblock|fill|is|summon|spawnItem|asNbt)\\b(?=\\s*\\()"
         },
         {
           "name": "support.variable.member.mcfc",
-          "match": "(?<=\\.)\\b(?:position|team|nbt|state|tags|inventory|hotbar|mainhand|offhand|head|chest|legs|feet|item|count|name|value|max|visible|players|states|exists|id|name_visible|no_ai|silent|glowing|lock|loot_table|loot_seed)\\b"
+          "match": "(?<=\\.)\\b(?:position|team|nbt|state|tags|inventory|hotbar|mainhand|offhand|head|chest|legs|feet|item|count|name|value|max|visible|players|states|exists|id|nameVisible|noAi|silent|glowing|lock|lootTable|lootSeed)\\b"
         }
       ]
     },
@@ -286,20 +237,24 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.operator.range.inclusive.mcfc",
-          "match": "\\.\\.="
-        },
-        {
-          "name": "keyword.operator.range.mcfc",
-          "match": "\\.\\."
-        },
-        {
-          "name": "storage.type.function.return.mcfc",
+          "name": "keyword.operator.arrow.mcfc",
           "match": "->"
+        },
+        {
+          "name": "keyword.operator.logical.mcfc",
+          "match": "&&|\\|\\||!(?!=)"
+        },
+        {
+          "name": "keyword.operator.increment.mcfc",
+          "match": "\\+\\+|--"
         },
         {
           "name": "keyword.operator.comparison.mcfc",
           "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.mcfc",
+          "match": "[+\\-*/%]="
         },
         {
           "name": "keyword.operator.assignment.mcfc",
@@ -313,6 +268,10 @@
     },
     "punctuation": {
       "patterns": [
+        {
+          "name": "punctuation.terminator.statement.mcfc",
+          "match": ";"
+        },
         {
           "name": "punctuation.separator.colon.mcfc",
           "match": ":"

@@ -419,7 +419,7 @@ fn db_exec(config: &Config, request: &Request, query: bool) -> String {
         db_query(&connection, &sql, &bound)
     } else {
         match connection.execute(&sql, bound.as_slice()) {
-            Ok(rows) => format!("{{ok:1b,rows_affected:{}}}", rows),
+            Ok(rows) => format!("{{ok:1b,rowsAffected:{}}}", rows),
             Err(error) => err(&format!("exec failed: {}", error)),
         }
     }
@@ -466,7 +466,7 @@ fn db_query(
         }
     }
     format!(
-        "{{ok:1b,rows_affected:{},rows:[{}]}}",
+        "{{ok:1b,rowsAffected:{},rows:[{}]}}",
         out_rows.len(),
         out_rows.join(",")
     )

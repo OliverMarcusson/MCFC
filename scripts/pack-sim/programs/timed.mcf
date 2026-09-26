@@ -1,28 +1,36 @@
-fn tick() -> void:
-    let t = 1
+void tick() {
+    var t = 1;
+}
 
-fn slow_sum(n: int) -> int:
-    let acc = 0
-    for i in 0..n:
-        acc = acc + i
-        if i % 2 == 0:
-            sleep_ticks(1)
-    return acc
+int slowSum(int n) {
+    var acc = 0;
+    for (int i = 0; i < n; i++) {
+        acc = acc + i;
+        if (i % 2 == 0) {
+            sleepTicks(1);
+        }
+    }
+    return acc;
+}
 
-fn main() -> void:
-    async:
-        sleep_ticks(3)
-        mc "say async done"
-    mc "say before"
-    let r = slow_sum(5)
-    mcf "say slow $(r)"
-    let xs = [5, 3, 9, 1, 7, 2]
-    xs.sort()
-    mcf "say sorted $(xs[0]) $(xs[1]) $(xs[5])"
-    let flag = false
-    let n = 0
-    while not flag:
-        n = n + 1
-        if n >= 4 and n % 2 == 0:
-            flag = true
-    mcf "say flag $(n)"
+void main() {
+    async {
+        sleepTicks(3);
+        mc("say async done");
+    }
+    mc("say before");
+    var r = slowSum(5);
+    mcf("say slow $(r)");
+    var xs = List.of(5, 3, 9, 1, 7, 2);
+    xs.sort();
+    mcf("say sorted $(xs[0]) $(xs[1]) $(xs[5])");
+    var flag = false;
+    var n = 0;
+    while (!flag) {
+        n = n + 1;
+        if (n >= 4 && n % 2 == 0) {
+            flag = true;
+        }
+    }
+    mcf("say flag $(n)");
+}

@@ -13,7 +13,7 @@ Then copy `examples/<name>/dist` into `<world>/datapacks/` and run `/reload`. Ex
 | [Oracle](#oracle) | HTTP, time, helper randomness, player state, an endless `async` loop | `mcfd` |
 | [RPC demo](#rpc-demo) | The smallest possible host call | `mcfd` |
 | [Cyber Quotes](#cyber-quotes) | JSON extraction, bearer tokens, formatted text | `mcfd`, API token |
-| [Feature demo](#feature-demo) | A self-checking tour of floats, strings, arrays, std, generics, world reads | nothing |
+| [Feature demo](#feature-demo) | A self-checking tour of floats, strings, lists, std, generics, world reads | nothing |
 | [Bukkit API conformance](#bukkit-api-conformance) | Events, commands, tasks, UI, agent callbacks | `mcfd` (optional), agent (optional) |
 
 ## Oracle

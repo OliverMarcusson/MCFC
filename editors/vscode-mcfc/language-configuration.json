@@ -1,6 +1,7 @@
 {
   "comments": {
-    "lineComment": "#"
+    "lineComment": "//",
+    "blockComment": ["/*", "*/"]
   },
   "brackets": [
     ["(", ")"],
@@ -13,19 +14,18 @@
     ["[", "]"],
     ["{", "}"],
     ["<", ">"],
-    ["\"", "\""],
-    ["'", "'"]
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "/*", "close": " */", "notIn": ["string"] }
   ],
   "surroundingPairs": [
     ["(", ")"],
     ["[", "]"],
     ["{", "}"],
     ["<", ">"],
-    ["\"", "\""],
-    ["'", "'"]
+    ["\"", "\""]
   ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(?:fn\\b.*|(?:struct|enum)\\b.*:|(?:event|command|task)\\b.*:|(?:if|else(?:\\s+if)?|while|for|as|at|match|switch|case|default)\\b.*:|async\\s*:)\\s*(?:#.*)?$",
-    "decreaseIndentPattern": "^\\s*(?:else|case\\b.*|default)\\s*:\\s*(?:#.*)?$"
+    "increaseIndentPattern": "^.*\\{[^}\"]*$",
+    "decreaseIndentPattern": "^\\s*\\}"
   }
 }

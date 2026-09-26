@@ -31,7 +31,7 @@ That includes the builder-oriented gameplay surface, such as:
 - player inventory completions for `player.inventory[0].*`, `player.hotbar[0].*`,
   and explicit `player_ref` values
 - member completions for `entity_def.nbt.*`, `block_def.states.*`, `item_def.nbt.*`,
-  and curated aliases like `name`, `no_ai`, `lock`, and `loot_table`
+  and curated aliases like `name`, `noAi`, `lock`, and `lootTable`
 
 ## Local Testing
 

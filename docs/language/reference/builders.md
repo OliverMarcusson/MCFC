@@ -4,118 +4,123 @@ A builder holds an entity, block, item or text component that you configure fiel
 
 ## Entity Builders
 
-Create an `entity_def` with `entity(id)`.
+Create an `EntityData` with `new EntityData(id)`.
 
 | Member | Type | Notes |
 | --- | --- | --- |
-| `id` | `string` | Read-only entity id. |
-| `nbt.*` | `nbt` | Reads and writes summon NBT. |
-| `name` | `string` | Shorthand for `nbt.CustomName`. |
-| `name_visible` | `bool` | Shorthand for `nbt.CustomNameVisible`. |
-| `no_ai` | `bool` | Shorthand for `nbt.NoAI`. |
-| `silent` | `bool` | Shorthand for `nbt.Silent`. |
-| `glowing` | `bool` | Shorthand for `nbt.Glowing`. |
-| `tags` | `array<string>` | Shorthand for `nbt.Tags`. |
-| `as_nbt()` | `nbt` | Flattened entity compound for passengers and summon payloads. |
+| `id` | `String` | Read-only entity id. |
+| `nbt.*` | `Nbt` | Reads and writes summon NBT. |
+| `name` | `String` | Shorthand for `nbt.CustomName`. |
+| `nameVisible` | `boolean` | Shorthand for `nbt.CustomNameVisible`. |
+| `noAi` | `boolean` | Shorthand for `nbt.NoAI`. |
+| `silent` | `boolean` | Shorthand for `nbt.Silent`. |
+| `glowing` | `boolean` | Shorthand for `nbt.Glowing`. |
+| `tags` | `List<String>` | Shorthand for `nbt.Tags`. |
+| `asNbt()` | `Nbt` | Flattened entity compound for passengers and summon payloads. |
 
 ```mcfc
-fn spawn_pet() -> void:
-    let pig = entity("minecraft:pig")
-    pig.name = "MCFC"
-    pig.no_ai = true
-    pig.nbt.Health = 20
+void spawnPet() {
+    var pig = new EntityData("minecraft:pig");
+    pig.name = "MCFC";
+    pig.noAi = true;
+    pig.nbt.Health = 20;
 
-    let chicken = entity("minecraft:chicken")
-    chicken.name = "Passenger"
-    pig.nbt.Passengers[0] = chicken
+    var chicken = new EntityData("minecraft:chicken");
+    chicken.name = "Passenger";
+    pig.nbt.Passengers[0] = chicken;
 
-    summon(pig)
+    summon(pig);
+}
 ```
 
 ## Block Builders
 
-Create a `block_def` with `block_type(id)`.
+Create a `BlockData` with `new BlockData(id)`.
 
 | Member | Type | Notes |
 | --- | --- | --- |
-| `id` | `string` | Read-only block id. |
-| `states.*` | `string`, `bool`, or `int` | Block-state values. |
-| `nbt.*` | `nbt` | Block-entity NBT. |
-| `name` | `string` | Shorthand for `nbt.CustomName`. |
-| `lock` | `string` | Shorthand for `nbt.Lock`. |
-| `loot_table` | `string` | Shorthand for `nbt.LootTable`. |
-| `loot_seed` | `int` | Shorthand for `nbt.LootTableSeed`. |
-| `as_nbt()` | `nbt` | Block-entity payload, equivalent to `block_def.nbt`. |
+| `id` | `String` | Read-only block id. |
+| `states.*` | `String`, `boolean`, or `int` | Block-state values. |
+| `nbt.*` | `Nbt` | Block-entity NBT. |
+| `name` | `String` | Shorthand for `nbt.CustomName`. |
+| `lock` | `String` | Shorthand for `nbt.Lock`. |
+| `lootTable` | `String` | Shorthand for `nbt.LootTable`. |
+| `lootSeed` | `int` | Shorthand for `nbt.LootTableSeed`. |
+| `asNbt()` | `Nbt` | Block-entity payload, equivalent to `BlockData.nbt`. |
 
-`setblock(block_def)` places the block id and states, then merges `block_def.nbt`. `fill(..., block_def)` uses only the block id and states.
+`setblock(BlockData)` places the block id and states, then merges `BlockData.nbt`. `fill(..., BlockData)` uses only the block id and states.
 
 ```mcfc
-fn place_chest() -> void:
-    let chest = block_type("minecraft:chest")
-    chest.states.facing = "north"
-    chest.name = "Loot"
-    chest.loot_table = "minecraft:chests/simple_dungeon"
+void placeChest() {
+    var chest = new BlockData("minecraft:chest");
+    chest.states.facing = "north";
+    chest.name = "Loot";
+    chest.lootTable = "minecraft:chests/simple_dungeon";
 
-    block("~ ~ ~").setblock(chest)
+    block("~ ~ ~").setblock(chest);
+}
 ```
 
 ## Item Builders
 
-Create an `item_def` with `item(id)`.
+Create an `ItemStack` with `new ItemStack(id)`.
 
 | Member | Type | Notes |
 | --- | --- | --- |
-| `id` | `string` | Read-only item id. |
+| `id` | `String` | Read-only item id. |
 | `count` | `int` | Stack size. |
-| `nbt.*` | `nbt` | Item NBT. |
-| `name` | `string` | Shorthand for `nbt.display.Name`. |
-| `as_nbt()` | `nbt` | Item-stack payload compound. |
+| `nbt.*` | `Nbt` | Item NBT. |
+| `name` | `String` | Shorthand for `nbt.display.Name`. |
+| `asNbt()` | `Nbt` | Item-stack payload compound. |
 
 ```mcfc
-fn reward(player: player_ref) -> void:
-    let sword = item("minecraft:diamond_sword")
-    sword.count = 1
-    sword.name = "Quest Blade"
-    sword.nbt.CustomModelData = 7
+void reward(Player player) {
+    var sword = new ItemStack("minecraft:diamond_sword");
+    sword.count = 1;
+    sword.name = "Quest Blade";
+    sword.nbt.CustomModelData = 7;
 
-    player.give(sword)
+    player.give(sword);
+}
 ```
 
 ## Text Builders
 
-Create a `text_def` with `text()` or `text("...")`.
+Create a `Component` with `new Component()` or `new Component("...")`.
 
-`text_def.*` supports arbitrary nested text-component content, formatting, interactivity, and child fields such as `.color`, `.bold`, `.extra`, `.hover_event.*`, `.click_event.*`, `.with`, `.score.*`, `.separator`, and `.nbt` source fields.
+`Component.*` supports arbitrary nested text-component content, formatting, interactivity, and child fields such as `.color`, `.bold`, `.extra`, `.hover_event.*`, `.click_event.*`, `.with`, `.score.*`, `.separator`, and `.nbt` source fields.
 
 ```mcfc
-fn send_prompt(player: player_ref) -> void:
-    let prompt = text("Open chest")
-    prompt.color = "gold"
-    prompt.bold = true
-    prompt.hover_event.action = "show_text"
-    prompt.hover_event.value = text("Contains loot")
-    prompt.click_event.action = "run_command"
-    prompt.click_event.command = "/trigger mcfcc_status"
+void sendPrompt(Player player) {
+    var prompt = new Component("Open chest");
+    prompt.color = "gold";
+    prompt.bold = true;
+    prompt.hover_event.action = "show_text";
+    prompt.hover_event.value = new Component("Contains loot");
+    prompt.click_event.action = "run_command";
+    prompt.click_event.command = "/trigger mcfcc_status";
 
-    player.tellraw(prompt)
+    player.tellraw(prompt);
+}
 ```
 
-Assigning a `text_def` into a nested text-component field stores the nested component object directly.
+Assigning a `Component` into a nested text-component field stores the nested component object directly.
 
 ## Builder-to-NBT Coercion
 
-When an `nbt` value is expected, assigning an `entity_def`, `block_def`, or `item_def` is shorthand for calling `.as_nbt()`.
+When an `Nbt` value is expected, assigning an `EntityData`, `BlockData`, or `ItemStack` is shorthand for calling `.asNbt()`.
 
 ```mcfc
-fn payloads() -> void:
-    let pig = entity("minecraft:pig")
-    let payload = pig.as_nbt()
+void payloads() {
+    var pig = new EntityData("minecraft:pig");
+    var payload = pig.asNbt();
 
-    summon("minecraft:pig", payload)
+    summon("minecraft:pig", payload);
+}
 ```
 
 ## Under the hood
 
-Builders are command-storage objects. Field assignments such as `pig.no_ai = true`, `chest.states.facing = "north"`, or `msg.color = "gold"` become `data modify storage ...` writes into generated runtime storage.
+Builders are command-storage objects. Field assignments such as `pig.noAi = true`, `chest.states.facing = "north"`, or `msg.color = "gold"` become `data modify storage ...` writes into generated runtime storage.
 
 When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `summon(pig)` uses the entity id and NBT payload, while `block("~ ~ ~").setblock(chest)` emits the block id/states and then merges block-entity NBT.

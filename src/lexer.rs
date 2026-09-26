@@ -9,35 +9,26 @@ pub struct Token {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
-    Fn,
-    Struct,
-    PlayerState,
-    Let,
     Return,
     If,
-    Match,
     Else,
     While,
     For,
-    In,
     Break,
     Continue,
     Async,
-    Mc,
-    Mcf,
+    New,
     True,
     False,
-    And,
-    Or,
-    Not,
+    AndAnd,
+    OrOr,
+    Bang,
     Arrow,
-    FatArrow,
-    DotDot,
-    DotDotEq,
     Colon,
-    ColonColon,
+    Semicolon,
     Comma,
     Dot,
+    At,
     LeftParen,
     RightParen,
     LeftBracket,
@@ -45,6 +36,13 @@ pub enum TokenKind {
     LeftBrace,
     RightBrace,
     Assign,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign,
+    PlusPlus,
+    MinusMinus,
     Plus,
     Minus,
     Star,
@@ -60,9 +58,6 @@ pub enum TokenKind {
     Integer(i64),
     Float(String),
     String(String),
-    Newline,
-    Indent,
-    Dedent,
     Eof,
 }
 
@@ -71,466 +66,162 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
     let mut cursor = Cursor::new(source);
     let mut diagnostics = Diagnostics::new();
     let mut tokens = Vec::new();
-    let mut indents = vec![0usize];
-    let mut at_line_start = true;
 
-    while cursor.peek().is_some() {
-        if at_line_start {
-            let line_start = cursor.position();
-            let mut indent = 0usize;
-            while let Some(next) = cursor.peek() {
-                match next {
-                    ' ' => {
-                        indent += 1;
-                        cursor.bump();
-                    }
-                    '\t' => {
-                        let start = cursor.position();
-                        cursor.bump();
-                        diagnostics.push(Diagnostic::new(
-                            "tabs are not allowed for indentation; use spaces",
-                            Span::from_range(
-                                &source_file,
-                                TextRange::new(start, cursor.position()),
-                            ),
-                        ));
-                        indent += 4;
-                    }
-                    '\r' => {
-                        cursor.bump();
-                    }
-                    _ => break,
-                }
-            }
-
-            match cursor.peek() {
-                Some('\n') => {
-                    let start = cursor.position();
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Newline,
-                        TextRange::new(start, cursor.position()),
-                    );
-                    at_line_start = true;
-                    continue;
-                }
-                Some('#') => {
-                    cursor.skip_comment();
-                    at_line_start = true;
-                    continue;
-                }
-                None => break,
-                _ => {
-                    let current = *indents.last().unwrap();
-                    if indent > current {
-                        indents.push(indent);
-                        push_token(
-                            &mut tokens,
-                            &source_file,
-                            TokenKind::Indent,
-                            TextRange::new(line_start, cursor.position()),
-                        );
-                    } else if indent < current {
-                        while indent < *indents.last().unwrap() {
-                            indents.pop();
-                            push_token(
-                                &mut tokens,
-                                &source_file,
-                                TokenKind::Dedent,
-                                TextRange::new(line_start, cursor.position()),
-                            );
-                        }
-                        if indent != *indents.last().unwrap() {
-                            diagnostics.push(Diagnostic::new(
-                                "inconsistent indentation",
-                                Span::from_range(
-                                    &source_file,
-                                    TextRange::new(line_start, cursor.position()),
-                                ),
-                            ));
-                        }
-                    }
-                    at_line_start = false;
-                }
-            }
+    while let Some(ch) = cursor.peek() {
+        let start = cursor.position();
+        if ch.is_whitespace() {
+            cursor.bump();
+            continue;
         }
-        let Some(ch) = cursor.peek() else {
-            break;
-        };
-        match ch {
-            ' ' | '\t' | '\r' => {
-                if ch == '\t' {
-                    let start = cursor.position();
-                    cursor.bump();
+        if cursor.rest().starts_with("//") {
+            cursor.consume_while(|next| next != '\n');
+            continue;
+        }
+        if cursor.rest().starts_with("/*") {
+            match cursor.rest()[2..].find("*/") {
+                Some(end) => cursor.position += end + 4,
+                None => {
+                    cursor.position = source.len();
                     diagnostics.push(Diagnostic::new(
-                        "tabs are not allowed; use spaces",
-                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
-                    ));
-                    continue;
-                }
-                cursor.bump();
-            }
-            '#' => cursor.skip_comment(),
-            '\n' => {
-                let start = cursor.position();
-                cursor.bump();
-                push_token(
-                    &mut tokens,
-                    &source_file,
-                    TokenKind::Newline,
-                    TextRange::new(start, cursor.position()),
-                );
-                at_line_start = true;
-            }
-            '(' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::LeftParen),
-            ')' => push_simple(
-                &mut cursor,
-                &mut tokens,
-                &source_file,
-                TokenKind::RightParen,
-            ),
-            '[' => push_simple(
-                &mut cursor,
-                &mut tokens,
-                &source_file,
-                TokenKind::LeftBracket,
-            ),
-            ']' => push_simple(
-                &mut cursor,
-                &mut tokens,
-                &source_file,
-                TokenKind::RightBracket,
-            ),
-            '{' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::LeftBrace),
-            '}' => push_simple(
-                &mut cursor,
-                &mut tokens,
-                &source_file,
-                TokenKind::RightBrace,
-            ),
-            ':' => {
-                let start = cursor.position();
-                cursor.bump();
-                let kind = if cursor.peek() == Some(':') {
-                    cursor.bump();
-                    TokenKind::ColonColon
-                } else {
-                    TokenKind::Colon
-                };
-                push_token(
-                    &mut tokens,
-                    &source_file,
-                    kind,
-                    TextRange::new(start, cursor.position()),
-                );
-            }
-            ',' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Comma),
-            '+' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Plus),
-            '*' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Star),
-            '/' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Slash),
-            '%' => push_simple(&mut cursor, &mut tokens, &source_file, TokenKind::Percent),
-            '.' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('.') {
-                    cursor.bump();
-                    let kind = if cursor.peek() == Some('=') {
-                        cursor.bump();
-                        TokenKind::DotDotEq
-                    } else {
-                        TokenKind::DotDot
-                    };
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        kind,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Dot,
-                        TextRange::new(start, cursor.position()),
-                    );
-                }
-            }
-            '-' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('>') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Arrow,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Minus,
-                        TextRange::new(start, cursor.position()),
-                    );
-                }
-            }
-            '=' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('=') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::EqEq,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else if cursor.peek() == Some('>') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::FatArrow,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Assign,
-                        TextRange::new(start, cursor.position()),
-                    );
-                }
-            }
-            '!' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('=') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::BangEq,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    diagnostics.push(Diagnostic::new(
-                        "unexpected '!'",
-                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                        "unterminated block comment",
+                        Span::from_range(&source_file, TextRange::new(start, start + 2)),
                     ));
                 }
             }
-            '<' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('=') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Lte,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Lt,
-                        TextRange::new(start, cursor.position()),
-                    );
-                }
-            }
-            '>' => {
-                let start = cursor.position();
-                cursor.bump();
-                if cursor.peek() == Some('=') {
-                    cursor.bump();
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Gte,
-                        TextRange::new(start, cursor.position()),
-                    );
-                } else {
-                    push_token(
-                        &mut tokens,
-                        &source_file,
-                        TokenKind::Gt,
-                        TextRange::new(start, cursor.position()),
-                    );
-                }
-            }
-            '"' | '\'' => {
-                let start = cursor.position();
-                let delimiter = ch;
-                cursor.bump();
-                let mut value = String::new();
-                let mut terminated = false;
-                while let Some(next) = cursor.peek() {
-                    match next {
-                        quote if quote == delimiter => {
-                            cursor.bump();
-                            terminated = true;
-                            break;
-                        }
-                        '\\' => {
-                            cursor.bump();
-                            match cursor.peek() {
-                                Some(quote) if quote == delimiter => {
-                                    cursor.bump();
-                                    value.push(delimiter);
-                                }
-                                Some('"') => {
-                                    cursor.bump();
-                                    value.push('"');
-                                }
-                                Some('\'') => {
-                                    cursor.bump();
-                                    value.push('\'');
-                                }
-                                Some('\\') => {
-                                    cursor.bump();
-                                    value.push('\\');
-                                }
-                                Some('n') => {
-                                    cursor.bump();
-                                    value.push('\n');
-                                }
-                                Some('t') => {
-                                    cursor.bump();
-                                    value.push('\t');
-                                }
-                                Some(other) => {
-                                    cursor.bump();
-                                    value.push(other);
-                                }
-                                None => break,
-                            }
-                        }
-                        other => {
-                            cursor.bump();
-                            value.push(other);
-                        }
-                    }
-                }
+            continue;
+        }
 
-                let range = TextRange::new(start, cursor.position());
-                if !terminated {
+        let kind = if ch == '"' {
+            match lex_string(&mut cursor) {
+                Some(value) => TokenKind::String(value),
+                None => {
                     diagnostics.push(Diagnostic::new(
                         "unterminated string literal",
-                        Span::from_range(&source_file, range),
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
                     ));
-                } else {
-                    push_token(&mut tokens, &source_file, TokenKind::String(value), range);
+                    continue;
                 }
             }
-            '@' => {
-                let start = cursor.position();
+        } else if ch.is_ascii_digit() {
+            cursor.consume_while(|next| next.is_ascii_digit());
+            let rest = cursor.rest();
+            let is_float =
+                rest.starts_with('.') && rest[1..].starts_with(|next: char| next.is_ascii_digit());
+            if is_float {
                 cursor.bump();
-                let ident_start = cursor.position();
-                cursor.consume_while(is_ident_continue);
-                let ident = &source[ident_start..cursor.position()];
-                let range = TextRange::new(start, cursor.position());
-                diagnostics.push(Diagnostic::new(
-                    format!("unknown annotation '@{}'", ident),
-                    Span::from_range(&source_file, range),
-                ));
-            }
-            ch if ch.is_ascii_digit() => {
-                let start = cursor.position();
                 cursor.consume_while(|next| next.is_ascii_digit());
-                let rest = &source[cursor.position()..];
-                let is_float = rest.starts_with('.')
-                    && rest[1..].starts_with(|next: char| next.is_ascii_digit());
-                if is_float {
+            }
+            let raw = &source[start..cursor.position()];
+            if is_float {
+                TokenKind::Float(raw.to_string())
+            } else {
+                TokenKind::Integer(raw.parse().unwrap_or(0))
+            }
+        } else if is_ident_start(ch) {
+            cursor.consume_while(is_ident_continue);
+            match &source[start..cursor.position()] {
+                "return" => TokenKind::Return,
+                "if" => TokenKind::If,
+                "else" => TokenKind::Else,
+                "while" => TokenKind::While,
+                "for" => TokenKind::For,
+                "break" => TokenKind::Break,
+                "continue" => TokenKind::Continue,
+                "async" => TokenKind::Async,
+                "new" => TokenKind::New,
+                "true" => TokenKind::True,
+                "false" => TokenKind::False,
+                raw => TokenKind::Identifier(raw.to_string()),
+            }
+        } else {
+            match lex_punct(&mut cursor) {
+                Some(kind) => kind,
+                None => {
                     cursor.bump();
-                    cursor.consume_while(|next| next.is_ascii_digit());
+                    diagnostics.push(Diagnostic::new(
+                        format!("unexpected character '{}'", ch),
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                    ));
+                    continue;
                 }
-                let range = TextRange::new(start, cursor.position());
-                let raw = &source[range.start..range.end];
-                let kind = if is_float {
-                    TokenKind::Float(raw.to_string())
-                } else {
-                    TokenKind::Integer(raw.parse().unwrap_or(0))
-                };
-                push_token(&mut tokens, &source_file, kind, range);
             }
-            ch if is_ident_start(ch) => {
-                let start = cursor.position();
-                cursor.consume_while(is_ident_continue);
-                let range = TextRange::new(start, cursor.position());
-                let raw = &source[range.start..range.end];
-                let kind = match raw {
-                    "fn" => TokenKind::Fn,
-                    "struct" => TokenKind::Struct,
-                    "player_state" => TokenKind::PlayerState,
-                    "let" => TokenKind::Let,
-                    "return" => TokenKind::Return,
-                    "if" => TokenKind::If,
-                    "match" => TokenKind::Match,
-                    "else" => TokenKind::Else,
-                    "while" => TokenKind::While,
-                    "for" => TokenKind::For,
-                    "in" => TokenKind::In,
-                    "break" => TokenKind::Break,
-                    "continue" => TokenKind::Continue,
-                    "async" => TokenKind::Async,
-                    "mc" => TokenKind::Mc,
-                    "mcf" => TokenKind::Mcf,
-                    "true" => TokenKind::True,
-                    "false" => TokenKind::False,
-                    "and" => TokenKind::And,
-                    "or" => TokenKind::Or,
-                    "not" => TokenKind::Not,
-                    _ => TokenKind::Identifier(raw.to_string()),
-                };
-                push_token(&mut tokens, &source_file, kind, range);
-            }
-            other => {
-                let start = cursor.position();
-                cursor.bump();
-                diagnostics.push(Diagnostic::new(
-                    format!("unexpected character '{}'", other),
-                    Span::from_range(&source_file, TextRange::new(start, cursor.position())),
-                ));
-            }
-        }
+        };
+        push_token(
+            &mut tokens,
+            &source_file,
+            kind,
+            TextRange::new(start, cursor.position()),
+        );
     }
 
-    if !matches!(
-        tokens.last().map(|token| &token.kind),
-        Some(TokenKind::Newline) | None
-    ) {
-        let newline_range = TextRange::new(cursor.position(), cursor.position());
-        push_token(&mut tokens, &source_file, TokenKind::Newline, newline_range);
-    }
-    while indents.len() > 1 {
-        indents.pop();
-        let range = TextRange::new(cursor.position(), cursor.position());
-        push_token(&mut tokens, &source_file, TokenKind::Dedent, range);
-    }
     let eof_range = TextRange::new(cursor.position(), cursor.position());
     push_token(&mut tokens, &source_file, TokenKind::Eof, eof_range);
     diagnostics.into_result(tokens)
 }
 
-fn push_simple(
-    cursor: &mut Cursor<'_>,
-    tokens: &mut Vec<Token>,
-    source_file: &SourceFile<'_>,
-    kind: TokenKind,
-) {
-    let start = cursor.position();
+/// Longest match first, so `+=` wins over `+`.
+const PUNCTUATION: &[(&str, TokenKind)] = &[
+    ("&&", TokenKind::AndAnd),
+    ("||", TokenKind::OrOr),
+    ("->", TokenKind::Arrow),
+    ("==", TokenKind::EqEq),
+    ("!=", TokenKind::BangEq),
+    ("<=", TokenKind::Lte),
+    (">=", TokenKind::Gte),
+    ("+=", TokenKind::PlusAssign),
+    ("-=", TokenKind::MinusAssign),
+    ("*=", TokenKind::StarAssign),
+    ("/=", TokenKind::SlashAssign),
+    ("%=", TokenKind::PercentAssign),
+    ("++", TokenKind::PlusPlus),
+    ("--", TokenKind::MinusMinus),
+    ("!", TokenKind::Bang),
+    (":", TokenKind::Colon),
+    (";", TokenKind::Semicolon),
+    (",", TokenKind::Comma),
+    (".", TokenKind::Dot),
+    ("@", TokenKind::At),
+    ("(", TokenKind::LeftParen),
+    (")", TokenKind::RightParen),
+    ("[", TokenKind::LeftBracket),
+    ("]", TokenKind::RightBracket),
+    ("{", TokenKind::LeftBrace),
+    ("}", TokenKind::RightBrace),
+    ("=", TokenKind::Assign),
+    ("+", TokenKind::Plus),
+    ("-", TokenKind::Minus),
+    ("*", TokenKind::Star),
+    ("/", TokenKind::Slash),
+    ("%", TokenKind::Percent),
+    ("<", TokenKind::Lt),
+    (">", TokenKind::Gt),
+];
+
+fn lex_punct(cursor: &mut Cursor<'_>) -> Option<TokenKind> {
+    let (text, kind) = PUNCTUATION
+        .iter()
+        .find(|(text, _)| cursor.rest().starts_with(text))?;
+    cursor.position += text.len();
+    Some(kind.clone())
+}
+
+/// Reads a `"..."` literal; `None` when it is unterminated.
+fn lex_string(cursor: &mut Cursor<'_>) -> Option<String> {
     cursor.bump();
-    push_token(
-        tokens,
-        source_file,
-        kind,
-        TextRange::new(start, cursor.position()),
-    );
+    let mut value = String::new();
+    while let Some(next) = cursor.bump() {
+        match next {
+            '"' => return Some(value),
+            '\n' => return None,
+            '\\' => match cursor.bump()? {
+                'n' => value.push('\n'),
+                't' => value.push('\t'),
+                other => value.push(other),
+            },
+            other => value.push(other),
+        }
+    }
+    None
 }
 
 fn push_token(
@@ -571,8 +262,12 @@ impl<'a> Cursor<'a> {
         self.position
     }
 
+    fn rest(&self) -> &'a str {
+        &self.source[self.position..]
+    }
+
     fn peek(&self) -> Option<char> {
-        self.source[self.position..].chars().next()
+        self.rest().chars().next()
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -590,87 +285,57 @@ impl<'a> Cursor<'a> {
             }
         }
     }
-
-    fn skip_comment(&mut self) {
-        while let Some(ch) = self.peek() {
-            if ch == '\n' {
-                break;
-            }
-            self.bump();
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{TokenKind, lex};
 
+    fn kinds(source: &str) -> Vec<TokenKind> {
+        lex(source)
+            .unwrap()
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
+    }
+
     #[test]
-    fn lexes_comments_and_newlines() {
-        let tokens = lex("fn main() -> void # trailing\n# own line\nend\n").unwrap();
-        let kinds: Vec<_> = tokens.into_iter().map(|token| token.kind).collect();
-        assert!(matches!(kinds[0], TokenKind::Fn));
-        assert!(
-            kinds
-                .iter()
-                .filter(|kind| matches!(kind, TokenKind::Newline))
-                .count()
-                >= 2
-        );
+    fn skips_line_and_block_comments() {
+        let kinds = kinds("void main() { // trailing\n/* block\n comment */ }\n");
+        assert_eq!(kinds.len(), 7);
         assert!(matches!(kinds.last(), Some(TokenKind::Eof)));
     }
 
     #[test]
-    fn lexes_async_and_ranges() {
-        let tokens = lex("async\n0..10\n0..=10\n").unwrap();
-        assert!(matches!(tokens[0].kind, TokenKind::Async));
-        assert_eq!(tokens[0].range.start, 0);
-        assert_eq!(tokens[0].range.end, 5);
-        assert!(
-            tokens
-                .iter()
-                .any(|token| matches!(token.kind, TokenKind::DotDot))
-        );
-        assert!(
-            tokens
-                .iter()
-                .any(|token| matches!(token.kind, TokenKind::DotDotEq))
-        );
+    fn lexes_compound_operators_longest_first() {
+        let kinds = kinds("i++ x += 1 a && !b || c -> d != e");
+        assert!(kinds.contains(&TokenKind::PlusPlus));
+        assert!(kinds.contains(&TokenKind::PlusAssign));
+        assert!(kinds.contains(&TokenKind::AndAnd));
+        assert!(kinds.contains(&TokenKind::Bang));
+        assert!(kinds.contains(&TokenKind::OrOr));
+        assert!(kinds.contains(&TokenKind::Arrow));
+        assert!(kinds.contains(&TokenKind::BangEq));
     }
 
     #[test]
     fn reports_malformed_tokens_without_stopping() {
-        let error = lex("!\n\"\n").unwrap_err();
+        let error = lex("#\n\"abc\n/* open").unwrap_err();
         let rendered = error.to_string();
-        assert!(rendered.contains("unexpected '!'"));
+        assert!(rendered.contains("unexpected character '#'"));
         assert!(rendered.contains("unterminated string literal"));
+        assert!(rendered.contains("unterminated block comment"));
     }
 
     #[test]
-    fn lexes_single_quoted_strings() {
-        let tokens = lex("'hello' '\"\"' 'it\\'s'").unwrap();
-        let strings: Vec<_> = tokens
+    fn lexes_string_escapes() {
+        let strings: Vec<_> = kinds(r#""say \"hi\"" "a\nb""#)
             .into_iter()
-            .filter_map(|token| match token.kind {
+            .filter_map(|kind| match kind {
                 TokenKind::String(value) => Some(value),
                 _ => None,
             })
             .collect();
-
-        assert_eq!(strings, vec!["hello", "\"\"", "it's"]);
-    }
-
-    #[test]
-    fn lexes_control_flow_keywords() {
-        let tokens = lex("else for in break continue and or not\n").unwrap();
-        let kinds: Vec<_> = tokens.into_iter().map(|token| token.kind).collect();
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Else)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::For)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::In)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Break)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Continue)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::And)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Or)));
-        assert!(kinds.iter().any(|kind| matches!(kind, TokenKind::Not)));
+        assert_eq!(strings, vec!["say \"hi\"", "a\nb"]);
     }
 }

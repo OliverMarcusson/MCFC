@@ -1,6 +1,6 @@
 # Projects
 
-MCFC projects are configured with `mcfc.toml` or `*.mcfc.toml`. A project build compiles `main.mcf` in the source directory, plus every file it reaches through `mod` declarations, and copies assets into the generated datapack.
+MCFC projects are configured with `mcfc.toml` or `*.mcfc.toml`. A project build compiles every `.mcf` file in the source directory and copies assets into the generated datapack.
 
 ## Basic Manifest
 
@@ -23,24 +23,23 @@ Fields:
 
 ## Multiple Source Files
 
-`src/main.mcf` is the root module. Split code into more files with [`mod`](../language/reference/statements#mod-and-pub) and import from them with [`use`](../language/reference/statements#use):
+Every `.mcf` file under `src/` is a module named by its path: `src/util.mcf` is `util`, and `src/combat/damage.mcf` is `combat.damage`. `src/main.mcf` is the root module.
 
 ```text
 src/
-  main.mcf          # mod util
-  util.mcf          # pub fn double(x: int) -> int
+  main.mcf          # import util.twice;
+  util.mcf          # public int twice(int x) { ... }
   combat/
-    mod.mcf         # pub mod damage
-    damage.mcf
+    damage.mcf      # combat.damage
 ```
 
-A `.mcf` file that no `mod` declaration reaches is left out of the build, and the build prints a warning naming it. Errors name the file and line they come from:
+Mark an item `public` to use it outside its module and that module's children. Call it by path (`util.twice(2)`) or bring it into scope with [`import`](../language/reference/statements#import). Errors name the file and line they come from:
 
 ```text
-error:src/util.mcf:3:5: cannot find function 'greet' in module 'util'; it is defined in the root module, so import it with 'use greet'
+error:src/main.mcf:5:18: function 'announce' is private to module 'util'; mark it 'public'
 ```
 
-To export a module function at a chosen path, use its full name: `function = "util::announce"`.
+To export a module function at a chosen path, use its full name: `function = "util.announce"`.
 
 ## Exports
 

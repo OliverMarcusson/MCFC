@@ -60,11 +60,11 @@ pub fn compile_source(
     source: &str,
     options: &CompileOptions,
 ) -> Result<CompileResult, Diagnostics> {
-    // Bukkit-inspired declarations are intentionally a small, vanilla-safe
-    // surface over ordinary MCFC functions.  Desugaring before lexing keeps
-    // the core language and all existing source files backwards compatible.
-    let normalized_source = normalize_bukkit_declarations_source(source);
-    if normalized_source.contains("fn __mcfc_agent_event_")
+    let ast = parser::parse(source)?;
+    if ast
+        .functions
+        .iter()
+        .any(|function| function.name.starts_with("__mcfc_agent_event_"))
         && !options
             .helper
             .as_ref()
@@ -73,13 +73,12 @@ pub fn compile_source(
     {
         let mut diagnostics = Diagnostics::new();
         diagnostics.push(Diagnostic::new(
-            "agent event declarations require '[helper.agent] enabled = true'",
+            "agent event handlers require '[helper.agent] enabled = true'",
             Span::new(1, 1),
         ));
         return Err(diagnostics);
     }
     validate_agent_manifest(options)?;
-    let ast = parser::parse(&normalized_source)?;
     let ast = modules::resolve(ast, &options.modules)?;
     let ast = normalize_special_functions(ast)?;
     let host_modules = HostModules::from_helper(options.helper.as_ref());
@@ -160,7 +159,7 @@ fn validate_suspending_calls(program: &IrProgram) -> Result<(), Diagnostics> {
     for (caller, callee) in backend::misplaced_suspending_calls(program) {
         diagnostics.push(Diagnostic::new(
             format!(
-                "'{callee}' can pause (it sleeps, sorts or waits on a host call), so '{caller}' must call it on its own line, as 'let x = {callee}(...)', 'x = {callee}(...)' or 'return {callee}(...)'"
+                "'{callee}' can pause (it sleeps, sorts or waits on a host call), so '{caller}' must call it on its own line, as 'var x = {callee}(...);', 'x = {callee}(...);' or 'return {callee}(...);'"
             ),
             Span::new(1, 1),
         ));
@@ -283,103 +282,6 @@ fn validate_agent_manifest(options: &CompileOptions) -> Result<(), Diagnostics> 
     diagnostics.into_result(())
 }
 
-/// Expand the first vanilla Bukkit-style declarations into ordinary functions.
-///
-/// The generated names are consumed by the backend to install their runtime
-/// drivers.  Keeping this as a source-normalisation pass lets old parser and
-/// library users continue to operate on the stable MCFC AST.
-/// Lower the source-only Bukkit/Paper-inspired declarations into the compact
-/// parser core. Kept crate-visible so the language server validates precisely
-/// the same surface accepted by the compiler.
-pub(crate) fn normalize_bukkit_declarations_source(source: &str) -> String {
-    source
-        .lines()
-        .map(normalize_bukkit_declaration_line)
-        .collect::<Vec<_>>()
-        .join("\n")
-        + if source.ends_with('\n') { "\n" } else { "" }
-}
-
-fn normalize_bukkit_declaration_line(line: &str) -> String {
-    // These declarations are top-level by design.  Nested text is left alone,
-    // including comments and strings in function bodies.
-    if line.starts_with(char::is_whitespace) {
-        return line.to_string();
-    }
-
-    let trimmed = line.trim();
-    if let Some((kind, parameter)) = parse_agent_event_declaration(trimmed) {
-        return format!("fn __mcfc_agent_event_{}({}) -> void:", kind, parameter);
-    }
-    if let Some(kind) = trimmed
-        .strip_prefix("event ")
-        .and_then(|value| value.strip_suffix(':'))
-        .filter(|value| is_mcfc_identifier(value))
-    {
-        return format!("fn __mcfc_event_{}() -> void:", kind);
-    }
-    if let Some(signature) = trimmed
-        .strip_prefix("command ")
-        .and_then(|value| value.strip_suffix(':'))
-    {
-        if let Some((name, rest)) = signature.split_once('(')
-            && is_mcfc_identifier(name.trim())
-        {
-            return format!("fn __mcfc_command_{}({}", name.trim(), rest);
-        }
-        if is_mcfc_identifier(signature.trim()) {
-            return format!("fn __mcfc_command_{}() -> void:", signature.trim());
-        }
-    }
-    if let Some(rest) = trimmed.strip_prefix("task ")
-        && let Some((name, schedule)) = rest.split_once(' ')
-    {
-        if let Some(ticks) = schedule
-            .strip_prefix("every_ticks(")
-            .and_then(|value| value.strip_suffix("):"))
-            .filter(|value| {
-                value
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .is_some()
-            })
-        {
-            return format!("fn __mcfc_task_{}_every_ticks_{}() -> void:", name, ticks);
-        }
-        if let Some(ticks) = schedule
-            .strip_prefix("after_ticks(")
-            .and_then(|value| value.strip_suffix("):"))
-            .filter(|value| {
-                value
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .is_some()
-            })
-        {
-            return format!("fn __mcfc_task_{}_after_ticks_{}() -> void:", name, ticks);
-        }
-    }
-    line.to_string()
-}
-
-/// Parse the typed form of an agent event declaration. Vanilla lifecycle events
-/// intentionally retain the shorter `event player_join:` form; JVM-backed
-/// events carry their explicit, compiler-provided payload type.
-fn parse_agent_event_declaration(line: &str) -> Option<(&str, &str)> {
-    let rest = line.strip_prefix("event ")?;
-    let (kind, parameter) = rest.split_once('(')?;
-    let kind = kind.trim();
-    let parameter = parameter.strip_suffix("):")?.trim();
-    let (name, ty) = parameter.split_once(':')?;
-    let name = name.trim();
-    let ty = ty.trim();
-    let expected = crate::language_catalog::agent_event_payload_type(kind)?;
-    (is_mcfc_identifier(kind) && is_mcfc_identifier(name) && ty == expected)
-        .then_some((kind, parameter))
-}
-
 fn is_mcfc_identifier(value: &str) -> bool {
     let mut chars = value.chars();
     matches!(chars.next(), Some(ch) if ch == '_' || ch.is_ascii_alphabetic())
@@ -428,6 +330,7 @@ fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnost
             return_type: Type::Void,
             body: Vec::new(),
             span: program.functions[first_index].span.clone(),
+            end: program.functions[first_index].end,
         };
         for index in &tick_void_indices {
             merged.body.extend(program.functions[*index].body.clone());
@@ -462,7 +365,7 @@ pub fn compile_file(
     options: &CompileOptions,
 ) -> Result<CompileResult, String> {
     let root = input.parent().unwrap_or(Path::new(""));
-    let (compiled, _) = compile_module_tree(input, root, options)?;
+    let compiled = compile_module_tree(input, &[], root, options)?;
     write_output(out_dir, &compiled, options)?;
     Ok(compiled)
 }
@@ -484,7 +387,7 @@ pub fn compile_project(
     let root_file = source_root.join("main.mcf");
     if !root_file.is_file() {
         return Err(format!(
-            "project root module '{}' not found; other files are loaded through 'mod' declarations",
+            "project root module '{}' not found",
             root_file.display()
         ));
     }
@@ -502,23 +405,16 @@ pub fn compile_project(
         .iter()
         .map(|item| ExportedFunction {
             path: item.path.clone(),
-            function: item.function.clone(),
+            // `util.announce` in the manifest names the function `util::announce`.
+            function: item.function.replace('.', "::"),
         })
         .collect();
     if manifest.helper.is_some() {
         effective.helper = manifest.helper.clone();
     }
 
-    let (mut compiled, modules) = compile_module_tree(&root_file, project_root, &effective)?;
-    for file in collect_source_files(&source_root)? {
-        if !modules.iter().any(|module| module.file == file) {
-            let shown = file.strip_prefix(project_root).unwrap_or(&file);
-            eprintln!(
-                "warning: '{}' is not part of the module tree; add a 'mod' declaration to include it",
-                shown.display()
-            );
-        }
-    }
+    let files = collect_source_files(&source_root)?;
+    let mut compiled = compile_module_tree(&root_file, &files, project_root, &effective)?;
     copy_project_assets(&asset_root, &mut compiled.artifacts)?;
     write_output(out_dir, &compiled, &effective)?;
     Ok(compiled)
@@ -573,13 +469,14 @@ pub fn canonicalize_output_path(out_dir: &Path) -> PathBuf {
     out_dir.to_path_buf()
 }
 
-/// Compiles `root_file` plus every module it declares with `mod`.
+/// Compiles `root_file` as the root module plus `files` as the modules their paths name.
 fn compile_module_tree(
     root_file: &Path,
+    files: &[PathBuf],
     display_root: &Path,
     options: &CompileOptions,
-) -> Result<(CompileResult, Vec<ModuleSource>), String> {
-    let loaded = modules::load(root_file, &|file| {
+) -> Result<CompileResult, String> {
+    let loaded = modules::load(root_file, files, &|file: &Path| {
         fs::read_to_string(file)
             .map_err(|error| format!("failed to read '{}': {}", file.display(), error))
     })?;
@@ -589,7 +486,7 @@ fn compile_module_tree(
     };
     let compiled = compile_source(&loaded.merged, &options)
         .map_err(|diagnostics| render_module_diagnostics(&diagnostics, &loaded, display_root))?;
-    Ok((compiled, loaded.modules))
+    Ok(compiled)
 }
 
 fn render_module_diagnostics(
@@ -654,24 +551,25 @@ mod tests {
     #[test]
     fn compiles_gameplay_entity_and_inventory_builtins() {
         let source = r#"
-fn main() -> void:
-    let pig = summon("minecraft:pig")
-    pig.add_tag("elite")
-    let tagged = pig.has_tag("elite")
-    pig.remove_tag("elite")
-    pig.team = "red"
-    pig.mainhand.item = "minecraft:carrot_on_a_stick"
-    pig.offhand.item = "minecraft:shield"
-    pig.head.name = "Captain"
-    pig.chest.count = 1
-    pig.effect("speed", 10, 1)
-    pig.teleport(block("~ ~1 ~"))
-    pig.damage(2)
-    pig.heal(1)
-    pig.give("minecraft:apple", 2)
-    pig.clear("minecraft:apple", 1)
-    pig.loot_give("minecraft:chests/simple_dungeon")
-    return
+void main() {
+    var pig = summon("minecraft:pig");
+    pig.addTag("elite");
+    var tagged = pig.hasTag("elite");
+    pig.removeTag("elite");
+    pig.team = "red";
+    pig.mainhand.item = "minecraft:carrot_on_a_stick";
+    pig.offhand.item = "minecraft:shield";
+    pig.head.name = "Captain";
+    pig.chest.count = 1;
+    pig.effect("speed", 10, 1);
+    pig.teleport(block("~ ~1 ~"));
+    pig.damage(2);
+    pig.heal(1);
+    pig.give("minecraft:apple", 2);
+    pig.clear("minecraft:apple", 1);
+    pig.lootGive("minecraft:chests/simple_dungeon");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -709,27 +607,28 @@ fn main() -> void:
     #[test]
     fn compiles_ui_audio_particle_and_world_builtins() {
         let source = r#"
-fn main() -> void:
-    let pig = single(selector("@e[type=pig,limit=1]"))
-    let pos = block("~ ~ ~")
-    pig.tellraw("hello @s")
-    pig.title("Danger")
-    pig.actionbar("Run")
-    let bb = bossbar("mcfc:test", "Boss @s")
-    bb.value = 10
-    bb.max = 20
-    bb.visible = true
-    bb.players = pig
-    bb.name = "Still here"
-    pig.playsound("minecraft:entity.experience_orb.pickup", "master")
-    pig.stopsound("master", "minecraft:entity.experience_orb.pickup")
-    pos.particle("minecraft:flame")
-    pos.particle("minecraft:smoke", 4, pig)
-    pos.loot_insert("minecraft:chests/simple_dungeon")
-    pos.loot_spawn("minecraft:chests/simple_dungeon")
-    pos.setblock("minecraft:stone")
-    pos.fill(block("~1 ~1 ~1"), "minecraft:glass")
-    return
+void main() {
+    var pig = single(selector("@e[type=pig,limit=1]"));
+    var pos = block("~ ~ ~");
+    pig.tellraw("hello @s");
+    pig.title("Danger");
+    pig.actionbar("Run");
+    var bb = new BossBar("mcfc:test", "Boss @s");
+    bb.value = 10;
+    bb.max = 20;
+    bb.visible = true;
+    bb.players = pig;
+    bb.name = "Still here";
+    pig.playsound("minecraft:entity.experience_orb.pickup", "master");
+    pig.stopsound("master", "minecraft:entity.experience_orb.pickup");
+    pos.particle("minecraft:flame");
+    pos.particle("minecraft:smoke", 4, pig);
+    pos.lootInsert("minecraft:chests/simple_dungeon");
+    pos.lootSpawn("minecraft:chests/simple_dungeon");
+    pos.setblock("minecraft:stone");
+    pos.fill(block("~1 ~1 ~1"), "minecraft:glass");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -761,18 +660,19 @@ fn main() -> void:
     #[test]
     fn compiles_entity_and_block_builders() {
         let source = r#"
-fn main() -> void:
-    let pig = entity("minecraft:pig")
-    pig.name = "Builder Pig"
-    pig.no_ai = true
-    let spawned = summon(pig)
-    let chest = block_type("minecraft:chest")
-    chest.states.facing = "north"
-    chest.name = "Loot"
-    let pos = block("~ ~ ~")
-    pos.setblock(chest)
-    pos.fill(block("~1 ~1 ~1"), chest)
-    return
+void main() {
+    var pig = new EntityData("minecraft:pig");
+    pig.name = "Builder Pig";
+    pig.noAi = true;
+    var spawned = summon(pig);
+    var chest = new BlockData("minecraft:chest");
+    chest.states.facing = "north";
+    chest.name = "Loot";
+    var pos = block("~ ~ ~");
+    pos.setblock(chest);
+    pos.fill(block("~1 ~1 ~1"), chest);
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -796,16 +696,18 @@ fn main() -> void:
     #[test]
     fn compiles_random_builtin_forms() {
         let source = r#"
-fn roll() -> int:
-    return random()
-fn main() -> void:
-    let any = random()
-    let bounded = random(6)
-    let between = random(1, 20)
-    bounded = random(between)
-    let combined = random() + roll()
-    mcf "say $(random(1, 3))"
-    return
+int roll() {
+    return random();
+}
+void main() {
+    var any = random();
+    var bounded = random(6);
+    var between = random(1, 20);
+    bounded = random(between);
+    var combined = random() + roll();
+    mcf("say $(random(1, 3))");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -826,11 +728,12 @@ fn main() -> void:
     #[test]
     fn compiles_interpolated_string_literals() {
         let source = r#"
-fn main() -> void:
-    let demo_title = "MCFC Demo $(random(100))"
-    let player = single(selector("@p"))
-    player.tellraw(demo_title)
-    return
+void main() {
+    var demo_title = "MCFC Demo $(random(100))";
+    var player = single(selector("@p"));
+    player.tellraw(demo_title);
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -852,12 +755,13 @@ fn main() -> void:
         // Multi-byte literal text around a placeholder must survive intact;
         // a byte-wise rewrite would corrupt “ ” into mojibake.
         let source = "
-fn main() -> void:
-    let q = \"hi\"
-    let line = \"\u{201c}$(q)\u{201d} \u{2014} done\"
-    let player = single(selector(\"@p\"))
-    player.tellraw(line)
-    return
+void main() {
+    var q = \"hi\";
+    var line = \"\u{201c}$(q)\u{201d} \u{2014} done\";
+    var player = single(selector(\"@p\"));
+    player.tellraw(line);
+    return;
+}
 ";
         let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
@@ -884,12 +788,13 @@ fn main() -> void:
         // by NBT path, never splicing it into a quoted string (which a value
         // containing a quote could break).
         let source = "
-fn main() -> void:
-    let who = \"world\"
-    let line = text(\"hi $(who)!\")
-    let player = single(selector(\"@p\"))
-    player.tellraw(line)
-    return
+void main() {
+    var who = \"world\";
+    var line = new Component(\"hi $(who)!\");
+    var player = single(selector(\"@p\"));
+    player.tellraw(line);
+    return;
+}
 ";
         let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
@@ -915,30 +820,35 @@ fn main() -> void:
     #[test]
     fn compiles_sleep_continuations() {
         let source = r#"
-fn main() -> void:
-    let player = single(selector("@p"))
-    let flag = true
+void main() {
+    var player = single(selector("@p"));
+    var flag = true;
 
-    sleep(1)
-    mc "say after straight sleep"
+    sleep(1);
+    mc("say after straight sleep");
 
-    if flag:
-        sleep(1)
-        mc "say after if sleep"
-    mc "say after if"
+    if (flag) {
+        sleep(1);
+        mc("say after if sleep");
+    }
+    mc("say after if");
 
-    at(player):
-        sleep(1)
-        mc "say after context sleep"
-    let i = 0
-    while i < 2:
-        sleep(1)
-        i = i + 1
-    for n in 0..2:
-        sleep(1)
-        mc "say after for sleep"
-    mc "say done"
-    return
+    at (player) {
+        sleep(1);
+        mc("say after context sleep");
+    }
+    var i = 0;
+    while (i < 2) {
+        sleep(1);
+        i = i + 1;
+    }
+    for (int n = 0; n < 2; n++) {
+        sleep(1);
+        mc("say after for sleep");
+    }
+    mc("say done");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -965,22 +875,24 @@ fn main() -> void:
     #[test]
     fn compiles_async_blocks_and_entity_position() {
         let source = r#"
-fn main() -> void:
-    let player = single(selector("@p"))
-    let bb = bossbar("mcfc:demo", "MCFC Bossbar")
-    let count = 5
-    bb.value = count
-    bb.max = 10
-    bb.visible = true
-    bb.players = player
-    player.position.particle("minecraft:happy_villager", 20, player)
-    async:
-        sleep(5)
-        bb.remove()
-        player.position.setblock("minecraft:gold_block")
-    count = 7
-    player.tellraw("caller continues")
-    return
+void main() {
+    var player = single(selector("@p"));
+    var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
+    var count = 5;
+    bb.value = count;
+    bb.max = 10;
+    bb.visible = true;
+    bb.players = player;
+    player.position.particle("minecraft:happy_villager", 20, player);
+    async {
+        sleep(5);
+        bb.remove();
+        player.position.setblock("minecraft:gold_block");
+    }
+    count = 7;
+    player.tellraw("caller continues");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -1011,9 +923,11 @@ fn main() -> void:
     fn rejects_async_return_old_builtins_and_book_annotation() {
         let async_error = compile_source(
             r#"
-fn main() -> void:
-    async:
-        return
+void main() {
+    async {
+        return;
+    }
+}
 "#,
             &lowering(),
         )
@@ -1023,9 +937,10 @@ fn main() -> void:
 
         let legacy_error = compile_source(
             r#"
-fn main() -> void:
-    let player = single(selector("@p"))
-    tellraw(player, "old")
+void main() {
+    var player = single(selector("@p"));
+    tellraw(player, "old");
+}
 "#,
             &lowering(),
         )
@@ -1036,8 +951,9 @@ fn main() -> void:
         let book_error = compile_source(
             r#"
 @book
-fn main() -> void:
-    return
+void main() {
+    return;
+}
 "#,
             &lowering(),
         )
@@ -1049,15 +965,16 @@ fn main() -> void:
     #[test]
     fn rejects_invalid_random_and_sleep_usage() {
         let source = r#"
-fn main() -> void:
-    let bad_sleep = sleep(1)
-    random(sleep(1))
-    mcf "say $(sleep(1))"
-    sleep(0)
-    sleep("bad")
-    let bad_random = random("bad")
-    let too_many = random(1, 2, 3)
-    return
+void main() {
+    var bad_sleep = sleep(1);
+    random(sleep(1));
+    mcf("say $(sleep(1))");
+    sleep(0);
+    sleep("bad");
+    var bad_random = random("bad");
+    var too_many = random(1, 2, 3);
+    return;
+}
 "#;
 
         let error = compile_source(source, &lowering()).unwrap_err();
@@ -1070,9 +987,10 @@ fn main() -> void:
 
         let string_error = compile_source(
             r#"
-fn main() -> void:
-    let bad = "value $(sleep(1))"
-    return
+void main() {
+    var bad = "value $(sleep(1))";
+    return;
+}
 "#,
             &lowering(),
         )
@@ -1084,14 +1002,15 @@ fn main() -> void:
     #[test]
     fn compiles_debug_builtins() {
         let source = r#"
-fn main() -> void:
-    let pig = single(selector("@e[type=pig,limit=1]"))
-    let pos = block("~ ~1 ~")
-    debug("checkpoint")
-    pos.debug_marker("marker")
-    pos.debug_marker("block marker", "minecraft:gold_block")
-    pig.debug_entity("nearest pig")
-    return
+void main() {
+    var pig = single(selector("@e[type=pig,limit=1]"));
+    var pos = block("~ ~1 ~");
+    debug("checkpoint");
+    pos.debugMarker("marker");
+    pos.debugMarker("block marker", "minecraft:gold_block");
+    pig.debugEntity("nearest pig");
+    return;
+}
 "#;
 
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -1115,9 +1034,10 @@ fn main() -> void:
     fn heal_rejects_player_and_ambiguous_targets() {
         let player_error = compile_source(
             r#"
-fn main() -> void:
-    let player = single(selector("@p"))
-    player.heal(1)
+void main() {
+    var player = single(selector("@p"));
+    player.heal(1);
+}
 "#,
             &lowering(),
         )
@@ -1127,38 +1047,48 @@ fn main() -> void:
 
         let ambiguous_error = compile_source(
             r#"
-fn main() -> void:
-    let target = single(selector("@e"))
-    target.heal(1)
+void main() {
+    var target = single(selector("@e"));
+    target.heal(1);
+}
 "#,
             &lowering(),
         )
         .unwrap_err()
         .to_string();
-        assert!(ambiguous_error.contains("ambiguous 'entity_ref'"));
+        assert!(ambiguous_error.contains("ambiguous 'Entity'"));
     }
 
     #[test]
     fn async_and_sleep_in_handlers_do_not_register_extra_commands() {
         let result = compile_source(
             r#"
-command buy:
-    let player = single(selector("@s"))
-    async:
-        sleep(3)
-        player.tellraw("later")
-    sleep_ticks(5)
-    player.tellraw("done")
+@Command("buy")
+void buy() {
+    var player = single(selector("@s"));
+    async {
+        sleep(3);
+        player.tellraw("later");
+    }
+    sleepTicks(5);
+    player.tellraw("done");
+}
 
-event player_join:
-    async:
-        sleep(1)
-        debug("joined")
+@Event(PLAYER_JOIN)
+void onPlayerJoin() {
+    async {
+        sleep(1);
+        debug("joined");
+    }
+}
 
-task pulse every_ticks(20):
-    async:
-        sleep(1)
-        debug("pulse")
+@Every(ticks = 20)
+void pulse() {
+    async {
+        sleep(1);
+        debug("pulse");
+    }
+}
 "#,
             &lowering(),
         )
@@ -1185,23 +1115,33 @@ task pulse every_ticks(20):
     fn compiles_vanilla_bukkit_declarations() {
         let result = compile_source(
             r#"
-player_state coins: int = "Coins"
+@PlayerState("Coins") int coins;
 
-event player_join:
-    let player = single(selector("@s"))
-    player.state.coins = player.state.coins + 1
+@Event(PLAYER_JOIN)
+void onPlayerJoin() {
+    var player = single(selector("@s"));
+    player.state.coins = player.state.coins + 1;
+}
 
-event player_death:
-    debug("dead")
+@Event(PLAYER_DEATH)
+void onPlayerDeath() {
+    debug("dead");
+}
 
-command status:
-    debug("status")
+@Command("status")
+void status() {
+    debug("status");
+}
 
-task pulse every_ticks(20):
-    debug("pulse")
+@Every(ticks = 20)
+void pulse() {
+    debug("pulse");
+}
 
-task later after_ticks(5):
-    debug("later")
+@After(ticks = 5)
+void later() {
+    debug("later");
+}
 "#,
             &lowering(),
         )
@@ -1229,11 +1169,15 @@ task later after_ticks(5):
     fn bukkit_command_objectives_are_unique_after_truncation() {
         let result = compile_source(
             r#"
-command abcdefghij_one:
-    debug("one")
+@Command("abcdefghij_one")
+void abcdefghijOne() {
+    debug("one");
+}
 
-command abcdefghij_two:
-    debug("two")
+@Command("abcdefghij_two")
+void abcdefghijTwo() {
+    debug("two");
+}
 "#,
             &lowering(),
         )
@@ -1267,8 +1211,10 @@ command abcdefghij_two:
         };
         let result = compile_source(
             r#"
-event chat(event: chat_event):
-    event.player.tellraw(event.message)
+@Event(CHAT)
+void onChat(ChatEvent event) {
+    event.player.tellraw(event.message);
+}
 "#,
             &options,
         )
@@ -1298,7 +1244,7 @@ event chat(event: chat_event):
             ..lowering()
         };
         let result = compile_source(
-            "event chat(event: chat_event):\n    event.cancel()\n",
+            "@Event(CHAT)\nvoid onChat(ChatEvent event) {\n    event.cancel();\n}\n",
             &options,
         )
         .expect("cancellable packet event should compile");
@@ -1332,7 +1278,7 @@ event chat(event: chat_event):
             ..lowering()
         };
         let error = compile_source(
-            "event player_connect(event: agent_event):\n    event.cancel()\n",
+            "@Event(PLAYER_CONNECT)\nvoid onPlayerConnect(AgentEvent event) {\n    event.cancel();\n}\n",
             &options,
         )
         .expect_err("lifecycle event cancellation must fail");
@@ -1342,7 +1288,7 @@ event chat(event: chat_event):
     #[test]
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
-            "event chat(event: chat_event):\n    debug(event.message)\n",
+            "@Event(CHAT)\nvoid onChat(ChatEvent event) {\n    debug(event.message);\n}\n",
             &lowering(),
         )
         .unwrap_err()
@@ -1366,8 +1312,10 @@ event chat(event: chat_event):
         };
         let result = compile_source(
             r#"
-event player_interact_block(event: player_interact_block_event):
-    event.player.tellraw(event.face)
+@Event(PLAYER_INTERACT_BLOCK)
+void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
+    event.player.tellraw(event.face);
+}
 "#,
             &options,
         )
@@ -1400,7 +1348,7 @@ event player_interact_block(event: player_interact_block_event):
             }),
             ..lowering()
         };
-        let error = compile_source("fn main() -> void:\n    return\n", &options)
+        let error = compile_source("void main() {\n    return;\n}\n", &options)
             .unwrap_err()
             .to_string();
         assert!(error.contains("observation-only"));
@@ -1409,21 +1357,22 @@ event player_interact_block(event: player_interact_block_event):
     #[test]
     fn compiles_world_reads_random_distributions_and_dict_keys() {
         let source = r#"
-fn main() -> void:
-    let spot = block("~ ~ ~")
-    let light = spot.light()
-    let biome = spot.biome()
-    let plains = spot.in_biome("plains")
-    let sky = spot.environment("gameplay/sky_light_level")
-    let rule = gamerule("max_entity_cramming")
-    let pick = random_weighted([3, 1])
-    let hits = random_binomial(10, 0.5)
-    let player = single(selector("@p"))
-    let dx = player.look_x()
-    let d = {"wood": 2}
-    let ks = d.keys()
-    let n = d.len()
-    return
+void main() {
+    var spot = block("~ ~ ~");
+    var light = spot.light();
+    var biome = spot.biome();
+    var plains = spot.inBiome("plains");
+    var sky = spot.environment("gameplay/sky_light_level");
+    var rule = gamerule("max_entity_cramming");
+    var pick = randomWeighted(List.of(3, 1));
+    var hits = randomBinomial(10, 0.5);
+    var player = single(selector("@p"));
+    var dx = player.lookX();
+    var d = Map.of("wood", 2);
+    var ks = d.keySet();
+    var n = d.size();
+    return;
+}
 "#;
         let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
@@ -1449,14 +1398,15 @@ fn main() -> void:
     fn rejects_unknown_world_ids_and_bad_weights() {
         let error = compile_source(
             r#"
-fn main() -> void:
-    let spot = block("~ ~ ~")
-    let a = spot.in_biome("moon")
-    let b = spot.environment("visual/fog_color")
-    let c = gamerule("no_such_rule")
-    let d = random_weighted([1, -2])
-    let e = random_binomial(3, 4)
-    return
+void main() {
+    var spot = block("~ ~ ~");
+    var a = spot.inBiome("moon");
+    var b = spot.environment("visual/fog_color");
+    var c = gamerule("no_such_rule");
+    var d = randomWeighted(List.of(1, -2));
+    var e = randomBinomial(3, 4);
+    return;
+}
 "#,
             &lowering(),
         )
@@ -1465,7 +1415,7 @@ fn main() -> void:
         assert!(error.contains("unknown biome 'moon'"));
         assert!(error.contains("unknown numeric environment attribute 'visual/fog_color'"));
         assert!(error.contains("unknown game rule 'no_such_rule'"));
-        assert!(error.contains("random_weighted(...) needs a literal array of weights"));
+        assert!(error.contains("randomWeighted(...) needs a literal list of weights"));
         assert!(error.contains("random_binomial(n, p) needs an 'int' and a 'float'"));
     }
 }

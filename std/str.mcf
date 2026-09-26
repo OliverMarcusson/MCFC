@@ -1,26 +1,34 @@
-# String search helpers. Each comparison slices the string, so these cost a
-# few commands per character; fine for names, ids, and short messages.
+// String search helpers. Each comparison slices the string, so these cost a
+// few commands per character; fine for names, ids, and short messages.
 
-pub fn starts_with(s: string, prefix: string) -> bool:
-    if prefix.len() > s.len():
-        return false
-    return s.slice(0, prefix.len()) == prefix
+public boolean startsWith(String s, String prefix) {
+    if (prefix.length() > s.length()) {
+        return false;
+    }
+    return s.substring(0, prefix.length()) == prefix;
+}
 
-pub fn ends_with(s: string, suffix: string) -> bool:
-    if suffix.len() > s.len():
-        return false
-    return s.slice(s.len() - suffix.len()) == suffix
+public boolean endsWith(String s, String suffix) {
+    if (suffix.length() > s.length()) {
+        return false;
+    }
+    return s.substring(s.length() - suffix.length()) == suffix;
+}
 
-# Index of the first `needle` in `s`, or -1.
-pub fn find(s: string, needle: string) -> int:
-    let width = needle.len()
-    let last = s.len() - width
-    let i = 0
-    while i <= last:
-        if s.slice(i, i + width) == needle:
-            return i
-        i = i + 1
-    return -1
+// Index of the first `needle` in `s`, or -1.
+public int find(String s, String needle) {
+    var width = needle.length();
+    var last = s.length() - width;
+    var i = 0;
+    while (i <= last) {
+        if (s.substring(i, i + width) == needle) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
 
-pub fn contains(s: string, needle: string) -> bool:
-    return find(s, needle) != -1
+public boolean contains(String s, String needle) {
+    return find(s, needle) != -1;
+}

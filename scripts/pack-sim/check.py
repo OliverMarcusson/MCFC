@@ -13,14 +13,15 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 PROGRAMS = os.path.join(HERE, "programs")
 
 # Executed commands of the optimized build. Lower these when the optimizer
-# improves; a rise is a regression.
+# improves; a rise is a regression. (`for` bounds are re-read every iteration,
+# as in Java, which costs data/strings/timed a few commands over the old syntax.)
 BUDGET = {
-    "control": 558,
-    "data": 412,
-    "sleepy": 169,
-    "strings": 85,
+    "control": 550,
+    "data": 415,
+    "sleepy": 168,
+    "strings": 86,
     "switchy": 65,
-    "timed": 388,
+    "timed": 389,
 }
 
 

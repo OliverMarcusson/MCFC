@@ -1,23 +1,30 @@
-fn wait_and_add(a: int) -> int:
-    sleep_ticks(2)
-    return a + 1
+int waitAndAdd(int a) {
+    sleepTicks(2);
+    return a + 1;
+}
 
-fn main() -> void:
-    let i = 0
-    let acc = 0
-    while i < 4:
-        i = i + 1
-        if i == 2:
-            continue
-        sleep_ticks(1)
-        acc = acc + i
-        if acc > 6:
-            break
-    mcf "say loop $(i) $(acc)"
-    let r = wait_and_add(10)
-    mcf "say waited $(r)"
-    for k in 0..3:
-        if k == 1:
-            sleep_ticks(1)
-            mcf "say resumed $(k)"
-    mcf "say done"
+void main() {
+    var i = 0;
+    var acc = 0;
+    while (i < 4) {
+        i = i + 1;
+        if (i == 2) {
+            continue;
+        }
+        sleepTicks(1);
+        acc = acc + i;
+        if (acc > 6) {
+            break;
+        }
+    }
+    mcf("say loop $(i) $(acc)");
+    var r = waitAndAdd(10);
+    mcf("say waited $(r)");
+    for (int k = 0; k < 3; k++) {
+        if (k == 1) {
+            sleepTicks(1);
+            mcf("say resumed $(k)");
+        }
+    }
+    mcf("say done");
+}

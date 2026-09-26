@@ -1,51 +1,58 @@
-fn main() -> void:
-    let player = single(selector("@a"))
-    
-    let npc_path = entity("minecraft:wandering_trader")
-    npc_path.name_visible = false
-    npc_path.silent = true
-    npc_path.tags = ["trader"]
+void main() {
+    var player = single(selector("@a"));
 
-    let npc = entity("minecraft:mannequin")
-    npc.name_visible = false
-    npc.tags = ["npc"]
-    npc.nbt.profile.name = "7ks"
+    var npc_path = new EntityData("minecraft:wandering_trader");
+    npc_path.nameVisible = false;
+    npc_path.silent = true;
+    npc_path.tags = List.of("trader");
 
-    let npc_name = text("Faithless")
-    npc_name.color = "purple"
+    var npc = new EntityData("minecraft:mannequin");
+    npc.nameVisible = false;
+    npc.tags = List.of("npc");
+    npc.nbt.profile.name = "7ks";
 
-    let stick = item("minecraft:stick")
-    stick.nbt.Enchantments = '{"minecraft:sharpness": 10}'
+    var npc_name = new Component("Faithless");
+    npc_name.color = "purple";
 
-    # player.give(stick)
+    var stick = new ItemStack("minecraft:stick");
+    stick.nbt.Enchantments = "{\"minecraft:sharpness\": 10}";
 
-    at(player):
-        let trader_ref = summon(npc_path)
-        
-        trader_ref.effect("minecraft:invisibility", 3600, 0)
-        summon(npc)
-    return
+    // player.give(stick)
 
-fn tick() -> void:
-    let player = player_ref(single(selector("@a")))
-    player.tellraw(string(player.nbt.SelectedItem.id))
-    if string(player.nbt.SelectedItem.id) == "minecraft:writable_book":
-        let book_content = string(player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw)
-        if book_content[-1] == "@":
-            let yes_text = text("$(book_content) $(random(100))")
-            yes_text.color = "gold"
-            yes_text.bold = true
-            player.tellraw(yes_text)
-        else:
-            player.tellraw("no")
-    else:
-        player.tellraw("no")
+    at (player) {
+        var trader_ref = summon(npc_path);
 
-    let traders = selector('@e[tag=trader]')
-    for trader in traders:
-        trader.mainhand.item = "minecraft:air"
-        at(trader):
-            let npc = single(selector("@e[type=minecraft:mannequin]"))
-            npc.teleport(block("~ ~ ~"))
-            npc.nbt.Rotation = trader.nbt.Rotation
-    return
+        trader_ref.effect("minecraft:invisibility", 3600, 0);
+        summon(npc);
+    }
+    return;
+}
+
+void tick() {
+    var player = (Player) single(selector("@a"));
+    player.tellraw((String) player.nbt.SelectedItem.id);
+    if ((String) player.nbt.SelectedItem.id == "minecraft:writable_book") {
+        var book_content = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
+        if (book_content[-1] == "@") {
+            var yes_text = new Component("$(book_content) $(random(100))");
+            yes_text.color = "gold";
+            yes_text.bold = true;
+            player.tellraw(yes_text);
+        } else {
+            player.tellraw("no");
+        }
+    } else {
+        player.tellraw("no");
+    }
+
+    var traders = selector("@e[tag=trader]");
+    for (var trader : traders) {
+        trader.mainhand.item = "minecraft:air";
+        at (trader) {
+            var npc = single(selector("@e[type=minecraft:mannequin]"));
+            npc.teleport(block("~ ~ ~"));
+            npc.nbt.Rotation = trader.nbt.Rotation;
+        }
+    }
+    return;
+}

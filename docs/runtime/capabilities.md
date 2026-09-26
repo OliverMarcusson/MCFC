@@ -15,34 +15,36 @@ time = true
 rand = true
 ```
 
-Every call pauses the function until `mcfd` answers (see [Functions that pause](/language/reference/statements#functions-that-pause)) and returns a struct with `ok: bool`. If `mcfd` isn't running, the call resumes after a timeout with `ok = false`.
+Every call pauses the function until `mcfd` answers (see [Functions that pause](/language/reference/statements#functions-that-pause)) and returns a struct with `ok: boolean`. If `mcfd` isn't running, the call resumes after a timeout with `ok = false`.
 
 ## Calls
 
 | Call | Returns fields besides `ok` |
 | --- | --- |
-| `http.get(url)` | `status: int`, `body: string`, `err: string` |
+| `http.get(url)` | `status: int`, `body: String`, `err: String` |
 | `http.post(url, body)` | `status`, `body`, `err` |
 | `http.get_json_string(url, path)` | `status`, `body` (the string at `path`), `err` |
-| `http.get_json_strings(url, paths: array<string>)` | `status`, `values: nbt` (one string per path), `err` |
-| `file.read(path)` | `content: string` |
+| `http.get_json_strings(url, paths: List<String>)` | `status`, `values: Nbt` (one string per path), `err` |
+| `file.read(path)` | `content: String` |
 | `file.write(path, content)` | |
-| `kv.get(key)` | `value: string` |
+| `kv.get(key)` | `value: String` |
 | `kv.set(key, value)` | |
-| `db.exec(sql, params: array<string>)` | `rows_affected: int` |
-| `db.query(sql, params: array<string>)` | `rows_affected: int`, `rows: nbt`, a list of rows where each row maps column name to string |
-| `time.now()` | `unix: int`, `iso: string` |
+| `db.exec(sql, params: List<String>)` | `rowsAffected: int` |
+| `db.query(sql, params: List<String>)` | `rowsAffected: int`, `rows: Nbt`, a list of rows where each row maps column name to string |
+| `time.now()` | `unix: int`, `iso: String` |
 | `rand.int(min, max)` | `value: int` |
-| `mcfd.ping()` | `pong: bool`. Always available, useful for checking the connection. |
+| `mcfd.ping()` | `pong: boolean`. Always available, useful for checking the connection. |
 
 JSON paths are dot-separated, such as `quote.author.name`. The JSON helpers set `ok = false` for non-2xx responses, invalid JSON, missing paths and non-string values.
 
 ```mcfc
-fn top_player(team: string) -> void:
-    let r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", [team])
-    if r.ok:
-        let name = string(r.rows[0].name)
-        selector("@a").tellraw("Top player: $(name)")
+void topPlayer(String team) {
+    var r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", List.of(team));
+    if (r.ok) {
+        var name = (String) r.rows[0].name;
+        selector("@a").tellraw("Top player: $(name)");
+    }
+}
 ```
 
 ## Scope

@@ -179,6 +179,16 @@ pub enum IrExprKind {
         kind: crate::types::CastKind,
         expr: Box<IrExpr>,
     },
+    Conditional {
+        condition: Box<IrExpr>,
+        then_expr: Box<IrExpr>,
+        else_expr: Box<IrExpr>,
+    },
+    Bind {
+        name: String,
+        value: Box<IrExpr>,
+        body: Box<IrExpr>,
+    },
 }
 
 pub fn lower(program: &TypedProgram) -> IrProgram {
@@ -444,6 +454,20 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
                     CastKind::String => CastKind::String,
                 },
                 expr: Box::new(lower_expr(expr)),
+            },
+            TypedExprKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => IrExprKind::Conditional {
+                condition: Box::new(lower_expr(condition)),
+                then_expr: Box::new(lower_expr(then_expr)),
+                else_expr: Box::new(lower_expr(else_expr)),
+            },
+            TypedExprKind::Bind { name, value, body } => IrExprKind::Bind {
+                name: name.clone(),
+                value: Box::new(lower_expr(value)),
+                body: Box::new(lower_expr(body)),
             },
         },
     }

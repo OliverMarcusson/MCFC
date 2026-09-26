@@ -18,6 +18,7 @@ pub enum TokenKind {
     Continue,
     Async,
     New,
+    Do,
     True,
     False,
     AndAnd,
@@ -25,6 +26,7 @@ pub enum TokenKind {
     Bang,
     Arrow,
     Colon,
+    Question,
     Semicolon,
     Comma,
     Dot,
@@ -103,19 +105,15 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 }
             }
         } else if ch.is_ascii_digit() {
-            cursor.consume_while(|next| next.is_ascii_digit());
-            let rest = cursor.rest();
-            let is_float =
-                rest.starts_with('.') && rest[1..].starts_with(|next: char| next.is_ascii_digit());
-            if is_float {
-                cursor.bump();
-                cursor.consume_while(|next| next.is_ascii_digit());
-            }
-            let raw = &source[start..cursor.position()];
-            if is_float {
-                TokenKind::Float(raw.to_string())
-            } else {
-                TokenKind::Integer(raw.parse().unwrap_or(0))
+            match lex_number(&mut cursor) {
+                Some(kind) => kind,
+                None => {
+                    diagnostics.push(Diagnostic::new(
+                        "invalid number literal",
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                    ));
+                    continue;
+                }
             }
         } else if is_ident_start(ch) {
             cursor.consume_while(is_ident_continue);
@@ -129,6 +127,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 "continue" => TokenKind::Continue,
                 "async" => TokenKind::Async,
                 "new" => TokenKind::New,
+                "do" => TokenKind::Do,
                 "true" => TokenKind::True,
                 "false" => TokenKind::False,
                 raw => TokenKind::Identifier(raw.to_string()),
@@ -176,6 +175,7 @@ const PUNCTUATION: &[(&str, TokenKind)] = &[
     ("++", TokenKind::PlusPlus),
     ("--", TokenKind::MinusMinus),
     ("!", TokenKind::Bang),
+    ("?", TokenKind::Question),
     (":", TokenKind::Colon),
     (";", TokenKind::Semicolon),
     (",", TokenKind::Comma),
@@ -203,6 +203,51 @@ fn lex_punct(cursor: &mut Cursor<'_>) -> Option<TokenKind> {
         .find(|(text, _)| cursor.rest().starts_with(text))?;
     cursor.position += text.len();
     Some(kind.clone())
+}
+
+/// Java number literals: `0xFF`, `1_000`, `1.5`, `1.5f`, `2f`. Floats keep their
+/// source text without `_` or the suffix.
+fn lex_number(cursor: &mut Cursor<'_>) -> Option<TokenKind> {
+    let start = cursor.position();
+    if cursor.rest().starts_with("0x") || cursor.rest().starts_with("0X") {
+        cursor.position += 2;
+        cursor.consume_while(|next| next.is_ascii_hexdigit() || next == '_');
+        let digits = cursor.source[start + 2..cursor.position()].replace('_', "");
+        return i64::from_str_radix(&digits, 16)
+            .ok()
+            .map(TokenKind::Integer);
+    }
+    let digit_or_underscore = |next: char| next.is_ascii_digit() || next == '_';
+    cursor.consume_while(digit_or_underscore);
+    let rest = cursor.rest();
+    let mut is_float =
+        rest.starts_with('.') && rest[1..].starts_with(|next: char| next.is_ascii_digit());
+    if is_float {
+        cursor.bump();
+        cursor.consume_while(digit_or_underscore);
+    }
+    let raw = cursor.source[start..cursor.position()].replace('_', "");
+    if cursor.rest().starts_with(['f', 'F']) {
+        cursor.bump();
+        is_float = true;
+    }
+    if cursor.rest().starts_with(is_ident_continue) {
+        cursor.consume_while(is_ident_continue);
+        return None;
+    }
+    if raw.ends_with('_') {
+        return None;
+    }
+    if is_float {
+        let raw = if raw.contains('.') {
+            raw
+        } else {
+            format!("{raw}.0")
+        };
+        Some(TokenKind::Float(raw))
+    } else {
+        raw.parse().ok().map(TokenKind::Integer)
+    }
 }
 
 /// Reads a `"..."` literal; `None` when it is unterminated.

@@ -9,8 +9,7 @@ import std.str.find;
 record Quest(String name, int reward) {}
 
 Quest bump(Quest q, int by) {
-    q.reward = q.reward + by;
-    return q;
+    return new Quest(q.name(), q.reward() + by);
 }
 
 <T> T largest(List<T> xs) {
@@ -20,7 +19,7 @@ Quest bump(Quest q, int by) {
 void main() {
     var q = new Quest("Mine", 5);
     q = bump(q, 3);
-    mcf("say quest $(q.name) $(q.reward)");
+    mcf("say quest $(q.name()) $(q.reward())");
     var xs = List.of(4, 9, 2, 7);
     xs.add(11);
     var popped = xs.removeLast();

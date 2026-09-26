@@ -4,7 +4,7 @@ MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` a
 
 **Top level:** [functions](#functions) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
 
-**In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [`switch`](#switch) · [`while`](#while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
+**In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
 ## Declarations
 
@@ -12,7 +12,7 @@ MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` a
 
 ```mcfc
 void greet(Player player, String message) {
-    player.tellraw(message);
+    player.sendMessage(message);
 }
 ```
 
@@ -71,12 +71,12 @@ record Quest(String name, int reward) {}
 
 void main() {
     var quest = new Quest("Mine", 5);
-    quest.reward = quest.reward + 1;
-    debug(quest.name);
+    quest = new Quest(quest.name(), quest.reward() + 1);
+    debug(quest.name());
 }
 ```
 
-`new Quest(...)` takes one argument per field, in declaration order. Records are top-level, and their body is always `{}`. Fields are read and written with `.`, so records are mutable. Record values live in command storage.
+`new Quest(...)` takes one argument per component, in declaration order. Records are top-level, and their body is always `{}`. Read components with accessor calls such as `quest.reward()`. To change a value, construct a new record. Record values live in command storage.
 
 ### `enum`
 
@@ -161,8 +161,7 @@ Profile profile;
 
 void update(Player player) {
     player.state.coins = player.state.coins + 1;
-    player.state.profile = new Profile(3, "Scout");
-    player.state.profile.level = 4;
+    player.state.profile = new Profile(4, "Scout");
 }
 ```
 
@@ -186,7 +185,7 @@ MarkerInfo info;
 
 void mark(Entity entity) {
     entity.state.info = new MarkerInfo("Target", 1.5);
-    debug(entity.state.info.label);
+    debug(entity.state.info.label());
 }
 ```
 
@@ -197,7 +196,7 @@ Scoreboard objectives are named `mcfe_*`. Stored values aren't removed when the 
 ```mcfc
 @Command("status")
 void status(Player player) {
-    player.tellraw("Ready");
+    player.sendMessage("Ready");
 }
 ```
 
@@ -227,10 +226,11 @@ void setup() {
 void main() {
     var amount = 5;
     List<String> names = List.of("a", "b");
+    final int maximum = 10;
 }
 ```
 
-`var` takes its type from the initializer. With a written type, the initializer must have that type. Every variable needs an initializer. Declaring a name that's already a local or parameter is an error, and a variable declared inside a block isn't visible outside it.
+`var` takes its type from the initializer. With a written type, the initializer must match or widen from `int` to `float`. Every variable needs an initializer. `final` prevents later assignment and also works on parameters. Declaring a name that's already a local or parameter is an error, and a variable declared inside a block isn't visible outside it. `static` is accepted on declarations but does not change storage lifetime.
 
 ### Assignment
 
@@ -241,7 +241,7 @@ void main() {
     amount += 2;
     amount++;
 
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     player.state.score = amount;
 }
 ```
@@ -253,16 +253,26 @@ The target is a local variable or a writable path, and the new value must have t
 ```mcfc
 void check(Player player) {
     if (player.hasTag("ready")) {
-        player.tellraw("Ready");
+        player.sendMessage("Ready");
     } else if (player.hasTag("waiting")) {
-        player.tellraw("Waiting");
+        player.sendMessage("Waiting");
     } else {
-        player.tellraw("Not ready");
+        player.sendMessage("Not ready");
     }
 }
 ```
 
 The condition must be a `boolean`. Braces are required.
+
+### Conditional expressions
+
+```mcfc
+int fee(boolean member, int price) {
+    return member ? price / 2 : price;
+}
+```
+
+`condition ? whenTrue : whenFalse` chooses one branch. `int` and `float` branches combine as `float`; `Player` and `Entity` branches combine as `Entity`.
 
 ### `switch`
 
@@ -281,6 +291,19 @@ void describe(int level) {
 
 `switch` works on enum, `int` and `String` values. Cases are constants of that type, and a case can list several. Each case is a single statement or a `{ ... }` block. Cases don't fall through, so there's no `break`. On an enum, cases name the bare constant (`case SURVIVAL`), and the switch must either list every constant or have a `default`. The value is evaluated once, and the first matching case runs.
 
+A switch can also produce a value. Expression arms end with `;`; a block arm returns a value with `yield`. A switch expression needs a `default` or every enum constant.
+
+```mcfc
+enum Rank { LOW, HIGH }
+
+String label(Rank rank) {
+    return switch (rank) {
+        case LOW -> "low";
+        case HIGH -> { yield "high"; }
+    };
+}
+```
+
 ### `while`
 
 ```mcfc
@@ -295,10 +318,23 @@ void count() {
 
 A loop runs entirely within one tick unless its body sleeps. A long loop with no `sleep` can hit Minecraft's command limit (`maxCommandChainLength`), and the rest of the function then doesn't run.
 
+### `do` / `while`
+
+```mcfc
+void retry() {
+    var attempts = 0;
+    do {
+        attempts++;
+    } while (attempts < 3);
+}
+```
+
+The body runs at least once. `continue` proceeds to the condition check.
+
 ### `for`
 
 ```mcfc
-void loops(List<int> values) {
+void loops(List<Integer> values) {
     for (int i = 0; i < 3; i++) {
         debug("$(i)");
     }
@@ -327,7 +363,7 @@ void firstReady() {
         if (!player.hasTag("ready")) {
             continue;
         }
-        player.tellraw("Ready");
+        player.sendMessage("Ready");
         break;
     }
 }
@@ -348,9 +384,9 @@ int clampZero(int value) {
 void greetLater(Player player) {
     async {
         sleepTicks(20);
-        player.actionbar("later");
+        player.sendActionBar("later");
     }
-    player.actionbar("now");
+    player.sendActionBar("now");
 }
 ```
 
@@ -361,11 +397,11 @@ The body starts running right away, and the statement after the block runs witho
 ```mcfc
 void sparkle(Player player) {
     as (player) {
-        single(Selector.of("@s")).addTag("marked");
+        Selector.of("@s").getFirst().addTag("marked");
     }
     at (player) {
-        Block.of("~ ~1 ~").particle("minecraft:happy_villager", 8);
-        Block.of("~ ~-1 ~").setblock("minecraft:gold_block");
+        Block.of("~ ~1 ~").spawnParticle("minecraft:happy_villager", 8);
+        Block.of("~ ~-1 ~").setBlock("minecraft:gold_block");
     }
 }
 ```

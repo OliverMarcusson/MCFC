@@ -1,6 +1,6 @@
 void main() {
-    var player = single(Selector.of("@p"));
-    if (exists(player)) {
-        player.tellraw("MCFC is live.");
+    var player = Selector.of("@p").getFirst();
+    if (player.isValid()) {
+        player.sendMessage("MCFC is live.");
     }
 }

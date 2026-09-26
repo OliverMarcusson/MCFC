@@ -1,0 +1,7 @@
+say string 1111 4 o 0
+say parse 437
+say math 932 10
+say list 50 0 4 1
+say map 2 7 1
+say enum 3 DONE 3
+say record Mine! 10

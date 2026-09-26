@@ -14,7 +14,7 @@ import std.math.gcd;
 import std.math.lerp;
 
 void tick() {
-    if (exists(single(Selector.of("@a[tag=!mcfc_tested,limit=1]")))) {
+    if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
         mc("tag @a add mcfc_tested");
         runTests();
     }
@@ -29,7 +29,7 @@ void check(String name, boolean ok, String got) {
 }
 
 boolean near(float a, float b) {
-    return (a - b).abs() < 0.001;
+    return Math.abs(a - b) < 0.001;
 }
 
 // Returns its argument unchanged, so the compiler cannot fold it.
@@ -63,26 +63,26 @@ void runTests() {
 
 void floats() {
     var x = 16.0;
-    check("float_sqrt", near(x.sqrt(), 4.0), x.sqrt().toString());
+    check("float_sqrt", near(Math.sqrt(x), 4.0), Math.sqrt(x).toString());
     var y = (x * 0.5 + 2.0) / 4.0 - 1.0;
     check("float_arith", near(y, 1.5), y.toString());
     check("float_neg", near(-y, -1.5), (-y).toString());
     check("float_to_int_floor", (int) -2.7 == -3, ((int) -2.7).toString());
     check("int_to_float", near((float) 7 / 2.0, 3.5), ((float) 7 / 2.0).toString());
-    check("float_pow", near(2.0.pow(10.0), 1024.0), 2.0.pow(10.0).toString());
-    check("float_hypot", near(3.0.hypot(4.0), 5.0), 3.0.hypot(4.0).toString());
-    check("float_floor", near((-1.5).floor(), -2.0), (-1.5).floor().toString());
-    check("float_ceil", near(1.2.ceil(), 2.0), 1.2.ceil().toString());
-    check("float_round", near(2.5.round(), 3.0), 2.5.round().toString());
-    check("float_trunc", near((-1.7).trunc(), -1.0), (-1.7).trunc().toString());
-    check("float_abs", near((-3.25).abs(), 3.25), (-3.25).abs().toString());
-    check("float_min_max", near(1.0.min(2.0) + 1.0.max(2.0), 3.0), 1.0.max(2.0).toString());
-    check("float_clamp", near(9.0.clamp(0.0, 5.0), 5.0), 9.0.clamp(0.0, 5.0).toString());
+    check("float_pow", near(Math.pow(2.0, 10.0), 1024.0), Math.pow(2.0, 10.0).toString());
+    check("float_hypot", near(Math.hypot(3.0, 4.0), 5.0), Math.hypot(3.0, 4.0).toString());
+    check("float_floor", near(Math.floor(-1.5), -2.0), Math.floor(-1.5).toString());
+    check("float_ceil", near(Math.ceil(1.2), 2.0), Math.ceil(1.2).toString());
+    check("float_round", near(Math.round(2.5), 3.0), Math.round(2.5).toString());
+    check("float_trunc", near(Math.trunc(-1.7), -1.0), Math.trunc(-1.7).toString());
+    check("float_abs", near(Math.abs(-3.25), 3.25), Math.abs(-3.25).toString());
+    check("float_min_max", near(Math.min(1.0, 2.0) + Math.max(1.0, 2.0), 3.0), Math.max(1.0, 2.0).toString());
+    check("float_clamp", near(Math.clamp(9.0, 0.0, 5.0), 5.0), Math.clamp(9.0, 0.0, 5.0).toString());
     // One of these two passes: it tells us whether sin/cos take radians or degrees.
-    check("float_sin_radians", near(1.5707964.sin(), 1.0), 1.5707964.sin().toString());
-    check("float_sin_degrees", near(90.0.sin(), 1.0), 90.0.sin().toString());
-    check("float_cos_zero", near(0.0.cos(), 1.0), 0.0.cos().toString());
-    check("float_tan", near(0.7853982.tan(), 1.0), 0.7853982.tan().toString());
+    check("float_sin_radians", near(Math.sin(1.5707964), 1.0), Math.sin(1.5707964).toString());
+    check("float_sin_degrees", near(Math.sin(90.0), 1.0), Math.sin(90.0).toString());
+    check("float_cos_zero", near(Math.cos(0.0), 1.0), Math.cos(0.0).toString());
+    check("float_tan", near(Math.tan(0.7853982), 1.0), Math.tan(0.7853982).toString());
     check("float_lt", 1.5 < 2.5, "1.5<2.5");
     check("float_not_lt", !(2.5 < 1.5), "2.5<1.5");
     check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5");
@@ -116,8 +116,8 @@ void strings() {
     var stop = 8;
     check("str_slice_dynamic", line.substring(start, stop) == "Steve", line.substring(start, stop));
     check("str_slice_out_of_range", name.substring(2, 99) == "", name.substring(2, 99));
-    check("str_parse_int", "-17".parseInt() == -17, "-17".parseInt().toString());
-    check("str_parse_int_bad", runtime("abc").parseInt() == 0, runtime("abc").parseInt().toString());
+    check("str_parse_int", Integer.parseInt("-17") == -17, Integer.parseInt("-17").toString());
+    check("str_parse_int_bad", Integer.parseInt(runtime("abc")) == 0, Integer.parseInt(runtime("abc")).toString());
     var quoted = runtime("say \"hi\"");
     var joined = "<" + quoted + ">";
     check("str_quote_fallback", joined == "", joined.length().toString());
@@ -146,11 +146,11 @@ void arrays() {
 // Shows which sort step is running on a bossbar.
 void progress(String label, int step) {
     var bar = new BossBar("mcfc_demo:sort", "sorts");
-    bar.max = 9;
-    bar.value = step;
-    bar.name = label;
-    bar.players = Selector.of("@a");
-    bar.visible = true;
+    bar.setMax(9);
+    bar.setValue(step);
+    bar.setName(label);
+    bar.setPlayers(Selector.of("@a"));
+    bar.setVisible(true);
     mcf("say MCFCTEST INFO step $(step) $(label)");
 }
 
@@ -221,18 +221,18 @@ void stdLibrary() {
 }
 
 void reads() {
-    var p = (Player) single(Selector.of("@a[limit=1]"));
-    var pos = p.x().toString() + "," + p.y().toString() + "," + p.z().toString();
-    var rot = p.yaw().toString() + "," + p.pitch().toString();
+    var p = (Player) Selector.of("@a[limit=1]").getFirst();
+    var pos = p.getX().toString() + "," + p.getY().toString() + "," + p.getZ().toString();
+    var rot = p.getYaw().toString() + "," + p.getPitch().toString();
     mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
-    check("read_health", p.health() > 0.0, p.health().toString());
-    check("read_food", p.food() >= 0 && p.food() <= 20, p.food().toString());
-    check("read_xp", p.xpLevel() >= 0, p.xpLevel().toString());
-    check("read_game_mode", p.gameMode() >= 0 && p.gameMode() <= 3, p.gameMode().toString());
-    check("read_dimension", startsWith(p.dimension(), "minecraft:"), p.dimension());
-    check("read_selected_slot", p.selectedSlot() >= 0 && p.selectedSlot() <= 8, p.selectedSlot().toString());
+    check("read_health", p.getHealth() > 0.0, p.getHealth().toString());
+    check("read_food", p.getFoodLevel() >= 0 && p.getFoodLevel() <= 20, p.getFoodLevel().toString());
+    check("read_xp", p.getLevel() >= 0, p.getLevel().toString());
+    check("read_game_mode", p.getGameMode() >= 0 && p.getGameMode() <= 3, p.getGameMode().toString());
+    check("read_dimension", startsWith(p.getDimension(), "minecraft:"), p.getDimension());
+    check("read_selected_slot", p.getSelectedSlot() >= 0 && p.getSelectedSlot() <= 8, p.getSelectedSlot().toString());
     mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
-    var pig = single(Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"));
+    var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]").getFirst();
     check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
     mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
     check("read_game_time", gameTime() > 0, gameTime().toString());
@@ -266,26 +266,26 @@ void newFeatures() {
     check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
     check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
     mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
-    var pig = single(Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]"));
-    check("look_west", near(pig.lookX(), -1.0) && near(pig.lookZ(), 0.0), pig.lookX().toString());
+    var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]").getFirst();
+    check("look_west", near(pig.getLookX(), -1.0) && near(pig.getLookZ(), 0.0), pig.getLookX().toString());
     mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
-    check("look_up", near(pig.lookY(), 1.0), pig.lookY().toString());
+    check("look_up", near(pig.getLookY(), 1.0), pig.getLookY().toString());
     mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
-    var p = single(Selector.of("@a[limit=1]"));
+    var p = Selector.of("@a[limit=1]").getFirst();
     at (p) {
         var here = Block.of("~ ~ ~");
-        var light = here.light();
-        var biome = here.biome();
+        var light = here.getLightLevel();
+        var biome = here.getBiome();
         check("block_light", light >= 0 && light <= 15, light.toString());
         // A light block emits level 15, so the air it fills reads 15.
         mc("setblock ~ ~3 ~ minecraft:light[level=15]");
-        var lit = Block.of("~ ~3 ~").light();
+        var lit = Block.of("~ ~3 ~").getLightLevel();
         mc("setblock ~ ~3 ~ minecraft:air");
         check("block_light_15", lit == 15, lit.toString());
         check("block_biome", startsWith(biome, "minecraft:"), biome);
         check("block_in_biome", here.inBiome(biome), biome);
         check("block_not_in_void", !here.inBiome("minecraft:the_void"), biome);
-        var sky = here.environment("gameplay/sky_light_level");
+        var sky = here.getEnvironment("gameplay/sky_light_level");
         check("block_environment", sky >= 0.0 && sky <= 15.0, sky.toString());
     }
 }

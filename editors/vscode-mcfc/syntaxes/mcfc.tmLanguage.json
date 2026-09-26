@@ -165,11 +165,11 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|else|switch|case|default|while|for|break|continue|return|async)\\b"
+          "match": "\\b(?:if|else|switch|case|default|yield|while|do|for|break|continue|return|async)\\b"
         },
         {
           "name": "keyword.other.module.mcfc",
-          "match": "\\b(?:import|public)\\b"
+          "match": "\\b(?:import|public|final|static)\\b"
         },
         {
           "name": "storage.modifier.declaration.mcfc",
@@ -189,7 +189,7 @@
       "patterns": [
         {
           "name": "support.type.mcfc",
-          "match": "\\b(?:int|float|boolean|String|void|List|Map|Optional|Selector|Entity|Player|Block|EntityData|BlockData|ItemStack|Component|ItemSlot|BossBar|Nbt|CommandSender|[A-Z][A-Za-z0-9]*Event)\\b"
+          "match": "\\b(?:int|float|boolean|Integer|Float|Boolean|String|Math|void|List|Map|Optional|Selector|Entity|Player|Block|EntityData|BlockData|ItemStack|Component|ItemSlot|BossBar|Nbt|CommandSender|[A-Z][A-Za-z0-9]*Event)\\b"
         }
       ]
     },
@@ -197,7 +197,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:single|findFirst|exists|hasData|sleep|sleepTicks|random|randomWeighted|randomBinomial|gamerule|at|as|summon|debug|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+          "match": "\\b(?:hasData|sleep|sleepTicks|random|randomWeighted|randomBinomial|gamerule|at|as|summon|debug|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.builtin.mcfc",
@@ -206,7 +206,7 @@
         },
         {
           "name": "support.function.method.mcfc",
-          "match": "(?<=\\.)\\b(?:size|length|get|isPresent|orElse|add|removeLast|remove|containsKey|keySet|getFirst|getLast|indexOf|contains|substring|parseInt|toString|effect|addTag|removeTag|hasTag|teleport|damage|heal|give|clear|lootGive|tellraw|title|actionbar|playsound|stopsound|debugEntity|lootInsert|lootSpawn|debugMarker|particle|setblock|fill|is|summon|spawnItem|asNbt)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*\\()"
         },
         {
           "name": "support.variable.member.mcfc",
@@ -226,11 +226,15 @@
       "patterns": [
         {
           "name": "constant.numeric.float.mcfc",
-          "match": "\\b[0-9]+\\.[0-9]+\\b"
+          "match": "\\b(?:[0-9][0-9_]*\\.[0-9][0-9_]*[fF]?|[0-9][0-9_]*[fF])\\b"
+        },
+        {
+          "name": "constant.numeric.integer.hex.mcfc",
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
         },
         {
           "name": "constant.numeric.integer.mcfc",
-          "match": "\\b[0-9]+\\b"
+          "match": "\\b[0-9][0-9_]*\\b"
         }
       ]
     },
@@ -238,7 +242,7 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.mcfc",
-          "match": "->"
+          "match": "->|\\?|:"
         },
         {
           "name": "keyword.operator.logical.mcfc",

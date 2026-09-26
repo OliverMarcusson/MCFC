@@ -14,18 +14,18 @@ record Reward(String item, int count) {}
 
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player;
-    player.tellraw("Welcome to MCFC");
+    Player player = event.player();
+    player.sendMessage("Welcome to MCFC");
 }
 
 @EventHandler
 void onChat(ChatEvent event) {
-    event.player.actionbar("chat: $(event.message)");
+    event.player().sendActionBar("chat: $(event.message())");
 }
 
 @Command("status")
 void status(Player player) {
-    player.tellraw("coins=$(player.state.coins)");
+    player.sendMessage("coins=$(player.state.coins)");
 }
 
 @Every(ticks = 20)
@@ -39,8 +39,8 @@ public <T> T first(List<T> values) {
 
 int score(Mode mode, float speed) {
     var reward = new Reward("minecraft:apple", 2);
-    List<int> values = List.of(1, 2, 3);
-    Map<String, int> totals = Map.of("a", 1);
+    List<Integer> values = List.of(1, 2, 3);
+    Map<String, Integer> totals = Map.of("a", 1);
     boolean ready = !false && (values.size() > 0 || totals.containsKey("a"));
     for (int i = 0; i < 3; i++) {
         if (i == 1) {
@@ -51,7 +51,7 @@ int score(Mode mode, float speed) {
         p.addTag("seen");
     }
     switch (mode) {
-        case Mode.IDLE -> mcf("say $(reward.item)");
+        case Mode.IDLE -> mcf("say $(reward.item())");
         default -> {
             sleepTicks(20);
         }
@@ -59,11 +59,16 @@ int score(Mode mode, float speed) {
     async {
         sleep(1);
     }
-    as (single(Selector.of("@p"))) {
+    as (Selector.of("@p").getFirst()) {
         mc("say hi");
     }
     var stack = new ItemStack("minecraft:stick");
-    var who = (Player) single(Selector.of("@p"));
+    var who = (Player) Selector.of("@p").getFirst();
     who.state.coins += 1;
+    final int flags = 0xFF;
+    var scaled = 1_000 + flags;
+    var fraction = 1.5f;
+    var chosen = ready ? scaled : 2;
+    do { chosen--; } while (chosen > 0);
     return (int) speed;
 }

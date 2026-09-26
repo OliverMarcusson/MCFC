@@ -17,7 +17,9 @@ PROGRAMS = os.path.join(HERE, "programs")
 # as in Java, which costs data/strings/timed a few commands over the old syntax.)
 BUDGET = {
     "control": 550,
-    "data": 415,
+    "data": 417,
+    "javaapi": 383,
+    "javaish": 119,
     "sleepy": 168,
     "strings": 86,
     "switchy": 65,

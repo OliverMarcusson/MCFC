@@ -1,6 +1,14 @@
 # Entities and Players
 
-Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").title("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").sendTitle("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+
+## Selecting and checking entities
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `Selector.getFirst()` | `Entity` | Narrows a selector that matches one entity, such as `@p`, `@s`, or `limit=1`. |
+| `Selector.findFirst()` | `Optional<Entity>` | Needs a literal `Selector.of(...)`; the compiler adds `limit=1`. |
+| `Entity.isValid()` | `boolean` | Whether the entity still exists. |
 
 ## Actions
 
@@ -21,11 +29,11 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 
 | Method | Command |
 | --- | --- |
-| `tellraw(msg)` | `tellraw` |
-| `title(msg)` | `title ... title` |
-| `actionbar(msg)` | `title ... actionbar` |
-| `playsound(sound, category)` | `playsound` |
-| `stopsound(category, sound)` | `stopsound` |
+| `sendMessage(msg)` | `tellraw` |
+| `sendTitle(msg)` | `title ... title` |
+| `sendActionBar(msg)` | `title ... actionbar` |
+| `playSound(sound, category)` | `playsound` |
+| `stopSound(category, sound)` | `stopsound` |
 
 `msg` is a `String` or a [`Component`](./builders#text-builders) for formatted text. Strings can use `$(...)` to insert values.
 
@@ -34,9 +42,9 @@ void celebrate(Player player) {
     var message = new Component("Quest complete");
     message.color = "gold";
     message.bold = true;
-    player.tellraw(message);
-    player.title("Victory");
-    player.playsound("minecraft:entity.player.levelup", "master");
+    player.sendMessage(message);
+    player.sendTitle("Victory");
+    player.playSound("minecraft:entity.player.levelup", "master");
 }
 ```
 
@@ -58,23 +66,23 @@ Each call reads the entity's NBT again, so store the result in a `var` if you ne
 
 | Method | Returns |
 | --- | --- |
-| `x()`, `y()`, `z()` | `float` position |
-| `yaw()`, `pitch()` | `float`, in degrees |
-| `lookX()`, `lookY()`, `lookZ()` | `float`, the unit vector the entity is facing |
-| `health()` | `float` |
+| `getX()`, `getY()`, `getZ()` | `float` position |
+| `getYaw()`, `getPitch()` | `float`, in degrees |
+| `getLookX()`, `getLookY()`, `getLookZ()` | `float`, the unit vector the entity is facing |
+| `getHealth()` | `float` |
 | `distanceTo(other: Entity)` | `float` |
-| `food()` | `int`, 0 to 20. Players only. |
-| `xpLevel()` | `int`. Players only. |
-| `gameMode()` | `int`: 0 survival, 1 creative, 2 adventure, 3 spectator. Players only. |
-| `selectedSlot()` | `int`, 0 to 8. Players only. |
-| `dimension()` | `String`, such as `"minecraft:overworld"`. Players only. |
+| `getFoodLevel()` | `int`, 0 to 20. Players only. |
+| `getLevel()` | `int`. Players only. |
+| `getGameMode()` | `int`: 0 survival, 1 creative, 2 adventure, 3 spectator. Players only. |
+| `getSelectedSlot()` | `int`, 0 to 8. Players only. |
+| `getDimension()` | `String`, such as `"minecraft:overworld"`. Players only. |
 
 ```mcfc
 void main() {
-    var player = single(Selector.of("@p"));
-    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
-    if (player.distanceTo(pig) < 8.0 && player.food() < 6) {
-        player.tellraw("The pig looks tasty");
+    var player = Selector.of("@p").getFirst();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    if (player.distanceTo(pig) < 8.0 && player.getFoodLevel() < 6) {
+        player.sendMessage("The pig looks tasty");
         pig.heal(2);
     }
 }

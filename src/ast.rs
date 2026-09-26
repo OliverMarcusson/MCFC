@@ -108,9 +108,9 @@ impl Type {
             Type::Float => "float".to_string(),
             Type::Bool => "boolean".to_string(),
             Type::String => "String".to_string(),
-            Type::Array(element) => format!("List<{}>", element.as_str()),
-            Type::Dict(value) => format!("Map<String, {}>", value.as_str()),
-            Type::Optional(value) => format!("Optional<{}>", value.as_str()),
+            Type::Array(element) => format!("List<{}>", element.as_type_arg()),
+            Type::Dict(value) => format!("Map<String, {}>", value.as_type_arg()),
+            Type::Optional(value) => format!("Optional<{}>", value.as_type_arg()),
             Type::Struct(name) => name.replace("::", "."),
             Type::Enum(name) => name.replace("::", "."),
             Type::Bossbar => "BossBar".to_string(),
@@ -125,6 +125,16 @@ impl Type {
             Type::ItemSlot => "ItemSlot".to_string(),
             Type::Nbt => "Nbt".to_string(),
             Type::Void => "void".to_string(),
+        }
+    }
+
+    /// The name inside `<...>`, where primitives are boxed: `List<Integer>`.
+    pub fn as_type_arg(&self) -> String {
+        match self {
+            Type::Int => "Integer".to_string(),
+            Type::Float => "Float".to_string(),
+            Type::Bool => "Boolean".to_string(),
+            other => other.as_str(),
         }
     }
 }
@@ -267,6 +277,18 @@ pub enum ExprKind {
         args: Vec<Expr>,
     },
     Path(PathExpr),
+    /// `condition ? then_expr : else_expr`
+    Conditional {
+        condition: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
+    /// `switch (value) { case p -> result; ... default -> result; }`, one entry per pattern.
+    Switch {
+        value: Box<Expr>,
+        arms: Vec<(Expr, Expr)>,
+        default: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

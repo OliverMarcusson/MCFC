@@ -336,22 +336,22 @@ rand = true
 fn main_template(config: &NewProjectConfig) -> String {
     match config.helper {
         HelperRuntime::None => r#"void main() {
-    var player = single(Selector.of("@p"));
-    if (exists(player)) {
-        player.tellraw("MCFC is live.");
+    var player = Selector.of("@p").getFirst();
+    if (player.isValid()) {
+        player.sendMessage("MCFC is live.");
     }
 }
 "#
         .to_string(),
         HelperRuntime::Mcfd => r#"void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var now = time.now();
     var roll = rand.int(1, 6);
-    if (exists(player)) {
-        if (now.ok && roll.ok) {
-            player.tellraw("MCFC is live. unix=$(now.unix), roll=$(roll.value)");
+    if (player.isValid()) {
+        if (now.ok() && roll.ok()) {
+            player.sendMessage("MCFC is live. unix=$(now.unix()), roll=$(roll.value())");
         } else {
-            player.tellraw("MCFC is live, but mcfd did not answer yet.");
+            player.sendMessage("MCFC is live, but mcfd did not answer yet.");
         }
     }
 }
@@ -361,28 +361,28 @@ fn main_template(config: &NewProjectConfig) -> String {
 // With mcfd-agent attached, it is also available as a root command.
 @Command("status")
 void status() {
-    var player = single(Selector.of("@s"));
-    player.tellraw("MCFC agent project is live.");
+    var player = Selector.of("@s").getFirst();
+    player.sendMessage("MCFC agent project is live.");
 }
 
 // This callback runs when the optional mcfd-agent is attached.
 @EventHandler
 void onChat(ChatEvent event) {
-    var player = single(Selector.of("@s"));
-    if (event.message == "roll") {
+    var player = Selector.of("@s").getFirst();
+    if (event.message() == "roll") {
         var roll = rand.int(1, 6);
-        if (roll.ok) {
-            player.tellraw("agent roll=$(roll.value)");
+        if (roll.ok()) {
+            player.sendMessage("agent roll=$(roll.value())");
         }
     }
 }
 
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var now = time.now();
-    if (exists(player)) {
-        if (now.ok) {
-            player.tellraw("MCFC is live. Try /trigger status or say roll after the agent attaches.");
+    if (player.isValid()) {
+        if (now.ok()) {
+            player.sendMessage("MCFC is live. Try /trigger status or say roll after the agent attaches.");
         }
     }
 }

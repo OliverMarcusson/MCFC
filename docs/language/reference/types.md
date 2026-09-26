@@ -23,11 +23,12 @@
 
 - `var` takes its type from the initializer; `T x = ...;` checks it. Parameters and return types are written out.
 - An assignment has to keep the variable's type, and arguments have to match parameter types.
-- Types never convert implicitly. `1.5 + 2` is an error, so write `1.5 + (float) 2`. The one exception: `EntityData`, `BlockData` and `ItemStack` can be used where an `Nbt` value is expected, which is short for `.asNbt()`.
-- `+ - * / %` work on two `int`s or two `float`s. `+` also joins two `String`s.
+- An `int` widens to `float` when a float is expected, including in arithmetic. `EntityData`, `BlockData` and `ItemStack` can be used where an `Nbt` value is expected, which is short for `.asNbt()`.
+- `+ - * / %` work on numbers; a mixed `int` and `float` expression has type `float`. `+` also joins a `String` with an `int`, `float`, `boolean` or enum.
 - `< <= > >=` work on `int`, `float` and `boolean`. `== !=` work on all of these plus `String`.
 - `&&`, `||` and `!` work on `boolean`.
 - Precedence, from tightest to loosest: `!` and casts, then `* / %`, then `+ -`, then comparisons, then `&&`, then `||`.
+- `Integer`, `Float` and `Boolean` are accepted as type names. Use the boxed spellings inside `<...>`, such as `List<Integer>`.
 
 ## Casts
 
@@ -41,27 +42,31 @@
 
 ## `int`
 
-`/` rounds down, and `%` takes the sign of the right side, the same as Minecraft's scoreboard `/=` and `%=`. So `-7 / 2` is `-4` and `-7 % 3` is `2`. Dividing by `0` leaves the left side unchanged. Overflow wraps.
+Integer `/` rounds down, and `%` takes the sign of the divisor, the same as Minecraft's scoreboard `/=` and `%=`. So `-7 / 2` is `-4` and `-7 % 3` is `2`. Casting a float with `(int)` also floors: `(int) -2.7` is `-3`. Dividing by `0` leaves the left side unchanged. Overflow wraps.
 
-`n.toString()` converts to text. `"42".parseInt()` goes the other way and returns `0` if the text isn't a whole number.
+`n.toString()` converts to text. `Integer.parseInt("42")` goes the other way and returns `0` if the text isn't a whole number.
 
 ## `float`
 
 ```mcfc
 float distance(float x, float z) {
-    return (x * x + z * z).sqrt();
+    return Math.sqrt(x * x + z * z);
 }
 ```
 
-Literals need a digit on both sides of the point: `1.0`, `0.5`, `-2.5`. Floats are 32-bit, which gives about 7 significant digits.
+Literals need a digit on both sides of the point: `1.0`, `0.5`, `-2.5`. A trailing `f` is accepted (`1.5f`, `2f`), and underscores can separate digits (`1_000`, `0xFF`). Floats are 32-bit, which gives about 7 significant digits.
 
-| Method | Returns |
+Numeric functions are called through `Math`. `int` arguments widen to `float` when the function needs a float.
+
+| Call | Returns / notes |
 | --- | --- |
-| `sqrt()`, `abs()` | |
-| `sin()`, `cos()`, `tan()` | Take radians. Entity `yaw()` and `pitch()` are in degrees, so multiply by `0.017453292`. |
-| `floor()`, `ceil()`, `round()`, `trunc()` | Rounded value, still a `float` |
-| `pow(e)`, `min(y)`, `max(y)`, `clamp(low, high)`, `hypot(y)` | `hypot` is `sqrt(x*x + y*y)`. `pow` stops the command when both values are `0.0`. |
-| `toString()` | `"0.5"`, `"-0.25"`, or `"4"` for a whole number |
+| `Math.sqrt(x)`, `Math.pow(x, e)`, `Math.hypot(x, y)` | `float`; `pow` stops the command when both inputs are `0.0`. |
+| `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. |
+| `Math.abs(x)`, `Math.min(x, y)`, `Math.max(x, y)`, `Math.clamp(x, low, high)` | `int` if all inputs are `int`; otherwise `float`. |
+| `Math.floor(x)`, `Math.ceil(x)`, `Math.trunc(x)` | Rounded `float`. |
+| `Math.round(x)` | `int`. |
+| `Math.signum(x)` | Sign as a number. |
+| `x.toString()` | `"0.5"`, `"-0.25"`, or `"4"` for a whole number. Also available on `int`. |
 
 Each float expression, however long, compiles to one `/compute` command. Comparisons cost two.
 
@@ -86,10 +91,14 @@ void main() {
 | --- | --- |
 | `length()` | Number of characters |
 | `substring(start)`, `substring(start, end)` | Substring. `end` is excluded, and a negative index counts from the end. Returns `""` when out of range. |
-| `parseInt()` | The number, or `0` |
-| `toString()` | Also available on `int` and `float` |
+| `equals(other)` | `boolean`, the same comparison as `==` |
+| `contains(part)`, `startsWith(prefix)`, `endsWith(suffix)` | `boolean` |
+| `indexOf(part)` | The first index, or `-1` |
+| `charAt(index)` | One-character `String`; MCFC has no `char` type. |
+| `isEmpty()` | `boolean` |
+| `toString()` | The same string |
 
-For `startsWith`, `endsWith`, `find` and `contains`, see [`std.str`](./std#std-str).
+`Integer.parseInt(s)` returns a number or `0` for invalid text. `String.valueOf(x)`, `Integer.toString(x)` and `Float.toString(x)` convert values to text.
 
 **Limits.** Joining, `toString()` and `$(...)` go through a Minecraft macro, which pastes the value in without escaping it. As a result:
 
@@ -117,11 +126,13 @@ void main() {
 | `xs[i]` | The element at `i` |
 | `get(i)` | `Optional<T>`, empty if there's no element at `i` |
 | `getFirst()`, `getLast()` | The first or last element. An empty list gives the type's empty value, such as `0`. |
+| `set(i, v)` | Replaces the element at `i`. |
+| `isEmpty()` | `boolean` |
 | `contains(v)`, `indexOf(v)` | `boolean`, and the index of `v` or `-1` |
 | `add(v)`, `add(i, v)`, `removeLast()`, `remove(i)`, `clear()` | Change the list. `removeLast` and `remove` return the removed element. |
-| `reverse()`, `sort()` | In place. `sort` works on `List<int>` and `List<float>`, smallest first. |
+| `reverse()`, `sort()` | In place. `sort` works on `List<Integer>` and `List<Float>`, smallest first. |
 
-`List.of()` with no elements needs a declared type: `List<int> xs = List.of();`. Methods that change the list need a variable or element (`teams["red"]`), not a function result.
+`List.of()` with no elements needs a declared type: `List<Integer> xs = List.of();`. Methods that change the list need a variable or element (`teams["red"]`), not a function result.
 
 `contains`, `indexOf` and `reverse` loop over every element. `sort` is a merge sort that does at most 1,000 steps per tick. Small lists finish immediately. Larger ones [pause](./statements#functions-that-pause) the function: 5,000 elements take about 3 seconds.
 
@@ -144,7 +155,10 @@ void main() {
 | --- | --- |
 | `m[key]` | The value for `key` |
 | `get(key)` | `Optional<T>` |
+| `getOrDefault(key, fallback)` | The value for `key`, or `fallback`. |
+| `put(key, value)` | Writes the entry. |
 | `containsKey(key)` | `boolean` |
+| `isEmpty()` | `boolean` |
 | `remove(key)` | Removes `key` |
 | `size()` | Number of keys |
 | `keySet()` | `List<String>`, in storage order. Returns an empty list if any string value in the map contains `'` or `"`. |
@@ -153,7 +167,7 @@ Keys may only use letters, digits and `_`, and can't start with a digit.
 
 ## `Optional<T>` {#optional}
 
-This is what `List.get`, `Map.get` and [`findFirst`](./builtins#selecting-entities) return.
+This is what `List.get`, `Map.get` and [`Selector.findFirst`](./methods#selecting-and-checking-entities) return.
 
 ```mcfc
 void main() {
@@ -168,6 +182,8 @@ void main() {
 | Method | Returns |
 | --- | --- |
 | `isPresent()` | `boolean` |
+| `isEmpty()` | `boolean` |
+| `get()` | The value, or the type's empty value when absent. |
 | `orElse(fallback)` | The value, or `fallback` when empty. `fallback` is always evaluated, even when a value is present. |
 
 `Optional<void>` isn't allowed.
@@ -175,7 +191,7 @@ void main() {
 ## Entities
 
 - `Selector` can match any number of entities. Loop over it with `for`.
-- `Entity` is one entity. Get one with `single(Selector.of(...))`, or from a `for` loop over a `Selector`.
+- `Entity` is one entity. Get one with `Selector.of(...).getFirst()`, or from a `for` loop over a `Selector`.
 - `Player` is an `Entity` that's known to be a player.
 
 Some methods only work on players, and `heal` only works on non-players. The compiler works out which kind a reference is from its selector:
@@ -194,24 +210,24 @@ A block position, created with `Block.of("~ ~ ~")` or read from `entity.position
 
 | Method | Does |
 | --- | --- |
-| `setblock(id \| BlockData)` | Places a block. Placing a `BlockData` also writes its NBT. |
+| `setBlock(id \| BlockData)` | Places a block. Placing a `BlockData` also writes its NBT. |
 | `fill(to: Block, id \| BlockData)` | Fills the box between two positions (block id and states only) |
 | `is(id) -> boolean` | Tests the block at this position |
 | `summon(id)`, `summon(id, Nbt)`, `summon(EntityData) -> Entity` | Summons at this position |
 | `spawnItem(ItemStack) -> Entity` | Drops an item stack |
-| `particle(name)`, `particle(name, count)`, `particle(name, count, viewers)` | |
+| `spawnParticle(name)`, `spawnParticle(name, count)`, `spawnParticle(name, count, viewers)` | Spawns particles. |
 | `lootInsert(table)`, `lootSpawn(table)` | Inserts loot into the container, or spawns it in the world |
 | `debugMarker(label)`, `debugMarker(label, block)` | Places a visible marker for debugging |
 | `nbt.*` | Block-entity NBT |
-| `light() -> int` | Light level 0 to 15 |
-| `biome() -> String`, `inBiome(id) -> boolean` | `inBiome` accepts a `#tag` |
-| `environment(attribute) -> float` | A numeric environment attribute, such as `"gameplay/sky_light_level"`. The id must be a literal. |
+| `getLightLevel() -> int` | Light level 0 to 15 |
+| `getBiome() -> String`, `inBiome(id) -> boolean` | `inBiome` accepts a `#tag` |
+| `getEnvironment(attribute) -> float` | A numeric environment attribute, such as `"gameplay/sky_light_level"`. The id must be a literal. |
 
 ```mcfc
 void markGround() {
     var below = Block.of("~ ~-1 ~");
-    if (below.is("minecraft:grass_block") && below.light() < 8) {
-        below.setblock("minecraft:glowstone");
+    if (below.is("minecraft:grass_block") && below.getLightLevel() < 8) {
+        below.setBlock("minecraft:glowstone");
     }
 }
 ```
@@ -233,11 +249,11 @@ Environment attributes: `visual/cloud_height`, `visual/fog_start_distance`, `vis
 ```mcfc
 void equip(Player player) {
     var sword = new ItemStack("minecraft:diamond_sword");
-    sword.name = "Quest Blade";
+    sword.setName("Quest Blade");
     player.hotbar[0] = sword;
     player.head.item = "minecraft:golden_helmet";
     if (player.inventory[3].exists) {
-        player.tellraw(player.inventory[3].id);
+        player.sendMessage(player.inventory[3].id);
     }
     player.inventory[4].clear();
 }
@@ -250,14 +266,14 @@ Assign an `ItemStack` to an inventory or hotbar slot to set it. The slot index c
 ```mcfc
 void show() {
     var bb = new BossBar("mypack:progress", "Progress");
-    bb.max = 10;
-    bb.value = 5;
-    bb.players = Selector.of("@a");
-    bb.visible = true;
+    bb.setMax(10);
+    bb.setValue(5);
+    bb.setPlayers(Selector.of("@a"));
+    bb.setVisible(true);
 }
 ```
 
-The fields are `name` (a `String` or `Component`), `value`, `max`, `visible` and `players`. `bb.remove()` deletes the bossbar. `new BossBar(id, ...)` with an existing id gives you that bossbar.
+Use `getName()`/`setName(...)`, `getValue()`/`setValue(...)`, `getMax()`/`setMax(...)`, `getVisible()`/`setVisible(...)` and `getPlayers()`/`setPlayers(...)`. `bb.remove()` deletes the bossbar. `new BossBar(id, ...)` with an existing id gives you that bossbar.
 
 ## `Nbt`
 

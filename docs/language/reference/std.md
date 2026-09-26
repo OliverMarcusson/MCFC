@@ -31,7 +31,7 @@ Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 
 ## `std.list`
 
-These are [generic](./statements#generic-functions), so they work on `List<int>` and `List<float>`.
+These are [generic](./statements#generic-functions), so they work on `List<Integer>` and `List<Float>`.
 
 | Function | Returns |
 | --- | --- |
@@ -50,7 +50,7 @@ To sort, use the built-in [`xs.sort()`](./types#list) method.
 | `int find(String s, String needle)` | The index of the first `needle` in `s`, or `-1`. |
 | `boolean contains(String s, String needle)` | `true` when `needle` appears in `s`. |
 
-These compare substrings of `s`, so `find` and `contains` cost a few commands per character. They are fine for names, ids, and short messages. Unlike joining, they never paste the text into a command, so `"` and `\` are safe.
+The `String` methods `startsWith`, `endsWith`, `indexOf` and `contains` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so `find` and `contains` cost a few commands per character. Unlike joining, they never paste the text into a command, so `"` and `\` are safe.
 
 ## Under The Hood
 

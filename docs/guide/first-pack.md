@@ -38,11 +38,11 @@ Replace `src/main.mcf` with:
 
 ```mcfc
 void main() {
-    Selector.of("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").sendMessage("Coins pack loaded");
 }
 ```
 
-`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `Selector.of("@a")` matches every online player, and `tellraw` sends them a chat message.
+`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `Selector.of("@a")` matches every online player, and `sendMessage` sends them a chat message.
 
 Run `/reload`. You should see `Coins pack loaded` in chat.
 
@@ -53,14 +53,14 @@ Run `/reload`. You should see `Coins pack loaded` in chat.
 int coins;
 
 void main() {
-    Selector.of("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").sendMessage("Coins pack loaded");
 }
 
 @Every(ticks = 20)
 void payday() {
     for (Player player : Selector.of("@a")) {
         player.state.coins = player.state.coins + 1;
-        player.actionbar("Coins: $(player.state.coins)");
+        player.sendActionBar("Coins: $(player.state.coins)");
     }
 }
 ```
@@ -81,12 +81,12 @@ The payout will be reused in step 7, so move it into a function:
 int coins;
 
 void main() {
-    Selector.of("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").sendMessage("Coins pack loaded");
 }
 
 void pay(Player player, int amount) {
     player.state.coins = player.state.coins + amount;
-    player.actionbar("Coins: $(player.state.coins)");
+    player.sendActionBar("Coins: $(player.state.coins)");
 }
 
 @Every(ticks = 20)
@@ -109,16 +109,16 @@ int coins;
 
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player;
-    player.tellraw("You earn 1 coin per second. Type /trigger buy to spend 10.");
+    Player player = event.player();
+    player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
 }
 
 @EventHandler
 void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player;
+    Player player = event.player();
     var lost = player.state.coins / 2;
     player.state.coins = player.state.coins - lost;
-    player.tellraw("You dropped $(lost) coins.");
+    player.sendMessage("You dropped $(lost) coins.");
 }
 ```
 
@@ -135,7 +135,7 @@ int coins;
 @Command("buy")
 void buy(Player player) {
     if (player.state.coins < 10) {
-        player.tellraw("You need 10 coins.");
+        player.sendMessage("You need 10 coins.");
         return;
     }
     player.state.coins = player.state.coins - 10;
@@ -155,7 +155,7 @@ Minecraft commands can't pause. MCFC compiles `sleep` into a scheduled continuat
 void remind(Player player) {
     async {
         sleep(3);
-        player.tellraw("Spend wisely.");
+        player.sendMessage("Spend wisely.");
     }
 }
 ```
@@ -169,12 +169,12 @@ Call `remind(player);` at the end of `buy`. `async { ... }` starts its body and 
 int coins;
 
 void main() {
-    Selector.of("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").sendMessage("Coins pack loaded");
 }
 
 void pay(Player player, int amount) {
     player.state.coins = player.state.coins + amount;
-    player.actionbar("Coins: $(player.state.coins)");
+    player.sendActionBar("Coins: $(player.state.coins)");
 }
 
 @Every(ticks = 20)
@@ -186,22 +186,22 @@ void payday() {
 
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player;
-    player.tellraw("You earn 1 coin per second. Type /trigger buy to spend 10.");
+    Player player = event.player();
+    player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
 }
 
 @EventHandler
 void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player;
+    Player player = event.player();
     var lost = player.state.coins / 2;
     player.state.coins = player.state.coins - lost;
-    player.tellraw("You dropped $(lost) coins.");
+    player.sendMessage("You dropped $(lost) coins.");
 }
 
 @Command("buy")
 void buy(Player player) {
     if (player.state.coins < 10) {
-        player.tellraw("You need 10 coins.");
+        player.sendMessage("You need 10 coins.");
         return;
     }
     player.state.coins = player.state.coins - 10;
@@ -212,7 +212,7 @@ void buy(Player player) {
 void remind(Player player) {
     async {
         sleep(3);
-        player.tellraw("Spend wisely.");
+        player.sendMessage("Spend wisely.");
     }
 }
 ```

@@ -13,7 +13,7 @@ void main() {
     var items = List.of(new Item("apple"));
     var index = 0;
     var found = lookup(items, index);
-    var name = found.orElse(new Item("missing")).name;
+    var name = found.orElse(new Item("missing")).name();
     var exists = found.isPresent();
     var counts = Map.of("apple", 2);
     var key = "banana";
@@ -48,7 +48,7 @@ void main() {
 #[test]
 fn optional_values_can_be_nested_in_collections() {
     let source = r#"
-Optional<Optional<int>> nested(List<Optional<int>> values) {
+Optional<Optional<Integer>> nested(List<Optional<Integer>> values) {
     return values.get(0);
 }
 
@@ -68,9 +68,9 @@ void main() {
 fn safe_entity_lookup_returns_optional_reference() {
     let source = r#"
 void main() {
-    var maybe = findFirst(Selector.of("@e[type=minecraft:pig]"));
+    var maybe = Selector.of("@e[type=minecraft:pig]").findFirst();
     var present = maybe.isPresent();
-    var pig = maybe.orElse(single(Selector.of("@s")));
+    var pig = maybe.orElse(Selector.of("@s").getFirst());
     if (present) {
         pig.addTag("found");
     }
@@ -95,7 +95,7 @@ fn safe_lookup_rejects_wrong_key_and_fallback_types() {
     for source in [
         "void main() {\n    var xs = List.of(1);\n    var value = xs.get(\"x\");\n}\n",
         "void main() {\n    var xs = List.of(1);\n    var value = xs.get(0).orElse(\"x\");\n}\n",
-        "Optional<Entity> first(Selector xs) {\n    return findFirst(xs);\n}\n",
+        "Optional<Entity> first(Selector xs) {\n    return xs.findFirst();\n}\n",
     ] {
         assert!(compile_source(source, &CompileOptions::default()).is_err());
     }

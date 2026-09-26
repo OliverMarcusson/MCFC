@@ -12,18 +12,18 @@ A function annotated with `@EventHandler` runs when something happens in game. I
 | `PlayerJoinEvent` | Once per player, the first time the pack sees them. Tracked with the tag `mcfc_join_<namespace>`, so it doesn't run again on later logins. |
 | `PlayerDeathEvent` | Each time a player dies, detected through a `deathCount` objective. |
 
-Vanilla handlers run as the affected player, which is `event.player`:
+Vanilla handlers run as the affected player, which is `event.player()`:
 
 ```mcfc
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player;
-    player.tellraw("Welcome!");
+    Player player = event.player();
+    player.sendMessage("Welcome!");
 }
 
 @EventHandler
 void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player;
+    Player player = event.player();
     player.state.deaths = player.state.deaths + 1;
 }
 ```
@@ -37,18 +37,18 @@ These take their payload type as the parameter, the same way:
 ```mcfc
 @EventHandler
 void onChat(ChatEvent event) {
-    if (event.message == "spark") {
+    if (event.message() == "spark") {
         event.cancel();
-        event.player.tellraw("Spark accepted");
+        event.player().sendMessage("Spark accepted");
     }
 }
 ```
 
-Every payload has `player: Player` and `cancelled: boolean`. On events marked cancellable, `event.cancel()` stops the action from happening. Calling it on any other event is a compile error.
+Every payload has `player(): Player` and `cancelled(): boolean`. Read payload values through accessor calls such as `event.message()`. On events marked cancellable, `event.cancel()` stops the action from happening. Calling it on any other event is a compile error.
 
 ### Typed payloads
 
-| Event type | Other fields | Cancellable |
+| Event type | Other components | Cancellable |
 | --- | --- | --- |
 | `ChatEvent` | `message: String` | Yes |
 | `BlockBreakEvent` | `x, y, z: int` | Yes |
@@ -70,7 +70,7 @@ Every payload has `player: Player` and `cancelled: boolean`. On events marked ca
 
 ### Generic payloads
 
-These payloads have `playerName: String`, `source: String` and `payload: String` besides `player` and `cancelled`. `payload` is the raw event data as text.
+These payloads have `playerName(): String`, `source(): String` and `payload(): String` besides `player()` and `cancelled()`. `payload()` is the raw event data as text.
 
 | Cancellable | Events |
 | --- | --- |
@@ -80,7 +80,7 @@ These payloads have `playerName: String`, `source: String` and `payload: String`
 ```mcfc
 @EventHandler
 void onPlayerDamage(PlayerDamageEvent event) {
-    event.player.tellraw("Damage event: $(event.payload)");
+    event.player().sendMessage("Damage event: $(event.payload())");
 }
 ```
 

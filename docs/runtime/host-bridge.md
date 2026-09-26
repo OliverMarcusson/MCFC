@@ -7,8 +7,8 @@ Host calls use `module.fn(...)` syntax and suspend like `sleep`.
 ```mcfc
 void onJoin(Player player) {
     var r = http.get("https://api.example.com/motd");
-    if (r.ok) {
-        player.tellraw(r.body);
+    if (r.ok()) {
+        player.sendMessage(r.body());
     }
 }
 ```

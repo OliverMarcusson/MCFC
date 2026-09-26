@@ -2121,6 +2121,35 @@ impl Backend {
             IrExprKind::Single(expr) => {
                 self.compile_expr_into_slot(function, depth, expr, target, lines);
             }
+            IrExprKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                let condition_temp = self.new_temp();
+                let condition_slot =
+                    local_slot(depth, &function.name, &condition_temp, &Type::Bool);
+                self.compile_expr_into_slot(function, depth, condition, &condition_slot, lines);
+                for (branch, matches, label) in
+                    [(then_expr, 1, "cond_then"), (else_expr, 0, "cond_else")]
+                {
+                    let (path, name) = self.new_block(function, depth, label);
+                    let mut branch_lines = Vec::new();
+                    self.compile_expr_into_slot(function, depth, branch, target, &mut branch_lines);
+                    self.files.insert(path, branch_lines.join("\n") + "\n");
+                    lines.push(format!(
+                        "execute if score {} mcfc matches {matches} run function {}:{}",
+                        condition_slot.numeric_name(),
+                        self.namespace,
+                        name
+                    ));
+                }
+            }
+            IrExprKind::Bind { name, value, body } => {
+                let slot = local_slot(depth, &function.name, name, &value.ty);
+                self.compile_expr_into_slot(function, depth, value, &slot, lines);
+                self.compile_expr_into_slot(function, depth, body, target, lines);
+            }
             IrExprKind::At { anchor, value } => {
                 let anchor_name = self.new_temp();
                 let value_name = self.new_temp();
@@ -3495,6 +3524,35 @@ impl Backend {
                     "execute store result score {} mcfc run data get storage {}:runtime {}.present 1",
                     target.numeric_name(), self.namespace, source.storage_path()
                 ));
+                return;
+            }
+            "get" if matches!(receiver.ty, Type::Optional(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                let Type::Optional(value_ty) = &receiver.ty else {
+                    unreachable!()
+                };
+                // An empty Optional gives the type's empty value, like `getFirst()` on an empty list.
+                if matches!(value_ty.as_ref(), Type::Int | Type::Bool | Type::Enum(_)) {
+                    lines.push(format!(
+                        "execute store result score {} mcfc run data get storage {}:runtime {}.value 1",
+                        target.numeric_name(),
+                        self.namespace,
+                        source.storage_path()
+                    ));
+                } else {
+                    lines.push(format!(
+                        "data remove storage {}:runtime {}",
+                        self.namespace,
+                        target.storage_path()
+                    ));
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set from storage {}:runtime {}.value",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        source.storage_path()
+                    ));
+                }
                 return;
             }
             "orElse" if matches!(receiver.ty, Type::Optional(_)) => {
@@ -8949,9 +9007,23 @@ fn calls_in_expr<'a>(expr: &'a IrExpr, set: &BTreeSet<String>, out: &mut Vec<&'a
         IrExprKind::InterpolatedString { placeholders, .. } => placeholders
             .iter()
             .for_each(|p| calls_in_expr(&p.expr, set, out)),
-        IrExprKind::Binary { left, right, .. } => {
+        IrExprKind::Binary { left, right, .. }
+        | IrExprKind::Bind {
+            value: left,
+            body: right,
+            ..
+        } => {
             calls_in_expr(left, set, out);
             calls_in_expr(right, set, out);
+        }
+        IrExprKind::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            calls_in_expr(condition, set, out);
+            calls_in_expr(then_expr, set, out);
+            calls_in_expr(else_expr, set, out);
         }
         IrExprKind::At { anchor, value } | IrExprKind::As { anchor, value } => {
             calls_in_expr(anchor, set, out);
@@ -9401,7 +9473,9 @@ fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) 
         | crate::ast::ExprKind::ArrayLiteral(_)
         | crate::ast::ExprKind::DictLiteral(_)
         | crate::ast::ExprKind::StructLiteral { .. }
-        | crate::ast::ExprKind::New { .. } => None,
+        | crate::ast::ExprKind::New { .. }
+        | crate::ast::ExprKind::Conditional { .. }
+        | crate::ast::ExprKind::Switch { .. } => None,
     }
 }
 
@@ -9771,6 +9845,19 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, Opti
             collect_objectives_from_expr(left, names);
             collect_objectives_from_expr(right, names);
         }
+        IrExprKind::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_objectives_from_expr(condition, names);
+            collect_objectives_from_expr(then_expr, names);
+            collect_objectives_from_expr(else_expr, names);
+        }
+        IrExprKind::Bind { value, body, .. } => {
+            collect_objectives_from_expr(value, names);
+            collect_objectives_from_expr(body, names);
+        }
         IrExprKind::Call { args, .. } => {
             for arg in args {
                 collect_objectives_from_expr(arg, names);
@@ -9933,7 +10020,17 @@ pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
             IrExprKind::Call { args, .. } | IrExprKind::ArrayLiteral(args) => {
                 args.iter().any(contains_expr)
             }
-            IrExprKind::Binary { left, right, .. } => contains_expr(left) || contains_expr(right),
+            IrExprKind::Binary { left, right, .. }
+            | IrExprKind::Bind {
+                value: left,
+                body: right,
+                ..
+            } => contains_expr(left) || contains_expr(right),
+            IrExprKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => contains_expr(condition) || contains_expr(then_expr) || contains_expr(else_expr),
             IrExprKind::Unary { expr, .. }
             | IrExprKind::Single(expr)
             | IrExprKind::Exists(expr)

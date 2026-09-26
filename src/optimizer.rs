@@ -231,6 +231,27 @@ fn fold_expr(expr: IrExpr) -> IrExpr {
             kind,
             expr: Box::new(fold_expr(*expr)),
         },
+        IrExprKind::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            let condition = fold_expr(*condition);
+            match condition.kind {
+                IrExprKind::Bool(true) => return fold_expr(*then_expr),
+                IrExprKind::Bool(false) => return fold_expr(*else_expr),
+                _ => IrExprKind::Conditional {
+                    condition: Box::new(condition),
+                    then_expr: Box::new(fold_expr(*then_expr)),
+                    else_expr: Box::new(fold_expr(*else_expr)),
+                },
+            }
+        }
+        IrExprKind::Bind { name, value, body } => IrExprKind::Bind {
+            name,
+            value: Box::new(fold_expr(*value)),
+            body: Box::new(fold_expr(*body)),
+        },
         IrExprKind::InterpolatedString {
             template,
             placeholders,

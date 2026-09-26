@@ -784,6 +784,29 @@ impl Resolver {
                 }
             }
             ExprKind::Path(path) => self.walk_path(scope, path, diagnostics),
+            ExprKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.walk_expr(scope, condition, diagnostics);
+                self.walk_expr(scope, then_expr, diagnostics);
+                self.walk_expr(scope, else_expr, diagnostics);
+            }
+            ExprKind::Switch {
+                value,
+                arms,
+                default,
+            } => {
+                self.walk_expr(scope, value, diagnostics);
+                for (pattern, result) in arms {
+                    self.walk_expr(scope, pattern, diagnostics);
+                    self.walk_expr(scope, result, diagnostics);
+                }
+                if let Some(default) = default {
+                    self.walk_expr(scope, default, diagnostics);
+                }
+            }
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)

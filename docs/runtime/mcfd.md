@@ -32,7 +32,7 @@ In game, `mcfd.ping()` checks the whole round trip:
 ```mcfc
 void health() {
     var r = mcfd.ping();
-    if (r.ok) {
+    if (r.ok()) {
         debug("mcfd connected");
     } else {
         debug("mcfd not responding");

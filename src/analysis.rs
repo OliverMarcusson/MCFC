@@ -324,12 +324,12 @@ void launch(int level) {
             r#"@PlayerState("Coins") int coins;
 @EventHandler
 void onChat(ChatEvent event) {
-    event.player.tellraw(event.message);
+    event.player().sendMessage(event.message());
 }
 @Command("status")
 void status() {
-    var player = single(Selector.of("@s"));
-    player.tellraw("ok");
+    var player = Selector.of("@s").getFirst();
+    player.sendMessage("ok");
 }
 "#,
         );

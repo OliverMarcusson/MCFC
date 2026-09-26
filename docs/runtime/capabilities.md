@@ -40,9 +40,9 @@ JSON paths are dot-separated, such as `quote.author.name`. The JSON helpers set 
 ```mcfc
 void topPlayer(String team) {
     var r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", List.of(team));
-    if (r.ok) {
-        var name = (String) r.rows[0].name;
-        Selector.of("@a").tellraw("Top player: $(name)");
+    if (r.ok()) {
+        var name = (String) r.rows()[0].name;
+        Selector.of("@a").sendMessage("Top player: $(name)");
     }
 }
 ```

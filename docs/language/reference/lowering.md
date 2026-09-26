@@ -73,7 +73,7 @@ MCFC uses scoreboard guard slots to model branches, loops, `break`, `continue`, 
 
 ## Builders And NBT
 
-Builder values are assembled in command storage. Methods such as `summon(EntityData)` and `setblock(BlockData)` render those stored payloads into Minecraft commands and `data modify` operations.
+Builder values are assembled in command storage. Calls such as `summon(EntityData)` and `Block.setBlock(BlockData)` render those stored payloads into Minecraft commands and `data modify` operations.
 
 When a builder is used where `Nbt` is expected, MCFC emits the equivalent of reading the builder's `.asNbt()` payload.
 

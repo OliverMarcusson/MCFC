@@ -13,7 +13,7 @@ void tick() {
 
 @Every(ticks = 1200)
 void announce() {
-    Selector.of("@a").tellraw("One minute has passed");
+    Selector.of("@a").sendMessage("One minute has passed");
 }
 ```
 
@@ -41,7 +41,7 @@ int last_dash;
 void dash(Player player) {
     var now = gameTime();
     if (now - player.state.last_dash < 100) {
-        player.actionbar("Dash is on cooldown");
+        player.sendActionBar("Dash is on cooldown");
         return;
     }
     player.state.last_dash = now;
@@ -57,10 +57,10 @@ void dash(Player player) {
 void startRound() {
     async {
         for (int i = 0; i < 5; i++) {
-            Selector.of("@a").title("$(5 - i)");
+            Selector.of("@a").sendTitle("$(5 - i)");
             sleep(1);
         }
-        Selector.of("@a").title("Go!");
+        Selector.of("@a").sendTitle("Go!");
     }
 }
 ```
@@ -72,7 +72,7 @@ void startRound() {
 ```mcfc
 void giveBlade(Player player) {
     var sword = new ItemStack("minecraft:netherite_sword");
-    sword.name = "Blade of Dawn";
+    sword.setName("Blade of Dawn");
     sword.nbt.CustomModelData = 7;
     player.give(sword);
 }
@@ -85,10 +85,10 @@ See [Builders](/language/reference/builders#item-builders) for the item fields.
 ```mcfc
 void spawnGuard() {
     var guard = new EntityData("minecraft:iron_golem");
-    guard.name = "Gate Guard";
-    guard.nameVisible = true;
-    guard.noAi = true;
-    guard.tags = List.of("guard");
+    guard.setName("Gate Guard");
+    guard.setNameVisible(true);
+    guard.setNoAi(true);
+    guard.setTags(List.of("guard"));
     var spawned = Block.of("0 64 0").summon(guard);
     spawned.state.post = "north gate";
 }
@@ -102,14 +102,14 @@ String post;
 ```mcfc
 void runTimer() {
     var bar = new BossBar("mypack:timer", "Time left");
-    bar.max = 30;
-    bar.value = 30;
-    bar.players = Selector.of("@a");
-    bar.visible = true;
+    bar.setMax(30);
+    bar.setValue(30);
+    bar.setPlayers(Selector.of("@a"));
+    bar.setVisible(true);
     async {
         for (int i = 0; i < 30; i++) {
             sleep(1);
-            bar.value = 29 - i;
+            bar.setValue(29 - i);
         }
         bar.remove();
     }
@@ -121,7 +121,7 @@ void runTimer() {
 ```mcfc
 @Command("accept")
 void accept(Player player) {
-    player.tellraw("Accepted");
+    player.sendMessage("Accepted");
 }
 
 void offer(Player player) {
@@ -129,7 +129,7 @@ void offer(Player player) {
     msg.color = "green";
     msg.click_event.action = "run_command";
     msg.click_event.command = "/trigger accept";
-    player.tellraw(msg);
+    player.sendMessage(msg);
 }
 ```
 
@@ -150,7 +150,7 @@ void main() {
 ```mcfc
 // src/shop.mcf
 public void setup() {
-    Selector.of("@a").tellraw("Shop ready");
+    Selector.of("@a").sendMessage("Shop ready");
 }
 ```
 
@@ -176,15 +176,15 @@ void motd(Player player) {
 
 void greet(Player player) {
     var r = http.get("https://api.example.com/motd");
-    if (r.ok) {
-        player.tellraw(r.body);
+    if (r.ok()) {
+        player.sendMessage(r.body());
     } else {
-        player.tellraw("No message today");
+        player.sendMessage("No message today");
     }
 }
 ```
 
-If `mcfd` isn't running, the call times out and `r.ok` is `false`. See [Capabilities](/runtime/capabilities).
+If `mcfd` isn't running, the call times out and `r.ok()` is `false`. See [Capabilities](/runtime/capabilities).
 
 ## Cancel chat or block breaking <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." />
 
@@ -193,16 +193,16 @@ This needs the [agent](/runtime/mcfd-agent) (`[helper.agent] enabled = true`):
 ```mcfc
 @EventHandler
 void onChat(ChatEvent event) {
-    if (event.message == "spoiler") {
+    if (event.message() == "spoiler") {
         event.cancel();
     }
 }
 
 @EventHandler
 void onBlockBreak(BlockBreakEvent event) {
-    if (event.player.hasTag("spawn_protected")) {
+    if (event.player().hasTag("spawn_protected")) {
         event.cancel();
-        event.player.actionbar("Spawn is protected");
+        event.player().sendActionBar("Spawn is protected");
     }
 }
 ```
@@ -211,8 +211,8 @@ void onBlockBreak(BlockBreakEvent event) {
 
 ```mcfc
 void main() {
-    var player = single(Selector.of("@p"));
-    debug("health=$(player.health()) food=$(player.food())");
+    var player = Selector.of("@p").getFirst();
+    debug("health=$(player.getHealth()) food=$(player.getFoodLevel())");
 }
 ```
 

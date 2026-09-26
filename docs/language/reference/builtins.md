@@ -7,15 +7,14 @@ These functions are always in scope. Library functions such as `clamp` or `start
 | Function | Returns | Notes |
 | --- | --- | --- |
 | `Selector.of(s: String)` | `Selector` | A target selector or player name, such as `"@a[tag=red]"`. |
-| `single(set: Selector)` | `Entity` | Narrows a selection to one entity. The selector should match one entity, like `@p`, `@s` or `limit=1`. |
-| `findFirst(set)` | `Optional<Entity>` | Empty when nothing matches. The argument has to be a literal `Selector.of(...)`, optionally wrapped in `as` or `at`. The compiler adds `limit=1` itself. |
-| `exists(e: Entity)` | `boolean` | Whether the entity is still there. |
+
+Use `selector.getFirst()` or `selector.findFirst()` to select one entity, and `entity.isValid()` to check a reference. See [Entities and Players](./methods#selecting-and-checking-entities).
 
 ```mcfc
 void tick() {
-    var pig = findFirst(Selector.of("@e[type=minecraft:pig]"));
+    var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
     if (pig.isPresent()) {
-        pig.orElse(single(Selector.of("@s"))).addTag("found");
+        pig.orElse(Selector.of("@s").getFirst()).addTag("found");
     }
 }
 ```
@@ -26,8 +25,8 @@ void tick() {
 
 ```mcfc
 void tick() {
-    var player = single(Selector.of("@p"));
-    var nearest_pig = single(at(player, Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")));
+    var player = Selector.of("@p").getFirst();
+    var nearest_pig = at(player, Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")).getFirst();
     nearest_pig.addTag("nearest");
 }
 ```
@@ -64,7 +63,7 @@ Under the hood, the rest of the function becomes a separate generated function t
 | `random()` | `0` to `2147483647` |
 | `random(max)` | `0` to `max`, including `max` |
 | `random(min, max)` | `min` to `max`, including both |
-| `randomWeighted(weights: List<int>)` | An index into `weights`, where each index's chance is proportional to its weight. `weights` must be a literal such as `List.of(3, 1)`. |
+| `randomWeighted(weights: List<Integer>)` | An index into `weights`, where each index's chance is proportional to its weight. `weights` must be a literal such as `List.of(3, 1)`. |
 | `randomBinomial(n: int, p: float)` | How many of `n` tries succeed, when each succeeds with chance `p`. |
 
 For randomness from the host machine, see [`rand.int`](/runtime/capabilities#calls).

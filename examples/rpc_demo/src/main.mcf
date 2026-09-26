@@ -1,9 +1,9 @@
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(Selector.of("@p"));
-    if (r.ok) {
-        p.tellraw(r.body);
+    var p = Selector.of("@p").getFirst();
+    if (r.ok()) {
+        p.sendMessage(r.body());
     } else {
-        p.tellraw("request failed");
+        p.sendMessage("request failed");
     }
 }

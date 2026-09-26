@@ -608,24 +608,24 @@ void main() {
     fn compiles_ui_audio_particle_and_world_builtins() {
         let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
     var pos = Block.of("~ ~ ~");
-    pig.tellraw("hello @s");
-    pig.title("Danger");
-    pig.actionbar("Run");
+    pig.sendMessage("hello @s");
+    pig.sendTitle("Danger");
+    pig.sendActionBar("Run");
     var bb = new BossBar("mcfc:test", "Boss @s");
-    bb.value = 10;
-    bb.max = 20;
-    bb.visible = true;
-    bb.players = pig;
-    bb.name = "Still here";
-    pig.playsound("minecraft:entity.experience_orb.pickup", "master");
-    pig.stopsound("master", "minecraft:entity.experience_orb.pickup");
-    pos.particle("minecraft:flame");
-    pos.particle("minecraft:smoke", 4, pig);
+    bb.setValue(10);
+    bb.setMax(20);
+    bb.setVisible(true);
+    bb.setPlayers(pig);
+    bb.setName("Still here");
+    pig.playSound("minecraft:entity.experience_orb.pickup", "master");
+    pig.stopSound("master", "minecraft:entity.experience_orb.pickup");
+    pos.spawnParticle("minecraft:flame");
+    pos.spawnParticle("minecraft:smoke", 4, pig);
     pos.lootInsert("minecraft:chests/simple_dungeon");
     pos.lootSpawn("minecraft:chests/simple_dungeon");
-    pos.setblock("minecraft:stone");
+    pos.setBlock("minecraft:stone");
     pos.fill(Block.of("~1 ~1 ~1"), "minecraft:glass");
     return;
 }
@@ -662,14 +662,14 @@ void main() {
         let source = r#"
 void main() {
     var pig = new EntityData("minecraft:pig");
-    pig.name = "Builder Pig";
-    pig.noAi = true;
+    pig.setName("Builder Pig");
+    pig.setNoAi(true);
     var spawned = summon(pig);
     var chest = new BlockData("minecraft:chest");
     chest.states.facing = "north";
-    chest.name = "Loot";
+    chest.setName("Loot");
     var pos = Block.of("~ ~ ~");
-    pos.setblock(chest);
+    pos.setBlock(chest);
     pos.fill(Block.of("~1 ~1 ~1"), chest);
     return;
 }
@@ -730,8 +730,8 @@ void main() {
         let source = r#"
 void main() {
     var demo_title = "MCFC Demo $(random(100))";
-    var player = single(Selector.of("@p"));
-    player.tellraw(demo_title);
+    var player = Selector.of("@p").getFirst();
+    player.sendMessage(demo_title);
     return;
 }
 "#;
@@ -758,8 +758,8 @@ void main() {
 void main() {
     var q = \"hi\";
     var line = \"\u{201c}$(q)\u{201d} \u{2014} done\";
-    var player = single(Selector.of(\"@p\"));
-    player.tellraw(line);
+    var player = Selector.of(\"@p\").getFirst();
+    player.sendMessage(line);
     return;
 }
 ";
@@ -791,8 +791,8 @@ void main() {
 void main() {
     var who = \"world\";
     var line = new Component(\"hi $(who)!\");
-    var player = single(Selector.of(\"@p\"));
-    player.tellraw(line);
+    var player = Selector.of(\"@p\").getFirst();
+    player.sendMessage(line);
     return;
 }
 ";
@@ -821,7 +821,7 @@ void main() {
     fn compiles_sleep_continuations() {
         let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var flag = true;
 
     sleep(1);
@@ -876,21 +876,21 @@ void main() {
     fn compiles_async_blocks_and_entity_position() {
         let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
     var count = 5;
-    bb.value = count;
-    bb.max = 10;
-    bb.visible = true;
-    bb.players = player;
-    player.position.particle("minecraft:happy_villager", 20, player);
+    bb.setValue(count);
+    bb.setMax(10);
+    bb.setVisible(true);
+    bb.setPlayers(player);
+    player.position.spawnParticle("minecraft:happy_villager", 20, player);
     async {
         sleep(5);
         bb.remove();
-        player.position.setblock("minecraft:gold_block");
+        player.position.setBlock("minecraft:gold_block");
     }
     count = 7;
-    player.tellraw("caller continues");
+    player.sendMessage("caller continues");
     return;
 }
 "#;
@@ -938,7 +938,7 @@ void main() {
         let legacy_error = compile_source(
             r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     tellraw(player, "old");
 }
 "#,
@@ -946,7 +946,7 @@ void main() {
         )
         .unwrap_err()
         .to_string();
-        assert!(legacy_error.contains("target.tellraw(message)"));
+        assert!(legacy_error.contains("target.sendMessage(message)"));
 
         let book_error = compile_source(
             r#"
@@ -1003,7 +1003,7 @@ void main() {
     fn compiles_debug_builtins() {
         let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
     var pos = Block.of("~ ~1 ~");
     debug("checkpoint");
     pos.debugMarker("marker");
@@ -1035,7 +1035,7 @@ void main() {
         let player_error = compile_source(
             r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     player.heal(1);
 }
 "#,
@@ -1048,7 +1048,7 @@ void main() {
         let ambiguous_error = compile_source(
             r#"
 void main() {
-    var target = single(Selector.of("@e"));
+    var target = Selector.of("@e").getFirst();
     target.heal(1);
 }
 "#,
@@ -1065,13 +1065,13 @@ void main() {
             r#"
 @Command("buy")
 void buy() {
-    var player = single(Selector.of("@s"));
+    var player = Selector.of("@s").getFirst();
     async {
         sleep(3);
-        player.tellraw("later");
+        player.sendMessage("later");
     }
     sleepTicks(5);
-    player.tellraw("done");
+    player.sendMessage("done");
 }
 
 @EventHandler
@@ -1119,7 +1119,7 @@ void pulse() {
 
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player;
+    Player player = event.player();
     player.state.coins = player.state.coins + 1;
 }
 
@@ -1213,7 +1213,7 @@ void abcdefghijTwo() {
             r#"
 @EventHandler
 void onChat(ChatEvent event) {
-    event.player.tellraw(event.message);
+    event.player().sendMessage(event.message());
 }
 "#,
             &options,
@@ -1288,7 +1288,7 @@ void onChat(ChatEvent event) {
     #[test]
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
-            "@EventHandler\nvoid onChat(ChatEvent event) {\n    debug(event.message);\n}\n",
+            "@EventHandler\nvoid onChat(ChatEvent event) {\n    debug(event.message());\n}\n",
             &lowering(),
         )
         .unwrap_err()
@@ -1314,7 +1314,7 @@ void onChat(ChatEvent event) {
             r#"
 @EventHandler
 void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
-    event.player.tellraw(event.face);
+    event.player().sendMessage(event.face());
 }
 "#,
             &options,
@@ -1359,15 +1359,15 @@ void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
         let source = r#"
 void main() {
     var spot = Block.of("~ ~ ~");
-    var light = spot.light();
-    var biome = spot.biome();
+    var light = spot.getLightLevel();
+    var biome = spot.getBiome();
     var plains = spot.inBiome("plains");
-    var sky = spot.environment("gameplay/sky_light_level");
+    var sky = spot.getEnvironment("gameplay/sky_light_level");
     var rule = gamerule("max_entity_cramming");
     var pick = randomWeighted(List.of(3, 1));
     var hits = randomBinomial(10, 0.5);
-    var player = single(Selector.of("@p"));
-    var dx = player.lookX();
+    var player = Selector.of("@p").getFirst();
+    var dx = player.getLookX();
     var d = Map.of("wood", 2);
     var ks = d.keySet();
     var n = d.size();
@@ -1401,7 +1401,7 @@ void main() {
 void main() {
     var spot = Block.of("~ ~ ~");
     var a = spot.inBiome("moon");
-    var b = spot.environment("visual/fog_color");
+    var b = spot.getEnvironment("visual/fog_color");
     var c = gamerule("no_such_rule");
     var d = randomWeighted(List.of(1, -2));
     var e = randomBinomial(3, 4);
@@ -1416,6 +1416,6 @@ void main() {
         assert!(error.contains("unknown numeric environment attribute 'visual/fog_color'"));
         assert!(error.contains("unknown game rule 'no_such_rule'"));
         assert!(error.contains("randomWeighted(...) needs a literal list of weights"));
-        assert!(error.contains("random_binomial(n, p) needs an 'int' and a 'float'"));
+        assert!(error.contains("randomBinomial(n, p) needs an 'int' and a 'float'"));
     }
 }

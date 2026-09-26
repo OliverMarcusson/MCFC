@@ -164,10 +164,10 @@ void main() {
 fn compiles_single_exists_and_context_composition() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@a[tag=hunter]"));
-    if (exists(player)) {
-        var nearest = single(at(player, Selector.of("@e[type=pig,sort=nearest]")));
-        if (exists(nearest)) {
+    var player = Selector.of("@a[tag=hunter]").getFirst();
+    if (player.isValid()) {
+        var nearest = at(player, Selector.of("@e[type=pig,sort=nearest]")).getFirst();
+        if (nearest.isValid()) {
             nearest.CustomName = "Target";
         }
     }
@@ -202,8 +202,8 @@ void main() {
 fn single_plain_player_name_stays_a_player_target() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("FaithlessMC"));
-    player.tellraw("hi");
+    var player = Selector.of("FaithlessMC").getFirst();
+    player.sendMessage("hi");
     return;
 }
 "#;
@@ -226,8 +226,8 @@ void main() {
 fn object_display_methods_expand_message_at_s_to_the_target_selector() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@a"));
-    player.tellraw("*@s* Expression test: $(32)");
+    var player = Selector.of("@a").getFirst();
+    player.sendMessage("*@s* Expression test: $(32)");
     return;
 }
 "#;
@@ -249,9 +249,9 @@ void main() {
 fn compiles_as_value_context_composition() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
-    if (exists(player)) {
-        var self_ref = single(as(player, Selector.of("@s")));
+    var player = Selector.of("@p").getFirst();
+    if (player.isValid()) {
+        var self_ref = as(player, Selector.of("@s")).getFirst();
         self_ref.tags.welcomed = true;
     }
     return;
@@ -279,7 +279,7 @@ void main() {
 fn compiles_as_and_at_context_blocks() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     as (player) {
         mcf("tellraw @s \"welcome @s\"");
         mc("title @s actionbar \"title @s\"");
@@ -347,7 +347,7 @@ void main() {
 fn compiles_nested_context_blocks() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     at (player) {
         as (Selector.of("@e[type=pig,limit=1]")) {
             mc("say @s");
@@ -377,16 +377,16 @@ void main() {
 fn compiles_text_def_display_components() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@a"));
+    var player = Selector.of("@a").getFirst();
     var msg = new Component("Hello");
     msg.color = "gold";
     msg.bold = true;
     msg.hover_event.action = "show_text";
     msg.hover_event.value = new Component("Hover!");
     msg.extra = List.of(new Component(" world"));
-    player.tellraw(msg);
+    player.sendMessage(msg);
     var bb = new BossBar("mcfc:test", msg);
-    bb.name = msg;
+    bb.setName(msg);
     return;
 }
 "#;
@@ -449,8 +449,8 @@ void main() {
 fn compiles_explicit_runtime_entity_and_block_nbt_paths() {
     let source = r#"
 void main() {
-    var ent1 = single(Selector.of("@e[type=pig,limit=1]"));
-    var ent2 = single(Selector.of("@e[type=cow,limit=1]"));
+    var ent1 = Selector.of("@e[type=pig,limit=1]").getFirst();
+    var ent2 = Selector.of("@e[type=cow,limit=1]").getFirst();
     var chest = Block.of("~ ~ ~");
     ent1.nbt.Rotation = ent2.nbt.Rotation;
     var rot = ent1.nbt.Rotation;
@@ -482,7 +482,7 @@ void main() {
 fn quotes_string_index_nbt_segments_in_runtime_and_storage_paths() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var chest = Block.of("~ ~ ~");
     var page = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
     var weird = (String) player.inventory[0].nbt.foo["A [crazy name]!"].baz;
@@ -518,7 +518,7 @@ void main() {
 fn quotes_dynamic_string_index_nbt_segments_on_storage_backed_paths() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var payload = player.inventory[0].nbt;
     var key = "A [crazy name]!";
     var value = (String) payload.foo[key].bar;
@@ -544,14 +544,14 @@ fn compiles_entity_and_block_builder_paths() {
     let source = r#"
 void main() {
     var pig = new EntityData("minecraft:pig");
-    pig.name = "Boss";
-    pig.glowing = true;
+    pig.setName("Boss");
+    pig.setGlowing(true);
     var spawned = summon(pig);
     var chest = new BlockData("minecraft:chest");
     chest.states.facing = "north";
-    chest.name = "Loot";
+    chest.setName("Loot");
     var pos = Block.of("~ ~ ~");
-    pos.setblock(chest);
+    pos.setBlock(chest);
     pos.fill(Block.of("~1 ~1 ~1"), chest);
     return;
 }
@@ -577,8 +577,8 @@ void main() {
 fn compiles_player_safe_api_surfaces() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
-    if (exists(player)) {
+    var player = Selector.of("@p").getFirst();
+    if (player.isValid()) {
         var air = (int) player.nbt.Air;
         player.state.quest_stage = 3;
         var stage = (int) player.state.quest_stage;
@@ -666,7 +666,7 @@ void main() {
 fn compiles_equipment_slot_reads_via_item_slot_surface() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var hand = player.mainhand;
     var present = hand.exists;
     var id = hand.id;
@@ -695,7 +695,7 @@ void main() {
 fn compiles_generic_entity_state_reads_and_writes() {
     let source = r#"
 void main() {
-    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
+    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
     marker.state.decay = 0;
     marker.state.decay = marker.state.decay + 1;
     return;
@@ -736,19 +736,18 @@ record Profile(String title, int level) {}
 @EntityState float ratio;
 @EntityState Profile profile;
 void main() {
-    var player = (Player) single(Selector.of("@p"));
-    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
+    var player = (Player) Selector.of("@p").getFirst();
+    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
     player.state.title = "hero";
     player.state.ratio = 1.5;
-    player.state.profile = new Profile("knight", 5);
-    player.state.profile.level = 6;
+    player.state.profile = new Profile("knight", 6);
     var title = player.state.title;
     var ratio = player.state.ratio;
-    var level = player.state.profile.level;
+    var level = player.state.profile.level();
     marker.state.title = title;
     marker.state.ratio = ratio;
     marker.state.profile = new Profile("mob", level);
-    var mob_title = marker.state.profile.title;
+    var mob_title = marker.state.profile.title();
     mcf("say $(mob_title)");
     return;
 }
@@ -783,8 +782,8 @@ record Profile(String title) {}
 @PlayerState("Profile") Profile profile;
 @EntityState float ratio;
 void main() {
-    var player = (Player) single(Selector.of("@p"));
-    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
+    var player = (Player) Selector.of("@p").getFirst();
+    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
     player.state.title = 3;
     player.state.profile = "bad";
     marker.state.ratio = "bad";
@@ -817,10 +816,10 @@ void main() {
 fn compiles_generic_entity_bool_state_conditions() {
     let source = r#"
 void main() {
-    var mob = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
+    var mob = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
     mob.state.alert = true;
     if (mob.state.alert) {
-        mob.tellraw("x");
+        mob.sendMessage("x");
     }
     return;
 }
@@ -860,11 +859,11 @@ void main() {
 fn compiles_item_builders_and_player_inventory_slots() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var sword = new ItemStack("minecraft:diamond_sword");
     var idx = 7;
-    sword.count = 2;
-    sword.name = "Blade";
+    sword.setCount(2);
+    sword.setName("Blade");
     sword.nbt.CustomModelData = 7;
 
     var payload = sword.asNbt();
@@ -923,7 +922,7 @@ void main() {
 fn compiles_runtime_item_slot_nbt_reads_and_writes() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     player.inventory[1].nbt = player.inventory[0].nbt;
     player.inventory[1].nbt.CustomModelData = player.inventory[0].nbt.CustomModelData;
     var payload = player.inventory[1].nbt;
@@ -958,7 +957,7 @@ void equip(Player player, int idx, ItemStack stack) {
     return;
 }
 void main() {
-    var target = single(Selector.of("@e[limit=1]"));
+    var target = Selector.of("@e[limit=1]").getFirst();
     var stack = new ItemStack("minecraft:book");
     var player = (Player) target;
     equip(target, 7, stack);
@@ -984,10 +983,10 @@ void main() {
 fn compiles_position_owned_summons_and_spawned_items() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var pig = Block.of("1 64 1").summon(new EntityData("minecraft:pig"));
     var inline = new EntityData("minecraft:pig");
-    inline.name = "Inline";
+    inline.setName("Inline");
     var pig_with_data = Block.of("~ ~ ~").summon("minecraft:pig", inline.asNbt());
     var rel = at(player, Block.of("~1 ~ ~"));
     var pig_relative = rel.summon("minecraft:pig");
@@ -1024,17 +1023,17 @@ Nbt echo(Nbt value) {
 }
 Nbt makePassenger() {
     var chicken = new EntityData("minecraft:chicken");
-    chicken.name = "Marcusson";
+    chicken.setName("Marcusson");
     return chicken;
 }
 void main() {
     var pig = new EntityData("minecraft:pig");
-    pig.name = "Ljungan";
-    pig.glowing = true;
+    pig.setName("Ljungan");
+    pig.setGlowing(true);
 
     var chicken = new EntityData("minecraft:chicken");
-    chicken.name = "Marcusson";
-    chicken.tags = List.of("cooler-tag");
+    chicken.setName("Marcusson");
+    chicken.setTags(List.of("cooler-tag"));
 
     pig.nbt.Passengers[0] = chicken;
     pig.nbt.Passengers = List.of(chicken);
@@ -1072,13 +1071,13 @@ fn compiles_nested_entity_builder_passengers() {
     let source = r#"
 void main() {
     var pig = new EntityData("minecraft:pig");
-    pig.name = "Dinnerbone";
-    pig.glowing = true;
-    pig.tags = List.of("cool-tag");
+    pig.setName("Dinnerbone");
+    pig.setGlowing(true);
+    pig.setTags(List.of("cool-tag"));
 
     var chicken = new EntityData("minecraft:chicken");
-    chicken.name = "Marcusson";
-    chicken.tags = List.of("cooler-tag");
+    chicken.setName("Marcusson");
+    chicken.setTags(List.of("cooler-tag"));
 
     var villager = new EntityData("minecraft:villager");
 
@@ -1115,8 +1114,8 @@ Nbt echo(Nbt value) {
 void main() {
     var chest = new BlockData("minecraft:chest");
     chest.states.facing = "north";
-    chest.name = "Loot";
-    chest.lock = "secret";
+    chest.setName("Loot");
+    chest.setLock("secret");
 
     var payload = chest.nbt;
     payload = chest;
@@ -1151,10 +1150,10 @@ void main() {
     var below = Block.of("~ ~-1 ~");
     var absolute = Block.of("10 64 10");
     if (below.is("minecraft:air")) {
-        below.setblock("minecraft:purple_concrete");
+        below.setBlock("minecraft:purple_concrete");
     }
     if (absolute.is("minecraft:stone")) {
-        absolute.setblock("minecraft:gold_block");
+        absolute.setBlock("minecraft:gold_block");
     }
 }
 "#;
@@ -1177,15 +1176,15 @@ void main() {
 fn compiles_async_bossbars_without_default_tick_tag() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var bb = new BossBar("mcfc:test", "Boss");
-    bb.value = 5;
-    bb.players = player;
+    bb.setValue(5);
+    bb.setPlayers(player);
 
     async {
         sleep(5);
         bb.remove();
-        player.position.setblock("minecraft:gold_block");
+        player.position.setBlock("minecraft:gold_block");
     }
 }
 "#;
@@ -1280,10 +1279,10 @@ fn compiles_tick_sleep_player_state_display_and_equipment_item_defs() {
 @PlayerState("Money") int money;
 
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     var helmet = new ItemStack("minecraft:golden_helmet");
-    helmet.count = 1;
-    helmet.name = "Crown";
+    helmet.setCount(1);
+    helmet.setName("Crown");
     player.head.item = helmet;
     player.state.money = 5;
     sleepTicks(5);
@@ -1497,7 +1496,7 @@ void main() {
 #[test]
 fn compiles_storage_backed_arrays() {
     let source = r#"
-int pick(List<int> xs, int index) {
+int pick(List<Integer> xs, int index) {
     return xs[index];
 }
 void main() {
@@ -1770,7 +1769,7 @@ fn compiles_struct_literals_and_field_access() {
     let source = r#"
 record Action(String action, int duration) {}
 int tick(Action action) {
-    return action.duration;
+    return action.duration();
 }
 void main() {
     var action = new Action("idle", 40);
@@ -1864,10 +1863,9 @@ void main() {
 
     let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
-    assert!(
-        rendered
-            .contains("an empty List.of() needs a declared type, like 'List<int> xs = List.of();'")
-    );
+    assert!(rendered.contains(
+        "an empty List.of() needs a declared type, like 'List<Integer> xs = List.of();'"
+    ));
     assert!(rendered.contains("List.of(...) values must all have one type"));
     assert!(rendered.contains("list index must have type 'int'"));
     assert!(rendered.contains("map key must have type 'String'"));
@@ -1973,7 +1971,7 @@ void main() {
 fn rejects_invalid_query_usage() {
     let source = r#"
 void main() {
-    var bad = single(Selector.of("@e[type=pig,limit=2]"));
+    var bad = Selector.of("@e[type=pig,limit=2]").getFirst();
     var also_bad = Selector.of("@e[type=pig]");
     also_bad.CustomName = "Nope";
     return;
@@ -1982,7 +1980,7 @@ void main() {
 
     let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
-    assert!(rendered.contains("single(selector(...)) requires no limit or 'limit=1'"));
+    assert!(rendered.contains("the selector must have no limit or 'limit=1'"));
     assert!(rendered.contains(
         "path assignment requires an 'Entity', 'Block', bossbar, or storage-backed base",
     ));
@@ -1992,7 +1990,7 @@ void main() {
 fn rejects_unsafe_player_writes() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     player.CustomName = "Nope";
     player.nbt.SelectedItem = "bad";
     player.state.story = "hello";
@@ -2013,7 +2011,7 @@ void main() {
 fn rejects_invalid_entity_state_writes() {
     let source = r#"
 void main() {
-    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
+    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
     marker.state.name = "bad";
     marker.state.payload = new ItemStack("minecraft:stick");
     return;
@@ -2031,8 +2029,8 @@ void main() {
 fn rejects_invalid_inventory_slot_usage() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var player = Selector.of("@p").getFirst();
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
     pig.inventory[0].count = 1;
     player.hotbar["bad"].count = 1;
     player.hotbar[9].count = 1;
@@ -2102,7 +2100,7 @@ fn rejects_invalid_macro_placeholders() {
     let source = r#"
 void main() {
     var a = 1;
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     if (true) {
         var inner = 2;
     }
@@ -2127,7 +2125,7 @@ fn compiles_expression_macro_placeholders() {
     let source = r#"
 record Action(String kind, int duration) {}
 int tick(Action action) {
-    return action.duration + 1;
+    return action.duration() + 1;
 }
 void main() {
     var a = 2;
@@ -2139,7 +2137,7 @@ void main() {
     var key = "npc";
     var store = Map.of("npc", Map.of("value", 7));
     var action = new Action("idle", 40);
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     mcf("say $(a + 1)");
     mcf("say $(x == y)");
     mcf("say $(flag && !ready)");
@@ -2147,7 +2145,7 @@ void main() {
     mcf("say $(values.remove(0))");
     mcf("say $(values.remove(0))");
     mcf("say $(store[key][\"value\"])");
-    mcf("say $(action.duration)");
+    mcf("say $(action.duration())");
     mcf("say $(player.state.quest_complete)");
     mcf("say $(player.team)");
     return;
@@ -2180,7 +2178,7 @@ void main() {
 fn rejects_invalid_as_and_at_contexts() {
     let source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     as (Block.of("~ ~ ~")) {
         mc("say bad");
     }
@@ -2217,14 +2215,18 @@ void old() {
 
     let legacy_source = r#"
 void main() {
-    var player = single(Selector.of("@p"));
+    var player = Selector.of("@p").getFirst();
     tellraw(player, "old");
     return;
 }
 "#;
 
     let legacy_error = compile_source(legacy_source, &lowering()).unwrap_err();
-    assert!(legacy_error.to_string().contains("target.tellraw(message)"));
+    assert!(
+        legacy_error
+            .to_string()
+            .contains("target.sendMessage(message)")
+    );
 }
 
 #[test]
@@ -2835,9 +2837,9 @@ fn host_call_emits_rpc_runtime() {
     let source = r#"
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(Selector.of("@p"));
-    if (r.ok) {
-        p.tellraw(r.body);
+    var p = Selector.of("@p").getFirst();
+    if (r.ok()) {
+        p.sendMessage(r.body());
     }
 }
 "#;
@@ -2926,12 +2928,12 @@ fn host_call_json_strings_is_typed_and_emits_rpc_runtime() {
     let source = r#"
 void quote() {
     var response = http.get_json_strings("https://api.example.com/quote", List.of("quote.text", "quote.author.name"));
-    if (response.ok) {
-        var quote = (String) response.values[0];
-        var player = single(Selector.of("@p"));
+    if (response.ok()) {
+        var quote = (String) response.values()[0];
+        var player = Selector.of("@p").getFirst();
         var message = new Component(quote);
         message.color = "aqua";
-        player.tellraw(message);
+        player.sendMessage(message);
     }
 }
 "#;
@@ -2956,9 +2958,9 @@ fn rpc_load_entry_is_reload_guarded() {
     let source = r#"
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(Selector.of("@p"));
-    if (r.ok) {
-        p.tellraw(r.body);
+    var p = Selector.of("@p").getFirst();
+    if (r.ok()) {
+        p.sendMessage(r.body());
     }
 }
 "#;
@@ -3003,8 +3005,8 @@ void main() {
 fn host_call_only_in_statement_position() {
     let source = r#"
 void main() {
-    var p = single(Selector.of("@p"));
-    p.tellraw(http.get("https://api.example.com/data").body);
+    var p = Selector.of("@p").getFirst();
+    p.sendMessage(http.get("https://api.example.com/data").body());
 }
 "#;
     let result = compile_source(source, &mcfd_http_options());
@@ -3045,7 +3047,7 @@ fn floats_lower_to_one_compute_command_per_expression() {
     let source = r#"
 void main() {
     var x = 3.0;
-    var y = (x * x + 1.5).sqrt();
+    var y = Math.sqrt(x * x + 1.5);
     var n = (int) (y * 100.0);
     var z = (float) n / 2.0;
     if (y < x) {
@@ -3074,14 +3076,19 @@ void main() {
 }
 
 #[test]
-fn floats_reject_mixing_with_ints() {
+fn floats_widen_mixed_ints() {
     let source = r#"
 void main() {
     var x = 1.5 + 2;
 }
 "#;
-    let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("cannot mix 'int' and 'float'"));
+    let result = compile_source(source, &lowering()).expect("mixed arithmetic widens to float");
+    let main = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    assert!(main.contains("type:\"from_int\""));
 }
 
 #[test]
@@ -3123,7 +3130,7 @@ void main() {
     var size = greeting.length();
     var tail = greeting.substring(-3);
     var mid = greeting.substring(n, size);
-    var parsed = "17".parseInt();
+    var parsed = Integer.parseInt("17");
     var joined = "a" + "b";
 }
 "#;
@@ -3318,7 +3325,7 @@ void main() {
     assert!(
         error
             .to_string()
-            .contains("sort() needs 'List<int>' or 'List<float>'"),
+            .contains("sort() needs 'List<Integer>' or 'List<Float>'"),
         "{error}"
     );
 }
@@ -3427,10 +3434,10 @@ void main() {
 fn entity_and_world_reads_lower_to_nbt_reads_and_queries() {
     let source = r#"
 void main() {
-    var p = (Player) single(Selector.of("@a[limit=1]"));
-    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
-    var x = p.x();
-    var food = p.food();
+    var p = (Player) Selector.of("@a[limit=1]").getFirst();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    var x = p.getX();
+    var food = p.getFoodLevel();
     var d = p.distanceTo(pig);
     var t = gameTime();
     var w = worldTime();
@@ -3463,15 +3470,15 @@ void main() {
 fn player_only_reads_need_a_player() {
     let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
-    var food = pig.food();
+    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+    var food = pig.getFoodLevel();
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("food() is only available on players")
+            .contains("getFoodLevel(...) is only available on players")
     );
 }
 
@@ -3591,11 +3598,43 @@ void main() {
 fn empty_collection_literals_take_the_declared_type() {
     let source = r#"
 void main() {
-    List<int> xs = List.of();
+    List<Integer> xs = List.of();
     xs.add(3);
-    Map<String, int> m = Map.of();
+    Map<String, Integer> m = Map.of();
     m["a"] = xs[0];
 }
 "#;
     compile_source(source, &lowering()).expect("typed empty collections should compile");
+}
+
+#[test]
+fn java_world_methods_lower_to_the_expected_commands() {
+    let source = r#"
+void main() {
+    var first = Selector.of("@e[type=minecraft:pig]").getFirst();
+    var maybe = Selector.of("@e[type=minecraft:pig]").findFirst();
+    if (first.isValid() && maybe.isPresent()) {
+        first.sendMessage("x=$(first.getX())");
+    }
+    var bar = new BossBar("mcfc:javaapi", "API");
+    bar.setMax(10);
+    var sword = new ItemStack("minecraft:diamond_sword");
+    sword.setName("Probe");
+    debug((String) sword.getName());
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("Java world methods compile");
+    let generated = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(generated.contains("if entity $(selector)"));
+    assert!(generated.contains("maybe.present set value 1b"));
+    assert!(generated.contains("Pos[0]"));
+    assert!(generated.contains("tellraw $(selector)"));
+    assert!(generated.contains("bossbar set $(id) max $(value)"));
+    assert!(generated.contains("Probe"));
 }

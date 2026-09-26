@@ -38,7 +38,7 @@ int coins;
 void payday() {
     for (Player player : Selector.of("@a")) {
         player.state.coins = player.state.coins + 1;
-        player.actionbar("Coins: $(player.state.coins)");
+        player.sendActionBar("Coins: $(player.state.coins)");
     }
 }
 

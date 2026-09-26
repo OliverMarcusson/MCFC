@@ -15,8 +15,8 @@ use crate::analysis::{
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
 use crate::language_catalog::{
-    AGENT_EVENTS, VANILLA_EVENTS, event_kind_for_type, event_type_name, internal_function_name,
-    internal_method_name,
+    AGENT_EVENTS, ENTITY_METHOD_NAMES, VANILLA_EVENTS, capitalized, event_kind_for_type,
+    event_type_name, internal_function_name, internal_method_name, property_names,
 };
 use crate::minecraft_ids::{MinecraftIdCategory, ids_for_category};
 use crate::minecraft_nbt_schema::{self, NbtSchemaCategory, NbtSchemaNode};
@@ -1130,9 +1130,14 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
         return Some(function.signature());
     }
     match name {
-        "selector" => Some("Selector.of(value: String) -> Selector".to_string()),
-        "single" => Some("single(value: Selector) -> Entity".to_string()),
-        "findFirst" => Some("findFirst(value: Selector) -> Optional<Entity>".to_string()),
+        "of" | "selector" => Some("Selector.of(value: String) -> Selector".to_string()),
+        "getFirst" => Some("Selector.getFirst() -> Entity | List<T>.getFirst() -> T".to_string()),
+        "findFirst" => Some("Selector.findFirst() -> Optional<Entity>".to_string()),
+        "isValid" => Some("Entity.isValid() -> boolean".to_string()),
+        "parseInt" => Some("Integer.parseInt(s: String) -> int".to_string()),
+        "valueOf" => Some("String.valueOf(x) -> String".to_string()),
+        "sqrt" => Some("Math.sqrt(x: float) -> float".to_string()),
+        "pow" => Some("Math.pow(x: float, exponent: float) -> float".to_string()),
         "EntityData" => Some("new EntityData(id: String)".to_string()),
         "ItemStack" => Some("new ItemStack(id: String)".to_string()),
         "block" => Some("Block.of(position: String) -> Block".to_string()),
@@ -1500,7 +1505,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "record" => Some("```mcfc\nrecord Name(int field, String label) {}\n```"),
         "enum" => Some("```mcfc\nenum Mode { IDLE, RUNNING }\n```"),
         "PlayerState" => Some("```mcfc\n@PlayerState(\"Money\")\nint money;\n```"),
-        "EntityState" => Some("```mcfc\n@EntityState\nString title;\n```"),
+        "EntityState" => Some("```mcfc\n@EntityState\nString sendTitle;\n```"),
         "switch" => Some(
             "```mcfc\nswitch (mode) {\n    case Mode.IDLE -> ...;\n    default -> { ... }\n}\n```",
         ),
@@ -1514,14 +1519,25 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
         ),
         "Selector" => Some("```mcfc\nSelector.of(value: String) -> Selector\n```"),
-        "single" => Some("```mcfc\nsingle(value: Selector) -> Entity\n```"),
-        "findFirst" => Some("```mcfc\nfindFirst(value: Selector) -> Optional<Entity>\n```"),
+        "getFirst" => Some("```mcfc\nSelector.getFirst() -> Entity\nList<T>.getFirst() -> T\n```"),
+        "findFirst" => Some("```mcfc\nSelector.findFirst() -> Optional<Entity>\n```"),
         "isPresent" => Some("```mcfc\nOptional<T>.isPresent() -> boolean\n```"),
         "orElse" => Some("```mcfc\nOptional<T>.orElse(fallback: T) -> T\n```"),
         "get" => Some(
-            "```mcfc\nList<T>.get(index: int) -> Optional<T>\nMap<String, T>.get(key: String) -> Optional<T>\n```",
+            "```mcfc\nList<T>.get(index: int) -> Optional<T>\nMap<String, T>.get(key: String) -> Optional<T>\nOptional<T>.get() -> T\n```",
         ),
-        "exists" => Some("```mcfc\nexists(value: Entity) -> boolean\n```"),
+        "isValid" => Some("```mcfc\nEntity.isValid() -> boolean\n```"),
+        "parseInt" => Some("```mcfc\nInteger.parseInt(s: String) -> int\n```"),
+        "valueOf" => Some("```mcfc\nString.valueOf(x) -> String\n```"),
+        "sqrt" => Some("```mcfc\nMath.sqrt(x: float) -> float\n```"),
+        "set" => Some("```mcfc\nList<T>.set(index: int, value: T) -> void\n```"),
+        "put" => Some("```mcfc\nMap<String, T>.put(key: String, value: T) -> void\n```"),
+        "getOrDefault" => {
+            Some("```mcfc\nMap<String, T>.getOrDefault(key: String, fallback: T) -> T\n```")
+        }
+        "isEmpty" => Some(
+            "```mcfc\nString.isEmpty() -> boolean\nList<T>.isEmpty() -> boolean\nMap<String, T>.isEmpty() -> boolean\nOptional<T>.isEmpty() -> boolean\n```",
+        ),
         "hasData" => Some("```mcfc\nhasData(value: storage_path) -> boolean\n```"),
         "Block" => Some("```mcfc\nBlock.of(position: String) -> Block\n```"),
         "at" => Some(
@@ -1547,24 +1563,28 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "lootInsert" => Some("```mcfc\nblock.lootInsert(table: String) -> void\n```"),
         "lootSpawn" => Some("```mcfc\nblock.lootSpawn(table: String) -> void\n```"),
         "spawnItem" => Some("```mcfc\nblock.spawnItem(stack: ItemStack) -> Entity\n```"),
-        "tellraw" => Some("```mcfc\nentity.tellraw(message: String|Component) -> void\n```"),
-        "title" => Some("```mcfc\nentity.title(message: String|Component) -> void\n```"),
-        "actionbar" => Some("```mcfc\nentity.actionbar(message: String|Component) -> void\n```"),
+        "sendMessage" => {
+            Some("```mcfc\nentity.sendMessage(message: String|Component) -> void\n```")
+        }
+        "sendTitle" => Some("```mcfc\nentity.sendTitle(message: String|Component) -> void\n```"),
+        "sendActionBar" => {
+            Some("```mcfc\nentity.sendActionBar(message: String|Component) -> void\n```")
+        }
         "debug" => Some("```mcfc\ndebug(message: String) -> void\n```"),
         "debugMarker" => Some(
             "```mcfc\nblock.debugMarker(label: String) -> void\nblock.debugMarker(label: String, markerBlock: String) -> void\n```",
         ),
         "debugEntity" => Some("```mcfc\nentity.debugEntity(label: String) -> void\n```"),
-        "playsound" => {
-            Some("```mcfc\nentity.playsound(sound: String, category: String) -> void\n```")
+        "playSound" => {
+            Some("```mcfc\nentity.playSound(sound: String, category: String) -> void\n```")
         }
-        "stopsound" => {
-            Some("```mcfc\nentity.stopsound(category: String, sound: String) -> void\n```")
+        "stopSound" => {
+            Some("```mcfc\nentity.stopSound(category: String, sound: String) -> void\n```")
         }
-        "particle" => Some(
-            "```mcfc\nblock.particle(name: String) -> void\nblock.particle(name: String, count: int) -> void\nblock.particle(name: String, count: int, viewers: Entity|Selector) -> void\n```",
+        "spawnParticle" => Some(
+            "```mcfc\nblock.spawnParticle(name: String) -> void\nblock.spawnParticle(name: String, count: int) -> void\nblock.spawnParticle(name: String, count: int, viewers: Entity|Selector) -> void\n```",
         ),
-        "setblock" => Some("```mcfc\nblock.setblock(blockId: String|BlockData) -> void\n```"),
+        "setBlock" => Some("```mcfc\nblock.setBlock(blockId: String|BlockData) -> void\n```"),
         "is" => Some("```mcfc\nblock.is(blockId: String) -> boolean\n```"),
         "fill" => Some("```mcfc\nblock.fill(to: Block, blockId: String|BlockData) -> void\n```"),
         "EntityData" => Some(
@@ -1577,14 +1597,14 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nnew BlockData(id: String)\n- id: String (read-only)\n- states.*\n- nbt.*\n- asNbt() -> Nbt\n```",
         ),
         "ItemStack" => Some(
-            "```mcfc\nnew ItemStack(id: String)\n- id: String (read-only)\n- count: int\n- nbt.*\n- asNbt() -> Nbt\n```",
+            "```mcfc\nnew ItemStack(id: String)\n- id: String (read-only)\n- getCount()/setCount(int)\n- getName()/setName(String)\n- nbt.*\n- asNbt() -> Nbt\n```",
         ),
         "Component" => Some(
             "```mcfc\nnew Component() / new Component(text: String)\n- storage-backed text component builder\n- supports arbitrary .field / [index] writes for text component content, styling, events, and nested children\n```",
         ),
         "BossBar" => Some("```mcfc\nnew BossBar(id: String, name: String|Component)\n```"),
         "ItemSlot" => Some(
-            "```mcfc\nItemSlot\n- exists: boolean (read-only)\n- id: String (read-only)\n- count: int\n- nbt.*\n- clear() -> void\n```",
+            "```mcfc\nItemSlot\n- isValid: boolean (read-only)\n- id: String (read-only)\n- count: int\n- nbt.*\n- clear() -> void\n```",
         ),
         "position" => Some("```mcfc\nentity.position -> Block\n```"),
         "state" => Some(
@@ -1884,7 +1904,13 @@ fn minecraft_id_category_at_offset(
 
 fn minecraft_id_category_for_call(call: &CallContext) -> Option<MinecraftIdCategory> {
     let name = if call.is_method {
-        internal_method_name(&call.name, 1)
+        ENTITY_METHOD_NAMES
+            .iter()
+            .find(|(java, _)| *java == call.name)
+            .map_or_else(
+                || internal_method_name(&call.name, 1),
+                |(_, internal)| *internal,
+            )
     } else {
         internal_function_name(&call.name)
     };
@@ -2186,7 +2212,7 @@ fn static_completion_items() -> Vec<CompletionItem> {
     for keyword in [
         "var", "return", "if", "else", "switch", "case", "default", "while", "for", "break",
         "continue", "async", "new", "mc", "mcf", "true", "false", "record", "enum", "import",
-        "public",
+        "public", "final", "static", "do", "yield",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -2199,10 +2225,14 @@ fn static_completion_items() -> Vec<CompletionItem> {
         ("int", "int"),
         ("float", "float"),
         ("boolean", "boolean"),
+        ("Integer", "Integer"),
+        ("Float", "Float"),
+        ("Boolean", "Boolean"),
         ("String", "String"),
-        ("List<>", "List<${1:int}>"),
-        ("Map<>", "Map<String, ${1:int}>"),
-        ("Optional<>", "Optional<${1:int}>"),
+        ("Math", "Math"),
+        ("List<>", "List<${1:Integer}>"),
+        ("Map<>", "Map<String, ${1:Integer}>"),
+        ("Optional<>", "Optional<${1:Integer}>"),
         ("Selector", "Selector"),
         ("Entity", "Entity"),
         ("Player", "Player"),
@@ -2265,11 +2295,6 @@ fn static_completion_items() -> Vec<CompletionItem> {
             "Selector.of(value: String) -> Selector",
             "Selector.of(${1:\"@e\"})",
         ),
-        (
-            "findFirst",
-            "findFirst(value: Selector) -> Optional<Entity>",
-            "findFirst(${1:Selector.of(\"@e\")})",
-        ),
         ("sleep", "sleep(seconds: int) -> void", "sleep(${1:1})"),
         (
             "sleepTicks",
@@ -2279,7 +2304,7 @@ fn static_completion_items() -> Vec<CompletionItem> {
         ("random", "random() -> int", "random()"),
         (
             "randomWeighted",
-            "randomWeighted(weights: List<int>) -> int",
+            "randomWeighted(weights: List<Integer>) -> int",
             "randomWeighted(List.of(${1:3}, ${2:1}))",
         ),
         (
@@ -2297,16 +2322,6 @@ fn static_completion_items() -> Vec<CompletionItem> {
             "random(min, max)",
             "random(min: int, max: int) -> int",
             "random(${1:min}, ${2:max})",
-        ),
-        (
-            "single",
-            "single(value: Selector) -> Entity",
-            "single(${1:value})",
-        ),
-        (
-            "exists",
-            "exists(value: Entity) -> boolean",
-            "exists(${1:value})",
         ),
         (
             "hasData",
@@ -2431,13 +2446,18 @@ fn member_completion_items(
     chain: &[String],
 ) -> Vec<CompletionItem> {
     if let [name] = chain
+        && let Some(items) = java_static_member_items(name)
+    {
+        return items;
+    }
+    if let [name] = chain
         && let Some(variants) = analysis
             .typed_program
             .as_ref()
             .and_then(|program| program.struct_defs.get(name))
             .and_then(|def| def.enum_variants.as_ref())
     {
-        return variants
+        let mut items: Vec<_> = variants
             .iter()
             .map(|variant| CompletionItem {
                 label: variant.clone(),
@@ -2446,6 +2466,13 @@ fn member_completion_items(
                 ..CompletionItem::default()
             })
             .collect();
+        items.push(snippet_item(
+            "values",
+            CompletionItemKind::METHOD,
+            &format!("{name}.values() -> List<{name}>"),
+            "values()",
+        ));
+        return items;
     }
     if let Some(items) = agent_event_member_completion_items(source, analysis, offset, chain) {
         return items;
@@ -2466,16 +2493,84 @@ fn member_completion_items(
     }
 }
 
+fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
+    let methods: &[(&str, &str, &str)] = match name {
+        "Math" => &[
+            ("abs", "Math.abs(x) -> number", "abs(${1:x})"),
+            ("min", "Math.min(a, b) -> number", "min(${1:a}, ${2:b})"),
+            ("max", "Math.max(a, b) -> number", "max(${1:a}, ${2:b})"),
+            (
+                "clamp",
+                "Math.clamp(x, low, high) -> number",
+                "clamp(${1:x}, ${2:low}, ${3:high})",
+            ),
+            ("sqrt", "Math.sqrt(x) -> float", "sqrt(${1:x})"),
+            (
+                "pow",
+                "Math.pow(x, exponent) -> float",
+                "pow(${1:x}, ${2:exponent})",
+            ),
+            (
+                "hypot",
+                "Math.hypot(x, y) -> float",
+                "hypot(${1:x}, ${2:y})",
+            ),
+            ("sin", "Math.sin(x) -> float", "sin(${1:x})"),
+            ("cos", "Math.cos(x) -> float", "cos(${1:x})"),
+            ("tan", "Math.tan(x) -> float", "tan(${1:x})"),
+            ("floor", "Math.floor(x) -> float", "floor(${1:x})"),
+            ("ceil", "Math.ceil(x) -> float", "ceil(${1:x})"),
+            ("round", "Math.round(x) -> int", "round(${1:x})"),
+            ("trunc", "Math.trunc(x) -> float", "trunc(${1:x})"),
+            ("signum", "Math.signum(x) -> float", "signum(${1:x})"),
+        ],
+        "Integer" => &[
+            (
+                "parseInt",
+                "Integer.parseInt(s: String) -> int",
+                "parseInt(${1:s})",
+            ),
+            (
+                "toString",
+                "Integer.toString(x: int) -> String",
+                "toString(${1:x})",
+            ),
+        ],
+        "Float" => &[(
+            "toString",
+            "Float.toString(x: float) -> String",
+            "toString(${1:x})",
+        )],
+        "String" => &[("valueOf", "String.valueOf(x) -> String", "valueOf(${1:x})")],
+        _ => return None,
+    };
+    Some(
+        methods
+            .iter()
+            .map(|(label, detail, insert_text)| {
+                snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+            })
+            .collect(),
+    )
+}
+
 fn completion_items_for_receiver(
     receiver: Option<CompletionReceiver>,
     analysis: &AnalysisResult,
 ) -> Vec<CompletionItem> {
     match receiver {
         Some(CompletionReceiver::Array) => array_method_items(),
+        Some(CompletionReceiver::Int) => vec![snippet_item(
+            "toString",
+            CompletionItemKind::METHOD,
+            "int.toString() -> String",
+            "toString()",
+        )],
         Some(CompletionReceiver::Float) => float_method_items(),
         Some(CompletionReceiver::String) => string_method_items(),
         Some(CompletionReceiver::Dict) => dict_method_items(),
         Some(CompletionReceiver::Optional) => optional_method_items(),
+        Some(CompletionReceiver::Selector) => selector_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
         Some(CompletionReceiver::EntityDef) => entity_def_items(),
@@ -2485,7 +2580,46 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::ItemSlot) => item_slot_items(),
         Some(CompletionReceiver::Bossbar) => bossbar_root_items(),
         Some(CompletionReceiver::EquipmentSlot) => equipment_slot_items(),
-        Some(CompletionReceiver::Struct(name)) => struct_field_items(analysis, &name),
+        Some(CompletionReceiver::Enum(_)) => vec![
+            snippet_item(
+                "name",
+                CompletionItemKind::METHOD,
+                "enum.name() -> String",
+                "name()",
+            ),
+            snippet_item(
+                "ordinal",
+                CompletionItemKind::METHOD,
+                "enum.ordinal() -> int",
+                "ordinal()",
+            ),
+        ],
+        Some(CompletionReceiver::Struct(name)) => {
+            if analysis
+                .typed_program
+                .as_ref()
+                .and_then(|program| program.struct_defs.get(&name))
+                .and_then(|def| def.enum_variants.as_ref())
+                .is_some()
+            {
+                vec![
+                    snippet_item(
+                        "name",
+                        CompletionItemKind::METHOD,
+                        "enum.name() -> String",
+                        "name()",
+                    ),
+                    snippet_item(
+                        "ordinal",
+                        CompletionItemKind::METHOD,
+                        "enum.ordinal() -> int",
+                        "ordinal()",
+                    ),
+                ]
+            } else {
+                struct_field_items(analysis, &name)
+            }
+        }
         Some(
             CompletionReceiver::PlayerDynamicNamespace
             | CompletionReceiver::EntityTeam
@@ -2679,6 +2813,12 @@ fn array_method_items() -> Vec<CompletionItem> {
             "add(${1:index}, ${2:value})",
         ),
         ("clear", "List<T>.clear() -> void", "clear()"),
+        (
+            "set",
+            "List<T>.set(index: int, value: T) -> void",
+            "set(${1:index}, ${2:value})",
+        ),
+        ("isEmpty", "List<T>.isEmpty() -> boolean", "isEmpty()"),
         ("getFirst", "List<T>.getFirst() -> T", "getFirst()"),
         ("getLast", "List<T>.getLast() -> T", "getLast()"),
         (
@@ -2692,7 +2832,7 @@ fn array_method_items() -> Vec<CompletionItem> {
             "indexOf(${1:value})",
         ),
         ("reverse", "List<T>.reverse() -> void", "reverse()"),
-        ("sort", "List<int>.sort() -> void", "sort()"),
+        ("sort", "List<Integer>.sort() -> void", "sort()"),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {
@@ -2701,15 +2841,78 @@ fn array_method_items() -> Vec<CompletionItem> {
     .collect()
 }
 
+fn selector_method_items() -> Vec<CompletionItem> {
+    let mut items = vec![
+        snippet_item(
+            "getFirst",
+            CompletionItemKind::METHOD,
+            "Selector.getFirst() -> Entity",
+            "getFirst()",
+        ),
+        snippet_item(
+            "findFirst",
+            CompletionItemKind::METHOD,
+            "Selector.findFirst() -> Optional<Entity>",
+            "findFirst()",
+        ),
+    ];
+    items.extend(generic_entity_root_items().into_iter().filter(|item| {
+        matches!(
+            item.label.as_str(),
+            "sendMessage"
+                | "sendTitle"
+                | "sendActionBar"
+                | "playSound"
+                | "stopSound"
+                | "teleport"
+                | "damage"
+                | "give"
+                | "clear"
+                | "lootGive"
+        )
+    }));
+    items
+}
+
 fn string_method_items() -> Vec<CompletionItem> {
     [
         ("length", "String.length() -> int", "length()"),
+        ("isEmpty", "String.isEmpty() -> boolean", "isEmpty()"),
+        (
+            "contains",
+            "String.contains(part: String) -> boolean",
+            "contains(${1:part})",
+        ),
+        (
+            "equals",
+            "String.equals(other: String) -> boolean",
+            "equals(${1:other})",
+        ),
+        (
+            "startsWith",
+            "String.startsWith(prefix: String) -> boolean",
+            "startsWith(${1:prefix})",
+        ),
+        (
+            "endsWith",
+            "String.endsWith(suffix: String) -> boolean",
+            "endsWith(${1:suffix})",
+        ),
+        (
+            "indexOf",
+            "String.indexOf(part: String) -> int",
+            "indexOf(${1:part})",
+        ),
+        (
+            "charAt",
+            "String.charAt(index: int) -> String",
+            "charAt(${1:index})",
+        ),
         (
             "substring",
             "String.substring(start: int, end: int) -> String",
             "substring(${1:start}, ${2:end})",
         ),
-        ("parseInt", "String.parseInt() -> int", "parseInt()"),
         ("toString", "String.toString() -> String", "toString()"),
     ]
     .into_iter()
@@ -2720,40 +2923,12 @@ fn string_method_items() -> Vec<CompletionItem> {
 }
 
 fn float_method_items() -> Vec<CompletionItem> {
-    [
-        ("sqrt", "float.sqrt() -> float", "sqrt()"),
-        ("sin", "float.sin() -> float", "sin()"),
-        ("cos", "float.cos() -> float", "cos()"),
-        ("tan", "float.tan() -> float", "tan()"),
-        ("abs", "float.abs() -> float", "abs()"),
-        ("floor", "float.floor() -> float", "floor()"),
-        ("ceil", "float.ceil() -> float", "ceil()"),
-        ("round", "float.round() -> float", "round()"),
-        ("trunc", "float.trunc() -> float", "trunc()"),
-        (
-            "pow",
-            "float.pow(exponent: float) -> float",
-            "pow(${1:exponent})",
-        ),
-        ("min", "float.min(other: float) -> float", "min(${1:other})"),
-        ("max", "float.max(other: float) -> float", "max(${1:other})"),
-        (
-            "clamp",
-            "float.clamp(low: float, high: float) -> float",
-            "clamp(${1:low}, ${2:high})",
-        ),
-        (
-            "hypot",
-            "float.hypot(other: float) -> float",
-            "hypot(${1:other})",
-        ),
-        ("toString", "float.toString() -> String", "toString()"),
-    ]
-    .into_iter()
-    .map(|(label, detail, insert_text)| {
-        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
-    })
-    .collect()
+    [("toString", "float.toString() -> String", "toString()")]
+        .into_iter()
+        .map(|(label, detail, insert_text)| {
+            snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+        })
+        .collect()
 }
 
 fn dict_method_items() -> Vec<CompletionItem> {
@@ -2774,6 +2949,21 @@ fn dict_method_items() -> Vec<CompletionItem> {
             "keySet()",
         ),
         ("size", "Map<String, T>.size() -> int", "size()"),
+        (
+            "isEmpty",
+            "Map<String, T>.isEmpty() -> boolean",
+            "isEmpty()",
+        ),
+        (
+            "put",
+            "Map<String, T>.put(key: String, value: T) -> void",
+            "put(${1:key}, ${2:value})",
+        ),
+        (
+            "getOrDefault",
+            "Map<String, T>.getOrDefault(key: String, fallback: T) -> T",
+            "getOrDefault(${1:key}, ${2:fallback})",
+        ),
         (
             "remove",
             "Map<String, T>.remove(key: String) -> void",
@@ -2799,6 +2989,8 @@ fn optional_method_items() -> Vec<CompletionItem> {
             "Optional<T>.orElse(fallback: T) -> T",
             "orElse(${1:fallback})",
         ),
+        ("get", "Optional<T>.get() -> T", "get()"),
+        ("isEmpty", "Optional<T>.isEmpty() -> boolean", "isEmpty()"),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {
@@ -2810,39 +3002,39 @@ fn optional_method_items() -> Vec<CompletionItem> {
 fn generic_entity_root_items() -> Vec<CompletionItem> {
     [
         (
-            "x",
-            "entity.x() -> float",
-            "x()",
+            "getX",
+            "entity.getX() -> float",
+            "getX()",
             CompletionItemKind::METHOD,
         ),
         (
-            "y",
-            "entity.y() -> float",
-            "y()",
+            "getY",
+            "entity.getY() -> float",
+            "getY()",
             CompletionItemKind::METHOD,
         ),
         (
-            "z",
-            "entity.z() -> float",
-            "z()",
+            "getZ",
+            "entity.getZ() -> float",
+            "getZ()",
             CompletionItemKind::METHOD,
         ),
         (
-            "yaw",
-            "entity.yaw() -> float",
-            "yaw()",
+            "getYaw",
+            "entity.getYaw() -> float",
+            "getYaw()",
             CompletionItemKind::METHOD,
         ),
         (
-            "pitch",
-            "entity.pitch() -> float",
-            "pitch()",
+            "getPitch",
+            "entity.getPitch() -> float",
+            "getPitch()",
             CompletionItemKind::METHOD,
         ),
         (
-            "health",
-            "entity.health() -> float",
-            "health()",
+            "getHealth",
+            "entity.getHealth() -> float",
+            "getHealth()",
             CompletionItemKind::METHOD,
         ),
         (
@@ -2852,21 +3044,21 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             CompletionItemKind::METHOD,
         ),
         (
-            "lookX",
-            "entity.lookX() -> float",
-            "lookX()",
+            "getLookX",
+            "entity.getLookX() -> float",
+            "getLookX()",
             CompletionItemKind::METHOD,
         ),
         (
-            "lookY",
-            "entity.lookY() -> float",
-            "lookY()",
+            "getLookY",
+            "entity.getLookY() -> float",
+            "getLookY()",
             CompletionItemKind::METHOD,
         ),
         (
-            "lookZ",
-            "entity.lookZ() -> float",
-            "lookZ()",
+            "getLookZ",
+            "entity.getLookZ() -> float",
+            "getLookZ()",
             CompletionItemKind::METHOD,
         ),
         (
@@ -2906,33 +3098,33 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             CompletionItemKind::METHOD,
         ),
         (
-            "tellraw",
-            "entity.tellraw(message: String) -> void",
-            "tellraw(${1:\"hello\"})",
+            "sendMessage",
+            "entity.sendMessage(message: String) -> void",
+            "sendMessage(${1:\"hello\"})",
             CompletionItemKind::METHOD,
         ),
         (
-            "title",
-            "entity.title(message: String) -> void",
-            "title(${1:\"hello\"})",
+            "sendTitle",
+            "entity.sendTitle(message: String) -> void",
+            "sendTitle(${1:\"hello\"})",
             CompletionItemKind::METHOD,
         ),
         (
-            "actionbar",
-            "entity.actionbar(message: String) -> void",
-            "actionbar(${1:\"hello\"})",
+            "sendActionBar",
+            "entity.sendActionBar(message: String) -> void",
+            "sendActionBar(${1:\"hello\"})",
             CompletionItemKind::METHOD,
         ),
         (
-            "playsound",
-            "entity.playsound(sound: String, category: String) -> void",
-            "playsound(${1:\"minecraft:entity.experience_orb.pickup\"}, ${2:\"master\"})",
+            "playSound",
+            "entity.playSound(sound: String, category: String) -> void",
+            "playSound(${1:\"minecraft:entity.experience_orb.pickup\"}, ${2:\"master\"})",
             CompletionItemKind::METHOD,
         ),
         (
-            "stopsound",
-            "entity.stopsound(category: String, sound: String) -> void",
-            "stopsound(${1:\"master\"}, ${2:\"minecraft:entity.experience_orb.pickup\"})",
+            "stopSound",
+            "entity.stopSound(category: String, sound: String) -> void",
+            "stopSound(${1:\"master\"}, ${2:\"minecraft:entity.experience_orb.pickup\"})",
             CompletionItemKind::METHOD,
         ),
         (
@@ -3057,15 +3249,27 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
     );
     items.extend(
         [
-            ("food", "player.food() -> int", "food()"),
-            ("xpLevel", "player.xpLevel() -> int", "xpLevel()"),
-            ("gameMode", "player.gameMode() -> int", "gameMode()"),
             (
-                "selectedSlot",
-                "player.selectedSlot() -> int",
-                "selectedSlot()",
+                "getFoodLevel",
+                "player.getFoodLevel() -> int",
+                "getFoodLevel()",
             ),
-            ("dimension", "player.dimension() -> String", "dimension()"),
+            ("getLevel", "player.getLevel() -> int", "getLevel()"),
+            (
+                "getGameMode",
+                "player.getGameMode() -> int",
+                "getGameMode()",
+            ),
+            (
+                "getSelectedSlot",
+                "player.getSelectedSlot() -> int",
+                "getSelectedSlot()",
+            ),
+            (
+                "getDimension",
+                "player.getDimension() -> String",
+                "getDimension()",
+            ),
         ]
         .into_iter()
         .map(|(label, detail, insert_text)| {
@@ -3093,14 +3297,14 @@ fn block_ref_items() -> Vec<CompletionItem> {
             "debugMarker(${1:\"checkpoint\"})",
         ),
         (
-            "particle",
-            "block.particle(name: String, count?: int, viewers?: Entity|Selector) -> void",
-            "particle(${1:\"minecraft:flame\"})",
+            "spawnParticle",
+            "block.spawnParticle(name: String, count?: int, viewers?: Entity|Selector) -> void",
+            "spawnParticle(${1:\"minecraft:flame\"})",
         ),
         (
-            "setblock",
-            "block.setblock(block_id: String|BlockData) -> void",
-            "setblock(${1:\"minecraft:stone\"})",
+            "setBlock",
+            "block.setBlock(block_id: String|BlockData) -> void",
+            "setBlock(${1:\"minecraft:stone\"})",
         ),
         (
             "fill",
@@ -3115,19 +3319,23 @@ fn block_ref_items() -> Vec<CompletionItem> {
         (
             "spawnItem",
             "block.spawnItem(stack: ItemStack) -> Entity",
-            "spawnItem(${1:item(\"minecraft:apple\")})",
+            "spawnItem(${1:new ItemStack(\"minecraft:apple\")})",
         ),
-        ("light", "block.light() -> int", "light()"),
-        ("biome", "block.biome() -> String", "biome()"),
+        (
+            "getLightLevel",
+            "block.getLightLevel() -> int",
+            "getLightLevel()",
+        ),
+        ("getBiome", "block.getBiome() -> String", "getBiome()"),
         (
             "inBiome",
-            "block.inBiome(biome: String) -> boolean",
+            "block.inBiome(getBiome: String) -> boolean",
             "inBiome(${1:\"minecraft:plains\"})",
         ),
         (
-            "environment",
-            "block.environment(attribute: String) -> float",
-            "environment(${1:\"gameplay/sky_light_level\"})",
+            "getEnvironment",
+            "block.getEnvironment(attribute: String) -> float",
+            "getEnvironment(${1:\"gameplay/sky_light_level\"})",
         ),
     ]
     .into_iter()
@@ -3183,6 +3391,8 @@ fn entity_def_items() -> Vec<CompletionItem> {
             snippet_item(label, CompletionItemKind::FIELD, detail, insert_text)
         }),
     );
+    items.retain(|item| !property_names(&Type::EntityDef).contains(&item.label.as_str()));
+    items.extend(property_accessor_items(&Type::EntityDef, "EntityData"));
     items
 }
 
@@ -3209,6 +3419,8 @@ fn item_def_items() -> Vec<CompletionItem> {
             snippet_item(label, CompletionItemKind::FIELD, detail, insert_text)
         }),
     );
+    items.retain(|item| !property_names(&Type::ItemDef).contains(&item.label.as_str()));
+    items.extend(property_accessor_items(&Type::ItemDef, "ItemStack"));
     items
 }
 
@@ -3242,7 +3454,34 @@ fn block_def_items() -> Vec<CompletionItem> {
             snippet_item(label, CompletionItemKind::FIELD, detail, insert_text)
         }),
     );
+    items.retain(|item| !property_names(&Type::BlockDef).contains(&item.label.as_str()));
+    items.extend(property_accessor_items(&Type::BlockDef, "BlockData"));
     items
+}
+
+fn property_accessor_items(ty: &Type, name: &str) -> Vec<CompletionItem> {
+    property_names(ty)
+        .iter()
+        .flat_map(|property| {
+            let suffix = capitalized(property);
+            let getter = format!("get{suffix}");
+            let setter = format!("set{suffix}");
+            [
+                snippet_item(
+                    &getter,
+                    CompletionItemKind::METHOD,
+                    &format!("{name}.{getter}() reads {property}"),
+                    &format!("{getter}()"),
+                ),
+                snippet_item(
+                    &setter,
+                    CompletionItemKind::METHOD,
+                    &format!("{name}.{setter}(value) writes {property}"),
+                    &format!("{setter}(${{1:value}})"),
+                ),
+            ]
+        })
+        .collect()
 }
 
 fn text_def_items() -> Vec<CompletionItem> {
@@ -3368,7 +3607,7 @@ fn item_slot_items() -> Vec<CompletionItem> {
 }
 
 fn bossbar_root_items() -> Vec<CompletionItem> {
-    [
+    let mut items: Vec<_> = [
         (
             "remove",
             "BossBar.remove() -> void",
@@ -3408,7 +3647,10 @@ fn bossbar_root_items() -> Vec<CompletionItem> {
     ]
     .into_iter()
     .map(|(label, detail, insert_text, kind)| snippet_item(label, kind, detail, insert_text))
-    .collect()
+    .collect();
+    items.retain(|item| !property_names(&Type::Bossbar).contains(&item.label.as_str()));
+    items.extend(property_accessor_items(&Type::Bossbar, "BossBar"));
+    items
 }
 
 fn equipment_slot_items() -> Vec<CompletionItem> {
@@ -3553,6 +3795,13 @@ fn move_back_over_call_suffix(source: &str, mut index: usize) -> usize {
         index -= ch.len_utf8();
     }
 
+    if previous_char(source, index) == Some('.') {
+        let prefix_end = index - 1;
+        let prefix_start = move_back_over_call_suffix(source, prefix_end);
+        if prefix_start < prefix_end {
+            return prefix_start;
+        }
+    }
     if index == word_end {
         word_end
     } else if source[..index].ends_with("new ") {
@@ -3682,11 +3931,14 @@ fn nbt_origin_for_type(ty: &Type) -> Option<NbtCompletionOrigin> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CompletionReceiver {
     Array,
+    Int,
     Float,
     String,
     Dict,
     Optional,
+    Selector,
     Struct(String),
+    Enum(String),
     GenericEntityRef,
     PlayerEntityRef,
     EntityDef,
@@ -3902,11 +4154,14 @@ fn receiver_from_type(
 fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<CompletionReceiver> {
     match ty {
         Type::Array(_) => Some(CompletionReceiver::Array),
+        Type::Int => Some(CompletionReceiver::Int),
         Type::Float => Some(CompletionReceiver::Float),
         Type::String => Some(CompletionReceiver::String),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
         Type::Optional(_) => Some(CompletionReceiver::Optional),
+        Type::EntitySet => Some(CompletionReceiver::Selector),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
+        Type::Enum(name) => Some(CompletionReceiver::Enum(name.clone())),
         Type::EntityRef => Some(if ref_kind == RefKind::Player {
             CompletionReceiver::PlayerEntityRef
         } else {
@@ -3969,8 +4224,9 @@ fn struct_field_items(analysis: &AnalysisResult, name: &str) -> Vec<CompletionIt
         .iter()
         .map(|(field, ty)| CompletionItem {
             label: field.clone(),
-            kind: Some(CompletionItemKind::FIELD),
-            detail: Some(ty.as_str()),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(format!("{}() -> {}", field, ty.as_str())),
+            insert_text: Some(format!("{}()", field)),
             ..CompletionItem::default()
         })
         .collect()
@@ -4331,8 +4587,10 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         infer_expr_type(inner)
     } else if starts("(Player)") {
         Some(Type::PlayerRef)
-    } else if starts("single(") {
+    } else if value.ends_with(".getFirst()") {
         Some(Type::EntityRef)
+    } else if value.ends_with(".findFirst()") {
+        Some(Type::Optional(Box::new(Type::EntityRef)))
     } else if starts("Selector.of(") {
         Some(Type::EntitySet)
     } else if starts("new EntityData(") {
@@ -4600,7 +4858,7 @@ void main() {
     fn completes_syntactic_locals_when_source_is_incomplete() {
         let source = r#"
 void main(String kind) {
-    var me = single(Selector.of("@a"));
+    var me = Selector.of("@a").getFirst();
     var amount = 1;
     me.team.;
 }
@@ -4622,7 +4880,7 @@ void main(String kind) {
         let source = r#"
 @EventHandler
 void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player;
+    Player player = event.player();
     player.;
 }
 "#;
@@ -4640,7 +4898,7 @@ void onPlayerDeath(PlayerDeathEvent event) {
             &analysis,
             source.find("player.").unwrap() + "player.".len(),
         );
-        assert!(member_items.iter().any(|item| item.label == "tellraw"));
+        assert!(member_items.iter().any(|item| item.label == "sendMessage"));
         assert!(!member_items.iter().any(|item| item.label == "add"));
     }
 
@@ -4648,15 +4906,15 @@ void onPlayerDeath(PlayerDeathEvent event) {
     fn semantic_ranges_exclude_strings_comments_members_and_other_scopes() {
         let source = r#"
 void first() {
-    var player = single(Selector.of("@s"));
-    player.tellraw("player");  // player
+    var player = Selector.of("@s").getFirst();
+    player.sendMessage("player");  // player
 }
 void second() {
-    var player = single(Selector.of("@p"));
-    player.tellraw("ok");
+    var player = Selector.of("@p").getFirst();
+    player.sendMessage("ok");
 }
 "#;
-        let offset = source.find("player.tellraw").unwrap();
+        let offset = source.find("player.sendMessage").unwrap();
         let ranges = semantic_ranges(source, offset, "player");
         assert_eq!(
             ranges.len(),
@@ -4687,7 +4945,7 @@ void main() {
         let source = r#"
 void main() {
     var values = List.of(1, 2, 3);
-    var me = single(Selector.of("@a"));
+    var me = Selector.of("@a").getFirst();
     values.;
     me.;
 }
@@ -4710,9 +4968,9 @@ void main() {
 record Profile(int duration, String label) {}
 record Action(Profile profile, String kind) {}
 void main(Action action) {
-    var next = action.profile;
-    var duration = next.duration;
-    var kind = action.kind;
+    var next = action.profile();
+    var duration = next.duration();
+    var kind = action.kind();
 }
 "#;
         let analysis = analyze_source(source);
@@ -4721,6 +4979,15 @@ void main(Action action) {
             "{:?}",
             analysis.diagnostics
         );
+
+        let action_items = completion_items(
+            source,
+            &analysis,
+            source.find("action.profile").unwrap() + "action.".len(),
+        );
+        assert!(action_items.iter().any(
+            |item| item.label == "profile" && item.insert_text.as_deref() == Some("profile()")
+        ));
 
         let top_level_items =
             completion_items(source, &analysis, source.find("void main").unwrap());
@@ -4748,8 +5015,8 @@ void main(Action action) {
     fn completes_nested_player_member_paths() {
         let source = r#"
 void main() {
-    var me = (Player) single(Selector.of("@a"));
-    var asserted = (Player) single(Selector.of("@e[limit=1]"));
+    var me = (Player) Selector.of("@a").getFirst();
+    var asserted = (Player) Selector.of("@e[limit=1]").getFirst();
     me.mainhand.;
     me.inventory[0].;
     me.inventory[-1].;
@@ -4833,7 +5100,7 @@ void main() {
     fn completes_gameplay_builtins_and_generic_entity_members() {
         let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
     pig.;
 }
 "#;
@@ -4855,11 +5122,15 @@ void main() {
                 .any(|item| item.label == "sleepTicks")
         );
         assert!(top_level_items.iter().any(|item| item.label == "debug"));
-        assert!(!top_level_items.iter().any(|item| item.label == "tellraw"));
+        assert!(
+            !top_level_items
+                .iter()
+                .any(|item| item.label == "sendMessage")
+        );
 
         let pig_items = completion_items(source, &analysis, source.find("pig.").unwrap() + 4);
         assert!(pig_items.iter().any(|item| item.label == "teleport"));
-        assert!(pig_items.iter().any(|item| item.label == "tellraw"));
+        assert!(pig_items.iter().any(|item| item.label == "sendMessage"));
         assert!(pig_items.iter().any(|item| item.label == "position"));
         assert!(pig_items.iter().any(|item| item.label == "addTag"));
         assert!(pig_items.iter().any(|item| item.label == "removeTag"));
@@ -4882,14 +5153,14 @@ void main() {
     fn completes_state_namespace_consistently_for_generic_entities_and_players() {
         let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
-    var player = (Player) single(Selector.of("@a[limit=1]"));
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+    var player = (Player) Selector.of("@a[limit=1]").getFirst();
     pig.state.;
     player.state.;
-    single(Selector.of("@e[type=pig,limit=1]")).state.;
-    ((Player) single(Selector.of("@a[limit=1]"))).state.;
+    Selector.of("@e[type=pig,limit=1]").getFirst().state.;
+    ((Player) Selector.of("@a[limit=1]").getFirst()).state.;
     pig.position.foo.;
-    single(Selector.of("@e[type=pig,limit=1]")).position.foo.;
+    Selector.of("@e[type=pig,limit=1]").getFirst().position.foo.;
 }
 "#;
         let analysis = analyze_source(source);
@@ -4912,9 +5183,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).state.")
+                .find("Selector.of(\"@e[type=pig,limit=1]\").getFirst().state.")
                 .unwrap()
-                + "single(Selector.of(\"@e[type=pig,limit=1]\")).state.".len(),
+                + "Selector.of(\"@e[type=pig,limit=1]\").getFirst().state.".len(),
         );
         assert!(inline_entity_state_items.is_empty());
 
@@ -4922,9 +5193,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("(Player) single(Selector.of(\"@a[limit=1]\"))).state.")
+                .find("(Player) Selector.of(\"@a[limit=1]\").getFirst()).state.")
                 .unwrap()
-                + "(Player) single(Selector.of(\"@a[limit=1]\"))).state.".len(),
+                + "(Player) Selector.of(\"@a[limit=1]\").getFirst()).state.".len(),
         );
         assert!(inline_player_state_items.is_empty());
 
@@ -4939,9 +5210,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).position.foo.")
+                .find("Selector.of(\"@e[type=pig,limit=1]\").getFirst().position.foo.")
                 .unwrap()
-                + "single(Selector.of(\"@e[type=pig,limit=1]\")).position.foo.".len(),
+                + "Selector.of(\"@e[type=pig,limit=1]\").getFirst().position.foo.".len(),
         );
         assert!(invalid_inline_nested_items.is_empty());
     }
@@ -4976,20 +5247,21 @@ void main() {
 
         let pig_items = completion_items(source, &analysis, source.find("pig.").unwrap() + 4);
         assert!(pig_items.iter().any(|item| item.label == "asNbt"));
-        assert!(pig_items.iter().any(|item| item.label == "name"));
+        assert!(pig_items.iter().any(|item| item.label == "getName"));
+        assert!(pig_items.iter().any(|item| item.label == "setName"));
         assert!(pig_items.iter().any(|item| item.label == "nbt"));
-        assert!(pig_items.iter().any(|item| item.label == "noAi"));
+        assert!(pig_items.iter().any(|item| item.label == "setNoAi"));
 
         let chest_items = completion_items(source, &analysis, source.find("chest.").unwrap() + 6);
         assert!(chest_items.iter().any(|item| item.label == "asNbt"));
         assert!(chest_items.iter().any(|item| item.label == "states"));
-        assert!(chest_items.iter().any(|item| item.label == "lock"));
-        assert!(chest_items.iter().any(|item| item.label == "name"));
+        assert!(chest_items.iter().any(|item| item.label == "setLock"));
+        assert!(chest_items.iter().any(|item| item.label == "getName"));
 
         let stack_items = completion_items(source, &analysis, source.find("stack.").unwrap() + 6);
         assert!(stack_items.iter().any(|item| item.label == "asNbt"));
-        assert!(stack_items.iter().any(|item| item.label == "count"));
-        assert!(stack_items.iter().any(|item| item.label == "name"));
+        assert!(stack_items.iter().any(|item| item.label == "setCount"));
+        assert!(stack_items.iter().any(|item| item.label == "getName"));
 
         let msg_items = completion_items(source, &analysis, source.find("msg.").unwrap() + 4);
         assert!(msg_items.iter().any(|item| item.label == "color"));
@@ -5003,7 +5275,11 @@ void main() {
                 + "ItemStack(\"minecraft:apple\").".len(),
         );
         assert!(inline_item_items.iter().any(|item| item.label == "asNbt"));
-        assert!(inline_item_items.iter().any(|item| item.label == "count"));
+        assert!(
+            inline_item_items
+                .iter()
+                .any(|item| item.label == "setCount")
+        );
 
         let inline_text_items = completion_items(
             source,
@@ -5180,11 +5456,11 @@ void main() {
     fn completes_schema_backed_nbt_fields_for_runtime_refs() {
         let source = r#"
 void main() {
-    var pig = single(Selector.of("@e[type=pig,limit=1]"));
-    var player = (Player) single(Selector.of("@a[limit=1]"));
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+    var player = (Player) Selector.of("@a[limit=1]").getFirst();
     var chest = Block.of("~ ~ ~");
     pig.nbt.;
-    single(Selector.of("@e[type=pig,limit=1]")).nbt.;
+    Selector.of("@e[type=pig,limit=1]").getFirst().nbt.;
     player.nbt.;
     chest.nbt.;
     Block.of("~ ~ ~").nbt.;
@@ -5203,9 +5479,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).nbt.")
+                .find("Selector.of(\"@e[type=pig,limit=1]\").getFirst().nbt.")
                 .unwrap()
-                + "single(Selector.of(\"@e[type=pig,limit=1]\")).nbt.".len(),
+                + "Selector.of(\"@e[type=pig,limit=1]\").getFirst().nbt.".len(),
         );
         assert!(
             inline_entity_items
@@ -5349,15 +5625,15 @@ void main() {
     fn completes_contextual_minecraft_ids_inside_string_arguments() {
         let source = r#"
 void main() {
-    var player = (Player) single(Selector.of("@a"));
+    var player = (Player) Selector.of("@a").getFirst();
     new EntityData("pig");
     new ItemStack("diamond_swo");
     new ItemStack("music_disc_boun");
-    Block.of("~ ~ ~").setblock("gold_bloc");
-    player.playsound("entity.experience_orb.picku", "master");
-    player.playsound("block.sulfur_spike.brea", "master");
-    Block.of("~ ~ ~").particle("happy_villag");
-    Block.of("~ ~ ~").particle("geyser_poo");
+    Block.of("~ ~ ~").setBlock("gold_bloc");
+    player.playSound("entity.experience_orb.picku", "master");
+    player.playSound("block.sulfur_spike.brea", "master");
+    Block.of("~ ~ ~").spawnParticle("happy_villag");
+    Block.of("~ ~ ~").spawnParticle("geyser_poo");
     player.effect("glowin", 3, 0);
     player.give("stick", 1);
     player.position.lootSpawn("chests/simple_dungeo");
@@ -5401,7 +5677,7 @@ void main() {
         let block_items = completion_items(
             source,
             &analysis,
-            source.find("setblock(\"gold_bloc").unwrap() + "setblock(\"gold_bloc".len(),
+            source.find("setBlock(\"gold_bloc").unwrap() + "setBlock(\"gold_bloc".len(),
         );
         assert!(
             block_items
@@ -5413,9 +5689,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("playsound(\"entity.experience_orb.picku")
+                .find("playSound(\"entity.experience_orb.picku")
                 .unwrap()
-                + "playsound(\"entity.experience_orb.picku".len(),
+                + "playSound(\"entity.experience_orb.picku".len(),
         );
         assert!(
             sound_items
@@ -5425,8 +5701,8 @@ void main() {
         let new_sound_items = completion_items(
             source,
             &analysis,
-            source.find("playsound(\"block.sulfur_spike.brea").unwrap()
-                + "playsound(\"block.sulfur_spike.brea".len(),
+            source.find("playSound(\"block.sulfur_spike.brea").unwrap()
+                + "playSound(\"block.sulfur_spike.brea".len(),
         );
         assert!(
             new_sound_items
@@ -5434,23 +5710,24 @@ void main() {
                 .any(|item| item.label == "minecraft:block.sulfur_spike.break")
         );
 
-        let particle_items = completion_items(
+        let spawn_particle_items = completion_items(
             source,
             &analysis,
-            source.find("particle(\"happy_villag").unwrap() + "particle(\"happy_villag".len(),
+            source.find("spawnParticle(\"happy_villag").unwrap()
+                + "spawnParticle(\"happy_villag".len(),
         );
         assert!(
-            particle_items
+            spawn_particle_items
                 .iter()
                 .any(|item| item.label == "minecraft:happy_villager")
         );
-        let new_particle_items = completion_items(
+        let new_spawn_particle_items = completion_items(
             source,
             &analysis,
-            source.find("particle(\"geyser_poo").unwrap() + "particle(\"geyser_poo".len(),
+            source.find("spawnParticle(\"geyser_poo").unwrap() + "spawnParticle(\"geyser_poo".len(),
         );
         assert!(
-            new_particle_items
+            new_spawn_particle_items
                 .iter()
                 .any(|item| item.label == "minecraft:geyser_poof")
         );
@@ -5494,7 +5771,7 @@ void main() {
     fn completes_minecraft_ids_for_unterminated_strings_and_item_assignments() {
         let assignment_source = r#"
 void main() {
-    var player = (Player) single(Selector.of("@a"));
+    var player = (Player) Selector.of("@a").getFirst();
     player.mainhand.item = "carrot_on_a_stic
 "#;
         let assignment_analysis = analyze_source(assignment_source);
@@ -5590,7 +5867,7 @@ void main() {
     fn does_not_offer_item_id_completions_for_read_only_item_slot_ids() {
         let source = r#"
 void main() {
-    var player = (Player) single(Selector.of("@a"));
+    var player = (Player) Selector.of("@a").getFirst();
     player.hotbar[0].id = "stick";
 }
 "#;
@@ -5803,5 +6080,60 @@ void main() {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("cannot find 'helper'"))
         );
+    }
+
+    #[test]
+    fn completes_java_static_and_selector_calls() {
+        let source = "void main() {\n    var sel = Selector.of(\"@e\");\n    sel.;\n}";
+        let analysis = analyze_source(source);
+        let selector = completion_items(source, &analysis, source.find("sel.").unwrap() + 4);
+        assert!(selector.iter().any(|item| item.label == "getFirst"));
+        assert!(selector.iter().any(|item| item.label == "findFirst"));
+        assert!(!selector.iter().any(|item| item.label == "single"));
+
+        let math = completion_items("Math.", &analyze_source("Math."), 5);
+        assert!(math.iter().any(|item| item.label == "sqrt"));
+        let integer = completion_items("Integer.", &analyze_source("Integer."), 8);
+        assert!(integer.iter().any(|item| item.label == "parseInt"));
+        let string = completion_items("String.", &analyze_source("String."), 7);
+        assert!(string.iter().any(|item| item.label == "valueOf"));
+    }
+
+    #[test]
+    fn completes_results_of_conditional_and_switch_expressions() {
+        let source = r#"
+enum Stage { NEW, DONE }
+void main() {
+    var label = true ? "yes" : "no";
+    var code = switch (Stage.NEW) {
+        case NEW -> "new";
+        case DONE -> "done";
+    };
+    var stage = Stage.NEW;
+    debug(label.toString());
+    debug(code.toString());
+    debug(stage.name());
+}
+"#;
+        let analysis = analyze_source(source);
+        assert!(
+            analysis.typed_program.is_some(),
+            "{:?}",
+            analysis.diagnostics
+        );
+        for name in ["label.", "code."] {
+            let offset = source.find(name).unwrap() + name.len();
+            let items = completion_items(source, &analysis, offset);
+            assert!(
+                items.iter().any(|item| item.label == "startsWith"),
+                "{name}"
+            );
+        }
+        let stage = completion_items(
+            source,
+            &analysis,
+            source.find("stage.name").unwrap() + "stage.".len(),
+        );
+        assert!(stage.iter().any(|item| item.label == "ordinal"));
     }
 }

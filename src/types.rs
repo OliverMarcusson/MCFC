@@ -4,8 +4,39 @@ use std::sync::{Arc, Mutex};
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::language_catalog::{
-    GENERIC_AGENT_EVENTS, VANILLA_EVENTS, event_kind_for_type, event_type_name,
+    ENTITY_METHOD_NAMES, GENERIC_AGENT_EVENTS, OLD_ENTITY_METHOD_NAMES, VANILLA_EVENTS,
+    accessor_property, capitalized, display_call, event_kind_for_type, event_type_name,
+    property_names,
 };
+
+thread_local! {
+    /// Set while a `setX(...)` call is checked as the assignment it lowers to,
+    /// so the assignment isn't reported as property syntax.
+    static LOWERING_SETTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `bb.max` written in source: properties are read and written through get/set methods.
+fn check_property_syntax(
+    base_ty: &Type,
+    segments: &[PathSegment],
+    write: bool,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) {
+    if let [PathSegment::Field(field)] = segments
+        && property_names(base_ty).contains(&field.as_str())
+    {
+        let accessor = if write {
+            format!("set{}(...)", capitalized(field))
+        } else {
+            format!("get{}()", capitalized(field))
+        };
+        diagnostics.push(Diagnostic::new(
+            format!("use '.{accessor}' for the {} property", field),
+            span,
+        ));
+    }
+}
 
 /// Host-bridge modules that may be called as `module.fn(...)` from `.mcf` source.
 /// Recognising a name here (independent of whether it is enabled) lets the type
@@ -623,6 +654,18 @@ pub enum TypedExprKind {
         kind: CastKind,
         expr: Box<TypedExpr>,
     },
+    /// `condition ? then_expr : else_expr`; only the chosen branch runs.
+    Conditional {
+        condition: Box<TypedExpr>,
+        then_expr: Box<TypedExpr>,
+        else_expr: Box<TypedExpr>,
+    },
+    /// Evaluates `value` once into the local `name`, then evaluates `body`.
+    Bind {
+        name: String,
+        value: Box<TypedExpr>,
+        body: Box<TypedExpr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1238,7 +1281,7 @@ fn type_check_block(
                     locals.insert(name.clone(), return_type);
                     kind
                 } else {
-                    // `List<int> xs = List.of();` takes the element type from the declaration.
+                    // `List<Integer> xs = List.of();` takes the element type from the declaration.
                     let empty_literal = match (ty, &value.kind) {
                         (Some(Type::Array(_)), ExprKind::ArrayLiteral(items))
                             if items.is_empty() =>
@@ -1333,6 +1376,15 @@ fn type_check_block(
                             diagnostics,
                             statement.span.clone(),
                         );
+                        if !LOWERING_SETTER.get() {
+                            check_property_syntax(
+                                &typed_path.base.ty,
+                                &path.segments,
+                                true,
+                                statement.span.clone(),
+                                diagnostics,
+                            );
+                        }
                         let is_equipment_item_def_write = is_entity_ref_type(&typed_path.base.ty)
                             && value.ty == Type::ItemDef
                             && matches!(
@@ -1927,6 +1979,98 @@ fn type_check_block(
                     placeholders,
                 }
             }
+            // `bb.setMax(10);` is the assignment `bb.max = 10;`.
+            StmtKind::Expr(Expr {
+                kind:
+                    ExprKind::MethodCall {
+                        receiver,
+                        method,
+                        args,
+                    },
+                ..
+            }) if args.len() == 1
+                && let ExprKind::Variable(name) = &receiver.kind
+                && let Some(ty) = env.get(name)
+                && let Some(property) = accessor_property(method, "set")
+                && property_names(ty).contains(&property.as_str()) =>
+            {
+                let assign = Stmt {
+                    kind: StmtKind::Assign {
+                        target: AssignTarget::Path(PathExpr {
+                            base: receiver.clone(),
+                            segments: vec![PathSegment::Field(property)],
+                        }),
+                        value: args[0].clone(),
+                    },
+                    span: statement.span.clone(),
+                };
+                LOWERING_SETTER.set(true);
+                let lowered = type_check_block(
+                    &[assign],
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    in_async,
+                    host,
+                    diagnostics,
+                );
+                LOWERING_SETTER.set(false);
+                typed.extend(lowered);
+                continue;
+            }
+            // `xs.set(i, v);` and `m.put(k, v);` are `xs[i] = v;` and `m[k] = v;`.
+            StmtKind::Expr(Expr {
+                kind:
+                    ExprKind::MethodCall {
+                        receiver,
+                        method,
+                        args,
+                    },
+                ..
+            }) if matches!(method.as_str(), "set" | "put")
+                && args.len() == 2
+                && matches!(receiver.kind, ExprKind::Variable(_) | ExprKind::Path(_)) =>
+            {
+                let index = PathSegment::Index(Box::new(args[0].clone()));
+                let path = match &receiver.kind {
+                    ExprKind::Path(path) => {
+                        let mut path = path.clone();
+                        path.segments.push(index);
+                        path
+                    }
+                    _ => PathExpr {
+                        base: receiver.clone(),
+                        segments: vec![index],
+                    },
+                };
+                let assign = Stmt {
+                    kind: StmtKind::Assign {
+                        target: AssignTarget::Path(path),
+                        value: args[1].clone(),
+                    },
+                    span: statement.span.clone(),
+                };
+                typed.extend(type_check_block(
+                    &[assign],
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    in_async,
+                    host,
+                    diagnostics,
+                ));
+                continue;
+            }
             StmtKind::Expr(expr) => {
                 if let Some((module, function, call_args)) = host_call_parts(expr, env) {
                     let (kind, _return_type) = type_check_host_call(
@@ -2065,6 +2209,7 @@ fn type_check_expr(
             kind: if value.contains("$(") {
                 TypedExprKind::InterpolatedString {
                     template: value.clone(),
+                    // Text reads like Java's `+`: `true`, not `1`; `DONE`, not `2`.
                     placeholders: collect_macro_placeholders(
                         value,
                         struct_defs,
@@ -2074,7 +2219,21 @@ fn type_check_expr(
                         called_functions,
                         expr.span.clone(),
                         diagnostics,
-                    ),
+                    )
+                    .into_iter()
+                    .map(|mut placeholder| {
+                        if matches!(placeholder.ty, Type::Bool | Type::Enum(_)) {
+                            placeholder.expr = string_operand(
+                                placeholder.expr,
+                                struct_defs,
+                                expr.span.clone(),
+                                diagnostics,
+                            );
+                            placeholder.ty = Type::String;
+                        }
+                        placeholder
+                    })
+                    .collect(),
                 }
             } else {
                 TypedExprKind::String(value.clone())
@@ -2100,7 +2259,7 @@ fn type_check_expr(
             let ty = infer_collection_type(
                 values.iter().map(|value| &value.ty),
                 "List.of(...) values must all have one type",
-                "an empty List.of() needs a declared type, like 'List<int> xs = List.of();'",
+                "an empty List.of() needs a declared type, like 'List<Integer> xs = List.of();'",
                 expr.span.clone(),
                 diagnostics,
             );
@@ -2255,6 +2414,7 @@ fn type_check_expr(
                     ref_kind: RefKind::Unknown,
                 };
             }
+            let ast_segments = &path.segments;
             let path = type_check_path(
                 path,
                 struct_defs,
@@ -2264,6 +2424,13 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
                 expr.span.clone(),
+            );
+            check_property_syntax(
+                &path.base.ty,
+                ast_segments,
+                false,
+                expr.span.clone(),
+                diagnostics,
             );
             let ref_kind = if path.ty == Type::PlayerRef {
                 RefKind::Player
@@ -2332,7 +2499,7 @@ fn type_check_expr(
                 UnaryOp::Not => {
                     if operand.ty != Type::Bool {
                         diagnostics.push(Diagnostic::new(
-                            "'not' requires a 'boolean' operand",
+                            "'!' requires a 'boolean' operand",
                             expr.span.clone(),
                         ));
                     }
@@ -2377,16 +2544,21 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
             );
-            if *op == BinaryOp::Add && left.ty == Type::String && right.ty == Type::String {
+            if *op == BinaryOp::Add && (left.ty == Type::String || right.ty == Type::String) {
+                // Like Java, `"n=" + n` converts the other side to text.
+                let left = string_operand(left, struct_defs, expr.span.clone(), diagnostics);
+                let right = string_operand(right, struct_defs, expr.span.clone(), diagnostics);
                 return concat_strings(vec![left, right]);
             }
             let ty = match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
                     if left.ty == Type::Float || right.ty == Type::Float =>
                 {
+                    left = coerce_expr_to_expected_type(left, &Type::Float);
+                    right = coerce_expr_to_expected_type(right, &Type::Float);
                     if left.ty != right.ty {
                         diagnostics.push(Diagnostic::new(
-                            "cannot mix 'int' and 'float'; convert with float(x) or int(x)",
+                            "arithmetic operators require 'int' or 'float' operands",
                             expr.span.clone(),
                         ));
                     }
@@ -2527,6 +2699,58 @@ fn type_check_expr(
                 ref_kind: RefKind::Unknown,
             }
         }
+        ExprKind::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            let check =
+                |expr: &Expr, diagnostics: &mut Diagnostics, called: &mut BTreeSet<String>| {
+                    type_check_expr(
+                        expr,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called,
+                        diagnostics,
+                    )
+                };
+            let condition = coerce_expr_to_expected_type(
+                check(condition, diagnostics, called_functions),
+                &Type::Bool,
+            );
+            if condition.ty != Type::Bool {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "the condition of '?:' must be 'boolean', found '{}'",
+                        condition.ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            let then_expr = check(then_expr, diagnostics, called_functions);
+            let else_expr = check(else_expr, diagnostics, called_functions);
+            let (then_expr, else_expr) =
+                unify_branches(then_expr, else_expr, expr.span.clone(), diagnostics);
+            conditional_expr(condition, then_expr, else_expr)
+        }
+        ExprKind::Switch {
+            value,
+            arms,
+            default,
+        } => type_check_switch_expr(
+            expr,
+            value,
+            arms,
+            default.as_deref(),
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        ),
         ExprKind::Call { function, args } => {
             if let Some(builtin) = type_check_builtin_call(
                 function,
@@ -2576,7 +2800,7 @@ fn type_check_expr(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected {}, found {}",
-                        function,
+                        display_call(function),
                         signature.params.len(),
                         args.len()
                     ),
@@ -3002,6 +3226,15 @@ fn type_check_path(
                 current_ty = *value.clone();
             }
             (Type::Struct(name), PathSegment::Field(field)) => {
+                if !name.starts_with('@') {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "read a record component with '.{field}()'; records can't be changed, so build a new one with 'new {}(...)'",
+                            name.replace("::", ".")
+                        ),
+                        span.clone(),
+                    ));
+                }
                 match struct_defs
                     .get(name)
                     .and_then(|def| def.fields.get(field))
@@ -3358,8 +3591,8 @@ fn type_check_builtin_call(
             );
             diagnostics.push(Diagnostic::new(
                 format!(
-                    "{}(...) may only appear as a standalone statement",
-                    function
+                    "{} may only appear as a standalone statement",
+                    display_call(function)
                 ),
                 expr.span.clone(),
             ));
@@ -3404,7 +3637,7 @@ fn type_check_builtin_call(
                     ),
                 },
                 ("random_binomial", [n, p]) => (n.ty != Type::Int || p.ty != Type::Float)
-                    .then(|| "random_binomial(n, p) needs an 'int' and a 'float'".to_string()),
+                    .then(|| "randomBinomial(n, p) needs an 'int' and a 'float'".to_string()),
                 _ => None,
             };
             if let Some(problem) = problem {
@@ -3792,7 +4025,7 @@ fn type_check_builtin_call(
                 && arg.ty != Type::String
             {
                 diagnostics.push(Diagnostic::new(
-                    "selector(...) requires a 'String' argument",
+                    "Selector.of(...) requires a 'String' argument",
                     expr.span.clone(),
                 ));
             }
@@ -3818,7 +4051,7 @@ fn type_check_builtin_call(
                 && arg.ty != Type::String
             {
                 diagnostics.push(Diagnostic::new(
-                    "block(...) requires a 'String' argument",
+                    "Block.of(...) requires a 'String' argument",
                     expr.span.clone(),
                 ));
             }
@@ -3843,12 +4076,12 @@ fn type_check_builtin_call(
             if let Some(arg) = args.first_mut() {
                 if arg.ty != Type::EntitySet {
                     diagnostics.push(Diagnostic::new(
-                        "findFirst(...) requires a 'Selector' argument",
+                        "Selector.findFirst() requires a Selector receiver",
                         expr.span.clone(),
                     ));
                 } else if !can_narrow_single_selector(arg) {
                     diagnostics.push(Diagnostic::new(
-                        "findFirst(...) requires a direct selector(...) expression so it can enforce limit=1",
+                        "findFirst() needs a Selector.of(\"...\") literal so it can add limit=1",
                         expr.span.clone(),
                     ));
                 } else {
@@ -3882,7 +4115,7 @@ fn type_check_builtin_call(
             });
             if arg.ty != Type::EntitySet {
                 diagnostics.push(Diagnostic::new(
-                    "single(...) requires a 'Selector' argument",
+                    "Selector.getFirst() requires a Selector receiver",
                     expr.span.clone(),
                 ));
             }
@@ -3944,7 +4177,7 @@ fn type_check_builtin_call(
             });
             if !is_entity_ref_type(&arg.ty) {
                 diagnostics.push(Diagnostic::new(
-                    "exists(...) requires an 'Entity' argument",
+                    "Entity.isValid() requires an Entity receiver",
                     expr.span.clone(),
                 ));
             }
@@ -4104,9 +4337,16 @@ fn type_check_builtin_call(
             if arg.ty != Type::Nbt && !numeric {
                 diagnostics.push(Diagnostic::new(
                     match function {
-                        "int" => "int(...) requires an 'Nbt' or 'float' argument".to_string(),
-                        "float" => "float(...) requires an 'Nbt' or 'int' argument".to_string(),
-                        _ => format!("{}(...) requires an 'Nbt' argument", function),
+                        "int" => format!("cannot cast '{}' to int", arg.ty.as_str()),
+                        "float" => format!("cannot cast '{}' to float", arg.ty.as_str()),
+                        "bool" => format!(
+                            "cannot cast '{}' to boolean; compare it instead, like 'x != 0'",
+                            arg.ty.as_str()
+                        ),
+                        _ => format!(
+                            "cannot cast '{}' to String; use String.valueOf(x) or \"\" + x",
+                            arg.ty.as_str()
+                        ),
                     },
                     expr.span.clone(),
                 ));
@@ -4142,6 +4382,82 @@ fn type_check_method_call(
     called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> Option<TypedExpr> {
+    let recheck = |kind: ExprKind, called: &mut BTreeSet<String>, diagnostics: &mut Diagnostics| {
+        let rewritten = Expr {
+            kind,
+            span: expr.span.clone(),
+        };
+        type_check_expr(
+            &rewritten,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called,
+            diagnostics,
+        )
+    };
+    match (method, args) {
+        // `a.equals(b)` is `a == b`: MCFC compares values, never references.
+        ("equals", [other]) => {
+            return Some(recheck(
+                ExprKind::Binary {
+                    op: BinaryOp::Eq,
+                    left: Box::new(receiver.clone()),
+                    right: Box::new(other.clone()),
+                },
+                called_functions,
+                diagnostics,
+            ));
+        }
+        ("getOrDefault", [key, fallback]) => {
+            let get = Expr {
+                kind: ExprKind::MethodCall {
+                    receiver: Box::new(receiver.clone()),
+                    method: "get".to_string(),
+                    args: vec![key.clone()],
+                },
+                span: expr.span.clone(),
+            };
+            return Some(recheck(
+                ExprKind::MethodCall {
+                    receiver: Box::new(get),
+                    method: "orElse".to_string(),
+                    args: vec![fallback.clone()],
+                },
+                called_functions,
+                diagnostics,
+            ));
+        }
+        _ => {}
+    }
+    if let ExprKind::Variable(enum_name) = &receiver.kind
+        && !env.contains_key(enum_name)
+        && let Some(variants) = struct_defs
+            .get(enum_name)
+            .and_then(|def| def.enum_variants.as_ref())
+    {
+        if method != "values" || !args.is_empty() {
+            diagnostics.push(Diagnostic::new(
+                format!("unknown method '{enum_name}.{method}'; enums have 'values()'"),
+                expr.span.clone(),
+            ));
+        }
+        let ty = Type::Enum(enum_name.clone());
+        return Some(TypedExpr {
+            kind: TypedExprKind::ArrayLiteral(
+                (0..variants.len())
+                    .map(|index| TypedExpr {
+                        kind: TypedExprKind::Int(index as i64),
+                        ty: ty.clone(),
+                        ref_kind: RefKind::Unknown,
+                    })
+                    .collect(),
+            ),
+            ty: Type::Array(Box::new(ty)),
+            ref_kind: RefKind::Unknown,
+        });
+    }
     let receiver_expr = receiver;
     let receiver = type_check_expr(
         receiver_expr,
@@ -4152,6 +4468,107 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    // `bb.getMax()` reads the `max` property.
+    if args.is_empty()
+        && let Some(property) = accessor_property(method, "get")
+        && property_names(&receiver.ty).contains(&property.as_str())
+    {
+        let path = PathExpr {
+            base: Box::new(receiver_expr.clone()),
+            segments: vec![PathSegment::Field(property)],
+        };
+        let path = type_check_path(
+            &path,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            expr.span.clone(),
+        );
+        return Some(TypedExpr {
+            ty: path.ty.clone(),
+            kind: TypedExprKind::Path(path),
+            ref_kind: RefKind::Unknown,
+        });
+    }
+    let on_world = matches!(
+        receiver.ty,
+        Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+    );
+    if on_world
+        && let Some((_, new_name)) = OLD_ENTITY_METHOD_NAMES
+            .iter()
+            .find(|(old, _)| *old == method)
+    {
+        diagnostics.push(Diagnostic::new(
+            format!("use '.{new_name}(...)'"),
+            expr.span.clone(),
+        ));
+    }
+    let method = if on_world {
+        ENTITY_METHOD_NAMES
+            .iter()
+            .find(|(java, _)| *java == method)
+            .map_or(method, |(_, internal)| *internal)
+    } else {
+        method
+    };
+    if receiver.ty == Type::EntitySet && matches!(method, "first" | "findFirst") {
+        if !args.is_empty() {
+            diagnostics.push(Diagnostic::new(
+                format!("{} takes no arguments", display_call(method)),
+                expr.span.clone(),
+            ));
+        }
+        let mut arg = receiver;
+        if method == "findFirst" && !can_narrow_single_selector(&arg) {
+            diagnostics.push(Diagnostic::new(
+                "findFirst() needs a Selector.of(\"...\") literal so it can add limit=1",
+                expr.span.clone(),
+            ));
+        }
+        rewrite_single_limit(&mut arg, diagnostics, expr.span.clone());
+        let ref_kind = arg.ref_kind;
+        return Some(if method == "findFirst" {
+            TypedExpr {
+                kind: TypedExprKind::Call {
+                    function: "find_first".to_string(),
+                    args: vec![arg],
+                },
+                ty: Type::Optional(Box::new(Type::EntityRef)),
+                ref_kind: RefKind::Unknown,
+            }
+        } else {
+            TypedExpr {
+                kind: TypedExprKind::Single(Box::new(arg)),
+                ty: Type::EntityRef,
+                ref_kind,
+            }
+        });
+    }
+    if method == "isValid" && is_entity_ref_type(&receiver.ty) {
+        if !args.is_empty() {
+            diagnostics.push(Diagnostic::new(
+                format!("{} takes no arguments", display_call(method)),
+                expr.span.clone(),
+            ));
+        }
+        return Some(TypedExpr {
+            kind: TypedExprKind::Exists(Box::new(receiver)),
+            ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
+        });
+    }
+    // A record component is read like Java: `quest.name()`.
+    if let Type::Struct(name) = &receiver.ty
+        && !name.starts_with('@')
+        && args.is_empty()
+        && let Some(field_ty) = struct_defs.get(name).and_then(|def| def.fields.get(method))
+    {
+        return Some(record_component(receiver, method, field_ty.clone()));
+    }
     if matches!(receiver.ty, Type::EntityRef | Type::PlayerRef) {
         let is_player = receiver.ty == Type::PlayerRef || receiver.ref_kind == RefKind::Player;
         if let Some(read) =
@@ -4177,6 +4594,160 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    let int = |value: i64| TypedExpr {
+        kind: TypedExprKind::Int(value),
+        ty: Type::Int,
+        ref_kind: RefKind::Unknown,
+    };
+    match method {
+        "isEmpty" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            return Some(match &receiver.ty {
+                Type::Optional(_) => TypedExpr {
+                    kind: TypedExprKind::Unary {
+                        op: UnaryOp::Not,
+                        expr: Box::new(method_call_expr(receiver, "isPresent", args, Type::Bool)),
+                    },
+                    ty: Type::Bool,
+                    ref_kind: RefKind::Unknown,
+                },
+                Type::String | Type::Array(_) | Type::Dict(_) => TypedExpr {
+                    kind: TypedExprKind::Binary {
+                        op: BinaryOp::Eq,
+                        left: Box::new(method_call_expr(receiver, "len", args, Type::Int)),
+                        right: Box::new(int(0)),
+                    },
+                    ty: Type::Bool,
+                    ref_kind: RefKind::Unknown,
+                },
+                other => {
+                    diagnostics.push(Diagnostic::new(
+                        format!("'{}' has no isEmpty()", other.as_str()),
+                        expr.span.clone(),
+                    ));
+                    int(0)
+                }
+            });
+        }
+        "get" if matches!(receiver.ty, Type::Optional(_)) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            let Type::Optional(value) = receiver.ty.clone() else {
+                unreachable!()
+            };
+            return Some(method_call_expr(receiver, "get", args, *value));
+        }
+        "contains" | "startsWith" | "endsWith" | "index_of" if receiver.ty == Type::String => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if args.first().is_some_and(|arg| arg.ty != Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{} needs a 'String' argument", display_call(method)),
+                    expr.span.clone(),
+                ));
+            }
+            let (function, ty) = match method {
+                "contains" => ("std::str::contains", Type::Bool),
+                "startsWith" => ("std::str::startsWith", Type::Bool),
+                "endsWith" => ("std::str::endsWith", Type::Bool),
+                _ => ("std::str::find", Type::Int),
+            };
+            called_functions.insert(function.to_string());
+            let mut call_args = vec![receiver];
+            call_args.extend(args);
+            return Some(TypedExpr {
+                kind: TypedExprKind::Call {
+                    function: function.to_string(),
+                    args: call_args,
+                },
+                ty,
+                ref_kind: RefKind::Unknown,
+            });
+        }
+        "charAt" if receiver.ty == Type::String => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            let index = args.into_iter().next().unwrap_or_else(|| int(0));
+            if index.ty != Type::Int {
+                diagnostics.push(Diagnostic::new(
+                    "charAt(...) index must be 'int'",
+                    expr.span.clone(),
+                ));
+            }
+            let end = TypedExpr {
+                kind: TypedExprKind::Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(index.clone()),
+                    right: Box::new(int(1)),
+                },
+                ty: Type::Int,
+                ref_kind: RefKind::Unknown,
+            };
+            // ponytail: no char type, so charAt gives a one-character String.
+            return Some(method_call_expr(
+                receiver,
+                "slice",
+                vec![index, end],
+                Type::String,
+            ));
+        }
+        "ordinal" if matches!(receiver.ty, Type::Enum(_)) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            let mut receiver = receiver;
+            receiver.ty = Type::Int;
+            return Some(receiver);
+        }
+        "name" if matches!(receiver.ty, Type::Enum(_)) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            let Type::Enum(name) = &receiver.ty else {
+                unreachable!()
+            };
+            let variants = struct_defs
+                .get(name)
+                .and_then(|def| def.enum_variants.clone())
+                .unwrap_or_default();
+            return Some(enum_name_expr(receiver, &variants));
+        }
+        "Integer.parseInt" => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            if receiver.ty != Type::String {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "Integer.parseInt(...) needs a 'String', found '{}'",
+                        receiver.ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            return Some(method_call_expr(receiver, "parse_int", args, Type::Int));
+        }
+        _ if method.starts_with("Math.") => {
+            return Some(type_check_math_call(
+                &method["Math.".len()..],
+                receiver,
+                args,
+                expr,
+                signatures,
+                called_functions,
+                diagnostics,
+            ));
+        }
+        "sqrt" | "sin" | "cos" | "tan" | "abs" | "floor" | "ceil" | "round" | "trunc" | "pow"
+        | "min" | "max" | "hypot" | "clamp"
+            if matches!(receiver.ty, Type::Float | Type::Int) =>
+        {
+            diagnostics.push(Diagnostic::new(
+                format!("use 'Math.{method}(x, ...)'; numbers have no methods besides toString()"),
+                expr.span.clone(),
+            ));
+            return Some(int(0));
+        }
+        "parseInt" | "parse_int" => {
+            diagnostics.push(Diagnostic::new(
+                "use 'Integer.parseInt(s)'",
+                expr.span.clone(),
+            ));
+            return Some(int(0));
+        }
+        _ => {}
+    }
     match method {
         "get" if matches!(receiver.ty, Type::Array(_) | Type::Dict(_)) => {
             expect_arity(method, &args, 1, expr, diagnostics);
@@ -4243,28 +4814,6 @@ fn type_check_method_call(
                 ));
             }
             Some(method_call_expr(receiver, method, args, Type::String))
-        }
-        "parse_int" if receiver.ty == Type::String => {
-            expect_arity(method, &args, 0, expr, diagnostics);
-            Some(method_call_expr(receiver, method, args, Type::Int))
-        }
-        "sqrt" | "sin" | "cos" | "tan" | "abs" | "floor" | "ceil" | "round" | "trunc" | "pow"
-        | "min" | "max" | "hypot" | "clamp"
-            if receiver.ty == Type::Float =>
-        {
-            let arity = match method {
-                "pow" | "min" | "max" | "hypot" => 1,
-                "clamp" => 2,
-                _ => 0,
-            };
-            expect_arity(method, &args, arity, expr, diagnostics);
-            if args.iter().any(|arg| arg.ty != Type::Float) {
-                diagnostics.push(Diagnostic::new(
-                    format!("{}() requires 'float' arguments", method),
-                    expr.span.clone(),
-                ));
-            }
-            Some(method_call_expr(receiver, method, args, Type::Float))
         }
         "cancel" => {
             expect_arity(method, &args, 0, expr, diagnostics);
@@ -4380,7 +4929,7 @@ fn type_check_method_call(
             if method == "sort" && !matches!(element, Type::Int | Type::Float) {
                 diagnostics.push(Diagnostic::new(
                     format!(
-                        "sort() needs 'List<int>' or 'List<float>', found 'List<{}>'",
+                        "sort() needs 'List<Integer>' or 'List<Float>', found 'List<{}>'",
                         element.as_str()
                     ),
                     expr.span.clone(),
@@ -4389,8 +4938,8 @@ fn type_check_method_call(
             if mutates && !is_storage_lvalue_expr(receiver_expr) {
                 diagnostics.push(Diagnostic::new(
                     format!(
-                        "{}() requires a variable or collection element receiver",
-                        method
+                        "{} requires a variable or collection element receiver",
+                        display_call(method)
                     ),
                     expr.span.clone(),
                 ));
@@ -4408,8 +4957,8 @@ fn type_check_method_call(
                 if arg.ty != element {
                     diagnostics.push(Diagnostic::new(
                         format!(
-                            "{}(...) value must be '{}', found '{}'",
-                            method,
+                            "{} value must be '{}', found '{}'",
+                            display_call(method),
                             element.as_str(),
                             arg.ty.as_str()
                         ),
@@ -4778,7 +5327,7 @@ fn type_check_method_call(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected 1 or 2, found {}",
-                        method,
+                        display_call(method),
                         args.len()
                     ),
                     expr.span.clone(),
@@ -4836,7 +5385,7 @@ fn type_check_method_call(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected 1 or 2, found {}",
-                        method,
+                        display_call(method),
                         args.len()
                     ),
                     expr.span.clone(),
@@ -4862,7 +5411,7 @@ fn type_check_method_call(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected 1, 2, or 3, found {}",
-                        method,
+                        display_call(method),
                         args.len()
                     ),
                     expr.span.clone(),
@@ -4888,14 +5437,14 @@ fn type_check_method_call(
         "add_tag" | "remove_tag" | "has_tag" => {
             if !is_entity_ref_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
-                    format!("{}.{}(...) requires an 'Entity' receiver", "entity", method),
+                    format!("{} requires an 'Entity' receiver", display_call(method)),
                     expr.span.clone(),
                 ));
             }
             expect_arity(method, &args, 1, expr, diagnostics);
             if args.first().map(|arg| &arg.ty) != Some(&Type::String) {
                 diagnostics.push(Diagnostic::new(
-                    format!("{}(...) tag name must be 'String'", method),
+                    format!("{} tag name must be 'String'", display_call(method)),
                     expr.span.clone(),
                 ));
             }
@@ -5251,31 +5800,32 @@ fn removed_builtin_message(function: &str) -> String {
         "heal" => "target.heal(amount)",
         "give" => "target.give(item_id, count)",
         "clear" => "target.clear(item_id, count)",
-        "loot_give" => "target.loot_give(table)",
-        "loot_insert" => "position.loot_insert(table)",
-        "loot_spawn" => "position.loot_spawn(table)",
-        "tellraw" => "target.tellraw(message)",
-        "title" => "target.title(message)",
-        "actionbar" => "target.actionbar(message)",
-        "debug_marker" => "position.debug_marker(label)",
-        "debug_entity" => "target.debug_entity(label)",
+        "loot_give" => "target.lootGive(table)",
+        "loot_insert" => "position.lootInsert(table)",
+        "loot_spawn" => "position.lootSpawn(table)",
+        "tellraw" => "target.sendMessage(message)",
+        "title" => "target.sendTitle(message)",
+        "actionbar" => "target.sendActionBar(message)",
+        "debug_marker" => "position.debugMarker(label)",
+        "debug_entity" => "target.debugEntity(label)",
         "bossbar_add" => "var bb = new BossBar(id, name);",
         "bossbar_remove" => "bb.remove()",
-        "bossbar_name" => "bb.name = name",
-        "bossbar_value" => "bb.value = value",
-        "bossbar_max" => "bb.max = max",
-        "bossbar_visible" => "bb.visible = visible",
-        "bossbar_players" => "bb.players = targets",
-        "playsound" => "target.playsound(sound, category)",
-        "stopsound" => "target.stopsound(category, sound)",
-        "particle" => "position.particle(name, count?, viewers?)",
-        "setblock" => "position.setblock(block_id)",
+        "bossbar_name" => "bb.setName(name)",
+        "bossbar_value" => "bb.setValue(value)",
+        "bossbar_max" => "bb.setMax(max)",
+        "bossbar_visible" => "bb.setVisible(visible)",
+        "bossbar_players" => "bb.setPlayers(targets)",
+        "playsound" => "target.playSound(sound, category)",
+        "stopsound" => "target.stopSound(category, sound)",
+        "particle" => "position.spawnParticle(name, count?, viewers?)",
+        "setblock" => "position.setBlock(block_id)",
         "fill" => "from.fill(to, block_id)",
         _ => "the method/property-style API",
     };
     format!(
-        "{}(...) has been replaced by object-style syntax; use {}",
-        function, replacement
+        "{} has been replaced by object-style syntax; use {}",
+        display_call(function),
+        replacement
     )
 }
 
@@ -5438,7 +5988,7 @@ fn type_check_gameplay_call(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected 2 or 3, found {}",
-                        function,
+                        display_call(function),
                         args.len()
                     ),
                     expr.span.clone(),
@@ -5604,7 +6154,7 @@ fn type_check_gameplay_call(
                 diagnostics.push(Diagnostic::new(
                     format!(
                         "wrong arity for '{}': expected 2, 3, or 4, found {}",
-                        function,
+                        display_call(function),
                         args.len()
                     ),
                     expr.span.clone(),
@@ -5763,7 +6313,7 @@ fn entity_read_expr(
             let hypot = |a: Expr, b: Expr| {
                 node(ExprKind::MethodCall {
                     receiver: Box::new(a),
-                    method: "hypot".to_string(),
+                    method: "Math.hypot".to_string(),
                     args: vec![b],
                 })
             };
@@ -5792,7 +6342,7 @@ fn entity_read_expr(
             let call = |value: Expr, name: &str| {
                 node(ExprKind::MethodCall {
                     receiver: Box::new(value),
-                    method: name.to_string(),
+                    method: format!("Math.{name}"),
                     args: Vec::new(),
                 })
             };
@@ -5821,7 +6371,7 @@ fn entity_read_expr(
         diagnostics.push(Diagnostic::new(
             format!(
                 "wrong arity for '{}': expected 0, found {}",
-                method,
+                display_call(method),
                 args.len()
             ),
             span.clone(),
@@ -5830,8 +6380,8 @@ fn entity_read_expr(
     if player_only && !is_player {
         diagnostics.push(Diagnostic::new(
             format!(
-                "{}() is only available on players; cast it with (Player)",
-                method
+                "{} is only available on players; cast it with (Player)",
+                display_call(method)
             ),
             span.clone(),
         ));
@@ -5882,6 +6432,409 @@ fn concat_strings(parts: Vec<TypedExpr>) -> TypedExpr {
     }
 }
 
+fn record_component(receiver: TypedExpr, field: &str, ty: Type) -> TypedExpr {
+    let mut path = match receiver.kind {
+        TypedExprKind::Path(path) => path,
+        kind => TypedPathExpr {
+            base: Box::new(TypedExpr {
+                kind,
+                ty: receiver.ty.clone(),
+                ref_kind: receiver.ref_kind,
+            }),
+            segments: Vec::new(),
+            segment_types: Vec::new(),
+            ty: receiver.ty.clone(),
+        },
+    };
+    path.segments.push(PathSegment::Field(field.to_string()));
+    path.segment_types.push(ty.clone());
+    path.ty = ty.clone();
+    TypedExpr {
+        ref_kind: if ty == Type::PlayerRef {
+            RefKind::Player
+        } else {
+            RefKind::Unknown
+        },
+        kind: TypedExprKind::Path(path),
+        ty,
+    }
+}
+
+/// `Math.f(x, ...)` with `x` as the receiver. Like Java, any `float` argument
+/// makes the call `float`; `abs`, `min`, `max` and `clamp` also work on `int`.
+fn type_check_math_call(
+    name: &str,
+    receiver: TypedExpr,
+    args: Vec<TypedExpr>,
+    expr: &Expr,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let arity = match name {
+        "pow" | "min" | "max" | "hypot" => 1,
+        "clamp" => 2,
+        _ => 0,
+    };
+    if args.len() != arity {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "wrong arity for 'Math.{name}': expected {}, found {}",
+                arity + 1,
+                args.len() + 1
+            ),
+            expr.span.clone(),
+        ));
+    }
+    let values: Vec<&TypedExpr> = std::iter::once(&receiver).chain(&args).collect();
+    if values
+        .iter()
+        .any(|value| !matches!(value.ty, Type::Int | Type::Float))
+    {
+        diagnostics.push(Diagnostic::new(
+            format!("Math.{name}(...) needs 'int' or 'float' arguments"),
+            expr.span.clone(),
+        ));
+    }
+    let all_int = values.iter().all(|value| value.ty == Type::Int);
+    if all_int && matches!(name, "abs" | "min" | "max" | "clamp" | "signum") {
+        let std_name = if name == "signum" { "sign" } else { name };
+        let function = format!("std::math::{std_name}");
+        if signatures.contains_key(&function) {
+            called_functions.insert(function.clone());
+        }
+        let mut call_args = vec![receiver];
+        call_args.extend(args);
+        return TypedExpr {
+            kind: TypedExprKind::Call {
+                function,
+                args: call_args,
+            },
+            ty: Type::Int,
+            ref_kind: RefKind::Unknown,
+        };
+    }
+    let receiver = coerce_expr_to_expected_type(receiver, &Type::Float);
+    let args: Vec<_> = args
+        .into_iter()
+        .map(|arg| coerce_expr_to_expected_type(arg, &Type::Float))
+        .collect();
+    match name {
+        // Java's Math.round gives a whole number.
+        "round" => TypedExpr {
+            kind: TypedExprKind::Cast {
+                kind: CastKind::Int,
+                expr: Box::new(method_call_expr(receiver, "round", args, Type::Float)),
+            },
+            ty: Type::Int,
+            ref_kind: RefKind::Unknown,
+        },
+        "signum" => {
+            let zero = || TypedExpr {
+                kind: TypedExprKind::Float("0.0".to_string()),
+                ty: Type::Float,
+                ref_kind: RefKind::Unknown,
+            };
+            let float = |text: &str| TypedExpr {
+                kind: TypedExprKind::Float(text.to_string()),
+                ty: Type::Float,
+                ref_kind: RefKind::Unknown,
+            };
+            let compare = |op: BinaryOp| TypedExpr {
+                kind: TypedExprKind::Binary {
+                    op,
+                    left: Box::new(receiver.clone()),
+                    right: Box::new(zero()),
+                },
+                ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
+            };
+            conditional_expr(
+                compare(BinaryOp::Gt),
+                float("1.0"),
+                conditional_expr(compare(BinaryOp::Lt), float("-1.0"), zero()),
+            )
+        }
+        _ => method_call_expr(receiver, name, args, Type::Float),
+    }
+}
+
+fn conditional_expr(condition: TypedExpr, then_expr: TypedExpr, else_expr: TypedExpr) -> TypedExpr {
+    TypedExpr {
+        ty: then_expr.ty.clone(),
+        ref_kind: if then_expr.ref_kind == else_expr.ref_kind {
+            then_expr.ref_kind
+        } else {
+            RefKind::Unknown
+        },
+        kind: TypedExprKind::Conditional {
+            condition: Box::new(condition),
+            then_expr: Box::new(then_expr),
+            else_expr: Box::new(else_expr),
+        },
+    }
+}
+
+/// Gives two branches one type, widening `int` to `float` and `Player` to `Entity`.
+fn unify_branches(
+    then_expr: TypedExpr,
+    else_expr: TypedExpr,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> (TypedExpr, TypedExpr) {
+    let target = match (&then_expr.ty, &else_expr.ty) {
+        (a, b) if a == b => a.clone(),
+        (Type::Int, Type::Float) | (Type::Float, Type::Int) => Type::Float,
+        (a, b) if is_entity_ref_type(a) && is_entity_ref_type(b) => Type::EntityRef,
+        (a, b) => {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "both results must have the same type, found '{}' and '{}'",
+                    a.as_str(),
+                    b.as_str()
+                ),
+                span,
+            ));
+            a.clone()
+        }
+    };
+    (
+        coerce_expr_to_expected_type(then_expr, &target),
+        coerce_expr_to_expected_type(else_expr, &target),
+    )
+}
+
+/// The text Java's `+` would give for a value joined to a `String`.
+fn string_operand(
+    operand: TypedExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let text = |value: &str| TypedExpr {
+        kind: TypedExprKind::String(value.to_string()),
+        ty: Type::String,
+        ref_kind: RefKind::Unknown,
+    };
+    match &operand.ty {
+        Type::String | Type::Int | Type::Float => operand,
+        Type::Bool => conditional_expr(operand, text("true"), text("false")),
+        Type::Enum(name) => match struct_defs
+            .get(name)
+            .and_then(|def| def.enum_variants.as_ref())
+        {
+            Some(variants) => enum_name_expr(operand, variants),
+            None => operand,
+        },
+        other => {
+            diagnostics.push(Diagnostic::new(
+                format!("cannot join '{}' to a String", other.as_str()),
+                span,
+            ));
+            operand
+        }
+    }
+}
+
+/// `e.name()`: a chain of `e == 0 ? "A" : e == 1 ? "B" : ...` over the constants.
+fn enum_name_expr(value: TypedExpr, variants: &[String]) -> TypedExpr {
+    let arms = variants
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            (
+                TypedExpr {
+                    kind: TypedExprKind::Int(index as i64),
+                    ty: value.ty.clone(),
+                    ref_kind: RefKind::Unknown,
+                },
+                TypedExpr {
+                    kind: TypedExprKind::String(name.clone()),
+                    ty: Type::String,
+                    ref_kind: RefKind::Unknown,
+                },
+            )
+        })
+        .collect();
+    switch_chain(value, arms, None, "__enum_name")
+}
+
+/// Lowers a switch expression to nested `?:`, binding a non-trivial value once.
+/// Without a default, the last arm is the fallback (the arms are exhaustive).
+fn switch_chain(
+    value: TypedExpr,
+    mut arms: Vec<(TypedExpr, TypedExpr)>,
+    default: Option<TypedExpr>,
+    temp_name: &str,
+) -> TypedExpr {
+    let direct = !switch_needs_temp(&value);
+    let subject = if direct {
+        value.clone()
+    } else {
+        TypedExpr {
+            kind: TypedExprKind::Variable(temp_name.to_string()),
+            ty: value.ty.clone(),
+            ref_kind: value.ref_kind,
+        }
+    };
+    let mut result = match default {
+        Some(default) => default,
+        None => match arms.pop() {
+            Some((_, last)) => last,
+            None => return value,
+        },
+    };
+    for (pattern, arm) in arms.into_iter().rev() {
+        let condition = TypedExpr {
+            kind: TypedExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(subject.clone()),
+                right: Box::new(pattern),
+            },
+            ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
+        };
+        result = conditional_expr(condition, arm, result);
+    }
+    if direct {
+        result
+    } else {
+        TypedExpr {
+            ty: result.ty.clone(),
+            ref_kind: result.ref_kind,
+            kind: TypedExprKind::Bind {
+                name: temp_name.to_string(),
+                value: Box::new(value),
+                body: Box::new(result),
+            },
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn type_check_switch_expr(
+    expr: &Expr,
+    value: &Expr,
+    arms: &[(Expr, Expr)],
+    default: Option<&Expr>,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let mut check = |expr: &Expr, diagnostics: &mut Diagnostics| {
+        type_check_expr(
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        )
+    };
+    let value = check(value, diagnostics);
+    if !matches!(value.ty, Type::Int | Type::String | Type::Enum(_)) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "switch works on enum, 'int' and 'String' values, found '{}'",
+                value.ty.as_str()
+            ),
+            expr.span.clone(),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut typed_arms: Vec<(TypedExpr, TypedExpr)> = Vec::new();
+    for (pattern, result) in arms {
+        let bare_constant = match (&value.ty, &pattern.kind) {
+            (Type::Enum(enum_name), ExprKind::Variable(constant))
+                if !env.contains_key(constant) =>
+            {
+                Some(Expr {
+                    kind: ExprKind::Path(PathExpr {
+                        base: Box::new(Expr {
+                            kind: ExprKind::Variable(enum_name.clone()),
+                            span: pattern.span.clone(),
+                        }),
+                        segments: vec![PathSegment::Field(constant.clone())],
+                    }),
+                    span: pattern.span.clone(),
+                })
+            }
+            _ => None,
+        };
+        let typed_pattern = check(bare_constant.as_ref().unwrap_or(pattern), diagnostics);
+        if typed_pattern.ty != value.ty
+            || !matches!(
+                typed_pattern.kind,
+                TypedExprKind::Int(_) | TypedExprKind::String(_)
+            )
+        {
+            diagnostics.push(Diagnostic::new(
+                "case must be a constant of the switch value's type",
+                pattern.span.clone(),
+            ));
+        }
+        if !seen.insert(format!("{:?}", typed_pattern.kind)) {
+            diagnostics.push(Diagnostic::new(
+                "duplicate switch case",
+                pattern.span.clone(),
+            ));
+        }
+        let typed_result = check(result, diagnostics);
+        typed_arms.push((typed_pattern, typed_result));
+    }
+    let mut default = default.map(|default| check(default, diagnostics));
+    if default.is_none() {
+        let exhaustive = match &value.ty {
+            Type::Enum(name) => struct_defs
+                .get(name)
+                .and_then(|def| def.enum_variants.as_ref())
+                .is_some_and(|variants| {
+                    (0..variants.len()).all(|index| {
+                        typed_arms.iter().any(|(pattern, _)| {
+                            matches!(pattern.kind, TypedExprKind::Int(value) if value == index as i64)
+                        })
+                    })
+                }),
+            _ => false,
+        };
+        if !exhaustive {
+            diagnostics.push(Diagnostic::new(
+                "a switch expression needs a 'default' unless it lists every enum constant",
+                expr.span.clone(),
+            ));
+        }
+    }
+    // Every result gets the type all results share.
+    let mut results: Vec<TypedExpr> = typed_arms
+        .iter()
+        .map(|(_, result)| result.clone())
+        .collect();
+    results.extend(default.clone());
+    let Some(mut unified) = results.first().cloned() else {
+        diagnostics.push(Diagnostic::new(
+            "switch requires at least one arm",
+            expr.span.clone(),
+        ));
+        return value;
+    };
+    for result in &results[1..] {
+        unified = unify_branches(unified, result.clone(), expr.span.clone(), diagnostics).0;
+    }
+    let ty = unified.ty.clone();
+    for (_, result) in typed_arms.iter_mut() {
+        *result = coerce_expr_to_expected_type(result.clone(), &ty);
+    }
+    if let Some(default) = default.as_mut() {
+        *default = coerce_expr_to_expected_type(default.clone(), &ty);
+    }
+    let temp_name = format!("__switch_expr_{}_{}", expr.span.line, expr.span.column);
+    switch_chain(value, typed_arms, default, &temp_name)
+}
+
 fn method_call_expr(
     receiver: TypedExpr,
     method: &str,
@@ -5919,6 +6872,17 @@ fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
     }
     if *expected == Type::Nbt {
         return coerce_expr_to_nbt(expr);
+    }
+    // Java widens `int` to `float` wherever a `float` is expected.
+    if *expected == Type::Float && expr.ty == Type::Int {
+        return TypedExpr {
+            kind: TypedExprKind::Cast {
+                kind: CastKind::Float,
+                expr: Box::new(expr),
+            },
+            ty: Type::Float,
+            ref_kind: RefKind::Unknown,
+        };
     }
     if *expected == Type::PlayerRef && is_entity_ref_type(&expr.ty) {
         let mut expr = expr;
@@ -5971,8 +6935,8 @@ fn expect_entity_receiver(
     ) {
         diagnostics.push(Diagnostic::new(
             format!(
-                "{}(...) requires an 'Entity' or 'Selector' receiver",
-                method
+                "{} requires an 'Entity' or 'Selector' receiver",
+                display_call(method)
             ),
             expr.span.clone(),
         ));
@@ -6024,7 +6988,7 @@ fn expect_block_receiver(
 ) {
     if receiver.ty != Type::BlockRef {
         diagnostics.push(Diagnostic::new(
-            format!("{}(...) requires a 'Block' receiver", method),
+            format!("{} requires a 'Block' receiver", display_call(method)),
             expr.span.clone(),
         ));
     }
@@ -6085,8 +7049,8 @@ fn expect_arg_matches(
     {
         diagnostics.push(Diagnostic::new(
             format!(
-                "{}(...) {} must be {}, found '{}'",
-                function,
+                "{} {} must be {}, found '{}'",
+                display_call(function),
                 label,
                 expected,
                 arg.ty.as_str()
@@ -6360,7 +7324,7 @@ fn validate_player_path_write(
     };
     match first.as_str() {
         "position" => diagnostics.push(Diagnostic::new(
-            "entity.position is read-only; use methods such as entity.position.setblock(...)",
+            "entity.position is read-only; use methods such as entity.position.setBlock(...)",
             span,
         )),
         "nbt" if path.base.ref_kind == RefKind::Player => diagnostics.push(Diagnostic::new(
@@ -6611,7 +7575,7 @@ fn expect_arity(
         diagnostics.push(Diagnostic::new(
             format!(
                 "wrong arity for '{}': expected {}, found {}",
-                function,
+                display_call(function),
                 expected,
                 args.len()
             ),
@@ -6706,7 +7670,10 @@ fn extract_string_literal(
         Some(TypedExprKind::String(value)) => value.clone(),
         _ => {
             diagnostics.push(Diagnostic::new(
-                format!("{}(...) currently requires a string literal", function),
+                format!(
+                    "{} currently requires a string literal",
+                    display_call(function)
+                ),
                 expr.span.clone(),
             ));
             String::new()
@@ -6758,7 +7725,7 @@ fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span)
             return value.to_string();
         }
         diagnostics.push(Diagnostic::new(
-            "single(selector(...)) requires no limit or 'limit=1'",
+            "the selector must have no limit or 'limit=1'",
             span,
         ));
         return value.to_string();
@@ -6939,6 +7906,7 @@ fn collect_macro_placeholders(
             Type::Int
                 | Type::Float
                 | Type::Bool
+                | Type::Enum(_)
                 | Type::String
                 | Type::EntitySet
                 | Type::EntityRef

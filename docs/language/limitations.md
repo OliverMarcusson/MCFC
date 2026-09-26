@@ -5,8 +5,8 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Language
 
 - **No recursion.** A function can't call itself, directly or indirectly. Use a `while` loop.
-- **No implicit conversions.** Use `(float) n`, `(int) x` and `toString()`.
-- **No generic records.** Only functions can be generic.
+- **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans and enums to text. Other conversions need a cast or `toString()`.
+- **No generic records.** Generic type parameters work on functions, but record declarations are not generic.
 - **Imports:** no re-exports, no `*` imports and no renaming.
 - **`$(...)` in `mcf`** doesn't apply imports. Write `$(util.twice(x))` with the full path.
 
@@ -14,7 +14,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 
 - **Strings aren't escaped** when they're joined or inserted with `$(...)`. A value containing `"` or `\` breaks the command. See [string limits](./reference/types#string).
 - **`Block.of(...)` needs a literal string.** Positions can't be computed at run time yet.
-- **`findFirst`** needs a literal `Selector.of(...)`, not a variable.
+- **`Selector.findFirst()`** needs a literal `Selector.of(...)`, not a variable.
 - **`hasData`** only works on storage values (lists, maps, records), not on entity NBT.
 - **`heal`** only works on references known to be non-players, for example `@e[type=minecraft:pig]`. For players, use `effect("minecraft:instant_health", 1, 0)`.
 - **`Selector.position`** isn't supported. Loop over the set and use each entity's `position`.

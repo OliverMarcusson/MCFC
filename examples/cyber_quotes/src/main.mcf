@@ -11,7 +11,7 @@
 void health() {
     var probe = new Component("[Cyber Quotes] Pinging mcfd...");
     probe.color = "gray";
-    for (var viewer : selector("@a")) {
+    for (var viewer : Selector.of("@a")) {
         ((Player) viewer).tellraw(probe);
     }
 
@@ -19,13 +19,13 @@ void health() {
     if (pong.ok) {
         var connected = new Component("✦ mcfd is connected.");
         connected.color = "green";
-        for (var viewer : selector("@a")) {
+        for (var viewer : Selector.of("@a")) {
             ((Player) viewer).tellraw(connected);
         }
     } else {
         var offline = new Component("✦ mcfd did not respond — is the service running?");
         offline.color = "red";
-        for (var viewer : selector("@a")) {
+        for (var viewer : Selector.of("@a")) {
             ((Player) viewer).tellraw(offline);
         }
     }
@@ -34,7 +34,7 @@ void health() {
 void quote() {
     var requesting = new Component("[Cyber Quotes debug] Requesting a random quote from Munin...");
     requesting.color = "yellow";
-    for (var viewer : selector("@a")) {
+    for (var viewer : Selector.of("@a")) {
         ((Player) viewer).tellraw(requesting);
     }
 
@@ -57,7 +57,7 @@ void quote() {
         attribution.color = "gray";
         message.extra = List.of(quote_line, attribution);
 
-        for (var viewer : selector("@a")) {
+        for (var viewer : Selector.of("@a")) {
             ((Player) viewer).tellraw(message);
         }
     } else {
@@ -66,7 +66,7 @@ void quote() {
         unavailable.italic = true;
         var diagnostic = new Component("[Cyber Quotes debug] ok=$(response.ok), status=$(response.status), error=$(response.err)");
         diagnostic.color = "gold";
-        for (var viewer : selector("@a")) {
+        for (var viewer : Selector.of("@a")) {
             ((Player) viewer).tellraw(unavailable);
             ((Player) viewer).tellraw(diagnostic);
         }

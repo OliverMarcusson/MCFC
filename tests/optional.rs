@@ -68,9 +68,9 @@ void main() {
 fn safe_entity_lookup_returns_optional_reference() {
     let source = r#"
 void main() {
-    var maybe = findFirst(selector("@e[type=minecraft:pig]"));
+    var maybe = findFirst(Selector.of("@e[type=minecraft:pig]"));
     var present = maybe.isPresent();
-    var pig = maybe.orElse(single(selector("@s")));
+    var pig = maybe.orElse(single(Selector.of("@s")));
     if (present) {
         pig.addTag("found");
     }

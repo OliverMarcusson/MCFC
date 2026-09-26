@@ -1,4 +1,4 @@
-# Host Bridge
+# Host Bridge <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 The host bridge lets a vanilla datapack reach outside Minecraft through an optional companion helper. The datapack exchanges requests and responses through the `mcfc:rpc` command-storage protocol; the generated datapack itself remains vanilla.
 

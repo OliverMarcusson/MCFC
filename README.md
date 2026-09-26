@@ -15,7 +15,7 @@ int coins;
 
 @Every(ticks = 20)
 void payday() {
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         player.state.coins = player.state.coins + 1;
         player.actionbar("Coins: $(player.state.coins)");
     }

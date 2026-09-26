@@ -2,7 +2,7 @@
 
 MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` and `/* ... */` are comments. Indentation has no meaning.
 
-**Top level:** [functions](#functions) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@Event`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
+**Top level:** [functions](#functions) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
 
 **In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [`switch`](#switch) · [`while`](#while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
@@ -120,7 +120,7 @@ int helper(int x) {
 - Items are private unless marked `public`. A private item can be used by its own module and the modules below it: `game.score` can use private items of `game`, but not the other way round.
 - `public` works on functions, records and enums.
 - Every module can reach every other module by path, like Java packages. A path's first segment is looked up in the current module, then in the root module.
-- `tick`, `@Event`, `@Command`, `@Every` and `@After` handlers work in any module and ignore `public`. `main` is only special in the root module.
+- `tick`, `@EventHandler`, `@Command`, `@Every` and `@After` handlers work in any module and ignore `public`. `main` is only special in the root module.
 - The name `std` is reserved for the [standard library](./std).
 
 A function in a module compiles under its full path. A zero-argument `void` function `util.announce` is exported as `/function <namespace>:util/announce`.
@@ -201,7 +201,7 @@ void status(Player player) {
 }
 ```
 
-Players run the command with `/trigger mcfcc_status`, which needs no operator permissions. The handler runs as that player, and the optional `Player` parameter is that player. Without a string, the command is named after the function. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
+Players run the command with `/trigger status`, which needs no operator permissions. The trigger objective is named after the command, so two packs with the same command name share it. The handler runs as that player, and the optional `Player` parameter is that player. Without a string, the command is named after the function. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
 
 ### `@Every` and `@After`
 
@@ -217,7 +217,7 @@ void setup() {
 }
 ```
 
-`@Every` repeats every `n` ticks. `@After` runs once, `n` ticks after load. Both take `ticks = n` or `seconds = n` (20 ticks each). Tasks take no parameters and run as the server, not as a player. Use `for (Player player : selector("@a")) { ... }` to act on each player.
+`@Every` repeats every `n` ticks. `@After` runs once, `n` ticks after load. Both take `ticks = n` or `seconds = n` (20 ticks each). Tasks take no parameters and run as the server, not as a player. Use `for (Player player : Selector.of("@a")) { ... }` to act on each player.
 
 ## In a function
 
@@ -241,7 +241,7 @@ void main() {
     amount += 2;
     amount++;
 
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.state.score = amount;
 }
 ```
@@ -302,7 +302,7 @@ void loops(List<int> values) {
     for (int i = 0; i < 3; i++) {
         debug("$(i)");
     }
-    for (Player player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         player.addTag("seen");
     }
     for (var value : values) {
@@ -314,7 +314,7 @@ void loops(List<int> values) {
 | Form | Iterates |
 | --- | --- |
 | `for (int i = 0; i < n; i++)` | a counting loop: the condition is checked before every iteration and the update runs after it |
-| `for (var e : selector(...))` | each matching entity, as an `Entity`. Runs through `execute as`, so `@s` is the current entity. Write `Player e` to get a `Player`; the selector must be able to match players. |
+| `for (var e : Selector.of(...))` | each matching entity, as an `Entity`. Runs through `execute as`, so `@s` is the current entity. Write `Player e` to get a `Player`; the selector must be able to match players. |
 | `for (var x : list)` | each element |
 
 The loop variable exists only inside the loop. In a counting loop, `continue` runs the update before the next check, like Java.
@@ -323,7 +323,7 @@ The loop variable exists only inside the loop. In a counting loop, `continue` ru
 
 ```mcfc
 void firstReady() {
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         if (!player.hasTag("ready")) {
             continue;
         }
@@ -361,11 +361,11 @@ The body starts running right away, and the statement after the block runs witho
 ```mcfc
 void sparkle(Player player) {
     as (player) {
-        single(selector("@s")).addTag("marked");
+        single(Selector.of("@s")).addTag("marked");
     }
     at (player) {
-        block("~ ~1 ~").particle("minecraft:happy_villager", 8);
-        block("~ ~-1 ~").setblock("minecraft:gold_block");
+        Block.of("~ ~1 ~").particle("minecraft:happy_villager", 8);
+        Block.of("~ ~-1 ~").setblock("minecraft:gold_block");
     }
 }
 ```

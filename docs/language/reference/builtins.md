@@ -6,16 +6,16 @@ These functions are always in scope. Library functions such as `clamp` or `start
 
 | Function | Returns | Notes |
 | --- | --- | --- |
-| `selector(s: String)` | `Selector` | A target selector or player name, such as `"@a[tag=red]"`. |
+| `Selector.of(s: String)` | `Selector` | A target selector or player name, such as `"@a[tag=red]"`. |
 | `single(set: Selector)` | `Entity` | Narrows a selection to one entity. The selector should match one entity, like `@p`, `@s` or `limit=1`. |
-| `findFirst(set)` | `Optional<Entity>` | Empty when nothing matches. The argument has to be a literal `selector(...)`, optionally wrapped in `as` or `at`. The compiler adds `limit=1` itself. |
+| `findFirst(set)` | `Optional<Entity>` | Empty when nothing matches. The argument has to be a literal `Selector.of(...)`, optionally wrapped in `as` or `at`. The compiler adds `limit=1` itself. |
 | `exists(e: Entity)` | `boolean` | Whether the entity is still there. |
 
 ```mcfc
 void tick() {
-    var pig = findFirst(selector("@e[type=minecraft:pig]"));
+    var pig = findFirst(Selector.of("@e[type=minecraft:pig]"));
     if (pig.isPresent()) {
-        pig.orElse(single(selector("@s"))).addTag("found");
+        pig.orElse(single(Selector.of("@s"))).addTag("found");
     }
 }
 ```
@@ -26,8 +26,8 @@ void tick() {
 
 ```mcfc
 void tick() {
-    var player = single(selector("@p"));
-    var nearest_pig = single(at(player, selector("@e[type=minecraft:pig,sort=nearest,limit=1]")));
+    var player = single(Selector.of("@p"));
+    var nearest_pig = single(at(player, Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")));
     nearest_pig.addTag("nearest");
 }
 ```
@@ -38,7 +38,7 @@ To run a whole block as or at an entity, use the [`as` and `at` blocks](./statem
 
 | Function | Returns | Notes |
 | --- | --- | --- |
-| `block(pos: String)` | [`Block`](./types#block) | `"~ ~ ~"`, `"10 64 -3"`, and so on |
+| `Block.of(pos: String)` | [`Block`](./types#block) | `"~ ~ ~"`, `"10 64 -3"`, and so on |
 | `new EntityData(id)` | `EntityData` | [Entity builder](./builders#entity-builders) |
 | `new ItemStack(id)` | `ItemStack` | [Item builder](./builders#item-builders) |
 | `new BlockData(id)` | `BlockData` | [Block builder](./builders#block-builders) |

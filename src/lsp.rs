@@ -15,7 +15,7 @@ use crate::analysis::{
 use crate::ast::Type;
 use crate::diagnostics::{Diagnostic as McfcDiagnostic, TextRange};
 use crate::language_catalog::{
-    AGENT_EVENTS, VANILLA_EVENTS, agent_event_payload_type, internal_function_name,
+    AGENT_EVENTS, VANILLA_EVENTS, event_kind_for_type, event_type_name, internal_function_name,
     internal_method_name,
 };
 use crate::minecraft_ids::{MinecraftIdCategory, ids_for_category};
@@ -1130,12 +1130,12 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
         return Some(function.signature());
     }
     match name {
-        "selector" => Some("selector(value: String) -> Selector".to_string()),
+        "selector" => Some("Selector.of(value: String) -> Selector".to_string()),
         "single" => Some("single(value: Selector) -> Entity".to_string()),
         "findFirst" => Some("findFirst(value: Selector) -> Optional<Entity>".to_string()),
         "EntityData" => Some("new EntityData(id: String)".to_string()),
         "ItemStack" => Some("new ItemStack(id: String)".to_string()),
-        "block" => Some("block(position: String) -> Block".to_string()),
+        "block" => Some("Block.of(position: String) -> Block".to_string()),
         "BlockData" => Some("new BlockData(id: String)".to_string()),
         "sleep" => Some("sleep(seconds: int) -> void".to_string()),
         "sleepTicks" => Some("sleepTicks(ticks: int) -> void".to_string()),
@@ -1513,7 +1513,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "random" => Some(
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
         ),
-        "selector" => Some("```mcfc\nselector(value: String) -> Selector\n```"),
+        "Selector" => Some("```mcfc\nSelector.of(value: String) -> Selector\n```"),
         "single" => Some("```mcfc\nsingle(value: Selector) -> Entity\n```"),
         "findFirst" => Some("```mcfc\nfindFirst(value: Selector) -> Optional<Entity>\n```"),
         "isPresent" => Some("```mcfc\nOptional<T>.isPresent() -> boolean\n```"),
@@ -1523,7 +1523,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         ),
         "exists" => Some("```mcfc\nexists(value: Entity) -> boolean\n```"),
         "hasData" => Some("```mcfc\nhasData(value: storage_path) -> boolean\n```"),
-        "block" => Some("```mcfc\nblock(position: String) -> Block\n```"),
+        "Block" => Some("```mcfc\nBlock.of(position: String) -> Block\n```"),
         "at" => Some(
             "```mcfc\nat(anchor: Entity, value: Selector|Entity|Block) -> Selector|Entity|Block\n\nat(anchor) {\n    ...\n}\n```",
         ),
@@ -2065,6 +2065,15 @@ fn call_name_before_paren(source: &str, open_paren: usize) -> Option<(String, bo
         return None;
     }
 
+    // `Selector.of(` and `Block.of(` are the builtin `selector(` and `block(` calls.
+    if &source[start..end] == "of" {
+        for (ty, builtin) in [("Selector.", "selector"), ("Block.", "block")] {
+            if source[..start].ends_with(ty) {
+                return Some((builtin.to_string(), false));
+            }
+        }
+    }
+
     let mut cursor = start;
     while cursor > 0 {
         let ch = previous_char(source, cursor)?;
@@ -2206,11 +2215,6 @@ fn static_completion_items() -> Vec<CompletionItem> {
         ("BossBar", "BossBar"),
         ("Nbt", "Nbt"),
         ("void", "void"),
-        ("AgentEvent", "AgentEvent"),
-        ("ChatEvent", "ChatEvent"),
-        ("InventoryClickEvent", "InventoryClickEvent"),
-        ("PlayerActionEvent", "PlayerActionEvent"),
-        ("BlockBreakEvent", "BlockBreakEvent"),
     ] {
         items.push(snippet_item(
             label,
@@ -2257,14 +2261,14 @@ fn static_completion_items() -> Vec<CompletionItem> {
             "@EntityState\n${2:String} ${1:title};",
         ),
         (
-            "selector",
-            "selector(value: String) -> Selector",
-            "selector(${1:\"@e\"})",
+            "Selector.of",
+            "Selector.of(value: String) -> Selector",
+            "Selector.of(${1:\"@e\"})",
         ),
         (
             "findFirst",
             "findFirst(value: Selector) -> Optional<Entity>",
-            "findFirst(${1:selector(\"@e\")})",
+            "findFirst(${1:Selector.of(\"@e\")})",
         ),
         ("sleep", "sleep(seconds: int) -> void", "sleep(${1:1})"),
         (
@@ -2310,9 +2314,9 @@ fn static_completion_items() -> Vec<CompletionItem> {
             "hasData(${1:value})",
         ),
         (
-            "block",
-            "block(position: String) -> Block",
-            "block(${1:\"~ ~ ~\"})",
+            "Block.of",
+            "Block.of(position: String) -> Block",
+            "Block.of(${1:\"~ ~ ~\"})",
         ),
         (
             "at",
@@ -2363,26 +2367,31 @@ fn static_completion_items() -> Vec<CompletionItem> {
     }
 
     for event in VANILLA_EVENTS.iter().chain(AGENT_EVENTS) {
-        let constant = event.to_ascii_uppercase();
-        let param = agent_event_payload_type(event)
-            .map(|payload| format!("{payload} event"))
-            .unwrap_or_default();
+        let ty = event_type_name(event);
         items.push(CompletionItem {
-            label: format!("@Event({constant})"),
+            label: format!("@EventHandler {ty}"),
             kind: Some(CompletionItemKind::EVENT),
-            detail: Some(match agent_event_payload_type(event) {
-                Some(payload) => format!("JVM-agent event ({payload})"),
-                None => "MCFC event handler".to_string(),
+            detail: Some(if VANILLA_EVENTS.contains(event) {
+                "Vanilla event handler".to_string()
+            } else {
+                "JVM-agent event handler".to_string()
             }),
             insert_text: Some(format!(
-                "@Event({constant})\nvoid ${{1:{}}}({param}) {{\n\t$0\n}}",
+                "@EventHandler\nvoid ${{1:{}}}({ty} event) {{\n\t$0\n}}",
                 handler_name(event)
             )),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..CompletionItem::default()
         });
     }
-
+    for event in VANILLA_EVENTS.iter().chain(AGENT_EVENTS) {
+        items.push(snippet_item(
+            &event_type_name(event),
+            CompletionItemKind::TYPE_PARAMETER,
+            "MCFC event type",
+            &event_type_name(event),
+        ));
+    }
     items
 }
 
@@ -3096,7 +3105,7 @@ fn block_ref_items() -> Vec<CompletionItem> {
         (
             "fill",
             "block.fill(to: Block, block_id: String|BlockData) -> void",
-            "fill(${1:block(\"~1 ~1 ~1\")}, ${2:\"minecraft:stone\"})",
+            "fill(${1:Block.of(\"~1 ~1 ~1\")}, ${2:\"minecraft:stone\"})",
         ),
         (
             "summon",
@@ -3548,6 +3557,12 @@ fn move_back_over_call_suffix(source: &str, mut index: usize) -> usize {
         word_end
     } else if source[..index].ends_with("new ") {
         index - "new ".len()
+    } else if &source[index..word_end] == "of"
+        && let Some(ty) = ["Selector.", "Block.", "List.", "Map."]
+            .into_iter()
+            .find(|ty| source[..index].ends_with(ty))
+    {
+        index - ty.len()
     } else {
         index
     }
@@ -4112,8 +4127,8 @@ fn agent_event_member_completion_items(
     }
 }
 
-/// Find the handler around the cursor when it is `@Event(KIND)` with a typed
-/// agent payload parameter, e.g. `void onChat(ChatEvent event) {`.
+/// Find the handler around the cursor when it is an `@EventHandler` with an
+/// event parameter, e.g. `void onChat(ChatEvent event) {`.
 fn agent_event_context(source: &str, offset: usize) -> Option<(String, String)> {
     let prefix = &source[..offset.min(source.len())];
     let mut lines = prefix.lines().rev();
@@ -4121,13 +4136,11 @@ fn agent_event_context(source: &str, offset: usize) -> Option<(String, String)> 
         !line.starts_with(char::is_whitespace) && is_scope_header(strip_line_comment(line).trim())
     })?;
     let annotation = lines.map(str::trim).find(|line| !line.is_empty())?;
-    let kind = annotation
-        .strip_prefix("@Event(")?
-        .strip_suffix(')')?
-        .trim()
-        .to_ascii_lowercase();
+    if annotation != "@EventHandler" {
+        return None;
+    }
     let [(ty, name)] = <[_; 1]>::try_from(header_params(strip_line_comment(header).trim())).ok()?;
-    (agent_event_payload_type(&kind) == Some(ty.as_str())).then_some((name, ty))
+    event_kind_for_type(&ty).map(|_| (name, ty))
 }
 
 fn upsert_scoped_completion_local(
@@ -4320,7 +4333,7 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::PlayerRef)
     } else if starts("single(") {
         Some(Type::EntityRef)
-    } else if starts("selector(") {
+    } else if starts("Selector.of(") {
         Some(Type::EntitySet)
     } else if starts("new EntityData(") {
         Some(Type::EntityDef)
@@ -4328,7 +4341,7 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::ItemDef)
     } else if starts("new Component(") {
         Some(Type::TextDef)
-    } else if starts("block(") {
+    } else if starts("Block.of(") {
         Some(Type::BlockRef)
     } else if starts("new BlockData(") {
         Some(Type::BlockDef)
@@ -4587,7 +4600,7 @@ void main() {
     fn completes_syntactic_locals_when_source_is_incomplete() {
         let source = r#"
 void main(String kind) {
-    var me = single(selector("@a"));
+    var me = single(Selector.of("@a"));
     var amount = 1;
     me.team.;
 }
@@ -4607,9 +4620,9 @@ void main(String kind) {
     #[test]
     fn completes_locals_and_members_inside_lowered_event_declarations() {
         let source = r#"
-@Event(PLAYER_DEATH)
-void onPlayerDeath() {
-    var player = single(selector("@s"));
+@EventHandler
+void onPlayerDeath(PlayerDeathEvent event) {
+    Player player = event.player;
     player.;
 }
 "#;
@@ -4619,7 +4632,7 @@ void onPlayerDeath() {
         assert!(
             !local_items
                 .iter()
-                .any(|item| item.label == "@Event(PLAYER_JOIN)")
+                .any(|item| item.label == "@EventHandler PlayerJoinEvent")
         );
 
         let member_items = completion_items(
@@ -4635,11 +4648,11 @@ void onPlayerDeath() {
     fn semantic_ranges_exclude_strings_comments_members_and_other_scopes() {
         let source = r#"
 void first() {
-    var player = single(selector("@s"));
+    var player = single(Selector.of("@s"));
     player.tellraw("player");  // player
 }
 void second() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.tellraw("ok");
 }
 "#;
@@ -4674,7 +4687,7 @@ void main() {
         let source = r#"
 void main() {
     var values = List.of(1, 2, 3);
-    var me = single(selector("@a"));
+    var me = single(Selector.of("@a"));
     values.;
     me.;
 }
@@ -4735,8 +4748,8 @@ void main(Action action) {
     fn completes_nested_player_member_paths() {
         let source = r#"
 void main() {
-    var me = (Player) single(selector("@a"));
-    var asserted = (Player) single(selector("@e[limit=1]"));
+    var me = (Player) single(Selector.of("@a"));
+    var asserted = (Player) single(Selector.of("@e[limit=1]"));
     me.mainhand.;
     me.inventory[0].;
     me.inventory[-1].;
@@ -4820,7 +4833,7 @@ void main() {
     fn completes_gameplay_builtins_and_generic_entity_members() {
         let source = r#"
 void main() {
-    var pig = single(selector("@e[type=pig,limit=1]"));
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
     pig.;
 }
 "#;
@@ -4869,14 +4882,14 @@ void main() {
     fn completes_state_namespace_consistently_for_generic_entities_and_players() {
         let source = r#"
 void main() {
-    var pig = single(selector("@e[type=pig,limit=1]"));
-    var player = (Player) single(selector("@a[limit=1]"));
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var player = (Player) single(Selector.of("@a[limit=1]"));
     pig.state.;
     player.state.;
-    single(selector("@e[type=pig,limit=1]")).state.;
-    ((Player) single(selector("@a[limit=1]"))).state.;
+    single(Selector.of("@e[type=pig,limit=1]")).state.;
+    ((Player) single(Selector.of("@a[limit=1]"))).state.;
     pig.position.foo.;
-    single(selector("@e[type=pig,limit=1]")).position.foo.;
+    single(Selector.of("@e[type=pig,limit=1]")).position.foo.;
 }
 "#;
         let analysis = analyze_source(source);
@@ -4899,9 +4912,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(selector(\"@e[type=pig,limit=1]\")).state.")
+                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).state.")
                 .unwrap()
-                + "single(selector(\"@e[type=pig,limit=1]\")).state.".len(),
+                + "single(Selector.of(\"@e[type=pig,limit=1]\")).state.".len(),
         );
         assert!(inline_entity_state_items.is_empty());
 
@@ -4909,9 +4922,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("(Player) single(selector(\"@a[limit=1]\"))).state.")
+                .find("(Player) single(Selector.of(\"@a[limit=1]\"))).state.")
                 .unwrap()
-                + "(Player) single(selector(\"@a[limit=1]\"))).state.".len(),
+                + "(Player) single(Selector.of(\"@a[limit=1]\"))).state.".len(),
         );
         assert!(inline_player_state_items.is_empty());
 
@@ -4926,9 +4939,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(selector(\"@e[type=pig,limit=1]\")).position.foo.")
+                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).position.foo.")
                 .unwrap()
-                + "single(selector(\"@e[type=pig,limit=1]\")).position.foo.".len(),
+                + "single(Selector.of(\"@e[type=pig,limit=1]\")).position.foo.".len(),
         );
         assert!(invalid_inline_nested_items.is_empty());
     }
@@ -4947,7 +4960,7 @@ void main() {
     msg.;
     new ItemStack("minecraft:apple").;
     new Component("Hello").;
-    block("~ ~ ~").;
+    Block.of("~ ~ ~").;
 }
 "#;
         let analysis = analyze_source(source);
@@ -5007,7 +5020,7 @@ void main() {
         let inline_block_items = completion_items(
             source,
             &analysis,
-            source.find("block(\"~ ~ ~\").").unwrap() + "block(\"~ ~ ~\").".len(),
+            source.find("Block.of(\"~ ~ ~\").").unwrap() + "Block.of(\"~ ~ ~\").".len(),
         );
         assert!(inline_block_items.iter().any(|item| item.label == "summon"));
         assert!(
@@ -5167,14 +5180,14 @@ void main() {
     fn completes_schema_backed_nbt_fields_for_runtime_refs() {
         let source = r#"
 void main() {
-    var pig = single(selector("@e[type=pig,limit=1]"));
-    var player = (Player) single(selector("@a[limit=1]"));
-    var chest = block("~ ~ ~");
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var player = (Player) single(Selector.of("@a[limit=1]"));
+    var chest = Block.of("~ ~ ~");
     pig.nbt.;
-    single(selector("@e[type=pig,limit=1]")).nbt.;
+    single(Selector.of("@e[type=pig,limit=1]")).nbt.;
     player.nbt.;
     chest.nbt.;
-    block("~ ~ ~").nbt.;
+    Block.of("~ ~ ~").nbt.;
 }
 "#;
         let analysis = analyze_source(source);
@@ -5190,9 +5203,9 @@ void main() {
             source,
             &analysis,
             source
-                .find("single(selector(\"@e[type=pig,limit=1]\")).nbt.")
+                .find("single(Selector.of(\"@e[type=pig,limit=1]\")).nbt.")
                 .unwrap()
-                + "single(selector(\"@e[type=pig,limit=1]\")).nbt.".len(),
+                + "single(Selector.of(\"@e[type=pig,limit=1]\")).nbt.".len(),
         );
         assert!(
             inline_entity_items
@@ -5217,7 +5230,7 @@ void main() {
         let inline_block_items = completion_items(
             source,
             &analysis,
-            source.find("block(\"~ ~ ~\").nbt.").unwrap() + "block(\"~ ~ ~\").nbt.".len(),
+            source.find("Block.of(\"~ ~ ~\").nbt.").unwrap() + "Block.of(\"~ ~ ~\").nbt.".len(),
         );
         assert!(inline_block_items.iter().any(|item| item.label == "lock"));
     }
@@ -5336,15 +5349,15 @@ void main() {
     fn completes_contextual_minecraft_ids_inside_string_arguments() {
         let source = r#"
 void main() {
-    var player = (Player) single(selector("@a"));
+    var player = (Player) single(Selector.of("@a"));
     new EntityData("pig");
     new ItemStack("diamond_swo");
     new ItemStack("music_disc_boun");
-    block("~ ~ ~").setblock("gold_bloc");
+    Block.of("~ ~ ~").setblock("gold_bloc");
     player.playsound("entity.experience_orb.picku", "master");
     player.playsound("block.sulfur_spike.brea", "master");
-    block("~ ~ ~").particle("happy_villag");
-    block("~ ~ ~").particle("geyser_poo");
+    Block.of("~ ~ ~").particle("happy_villag");
+    Block.of("~ ~ ~").particle("geyser_poo");
     player.effect("glowin", 3, 0);
     player.give("stick", 1);
     player.position.lootSpawn("chests/simple_dungeo");
@@ -5481,7 +5494,7 @@ void main() {
     fn completes_minecraft_ids_for_unterminated_strings_and_item_assignments() {
         let assignment_source = r#"
 void main() {
-    var player = (Player) single(selector("@a"));
+    var player = (Player) single(Selector.of("@a"));
     player.mainhand.item = "carrot_on_a_stic
 "#;
         let assignment_analysis = analyze_source(assignment_source);
@@ -5521,9 +5534,9 @@ void main() {
     fn completes_selector_entity_ids_and_top_level_debug_marker_block_ids() {
         let source = r#"
 void main() {
-    var matching = selector("@e[type=chicke,limit=1]");
-    var negated = selector("@e[type=!zomb,limit=1]");
-    debugMarker(block("~ ~ ~"), "marker", "gold_bloc");
+    var matching = Selector.of("@e[type=chicke,limit=1]");
+    var negated = Selector.of("@e[type=!zomb,limit=1]");
+    debugMarker(Block.of("~ ~ ~"), "marker", "gold_bloc");
 }
 "#;
         let analysis = analyze_source(source);
@@ -5577,7 +5590,7 @@ void main() {
     fn does_not_offer_item_id_completions_for_read_only_item_slot_ids() {
         let source = r#"
 void main() {
-    var player = (Player) single(selector("@a"));
+    var player = (Player) single(Selector.of("@a"));
     player.hotbar[0].id = "stick";
 }
 "#;

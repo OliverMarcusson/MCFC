@@ -12,12 +12,13 @@ enum Mode { IDLE, RUNNING }
 
 record Reward(String item, int count) {}
 
-@Event(PLAYER_JOIN)
-void onPlayerJoin(Player player) {
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
+    Player player = event.player;
     player.tellraw("Welcome to MCFC");
 }
 
-@Event(CHAT)
+@EventHandler
 void onChat(ChatEvent event) {
     event.player.actionbar("chat: $(event.message)");
 }
@@ -46,7 +47,7 @@ int score(Mode mode, float speed) {
             continue;
         }
     }
-    for (Player p : selector("@a")) {
+    for (Player p : Selector.of("@a")) {
         p.addTag("seen");
     }
     switch (mode) {
@@ -58,11 +59,11 @@ int score(Mode mode, float speed) {
     async {
         sleep(1);
     }
-    as (single(selector("@p"))) {
+    as (single(Selector.of("@p"))) {
         mc("say hi");
     }
     var stack = new ItemStack("minecraft:stick");
-    var who = (Player) single(selector("@p"));
+    var who = (Player) single(Selector.of("@p"));
     who.state.coins += 1;
     return (int) speed;
 }

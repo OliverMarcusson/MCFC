@@ -175,7 +175,7 @@ void main() {
 ## Entities
 
 - `Selector` can match any number of entities. Loop over it with `for`.
-- `Entity` is one entity. Get one with `single(selector(...))`, or from a `for` loop over a `Selector`.
+- `Entity` is one entity. Get one with `single(Selector.of(...))`, or from a `for` loop over a `Selector`.
 - `Player` is an `Entity` that's known to be a player.
 
 Some methods only work on players, and `heal` only works on non-players. The compiler works out which kind a reference is from its selector:
@@ -186,11 +186,11 @@ Some methods only work on players, and `heal` only works on non-players. The com
 | any other `type=...` | non-player |
 | anything else | unknown |
 
-`(Player) e` asserts that `e` is a player, and `for (Player p : selector(...))` does the same for a loop. All entity methods and fields are listed in [Entities and Players](./methods).
+`(Player) e` asserts that `e` is a player, and `for (Player p : Selector.of(...))` does the same for a loop. All entity methods and fields are listed in [Entities and Players](./methods).
 
 ## `Block`
 
-A block position, created with `block("~ ~ ~")` or read from `entity.position`. `block(...)` needs a literal string, so a position can't be computed at run time yet. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, block("~1 ~ ~"))` or an [`at` block](./statements#as-and-at).
+A block position, created with `Block.of("~ ~ ~")` or read from `entity.position`. `Block.of(...)` needs a literal string, so a position can't be computed at run time yet. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, Block.of("~1 ~ ~"))` or an [`at` block](./statements#as-and-at).
 
 | Method | Does |
 | --- | --- |
@@ -209,7 +209,7 @@ A block position, created with `block("~ ~ ~")` or read from `entity.position`. 
 
 ```mcfc
 void markGround() {
-    var below = block("~ ~-1 ~");
+    var below = Block.of("~ ~-1 ~");
     if (below.is("minecraft:grass_block") && below.light() < 8) {
         below.setblock("minecraft:glowstone");
     }
@@ -252,7 +252,7 @@ void show() {
     var bb = new BossBar("mypack:progress", "Progress");
     bb.max = 10;
     bb.value = 5;
-    bb.players = selector("@a");
+    bb.players = Selector.of("@a");
     bb.visible = true;
 }
 ```

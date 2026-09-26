@@ -322,13 +322,13 @@ void launch(int level) {
     fn analyzes_bukkit_style_declarations_with_the_compiler_frontend() {
         let analysis = analyze_source(
             r#"@PlayerState("Coins") int coins;
-@Event(CHAT)
+@EventHandler
 void onChat(ChatEvent event) {
     event.player.tellraw(event.message);
 }
 @Command("status")
 void status() {
-    var player = single(selector("@s"));
+    var player = single(Selector.of("@s"));
     player.tellraw("ok");
 }
 "#,

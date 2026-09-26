@@ -1,8 +1,8 @@
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::language_catalog::{
-    VANILLA_EVENTS, agent_event_payload_type, internal_function_name, internal_method_name,
-    java_name_for,
+    VANILLA_EVENTS, event_kind_for_type, event_type_name, internal_function_name,
+    internal_method_name, java_name_for,
 };
 use crate::lexer::{Token, TokenKind, lex};
 
@@ -33,6 +33,9 @@ const BUILTIN_CONSTRUCTORS: &[(&str, &str)] = &[
     ("Component", "text"),
     ("BossBar", "bossbar"),
 ];
+
+/// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
+const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
 struct Annotation {
     name: String,
@@ -313,7 +316,7 @@ impl Parser {
         }
     }
 
-    /// `@Event`, `@Command`, `@Every` and `@After` turn a function into a handler.
+    /// `@EventHandler`, `@Command`, `@Every` and `@After` turn a function into a handler.
     /// It is renamed to the hook name the backend installs; parameters that stand
     /// for the running player become a prologue.
     fn apply_function_annotations(&mut self, annotations: &[Annotation], function: &mut Function) {
@@ -332,33 +335,61 @@ impl Parser {
         }
         let span = annotation.span.clone();
         match annotation.name.as_str() {
-            "Event" => {
-                let Some(kind) = single_identifier_arg(annotation) else {
-                    self.error_at("@Event takes an event name, like @Event(PLAYER_JOIN)", span);
-                    return;
-                };
-                let kind = kind.to_ascii_lowercase();
-                if VANILLA_EVENTS.contains(&kind.as_str()) {
-                    self.bind_player_param(function, &annotation.name);
-                    function.name = format!("__mcfc_event_{kind}");
-                } else if let Some(payload) = agent_event_payload_type(&kind) {
-                    let ok = matches!(function.params.as_slice(),
-                        [param] if param.ty == Type::Struct(payload.to_string()));
-                    if !ok {
-                        self.error_at(
-                            &format!(
-                                "@Event({}) handlers take one '{payload}' parameter",
-                                kind.to_ascii_uppercase()
-                            ),
-                            span,
-                        );
-                    }
-                    function.name = format!("__mcfc_agent_event_{kind}");
-                } else {
+            "EventHandler" => {
+                if !annotation.args.is_empty() {
                     self.error_at(
-                        &format!("unknown event '{}'", kind.to_ascii_uppercase()),
+                        "@EventHandler takes no arguments; the parameter type picks the event",
+                        span.clone(),
+                    );
+                }
+                let kind = match function.params.as_slice() {
+                    [param] => match &param.ty {
+                        Type::Struct(ty) => event_kind_for_type(ty),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(kind) = kind else {
+                    self.error_at(
+                        "@EventHandler handlers take one event parameter, like 'PlayerJoinEvent event'",
                         span,
                     );
+                    return;
+                };
+                if VANILLA_EVENTS.contains(&kind) {
+                    // Vanilla handlers run as the player; the event is built from `@s`.
+                    let param = function.params.remove(0);
+                    let at_s = call(
+                        "selector",
+                        vec![string_expr("@s", &param.span)],
+                        &param.span,
+                    );
+                    let player = call(
+                        "player_ref",
+                        vec![call("single", vec![at_s], &param.span)],
+                        &param.span,
+                    );
+                    let event = Expr {
+                        kind: ExprKind::StructLiteral {
+                            name: event_type_name(kind),
+                            fields: vec![("player".to_string(), player)],
+                        },
+                        span: param.span.clone(),
+                    };
+                    function.body.insert(
+                        0,
+                        Stmt {
+                            kind: StmtKind::Let {
+                                name: param.name,
+                                ty: None,
+                                value: event,
+                            },
+                            span: param.span,
+                        },
+                    );
+                    function.name = format!("__mcfc_event_{kind}");
+                } else {
+                    function.name = format!("__mcfc_agent_event_{kind}");
                 }
             }
             "Command" => {
@@ -957,7 +988,9 @@ impl Parser {
                 }
             }
             TokenKind::Identifier(name)
-                if (name == "List" || name == "Map")
+                if (name == "List"
+                    || name == "Map"
+                    || STATIC_FACTORIES.iter().any(|(ty, _)| *ty == name))
                     && matches!(self.peek().kind, TokenKind::Dot)
                     && matches!(self.peek_at(1), TokenKind::Identifier(of) if of == "of") =>
             {
@@ -968,7 +1001,9 @@ impl Parser {
                     &format!("expected '(' after {name}.of"),
                 );
                 let args = self.parse_call_args();
-                if name == "List" {
+                if let Some((_, builtin)) = STATIC_FACTORIES.iter().find(|(ty, _)| *ty == name) {
+                    call(builtin, args, &span)
+                } else if name == "List" {
                     Expr {
                         kind: ExprKind::ArrayLiteral(args),
                         span,
@@ -987,6 +1022,12 @@ impl Parser {
                         .find(|(_, builtin)| *builtin == name)
                     {
                         self.error_at(&format!("use 'new {ty}(...)'"), span.clone());
+                    }
+                    if let Some((ty, _)) = STATIC_FACTORIES
+                        .iter()
+                        .find(|(_, builtin)| *builtin == name)
+                    {
+                        self.error_at(&format!("use '{ty}.of(...)'"), span.clone());
                     }
                     if let Some(java) = java_name_for(&name, false) {
                         self.error_at(&format!("use '{java}(...)'"), span.clone());
@@ -1379,21 +1420,6 @@ fn append_path_segment(expr: Expr, segment: PathSegment, span: Span) -> Expr {
     }
 }
 
-fn single_identifier_arg(annotation: &Annotation) -> Option<&str> {
-    match annotation.args.as_slice() {
-        [
-            (
-                None,
-                Expr {
-                    kind: ExprKind::Variable(name),
-                    ..
-                },
-            ),
-        ] => Some(name),
-        _ => None,
-    }
-}
-
 fn is_command_name(name: &str) -> bool {
     name.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
         && name
@@ -1505,7 +1531,7 @@ mod tests {
         let program = parse(
             r#"
 void main() {
-    for (Player p : selector("@a")) { p.tellraw("hi"); }
+    for (Player p : Selector.of("@a")) { p.tellraw("hi"); }
     switch (mode) {
         case A, B -> debug("ab");
         default -> { debug("other"); }
@@ -1545,7 +1571,7 @@ void main() {
         let program = parse(
             r#"
 @PlayerState("Coins") int coins;
-@Event(PLAYER_JOIN) void onJoin(Player player) { player.tellraw("hi"); }
+@EventHandler void onJoin(PlayerJoinEvent event) { Player player = event.player; player.tellraw("hi"); }
 @Command("spawn") void spawn() {}
 @Every(seconds = 2) void heartBeat() {}
 "#,

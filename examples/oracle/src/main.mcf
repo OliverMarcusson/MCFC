@@ -10,14 +10,14 @@
 @PlayerState("Prophecies") int prophecies;
 
 void main() {
-    selector("@a").tellraw("§5✦ The Oracle of Numbers awakens...");
+    Selector.of("@a").tellraw("§5✦ The Oracle of Numbers awakens...");
     async {
         while (true) {
             // Each of these suspends until the helper answers, then resumes here.
             var fact = http.get("https://www.random.org/integers/?num=1&min=1&max=1000&col=1&base=10&format=plain&rnd=new");
             var now = time.now();
             if (fact.ok) {
-                for (var viewer : selector("@a")) {
+                for (var viewer : Selector.of("@a")) {
                     var player = (Player) viewer;
                     player.state.prophecies = player.state.prophecies + 1;
                     player.tellraw("§5✦ §dThe Oracle divines §7(§f$(now.iso)§7)");
@@ -25,7 +25,7 @@ void main() {
                     player.tellraw("§8prophecies witnessed: §f$(player.state.prophecies)");
                 }
             } else {
-                selector("@a").tellraw("§cThe Oracle is silent — is mcfd running?");
+                Selector.of("@a").tellraw("§cThe Oracle is silent — is mcfd running?");
             }
             sleep(15);
         }
@@ -34,7 +34,7 @@ void main() {
 
 // Run with: /function oracle:roll
 void roll() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var dice = rand.int(1, 6);
     if (dice.ok) {
         player.tellraw("§6You rolled a §e$(dice.value)§6!");

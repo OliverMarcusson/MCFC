@@ -21,8 +21,8 @@ Generated files are deterministic and use reserved generated paths under the pac
 - `void main()` becomes an internal generated function called by `data/<namespace>/function/main.mcfunction`.
 - `void tick()` becomes the datapack tick entrypoint.
 - Exported functions get public wrapper `.mcfunction` files so Minecraft can call them directly.
-- `@Event`, `@Command`, `@Every` and `@After` handlers lower to generated dispatcher functions.
-- Functions nothing can reach are dropped after type checking. The starting points are `main`, `tick`, `@Event`/`@Command`/`@Every`/`@After` handlers, `[[export]]` functions, and your zero-argument `void` functions. Unused helpers and unused `std` functions therefore add nothing to the pack, although they are still checked for errors.
+- `@EventHandler`, `@Command`, `@Every` and `@After` handlers lower to generated dispatcher functions.
+- Functions nothing can reach are dropped after type checking. The starting points are `main`, `tick`, `@EventHandler`/`@Command`/`@Every`/`@After` handlers, `[[export]]` functions, and your zero-argument `void` functions. Unused helpers and unused `std` functions therefore add nothing to the pack, although they are still checked for errors.
 - Functions in modules compile under their full path. `util.twice` uses generated names such as `generated/util__twice__d0__entry` and scoreboard slots such as `$d0_util__twice_x`. Its public wrapper, when it has one, is `data/<namespace>/function/util/twice.mcfunction`. Function paths are lowercase, so `resetArena` becomes `reset_arena`.
 
 ## Value Representation
@@ -81,8 +81,8 @@ When a builder is used where `Nbt` is expected, MCFC emits the equivalent of rea
 
 Vanilla-safe events lower to datapack detectors:
 
-- `PLAYER_JOIN` uses generated player tagging to detect first-seen players.
-- `PLAYER_DEATH` uses `deathCount` scoreboard objectives and seen counters.
+- `PlayerJoinEvent` uses generated player tagging to detect first-seen players.
+- `PlayerDeathEvent` uses `deathCount` scoreboard objectives and seen counters.
 - `@Command` uses a trigger objective and dispatches matching players.
 - `@Every` and `@After` use generated counters or `schedule function`.
 

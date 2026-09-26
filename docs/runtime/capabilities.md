@@ -1,4 +1,4 @@
-# Capabilities
+# Capabilities <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 Each host module has to be enabled in `mcfc.toml`. Calling a module that isn't enabled is a compile error.
 
@@ -42,7 +42,7 @@ void topPlayer(String team) {
     var r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", List.of(team));
     if (r.ok) {
         var name = (String) r.rows[0].name;
-        selector("@a").tellraw("Top player: $(name)");
+        Selector.of("@a").tellraw("Top player: $(name)");
     }
 }
 ```

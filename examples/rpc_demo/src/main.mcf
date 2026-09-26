@@ -1,6 +1,6 @@
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(selector("@p"));
+    var p = single(Selector.of("@p"));
     if (r.ok) {
         p.tellraw(r.body);
     } else {

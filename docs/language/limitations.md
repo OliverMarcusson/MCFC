@@ -13,8 +13,8 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Runtime values
 
 - **Strings aren't escaped** when they're joined or inserted with `$(...)`. A value containing `"` or `\` breaks the command. See [string limits](./reference/types#string).
-- **`block(...)` needs a literal string.** Positions can't be computed at run time yet.
-- **`findFirst`** needs a literal `selector(...)`, not a variable.
+- **`Block.of(...)` needs a literal string.** Positions can't be computed at run time yet.
+- **`findFirst`** needs a literal `Selector.of(...)`, not a variable.
 - **`hasData`** only works on storage values (lists, maps, records), not on entity NBT.
 - **`heal`** only works on references known to be non-players, for example `@e[type=minecraft:pig]`. For players, use `effect("minecraft:instant_health", 1, 0)`.
 - **`Selector.position`** isn't supported. Loop over the set and use each entity's `position`.
@@ -29,4 +29,5 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Platform
 
 - Output targets Minecraft 26.3 only.
-- Vanilla events are limited to `player_join` and `player_death`. Other events need the [agent](/runtime/mcfd-agent).
+- Vanilla events are limited to `PlayerJoinEvent` and `PlayerDeathEvent`. Other events need the [agent](/runtime/mcfd-agent).
+- Sections marked <Badge type="danger" text="Agent" /> or <Badge type="danger" text="mcfd" /> need a process running beside the server, so they don't work on Realms or most shared hosts. Everything else is a plain datapack.

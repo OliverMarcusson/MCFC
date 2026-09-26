@@ -101,7 +101,7 @@
       "patterns": [
         {
           "name": "meta.annotation.mcfc",
-          "match": "(@)(Event|Command|Every|After|PlayerState|EntityState|Book|[A-Za-z_][A-Za-z0-9_]*)\\b(?:\\s*\\(\\s*([A-Z][A-Z0-9_]*)\\s*\\))?",
+          "match": "(@)(EventHandler|Command|Every|After|PlayerState|EntityState|Book|[A-Za-z_][A-Za-z0-9_]*)\\b(?:\\s*\\(\\s*([A-Z][A-Z0-9_]*)\\s*\\))?",
           "captures": {
             "1": { "name": "punctuation.definition.annotation.mcfc" },
             "2": { "name": "storage.type.annotation.mcfc" },
@@ -197,7 +197,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.mcfc",
-          "match": "\\b(?:selector|single|findFirst|exists|hasData|block|sleep|sleepTicks|random|randomWeighted|randomBinomial|gamerule|at|as|summon|debug|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
+          "match": "\\b(?:single|findFirst|exists|hasData|sleep|sleepTicks|random|randomWeighted|randomBinomial|gamerule|at|as|summon|debug|http|file|kv|db|time|rand)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.builtin.mcfc",

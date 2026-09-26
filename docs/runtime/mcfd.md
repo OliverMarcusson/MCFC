@@ -1,4 +1,4 @@
-# mcfd
+# mcfd <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 `mcfd` is the helper service behind [host calls](./host-bridge). It runs next to Minecraft, reads requests from the game log and writes answers back into the datapack. You only need it for packs that enable `[helper]` capabilities.
 

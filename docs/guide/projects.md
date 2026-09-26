@@ -51,7 +51,7 @@ path = "data/my_pack/function/run_all.mcfunction"
 function = "run_all"
 ```
 
-## Helper Runtime
+## Helper Runtime <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 Host capabilities are enabled through the `[helper]` table:
 

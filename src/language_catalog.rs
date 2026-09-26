@@ -2,7 +2,6 @@
 //! Keep additions here so compiler, language server, and editor tooling share
 //! the names users write instead of maintaining independent stale lists.
 
-pub const TOP_LEVEL_DECLARATIONS: &[&str] = &["event", "command", "task"];
 pub const VANILLA_EVENTS: &[&str] = &["player_join", "player_death"];
 pub const AGENT_EVENTS: &[&str] = &[
     "chat",
@@ -39,42 +38,49 @@ pub const AGENT_EVENTS: &[&str] = &[
     "game_mode_change",
 ];
 
-pub fn agent_event_payload_type(kind: &str) -> Option<&'static str> {
-    Some(match kind {
-        "chat" => "ChatEvent",
-        "inventory_click" => "InventoryClickEvent",
-        "player_action" => "PlayerActionEvent",
-        "block_break" => "BlockBreakEvent",
-        "player_interact_block" => "PlayerInteractBlockEvent",
-        "player_interact_item" => "PlayerInteractItemEvent",
-        "entity_interact" => "EntityInteractEvent",
-        "entity_attack" => "EntityAttackEvent",
-        "item_held_change" => "ItemHeldChangeEvent",
-        "inventory_close" => "InventoryCloseEvent",
-        "player_swing" => "PlayerSwingEvent",
-        "player_action_toggle" => "PlayerActionToggleEvent",
-        "item_rename" => "ItemRenameEvent",
-        "trade_select" => "TradeSelectEvent",
-        "sign_change" => "SignChangeEvent",
-        "recipe_place" => "RecipePlaceEvent",
-        "game_mode_request" => "GameModeRequestEvent",
-        "player_respawn_request"
-        | "book_edit"
-        | "beacon_effect"
-        | "item_pick"
-        | "entity_teleport"
-        | "player_abilities"
-        | "player_connect"
-        | "player_quit"
-        | "player_respawn"
-        | "player_damage"
-        | "player_teleport"
-        | "player_item_drop"
-        | "player_item_pickup"
-        | "inventory_open"
-        | "game_mode_change" => "AgentEvent",
-        _ => return None,
-    })
+/// Agent events whose payload carries only the shared fields
+/// (`player`, `playerName`, `source`, `payload`, `cancelled`).
+pub const GENERIC_AGENT_EVENTS: &[&str] = &[
+    "player_respawn_request",
+    "book_edit",
+    "beacon_effect",
+    "item_pick",
+    "entity_teleport",
+    "player_abilities",
+    "player_connect",
+    "player_quit",
+    "player_respawn",
+    "player_damage",
+    "player_teleport",
+    "player_item_drop",
+    "player_item_pickup",
+    "inventory_open",
+    "game_mode_change",
+];
+
+/// The parameter type that selects an event: `player_join` is `PlayerJoinEvent`.
+pub fn event_type_name(kind: &str) -> String {
+    let mut name: String = kind
+        .split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                .unwrap_or_default()
+        })
+        .collect();
+    name.push_str("Event");
+    name
+}
+
+/// The event an `@EventHandler` parameter type listens to.
+pub fn event_kind_for_type(ty: &str) -> Option<&'static str> {
+    VANILLA_EVENTS
+        .iter()
+        .chain(AGENT_EVENTS)
+        .copied()
+        .find(|kind| event_type_name(kind) == ty)
 }
 
 /// Builtin functions users write in camelCase, with the name the compiler uses.

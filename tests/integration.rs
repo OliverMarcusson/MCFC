@@ -135,7 +135,7 @@ void main() {
 fn compiles_entity_queries_and_iteration() {
     let source = r#"
 void main() {
-    var pigs = selector("@e[type=pig,limit=3]");
+    var pigs = Selector.of("@e[type=pig,limit=3]");
     for (var pig : pigs) {
         pig.CustomName = "Hello";
     }
@@ -164,9 +164,9 @@ void main() {
 fn compiles_single_exists_and_context_composition() {
     let source = r#"
 void main() {
-    var player = single(selector("@a[tag=hunter]"));
+    var player = single(Selector.of("@a[tag=hunter]"));
     if (exists(player)) {
-        var nearest = single(at(player, selector("@e[type=pig,sort=nearest]")));
+        var nearest = single(at(player, Selector.of("@e[type=pig,sort=nearest]")));
         if (exists(nearest)) {
             nearest.CustomName = "Target";
         }
@@ -202,7 +202,7 @@ void main() {
 fn single_plain_player_name_stays_a_player_target() {
     let source = r#"
 void main() {
-    var player = single(selector("FaithlessMC"));
+    var player = single(Selector.of("FaithlessMC"));
     player.tellraw("hi");
     return;
 }
@@ -226,7 +226,7 @@ void main() {
 fn object_display_methods_expand_message_at_s_to_the_target_selector() {
     let source = r#"
 void main() {
-    var player = single(selector("@a"));
+    var player = single(Selector.of("@a"));
     player.tellraw("*@s* Expression test: $(32)");
     return;
 }
@@ -249,9 +249,9 @@ void main() {
 fn compiles_as_value_context_composition() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     if (exists(player)) {
-        var self_ref = single(as(player, selector("@s")));
+        var self_ref = single(as(player, Selector.of("@s")));
         self_ref.tags.welcomed = true;
     }
     return;
@@ -279,7 +279,7 @@ void main() {
 fn compiles_as_and_at_context_blocks() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     as (player) {
         mcf("tellraw @s \"welcome @s\"");
         mc("title @s actionbar \"title @s\"");
@@ -347,9 +347,9 @@ void main() {
 fn compiles_nested_context_blocks() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     at (player) {
-        as (selector("@e[type=pig,limit=1]")) {
+        as (Selector.of("@e[type=pig,limit=1]")) {
             mc("say @s");
         }
     }
@@ -377,7 +377,7 @@ void main() {
 fn compiles_text_def_display_components() {
     let source = r#"
 void main() {
-    var player = single(selector("@a"));
+    var player = single(Selector.of("@a"));
     var msg = new Component("Hello");
     msg.color = "gold";
     msg.bold = true;
@@ -415,7 +415,7 @@ void main() {
 fn compiles_block_paths_and_nbt_casts() {
     let source = r#"
 void main() {
-    var chest = block("~ ~ ~");
+    var chest = Block.of("~ ~ ~");
     chest.CustomName = "Loot";
     var name = (String) chest.CustomName;
     return;
@@ -449,9 +449,9 @@ void main() {
 fn compiles_explicit_runtime_entity_and_block_nbt_paths() {
     let source = r#"
 void main() {
-    var ent1 = single(selector("@e[type=pig,limit=1]"));
-    var ent2 = single(selector("@e[type=cow,limit=1]"));
-    var chest = block("~ ~ ~");
+    var ent1 = single(Selector.of("@e[type=pig,limit=1]"));
+    var ent2 = single(Selector.of("@e[type=cow,limit=1]"));
+    var chest = Block.of("~ ~ ~");
     ent1.nbt.Rotation = ent2.nbt.Rotation;
     var rot = ent1.nbt.Rotation;
     chest.nbt.CustomName = "Loot";
@@ -482,8 +482,8 @@ void main() {
 fn quotes_string_index_nbt_segments_in_runtime_and_storage_paths() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
-    var chest = block("~ ~ ~");
+    var player = single(Selector.of("@p"));
+    var chest = Block.of("~ ~ ~");
     var page = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
     var weird = (String) player.inventory[0].nbt.foo["A [crazy name]!"].baz;
     chest.nbt.Items[1].components["minecraft:written_book_content"].author = page;
@@ -518,7 +518,7 @@ void main() {
 fn quotes_dynamic_string_index_nbt_segments_on_storage_backed_paths() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var payload = player.inventory[0].nbt;
     var key = "A [crazy name]!";
     var value = (String) payload.foo[key].bar;
@@ -550,9 +550,9 @@ void main() {
     var chest = new BlockData("minecraft:chest");
     chest.states.facing = "north";
     chest.name = "Loot";
-    var pos = block("~ ~ ~");
+    var pos = Block.of("~ ~ ~");
     pos.setblock(chest);
-    pos.fill(block("~1 ~1 ~1"), chest);
+    pos.fill(Block.of("~1 ~1 ~1"), chest);
     return;
 }
 "#;
@@ -577,7 +577,7 @@ void main() {
 fn compiles_player_safe_api_surfaces() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     if (exists(player)) {
         var air = (int) player.nbt.Air;
         player.state.quest_stage = 3;
@@ -666,7 +666,7 @@ void main() {
 fn compiles_equipment_slot_reads_via_item_slot_surface() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var hand = player.mainhand;
     var present = hand.exists;
     var id = hand.id;
@@ -695,7 +695,7 @@ void main() {
 fn compiles_generic_entity_state_reads_and_writes() {
     let source = r#"
 void main() {
-    var marker = single(selector("@e[type=minecraft:marker,limit=1]"));
+    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
     marker.state.decay = 0;
     marker.state.decay = marker.state.decay + 1;
     return;
@@ -736,8 +736,8 @@ record Profile(String title, int level) {}
 @EntityState float ratio;
 @EntityState Profile profile;
 void main() {
-    var player = (Player) single(selector("@p"));
-    var marker = single(selector("@e[type=minecraft:marker,limit=1]"));
+    var player = (Player) single(Selector.of("@p"));
+    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
     player.state.title = "hero";
     player.state.ratio = 1.5;
     player.state.profile = new Profile("knight", 5);
@@ -783,8 +783,8 @@ record Profile(String title) {}
 @PlayerState("Profile") Profile profile;
 @EntityState float ratio;
 void main() {
-    var player = (Player) single(selector("@p"));
-    var marker = single(selector("@e[type=minecraft:marker,limit=1]"));
+    var player = (Player) single(Selector.of("@p"));
+    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
     player.state.title = 3;
     player.state.profile = "bad";
     marker.state.ratio = "bad";
@@ -817,7 +817,7 @@ void main() {
 fn compiles_generic_entity_bool_state_conditions() {
     let source = r#"
 void main() {
-    var mob = single(selector("@e[type=minecraft:pig,limit=1]"));
+    var mob = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
     mob.state.alert = true;
     if (mob.state.alert) {
         mob.tellraw("x");
@@ -860,7 +860,7 @@ void main() {
 fn compiles_item_builders_and_player_inventory_slots() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var sword = new ItemStack("minecraft:diamond_sword");
     var idx = 7;
     sword.count = 2;
@@ -923,7 +923,7 @@ void main() {
 fn compiles_runtime_item_slot_nbt_reads_and_writes() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.inventory[1].nbt = player.inventory[0].nbt;
     player.inventory[1].nbt.CustomModelData = player.inventory[0].nbt.CustomModelData;
     var payload = player.inventory[1].nbt;
@@ -958,7 +958,7 @@ void equip(Player player, int idx, ItemStack stack) {
     return;
 }
 void main() {
-    var target = single(selector("@e[limit=1]"));
+    var target = single(Selector.of("@e[limit=1]"));
     var stack = new ItemStack("minecraft:book");
     var player = (Player) target;
     equip(target, 7, stack);
@@ -984,15 +984,15 @@ void main() {
 fn compiles_position_owned_summons_and_spawned_items() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
-    var pig = block("1 64 1").summon(new EntityData("minecraft:pig"));
+    var player = single(Selector.of("@p"));
+    var pig = Block.of("1 64 1").summon(new EntityData("minecraft:pig"));
     var inline = new EntityData("minecraft:pig");
     inline.name = "Inline";
-    var pig_with_data = block("~ ~ ~").summon("minecraft:pig", inline.asNbt());
-    var rel = at(player, block("~1 ~ ~"));
+    var pig_with_data = Block.of("~ ~ ~").summon("minecraft:pig", inline.asNbt());
+    var rel = at(player, Block.of("~1 ~ ~"));
     var pig_relative = rel.summon("minecraft:pig");
-    var pig_above = at(player, block("~ ~10 ~")).summon("minecraft:pig");
-    var drop = block("~ ~ ~").spawnItem(new ItemStack("minecraft:apple"));
+    var pig_above = at(player, Block.of("~ ~10 ~")).summon("minecraft:pig");
+    var drop = Block.of("~ ~ ~").spawnItem(new ItemStack("minecraft:apple"));
     return;
 }
 "#;
@@ -1148,8 +1148,8 @@ void main() {
 fn compiles_block_ref_is_checks() {
     let source = r#"
 void main() {
-    var below = block("~ ~-1 ~");
-    var absolute = block("10 64 10");
+    var below = Block.of("~ ~-1 ~");
+    var absolute = Block.of("10 64 10");
     if (below.is("minecraft:air")) {
         below.setblock("minecraft:purple_concrete");
     }
@@ -1177,7 +1177,7 @@ void main() {
 fn compiles_async_bossbars_without_default_tick_tag() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var bb = new BossBar("mcfc:test", "Boss");
     bb.value = 5;
     bb.players = player;
@@ -1280,7 +1280,7 @@ fn compiles_tick_sleep_player_state_display_and_equipment_item_defs() {
 @PlayerState("Money") int money;
 
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var helmet = new ItemStack("minecraft:golden_helmet");
     helmet.count = 1;
     helmet.name = "Crown";
@@ -1855,7 +1855,7 @@ void main() {
     var bad_remove = arr.remove("x");
     var bad_remove_alias = arr.remove("x");
     var bad_key = dict[1];
-    var bad_refs = List.of(selector("@a"));
+    var bad_refs = List.of(Selector.of("@a"));
     arr.add("bad");
     dict["bad-key"] = 2;
     return;
@@ -1973,8 +1973,8 @@ void main() {
 fn rejects_invalid_query_usage() {
     let source = r#"
 void main() {
-    var bad = single(selector("@e[type=pig,limit=2]"));
-    var also_bad = selector("@e[type=pig]");
+    var bad = single(Selector.of("@e[type=pig,limit=2]"));
+    var also_bad = Selector.of("@e[type=pig]");
     also_bad.CustomName = "Nope";
     return;
 }
@@ -1992,7 +1992,7 @@ void main() {
 fn rejects_unsafe_player_writes() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.CustomName = "Nope";
     player.nbt.SelectedItem = "bad";
     player.state.story = "hello";
@@ -2013,7 +2013,7 @@ void main() {
 fn rejects_invalid_entity_state_writes() {
     let source = r#"
 void main() {
-    var marker = single(selector("@e[type=minecraft:marker,limit=1]"));
+    var marker = single(Selector.of("@e[type=minecraft:marker,limit=1]"));
     marker.state.name = "bad";
     marker.state.payload = new ItemStack("minecraft:stick");
     return;
@@ -2031,8 +2031,8 @@ void main() {
 fn rejects_invalid_inventory_slot_usage() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
-    var pig = single(selector("@e[type=pig,limit=1]"));
+    var player = single(Selector.of("@p"));
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
     pig.inventory[0].count = 1;
     player.hotbar["bad"].count = 1;
     player.hotbar[9].count = 1;
@@ -2102,7 +2102,7 @@ fn rejects_invalid_macro_placeholders() {
     let source = r#"
 void main() {
     var a = 1;
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     if (true) {
         var inner = 2;
     }
@@ -2139,7 +2139,7 @@ void main() {
     var key = "npc";
     var store = Map.of("npc", Map.of("value", 7));
     var action = new Action("idle", 40);
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     mcf("say $(a + 1)");
     mcf("say $(x == y)");
     mcf("say $(flag && !ready)");
@@ -2180,11 +2180,11 @@ void main() {
 fn rejects_invalid_as_and_at_contexts() {
     let source = r#"
 void main() {
-    var player = single(selector("@p"));
-    as (block("~ ~ ~")) {
+    var player = single(Selector.of("@p"));
+    as (Block.of("~ ~ ~")) {
         mc("say bad");
     }
-    at (block("~ ~ ~")) {
+    at (Block.of("~ ~ ~")) {
         mc("say bad");
     }
     var bad = as(player, 1);
@@ -2217,7 +2217,7 @@ void old() {
 
     let legacy_source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     tellraw(player, "old");
     return;
 }
@@ -2431,7 +2431,7 @@ fn cli_new_creates_mcfd_agent_project_that_builds() {
 
     let source = fs::read_to_string(project.join("src").join("main.mcf")).unwrap();
     assert!(source.contains("@Command(\"status\")\nvoid status() {"));
-    assert!(source.contains("@Event(CHAT)\nvoid onChat(ChatEvent event) {"));
+    assert!(source.contains("@EventHandler\nvoid onChat(ChatEvent event) {"));
 
     let build_status = mcfc::cli::run(vec![
         "mcfc".into(),
@@ -2835,7 +2835,7 @@ fn host_call_emits_rpc_runtime() {
     let source = r#"
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(selector("@p"));
+    var p = single(Selector.of("@p"));
     if (r.ok) {
         p.tellraw(r.body);
     }
@@ -2928,7 +2928,7 @@ void quote() {
     var response = http.get_json_strings("https://api.example.com/quote", List.of("quote.text", "quote.author.name"));
     if (response.ok) {
         var quote = (String) response.values[0];
-        var player = single(selector("@p"));
+        var player = single(Selector.of("@p"));
         var message = new Component(quote);
         message.color = "aqua";
         player.tellraw(message);
@@ -2956,7 +2956,7 @@ fn rpc_load_entry_is_reload_guarded() {
     let source = r#"
 void main() {
     var r = http.get("https://api.example.com/data");
-    var p = single(selector("@p"));
+    var p = single(Selector.of("@p"));
     if (r.ok) {
         p.tellraw(r.body);
     }
@@ -3003,7 +3003,7 @@ void main() {
 fn host_call_only_in_statement_position() {
     let source = r#"
 void main() {
-    var p = single(selector("@p"));
+    var p = single(Selector.of("@p"));
     p.tellraw(http.get("https://api.example.com/data").body);
 }
 "#;
@@ -3427,8 +3427,8 @@ void main() {
 fn entity_and_world_reads_lower_to_nbt_reads_and_queries() {
     let source = r#"
 void main() {
-    var p = (Player) single(selector("@a[limit=1]"));
-    var pig = single(selector("@e[type=minecraft:pig,limit=1]"));
+    var p = (Player) single(Selector.of("@a[limit=1]"));
+    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
     var x = p.x();
     var food = p.food();
     var d = p.distanceTo(pig);
@@ -3463,7 +3463,7 @@ void main() {
 fn player_only_reads_need_a_player() {
     let source = r#"
 void main() {
-    var pig = single(selector("@e[type=minecraft:pig,limit=1]"));
+    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
     var food = pig.food();
 }
 "#;

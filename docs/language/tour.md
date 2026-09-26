@@ -9,7 +9,7 @@ MCFC is written like Java: blocks are `{ ... }`, statements end with `;`, and co
 ```mcfc
 void main() {
     // runs on load and on /reload
-    selector("@a").tellraw("loaded");
+    Selector.of("@a").tellraw("loaded");
 }
 ```
 
@@ -61,7 +61,7 @@ void main() {
         debug("$(i)");
     }
 
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         player.addTag("seen");
     }
 
@@ -97,7 +97,7 @@ Create a record with `new Quest("Mine", 5)`. → [`record`](./reference/statemen
 ```mcfc
 void main() {
     var first = List.of(4, 8).get(5).orElse(0);
-    var pig = findFirst(selector("@e[type=minecraft:pig]"));
+    var pig = findFirst(Selector.of("@e[type=minecraft:pig]"));
     if (pig.isPresent()) {
         debug("found a pig");
     }
@@ -110,7 +110,7 @@ void main() {
 
 ```mcfc
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.tellraw("Hi");
     player.give("minecraft:bread", 3);
     player.effect("minecraft:speed", 10, 1);
@@ -121,7 +121,7 @@ void main() {
 }
 ```
 
-`selector(...)` can match any number of entities, and `single(...)` narrows it to one. The compiler works out from the selector whether a reference is a player, and `(Player) e` asserts it. → [Entities and Players](./reference/methods)
+`Selector.of(...)` can match any number of entities, and `single(...)` narrows it to one. The compiler works out from the selector whether a reference is a player, and `(Player) e` asserts it. → [Entities and Players](./reference/methods)
 
 To create customized entities, items, blocks and text before using them, use [builders](./reference/builders):
 
@@ -129,7 +129,7 @@ To create customized entities, items, blocks and text before using them, use [bu
 void main() {
     var sword = new ItemStack("minecraft:diamond_sword");
     sword.name = "Quest Blade";
-    single(selector("@p")).give(sword);
+    single(Selector.of("@p")).give(sword);
 }
 ```
 
@@ -152,23 +152,24 @@ State is stored per player or per entity and survives reloads. → [`@PlayerStat
 ## Events, commands and tasks
 
 ```mcfc
-@Event(PLAYER_JOIN)
-void onPlayerJoin(Player player) {
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
+    Player player = event.player;
     player.tellraw("Welcome");
 }
 
 @Command("spawn")
 void spawn(Player player) {
-    player.teleport(block("0 64 0"));
+    player.teleport(Block.of("0 64 0"));
 }
 
 @Every(ticks = 6000)
 void reminder() {
-    selector("@a").actionbar("Five minutes passed");
+    Selector.of("@a").actionbar("Five minutes passed");
 }
 ```
 
-Handlers are ordinary functions with an annotation. A `@Command` is run with `/trigger mcfcc_<name>`. With the optional agent there are 34 events in total, many of them cancellable. → [Events](./reference/events), [`@Command`](./reference/statements#command), [`@Every`](./reference/statements#every-and-after)
+Handlers are ordinary functions with an annotation. A `@Command` is run with `/trigger <name>`. With the optional agent there are 34 events in total, many of them cancellable. → [Events](./reference/events), [`@Command`](./reference/statements#command), [`@Every`](./reference/statements#every-and-after)
 
 ## Waiting
 
@@ -211,7 +212,7 @@ void main() {
 
 Each file is a module named by its path (`src/combat.mcf` is `combat`), and `combat.damage()` calls into it. Items are private unless marked `public`. `std` is always available. → [Modules](./reference/statements#modules-and-public), [`import`](./reference/statements#import), [std](./reference/std)
 
-## Outside the game
+## Outside the game <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 With the optional `mcfd` helper, a pack can make HTTP requests, read and write files, and query SQLite:
 

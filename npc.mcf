@@ -1,5 +1,5 @@
 void main() {
-    var player = single(selector("@a"));
+    var player = single(Selector.of("@a"));
 
     var npc_path = new EntityData("minecraft:wandering_trader");
     npc_path.nameVisible = false;
@@ -29,7 +29,7 @@ void main() {
 }
 
 void tick() {
-    var player = (Player) single(selector("@a"));
+    var player = (Player) single(Selector.of("@a"));
     player.tellraw((String) player.nbt.SelectedItem.id);
     if ((String) player.nbt.SelectedItem.id == "minecraft:writable_book") {
         var book_content = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
@@ -45,12 +45,12 @@ void tick() {
         player.tellraw("no");
     }
 
-    var traders = selector("@e[tag=trader]");
+    var traders = Selector.of("@e[tag=trader]");
     for (var trader : traders) {
         trader.mainhand.item = "minecraft:air";
         at (trader) {
-            var npc = single(selector("@e[type=minecraft:mannequin]"));
-            npc.teleport(block("~ ~ ~"));
+            var npc = single(Selector.of("@e[type=minecraft:mannequin]"));
+            npc.teleport(Block.of("~ ~ ~"));
             npc.nbt.Rotation = trader.nbt.Rotation;
         }
     }

@@ -6,14 +6,14 @@ Short, complete programs for common tasks. Each one compiles as-is in a project'
 
 ```mcfc
 void tick() {
-    for (var player : selector("@a[y=-64,dy=0]")) {
-        player.teleport(block("0 100 0"));
+    for (Player player : Selector.of("@a[y=-64,dy=0]")) {
+        player.teleport(Block.of("0 100 0"));
     }
 }
 
 @Every(ticks = 1200)
 void announce() {
-    selector("@a").tellraw("One minute has passed");
+    Selector.of("@a").tellraw("One minute has passed");
 }
 ```
 
@@ -57,10 +57,10 @@ void dash(Player player) {
 void startRound() {
     async {
         for (int i = 0; i < 5; i++) {
-            selector("@a").title("$(5 - i)");
+            Selector.of("@a").title("$(5 - i)");
             sleep(1);
         }
-        selector("@a").title("Go!");
+        Selector.of("@a").title("Go!");
     }
 }
 ```
@@ -89,7 +89,7 @@ void spawnGuard() {
     guard.nameVisible = true;
     guard.noAi = true;
     guard.tags = List.of("guard");
-    var spawned = block("0 64 0").summon(guard);
+    var spawned = Block.of("0 64 0").summon(guard);
     spawned.state.post = "north gate";
 }
 
@@ -104,7 +104,7 @@ void runTimer() {
     var bar = new BossBar("mypack:timer", "Time left");
     bar.max = 30;
     bar.value = 30;
-    bar.players = selector("@a");
+    bar.players = Selector.of("@a");
     bar.visible = true;
     async {
         for (int i = 0; i < 30; i++) {
@@ -128,7 +128,7 @@ void offer(Player player) {
     var msg = new Component("[Click to accept]");
     msg.color = "green";
     msg.click_event.action = "run_command";
-    msg.click_event.command = "/trigger mcfcc_accept";
+    msg.click_event.command = "/trigger accept";
     player.tellraw(msg);
 }
 ```
@@ -150,13 +150,13 @@ void main() {
 ```mcfc
 // src/shop.mcf
 public void setup() {
-    selector("@a").tellraw("Shop ready");
+    Selector.of("@a").tellraw("Shop ready");
 }
 ```
 
 Every `.mcf` file under `src/` is a module named by its path. See [Modules](/language/reference/statements#modules-and-public).
 
-## Call a web API
+## Call a web API <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 Enable the capability in `mcfc.toml`, and install `mcfd` with `mcfd service install`:
 
@@ -186,19 +186,19 @@ void greet(Player player) {
 
 If `mcfd` isn't running, the call times out and `r.ok` is `false`. See [Capabilities](/runtime/capabilities).
 
-## Cancel chat or block breaking
+## Cancel chat or block breaking <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." />
 
 This needs the [agent](/runtime/mcfd-agent) (`[helper.agent] enabled = true`):
 
 ```mcfc
-@Event(CHAT)
+@EventHandler
 void onChat(ChatEvent event) {
     if (event.message == "spoiler") {
         event.cancel();
     }
 }
 
-@Event(BLOCK_BREAK)
+@EventHandler
 void onBlockBreak(BlockBreakEvent event) {
     if (event.player.hasTag("spawn_protected")) {
         event.cancel();
@@ -211,7 +211,7 @@ void onBlockBreak(BlockBreakEvent event) {
 
 ```mcfc
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     debug("health=$(player.health()) food=$(player.food())");
 }
 ```

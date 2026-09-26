@@ -38,11 +38,11 @@ Replace `src/main.mcf` with:
 
 ```mcfc
 void main() {
-    selector("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").tellraw("Coins pack loaded");
 }
 ```
 
-`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `selector("@a")` matches every online player, and `tellraw` sends them a chat message.
+`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `Selector.of("@a")` matches every online player, and `tellraw` sends them a chat message.
 
 Run `/reload`. You should see `Coins pack loaded` in chat.
 
@@ -53,12 +53,12 @@ Run `/reload`. You should see `Coins pack loaded` in chat.
 int coins;
 
 void main() {
-    selector("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").tellraw("Coins pack loaded");
 }
 
 @Every(ticks = 20)
 void payday() {
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         player.state.coins = player.state.coins + 1;
         player.actionbar("Coins: $(player.state.coins)");
     }
@@ -67,7 +67,7 @@ void payday() {
 
 - `@PlayerState("Coins") int coins;` declares a per-player integer. `"Coins"` is the display name of the scoreboard objective that backs it. A player who has never been paid reads as `0`.
 - `@Every(ticks = 20)` runs `payday` every 20 ticks, which is once per second.
-- `for (var player : selector("@a"))` runs the loop body once per online player, with `player` bound to that player.
+- `for (Player player : Selector.of("@a"))` runs the loop body once per online player, with `player` bound to that player.
 - `$(...)` inside a string inserts a value.
 
 Reload. The action bar now counts up once per second. Values are kept across reloads and restarts.
@@ -81,7 +81,7 @@ The payout will be reused in step 7, so move it into a function:
 int coins;
 
 void main() {
-    selector("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").tellraw("Coins pack loaded");
 }
 
 void pay(Player player, int amount) {
@@ -91,7 +91,7 @@ void pay(Player player, int amount) {
 
 @Every(ticks = 20)
 void payday() {
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         pay(player, 1);
     }
 }
@@ -107,22 +107,22 @@ Add these below `payday`:
 @PlayerState("Coins")
 int coins;
 
-@Event(PLAYER_JOIN)
-void onPlayerJoin(Player player) {
-    player.tellraw("You earn 1 coin per second. Type /trigger mcfcc_buy to spend 10.");
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
+    Player player = event.player;
+    player.tellraw("You earn 1 coin per second. Type /trigger buy to spend 10.");
 }
 
-@Event(PLAYER_DEATH)
-void onPlayerDeath(Player player) {
+@EventHandler
+void onPlayerDeath(PlayerDeathEvent event) {
+    Player player = event.player;
     var lost = player.state.coins / 2;
     player.state.coins = player.state.coins - lost;
     player.tellraw("You dropped $(lost) coins.");
 }
 ```
 
-Event handlers run as the affected player. A handler can take that player as a `Player` parameter, or look it up with `single(selector("@s"))`.
-
-`PLAYER_JOIN` runs once for each player, the first time the pack sees them. `PLAYER_DEATH` runs each time a player dies. Integer `/` rounds down. The [event reference](/language/reference/events) lists every event.
+`@EventHandler` works like Bukkit: the parameter's type picks the event. `PlayerJoinEvent` runs once for each player, the first time the pack sees them. `PlayerDeathEvent` runs each time a player dies. `event.player` is that player. Integer `/` rounds down. The [event reference](/language/reference/events) lists every event.
 
 To test, run `/kill` on yourself.
 
@@ -143,7 +143,7 @@ void buy(Player player) {
 }
 ```
 
-Players run this with `/trigger mcfcc_buy`. Vanilla has no custom commands, so `@Command` works through a trigger objective, which any player can run without operator permissions. The optional [agent](/runtime/mcfd-agent) also registers it as a real `/buy` command.
+Players run this with `/trigger buy`. Vanilla has no custom commands, so `@Command` works through a trigger objective, which any player can run without operator permissions. The optional [agent](/runtime/mcfd-agent) also registers it as a real `/buy` command.
 
 `return;` ends the handler early.
 
@@ -169,7 +169,7 @@ Call `remind(player);` at the end of `buy`. `async { ... }` starts its body and 
 int coins;
 
 void main() {
-    selector("@a").tellraw("Coins pack loaded");
+    Selector.of("@a").tellraw("Coins pack loaded");
 }
 
 void pay(Player player, int amount) {
@@ -179,18 +179,20 @@ void pay(Player player, int amount) {
 
 @Every(ticks = 20)
 void payday() {
-    for (var player : selector("@a")) {
+    for (Player player : Selector.of("@a")) {
         pay(player, 1);
     }
 }
 
-@Event(PLAYER_JOIN)
-void onPlayerJoin(Player player) {
-    player.tellraw("You earn 1 coin per second. Type /trigger mcfcc_buy to spend 10.");
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
+    Player player = event.player;
+    player.tellraw("You earn 1 coin per second. Type /trigger buy to spend 10.");
 }
 
-@Event(PLAYER_DEATH)
-void onPlayerDeath(Player player) {
+@EventHandler
+void onPlayerDeath(PlayerDeathEvent event) {
+    Player player = event.player;
     var lost = player.state.coins / 2;
     player.state.coins = player.state.coins - lost;
     player.tellraw("You dropped $(lost) coins.");

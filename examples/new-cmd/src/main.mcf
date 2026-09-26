@@ -1,5 +1,5 @@
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     if (exists(player)) {
         player.tellraw("MCFC is live.");
     }

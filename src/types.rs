@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
+use crate::language_catalog::{
+    GENERIC_AGENT_EVENTS, VANILLA_EVENTS, event_kind_for_type, event_type_name,
+};
 
 /// Host-bridge modules that may be called as `module.fn(...)` from `.mcf` source.
 /// Recognising a name here (independent of whether it is enabled) lets the type
@@ -123,16 +126,6 @@ fn builtin_response_structs() -> Vec<(&'static str, Vec<(&'static str, Type)>)> 
         // JVM-agent event payloads. These are compiler-provided structs rather
         // than user declarations so every agent-enabled pack shares one stable
         // 26.3 wire contract.
-        (
-            "AgentEvent",
-            vec![
-                ("player", Type::PlayerRef),
-                ("playerName", Type::String),
-                ("source", Type::String),
-                ("payload", Type::String),
-                ("cancelled", Type::Bool),
-            ],
-        ),
         (
             "CommandSender",
             vec![
@@ -661,6 +654,32 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 },
             );
         }
+        for kind in GENERIC_AGENT_EVENTS {
+            let fields = [
+                ("player", Type::PlayerRef),
+                ("playerName", Type::String),
+                ("source", Type::String),
+                ("payload", Type::String),
+                ("cancelled", Type::Bool),
+            ];
+            struct_defs.insert(
+                event_type_name(kind),
+                StructTypeDef {
+                    fields: fields.map(|(f, ty)| (f.to_string(), ty)).into(),
+                    enum_variants: None,
+                },
+            );
+        }
+    }
+    // `@EventHandler void onJoin(PlayerJoinEvent event)`: vanilla events carry the player.
+    for kind in VANILLA_EVENTS {
+        struct_defs.insert(
+            event_type_name(kind),
+            StructTypeDef {
+                fields: BTreeMap::from([("player".to_string(), Type::PlayerRef)]),
+                enum_variants: None,
+            },
+        );
     }
 
     for struct_def in &program.structs {
@@ -4249,7 +4268,7 @@ fn type_check_method_call(
         }
         "cancel" => {
             expect_arity(method, &args, 0, expr, diagnostics);
-            let is_agent_event = matches!(&receiver.ty, Type::Struct(name) if name == "AgentEvent" || name.ends_with("Event"));
+            let is_agent_event = matches!(&receiver.ty, Type::Struct(name) if event_kind_for_type(name).is_some_and(|kind| !VANILLA_EVENTS.contains(&kind)));
             if !is_agent_event {
                 diagnostics.push(Diagnostic::new(
                     "cancel() is only available on a typed agent event payload",

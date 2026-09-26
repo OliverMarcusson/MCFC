@@ -5,7 +5,7 @@ OVERHAUL:
 - make MCFC modular and extendable. Developers should be able to create rust extensions to the compiler that adds more features like more commands, types, datastructures and more. Modularize the current compiler.
 
 LANGUAGE GAPS (things docs currently need `mc`/`mcf` for):
-- Positions from runtime values: `block(...)` only takes a literal, so there is no way to teleport to or place a block at computed coordinates (e.g. random spread, `spreadplayers`).
+- Positions from runtime values: `Block.of(...)` only takes a literal, so there is no way to teleport to or place a block at computed coordinates (e.g. random spread, `spreadplayers`).
 - Set a player's game mode (`game_mode()` can only read it).
 - Experience: add/set levels and points (`xp_level()` can only read).
 - World control: weather, time of day, difficulty, and writing game rules (`gamerule()` can only read).

@@ -28,11 +28,11 @@ agent may add server hooks which cannot be implemented by a vanilla datapack.
 data player.coins: int = 0
 
 event player_join:
-    let player = single(selector("@s"))
+    let player = single(Selector.of("@s"))
     player.tellraw("Welcome!")
 
 command home:
-    let player = single(selector("@s"))
+    let player = single(Selector.of("@s"))
     player.tellraw("Home requested")
 
 task cleanup every_ticks(1200):
@@ -40,7 +40,7 @@ task cleanup every_ticks(1200):
 ```
 
 The first vanilla backend executes event and command handlers as the affected
-player; they use `single(selector("@s"))` to obtain a player reference. It has
+player; they use `single(Selector.of("@s"))` to obtain a player reference. It has
 no synthetic event objects and is not cancellable. Agent-only event data and
 cancellation remain a later, compile-time-gated backend.
 

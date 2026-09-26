@@ -1,6 +1,6 @@
 # Entities and Players
 
-Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, the message methods and the sound methods also work on a `Selector`, such as `selector("@a").title("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").title("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
 
 ## Actions
 
@@ -71,8 +71,8 @@ Each call reads the entity's NBT again, so store the result in a `var` if you ne
 
 ```mcfc
 void main() {
-    var player = single(selector("@p"));
-    var pig = single(selector("@e[type=minecraft:pig,limit=1]"));
+    var player = single(Selector.of("@p"));
+    var pig = single(Selector.of("@e[type=minecraft:pig,limit=1]"));
     if (player.distanceTo(pig) < 8.0 && player.food() < 6) {
         player.tellraw("The pig looks tasty");
         pig.heal(2);

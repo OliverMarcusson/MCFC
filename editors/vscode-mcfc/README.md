@@ -12,8 +12,8 @@ without replacing your installed TOML syntax theme.
 
 The bundled `mcfc-lsp` server provides:
 
-- compiler-backed diagnostics for normal source plus Bukkit-style `data`,
-  `event`, `command`, and `task` declarations
+- compiler-backed diagnostics, including `@EventHandler`, `@Command`, `@Every`,
+  `@After`, `@PlayerState`, and `@EntityState` declarations
 - symbols, semantic highlighting, folding ranges, selection ranges, formatting,
   document highlights, definitions, references, rename, and signature help
 - hovers and completions for functions, locals, types, methods, host modules,
@@ -23,14 +23,14 @@ The bundled `mcfc-lsp` server provides:
 
 That includes the builder-oriented gameplay surface, such as:
 
-- `entity("minecraft:pig")`, `block_type("minecraft:chest")`, and `item("minecraft:apple")`
-- `summon(entity_def)` plus explicit-position `block("~ ~ ~").summon(...)`
-- `entity_def.as_nbt()`, `block_def.as_nbt()`, and `item_def.as_nbt()`
-- implicit builder-to-`nbt` coercion in NBT contexts such as
+- `new EntityData("minecraft:pig")`, `new BlockData("minecraft:chest")`, and `new ItemStack("minecraft:apple")`
+- `summon(entityData)` plus explicit-position `Block.of("~ ~ ~").summon(...)`
+- `.asNbt()` on `EntityData`, `BlockData`, and `ItemStack`
+- implicit builder-to-`Nbt` coercion in NBT contexts such as
   `pig.nbt.Passengers[0] = chicken`
 - player inventory completions for `player.inventory[0].*`, `player.hotbar[0].*`,
-  and explicit `player_ref` values
-- member completions for `entity_def.nbt.*`, `block_def.states.*`, `item_def.nbt.*`,
+  and explicit `Player` values
+- member completions for `EntityData.nbt.*`, `BlockData.states.*`, `ItemStack.nbt.*`,
   and curated aliases like `name`, `noAi`, `lock`, and `lootTable`
 
 ## Local Testing

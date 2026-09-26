@@ -1,4 +1,4 @@
-# mcfd-agent
+# mcfd-agent <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." />
 
 `mcfd-agent` is an optional Java agent. It adds the [agent events](/language/reference/events#agent-events), such as chat, block break and interactions, some of them cancellable, and registers real `/name` commands for `@Command` handlers. It isn't a mod or a plugin. `mcfd` attaches it to the running Minecraft process.
 
@@ -16,7 +16,7 @@ Without the agent, a pack that uses agent events still loads. Its agent handlers
    enabled = true
    ```
 
-   `@Event` and `@Command` handlers are subscribed automatically.
+   `@EventHandler` and `@Command` handlers are subscribed automatically.
 
 2. Build the agent. This needs a JDK:
 

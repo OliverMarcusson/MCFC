@@ -3533,7 +3533,7 @@ impl Backend {
                 ));
                 return;
             }
-            "cancel" if matches!(&receiver.ty, Type::Struct(name) if name == "AgentEvent" || name.ends_with("Event")) =>
+            "cancel" if matches!(&receiver.ty, Type::Struct(name) if crate::language_catalog::event_kind_for_type(name).is_some()) =>
             {
                 lines.push(format!(
                     "data modify storage {}:agent decision.cancel set value 1b",
@@ -9878,9 +9878,9 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
         }
         let name = &function.name;
         if let Some(event) = name.strip_prefix("__mcfc_agent_event_") {
-            if let Some(event_type) = agent_event_type(event)
-                && function.params.len() == 1
-                && function.params[0].ty == Type::Struct(event_type.to_string())
+            if function.params.len() == 1
+                && function.params[0].ty
+                    == Type::Struct(crate::language_catalog::event_type_name(event))
             {
                 runtime.agent_handlers.push(AgentEventHandler {
                     event: event.to_string(),
@@ -9976,44 +9976,6 @@ pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
     contains_statements(&function.body)
 }
 
-fn agent_event_type(event: &str) -> Option<&'static str> {
-    match event {
-        "chat" => Some("ChatEvent"),
-        "inventory_click" => Some("InventoryClickEvent"),
-        "player_action" => Some("PlayerActionEvent"),
-        "block_break" => Some("BlockBreakEvent"),
-        "player_interact_block" => Some("PlayerInteractBlockEvent"),
-        "player_interact_item" => Some("PlayerInteractItemEvent"),
-        "entity_interact" => Some("EntityInteractEvent"),
-        "entity_attack" => Some("EntityAttackEvent"),
-        "item_held_change" => Some("ItemHeldChangeEvent"),
-        "inventory_close" => Some("InventoryCloseEvent"),
-        "player_swing" => Some("PlayerSwingEvent"),
-        "player_action_toggle" => Some("PlayerActionToggleEvent"),
-        "item_rename" => Some("ItemRenameEvent"),
-        "trade_select" => Some("TradeSelectEvent"),
-        "sign_change" => Some("SignChangeEvent"),
-        "recipe_place" => Some("RecipePlaceEvent"),
-        "game_mode_request" => Some("GameModeRequestEvent"),
-        "player_respawn_request"
-        | "book_edit"
-        | "beacon_effect"
-        | "item_pick"
-        | "entity_teleport"
-        | "player_abilities"
-        | "player_connect"
-        | "player_quit"
-        | "player_respawn"
-        | "player_damage"
-        | "player_teleport"
-        | "player_item_drop"
-        | "player_item_pickup"
-        | "inventory_open"
-        | "game_mode_change" => Some("AgentEvent"),
-        _ => None,
-    }
-}
-
 fn is_bukkit_generated_function(name: &str) -> bool {
     name.starts_with("__mcfc_event_")
         || name.starts_with("__mcfc_agent_event_")
@@ -10028,16 +9990,12 @@ fn bukkit_command_objective(command: &str, used: &mut BTreeSet<String>) -> Strin
     } else {
         sanitized.as_str()
     };
-    let first_suffix: String = base.chars().take(10).collect();
-    let first = format!("mcfcc_{}", first_suffix);
-    if used.insert(first.clone()) {
-        return first;
+    // `@Command("buy")` is `/trigger buy`. Two names that sanitize alike get `_1`, `_2`...
+    if used.insert(base.to_string()) {
+        return base.to_string();
     }
     for counter in 1u32.. {
-        let tag = format!("_{}", base36(counter));
-        let prefix_len = 10usize.saturating_sub(tag.len());
-        let prefix: String = base.chars().take(prefix_len).collect();
-        let objective = format!("mcfcc_{}{}", prefix, tag);
+        let objective = format!("{}_{}", base, base36(counter));
         if used.insert(objective.clone()) {
             return objective;
         }

@@ -16,7 +16,7 @@ Then copy `examples/<name>/dist` into `<world>/datapacks/` and run `/reload`. Ex
 | [Feature demo](#feature-demo) | A self-checking tour of floats, strings, lists, std, generics, world reads | nothing |
 | [Bukkit API conformance](#bukkit-api-conformance) | Events, commands, tasks, UI, agent callbacks | `mcfd` (optional), agent (optional) |
 
-## Oracle
+## Oracle <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 Every 15 seconds, fetches a random number from random.org and announces it with the real time. `/function oracle:roll` rolls a die using `rand`.
 
@@ -26,13 +26,13 @@ Every 15 seconds, fetches a random number from random.org and announces it with 
 
 If `mcfd` isn't running, the requests time out and the Oracle reports that it's silent.
 
-## RPC demo
+## RPC demo <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 <<< @/../examples/rpc_demo/src/main.mcf{mcfc}
 
 Only `api.example.com` is on the allow list, and `mcfd` rejects requests to any other domain.
 
-## Cyber Quotes
+## Cyber Quotes <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 `/function cyber_quotes:quote` fetches a quote and pulls three JSON fields from the same response. `/function cyber_quotes:health` checks the connection to `mcfd` first.
 
@@ -63,7 +63,7 @@ A smoke test for the declaration features. After loading, run:
 ```text
 /function bukkit_api_conformance:run_all
 /function bukkit_api_conformance:report
-/trigger mcfcc_status
+/trigger status
 /function bukkit_api_conformance:cleanup
 ```
 

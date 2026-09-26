@@ -57,7 +57,7 @@ void placeChest() {
     chest.name = "Loot";
     chest.lootTable = "minecraft:chests/simple_dungeon";
 
-    block("~ ~ ~").setblock(chest);
+    Block.of("~ ~ ~").setblock(chest);
 }
 ```
 
@@ -98,7 +98,7 @@ void sendPrompt(Player player) {
     prompt.hover_event.action = "show_text";
     prompt.hover_event.value = new Component("Contains loot");
     prompt.click_event.action = "run_command";
-    prompt.click_event.command = "/trigger mcfcc_status";
+    prompt.click_event.command = "/trigger status";
 
     player.tellraw(prompt);
 }
@@ -123,4 +123,4 @@ void payloads() {
 
 Builders are command-storage objects. Field assignments such as `pig.noAi = true`, `chest.states.facing = "north"`, or `msg.color = "gold"` become `data modify storage ...` writes into generated runtime storage.
 
-When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `summon(pig)` uses the entity id and NBT payload, while `block("~ ~ ~").setblock(chest)` emits the block id/states and then merges block-entity NBT.
+When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `summon(pig)` uses the entity id and NBT payload, while `Block.of("~ ~ ~").setblock(chest)` emits the block id/states and then merges block-entity NBT.

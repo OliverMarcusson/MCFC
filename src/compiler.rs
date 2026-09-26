@@ -562,7 +562,7 @@ void main() {
     pig.head.name = "Captain";
     pig.chest.count = 1;
     pig.effect("speed", 10, 1);
-    pig.teleport(block("~ ~1 ~"));
+    pig.teleport(Block.of("~ ~1 ~"));
     pig.damage(2);
     pig.heal(1);
     pig.give("minecraft:apple", 2);
@@ -608,8 +608,8 @@ void main() {
     fn compiles_ui_audio_particle_and_world_builtins() {
         let source = r#"
 void main() {
-    var pig = single(selector("@e[type=pig,limit=1]"));
-    var pos = block("~ ~ ~");
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var pos = Block.of("~ ~ ~");
     pig.tellraw("hello @s");
     pig.title("Danger");
     pig.actionbar("Run");
@@ -626,7 +626,7 @@ void main() {
     pos.lootInsert("minecraft:chests/simple_dungeon");
     pos.lootSpawn("minecraft:chests/simple_dungeon");
     pos.setblock("minecraft:stone");
-    pos.fill(block("~1 ~1 ~1"), "minecraft:glass");
+    pos.fill(Block.of("~1 ~1 ~1"), "minecraft:glass");
     return;
 }
 "#;
@@ -668,9 +668,9 @@ void main() {
     var chest = new BlockData("minecraft:chest");
     chest.states.facing = "north";
     chest.name = "Loot";
-    var pos = block("~ ~ ~");
+    var pos = Block.of("~ ~ ~");
     pos.setblock(chest);
-    pos.fill(block("~1 ~1 ~1"), chest);
+    pos.fill(Block.of("~1 ~1 ~1"), chest);
     return;
 }
 "#;
@@ -730,7 +730,7 @@ void main() {
         let source = r#"
 void main() {
     var demo_title = "MCFC Demo $(random(100))";
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.tellraw(demo_title);
     return;
 }
@@ -758,7 +758,7 @@ void main() {
 void main() {
     var q = \"hi\";
     var line = \"\u{201c}$(q)\u{201d} \u{2014} done\";
-    var player = single(selector(\"@p\"));
+    var player = single(Selector.of(\"@p\"));
     player.tellraw(line);
     return;
 }
@@ -791,7 +791,7 @@ void main() {
 void main() {
     var who = \"world\";
     var line = new Component(\"hi $(who)!\");
-    var player = single(selector(\"@p\"));
+    var player = single(Selector.of(\"@p\"));
     player.tellraw(line);
     return;
 }
@@ -821,7 +821,7 @@ void main() {
     fn compiles_sleep_continuations() {
         let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var flag = true;
 
     sleep(1);
@@ -876,7 +876,7 @@ void main() {
     fn compiles_async_blocks_and_entity_position() {
         let source = r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
     var count = 5;
     bb.value = count;
@@ -938,7 +938,7 @@ void main() {
         let legacy_error = compile_source(
             r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     tellraw(player, "old");
 }
 "#,
@@ -1003,8 +1003,8 @@ void main() {
     fn compiles_debug_builtins() {
         let source = r#"
 void main() {
-    var pig = single(selector("@e[type=pig,limit=1]"));
-    var pos = block("~ ~1 ~");
+    var pig = single(Selector.of("@e[type=pig,limit=1]"));
+    var pos = Block.of("~ ~1 ~");
     debug("checkpoint");
     pos.debugMarker("marker");
     pos.debugMarker("block marker", "minecraft:gold_block");
@@ -1035,7 +1035,7 @@ void main() {
         let player_error = compile_source(
             r#"
 void main() {
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     player.heal(1);
 }
 "#,
@@ -1048,7 +1048,7 @@ void main() {
         let ambiguous_error = compile_source(
             r#"
 void main() {
-    var target = single(selector("@e"));
+    var target = single(Selector.of("@e"));
     target.heal(1);
 }
 "#,
@@ -1065,7 +1065,7 @@ void main() {
             r#"
 @Command("buy")
 void buy() {
-    var player = single(selector("@s"));
+    var player = single(Selector.of("@s"));
     async {
         sleep(3);
         player.tellraw("later");
@@ -1074,8 +1074,8 @@ void buy() {
     player.tellraw("done");
 }
 
-@Event(PLAYER_JOIN)
-void onPlayerJoin() {
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
     async {
         sleep(1);
         debug("joined");
@@ -1100,8 +1100,8 @@ void pulse() {
             .cloned()
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(generated.contains("scoreboard objectives add mcfcc_buy trigger"));
-        assert!(!generated.contains("mcfcc_buy_"), "extra trigger objective");
+        assert!(generated.contains("scoreboard objectives add buy trigger"));
+        assert!(!generated.contains("buy_1"), "extra trigger objective");
         let agent_commands = result
             .artifacts
             .files
@@ -1117,14 +1117,14 @@ void pulse() {
             r#"
 @PlayerState("Coins") int coins;
 
-@Event(PLAYER_JOIN)
-void onPlayerJoin() {
-    var player = single(selector("@s"));
+@EventHandler
+void onPlayerJoin(PlayerJoinEvent event) {
+    Player player = event.player;
     player.state.coins = player.state.coins + 1;
 }
 
-@Event(PLAYER_DEATH)
-void onPlayerDeath() {
+@EventHandler
+void onPlayerDeath(PlayerDeathEvent event) {
     debug("dead");
 }
 
@@ -1156,7 +1156,7 @@ void later() {
             .expect("Bukkit runtime");
         assert!(runtime.contains("mcfc_join_mcfc"));
         assert!(runtime.contains("mcfc_deaths matches 1.."));
-        assert!(runtime.contains("mcfcc_status"));
+        assert!(runtime.contains("scores={status=1..}"));
         assert!(runtime.contains("#mcfct_pulse"));
         assert!(files.contains_key("data/mcfc/function/generated/bukkit/load.mcfunction"));
         assert!(files.contains_key("data/mcfc/function/generated/bukkit/player_join.mcfunction"));
@@ -1166,7 +1166,7 @@ void later() {
     }
 
     #[test]
-    fn bukkit_command_objectives_are_unique_after_truncation() {
+    fn bukkit_command_objectives_use_the_full_command_name() {
         let result = compile_source(
             r#"
 @Command("abcdefghij_one")
@@ -1181,18 +1181,18 @@ void abcdefghijTwo() {
 "#,
             &lowering(),
         )
-        .expect("commands with shared objective prefixes should compile");
+        .expect("commands with shared prefixes should compile");
         let files = &result.artifacts.files;
         let setup = files
             .get("data/mcfc/function/generated/setup.mcfunction")
             .expect("setup function");
-        assert!(setup.contains("scoreboard objectives add mcfcc_abcdefghij trigger"));
-        assert!(setup.contains("scoreboard objectives add mcfcc_abcdefgh_1 trigger"));
+        assert!(setup.contains("scoreboard objectives add abcdefghij_one trigger"));
+        assert!(setup.contains("scoreboard objectives add abcdefghij_two trigger"));
         let runtime = files
             .get("data/mcfc/function/generated/bukkit/tick.mcfunction")
             .expect("Bukkit runtime");
-        assert!(runtime.contains("execute as @a[scores={mcfcc_abcdefghij=1..}] run function mcfc:generated/bukkit/command/abcdefghij_one"));
-        assert!(runtime.contains("execute as @a[scores={mcfcc_abcdefgh_1=1..}] run function mcfc:generated/bukkit/command/abcdefghij_two"));
+        assert!(runtime.contains("execute as @a[scores={abcdefghij_one=1..}] run function mcfc:generated/bukkit/command/abcdefghij_one"));
+        assert!(runtime.contains("execute as @a[scores={abcdefghij_two=1..}] run function mcfc:generated/bukkit/command/abcdefghij_two"));
     }
 
     #[test]
@@ -1211,7 +1211,7 @@ void abcdefghijTwo() {
         };
         let result = compile_source(
             r#"
-@Event(CHAT)
+@EventHandler
 void onChat(ChatEvent event) {
     event.player.tellraw(event.message);
 }
@@ -1244,7 +1244,7 @@ void onChat(ChatEvent event) {
             ..lowering()
         };
         let result = compile_source(
-            "@Event(CHAT)\nvoid onChat(ChatEvent event) {\n    event.cancel();\n}\n",
+            "@EventHandler\nvoid onChat(ChatEvent event) {\n    event.cancel();\n}\n",
             &options,
         )
         .expect("cancellable packet event should compile");
@@ -1278,7 +1278,7 @@ void onChat(ChatEvent event) {
             ..lowering()
         };
         let error = compile_source(
-            "@Event(PLAYER_CONNECT)\nvoid onPlayerConnect(AgentEvent event) {\n    event.cancel();\n}\n",
+            "@EventHandler\nvoid onPlayerConnect(PlayerConnectEvent event) {\n    event.cancel();\n}\n",
             &options,
         )
         .expect_err("lifecycle event cancellation must fail");
@@ -1288,7 +1288,7 @@ void onChat(ChatEvent event) {
     #[test]
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
-            "@Event(CHAT)\nvoid onChat(ChatEvent event) {\n    debug(event.message);\n}\n",
+            "@EventHandler\nvoid onChat(ChatEvent event) {\n    debug(event.message);\n}\n",
             &lowering(),
         )
         .unwrap_err()
@@ -1312,7 +1312,7 @@ void onChat(ChatEvent event) {
         };
         let result = compile_source(
             r#"
-@Event(PLAYER_INTERACT_BLOCK)
+@EventHandler
 void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
     event.player.tellraw(event.face);
 }
@@ -1358,7 +1358,7 @@ void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
     fn compiles_world_reads_random_distributions_and_dict_keys() {
         let source = r#"
 void main() {
-    var spot = block("~ ~ ~");
+    var spot = Block.of("~ ~ ~");
     var light = spot.light();
     var biome = spot.biome();
     var plains = spot.inBiome("plains");
@@ -1366,7 +1366,7 @@ void main() {
     var rule = gamerule("max_entity_cramming");
     var pick = randomWeighted(List.of(3, 1));
     var hits = randomBinomial(10, 0.5);
-    var player = single(selector("@p"));
+    var player = single(Selector.of("@p"));
     var dx = player.lookX();
     var d = Map.of("wood", 2);
     var ks = d.keySet();
@@ -1399,7 +1399,7 @@ void main() {
         let error = compile_source(
             r#"
 void main() {
-    var spot = block("~ ~ ~");
+    var spot = Block.of("~ ~ ~");
     var a = spot.inBiome("moon");
     var b = spot.environment("visual/fog_color");
     var c = gamerule("no_such_rule");

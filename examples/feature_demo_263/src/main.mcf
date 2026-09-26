@@ -14,7 +14,7 @@ import std.math.gcd;
 import std.math.lerp;
 
 void tick() {
-    if (exists(single(selector("@a[tag=!mcfc_tested,limit=1]")))) {
+    if (exists(single(Selector.of("@a[tag=!mcfc_tested,limit=1]")))) {
         mc("tag @a add mcfc_tested");
         runTests();
     }
@@ -149,7 +149,7 @@ void progress(String label, int step) {
     bar.max = 9;
     bar.value = step;
     bar.name = label;
-    bar.players = selector("@a");
+    bar.players = Selector.of("@a");
     bar.visible = true;
     mcf("say MCFCTEST INFO step $(step) $(label)");
 }
@@ -221,7 +221,7 @@ void stdLibrary() {
 }
 
 void reads() {
-    var p = (Player) single(selector("@a[limit=1]"));
+    var p = (Player) single(Selector.of("@a[limit=1]"));
     var pos = p.x().toString() + "," + p.y().toString() + "," + p.z().toString();
     var rot = p.yaw().toString() + "," + p.pitch().toString();
     mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
@@ -232,7 +232,7 @@ void reads() {
     check("read_dimension", startsWith(p.dimension(), "minecraft:"), p.dimension());
     check("read_selected_slot", p.selectedSlot() >= 0 && p.selectedSlot() <= 8, p.selectedSlot().toString());
     mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
-    var pig = single(selector("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"));
+    var pig = single(Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]"));
     check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
     mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
     check("read_game_time", gameTime() > 0, gameTime().toString());
@@ -266,20 +266,20 @@ void newFeatures() {
     check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
     check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
     mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
-    var pig = single(selector("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]"));
+    var pig = single(Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]"));
     check("look_west", near(pig.lookX(), -1.0) && near(pig.lookZ(), 0.0), pig.lookX().toString());
     mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
     check("look_up", near(pig.lookY(), 1.0), pig.lookY().toString());
     mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
-    var p = single(selector("@a[limit=1]"));
+    var p = single(Selector.of("@a[limit=1]"));
     at (p) {
-        var here = block("~ ~ ~");
+        var here = Block.of("~ ~ ~");
         var light = here.light();
         var biome = here.biome();
         check("block_light", light >= 0 && light <= 15, light.toString());
         // A light block emits level 15, so the air it fills reads 15.
         mc("setblock ~ ~3 ~ minecraft:light[level=15]");
-        var lit = block("~ ~3 ~").light();
+        var lit = Block.of("~ ~3 ~").light();
         mc("setblock ~ ~3 ~ minecraft:air");
         check("block_light_15", lit == 15, lit.toString());
         check("block_biome", startsWith(biome, "minecraft:"), biome);

@@ -18,7 +18,7 @@ Install `dist/` as a normal datapack, reload, then run:
 ```text
 /function bukkit_api_conformance:run_all
 /function bukkit_api_conformance:report
-/trigger mcfcc_status
+/trigger status
 /function bukkit_api_conformance:cleanup
 ```
 

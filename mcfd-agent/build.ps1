@@ -3,15 +3,35 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $JavaHome) {
-    $JavaHome = Split-Path -Parent (Split-Path -Parent (Get-Command javac -ErrorAction Stop).Source)
+
+# Major version from the JDK's `release` file: "17.0.20" -> 17, "1.8.0_504" -> 8.
+function Get-JdkMajor([string]$JdkHome) {
+    $release = Join-Path $JdkHome 'release'
+    if (-not (Test-Path -LiteralPath (Join-Path $JdkHome 'bin\javac.exe')) -or -not (Test-Path -LiteralPath $release)) { return 0 }
+    $line = Select-String -LiteralPath $release -Pattern '^JAVA_VERSION="(\d+)(?:\.(\d+))?' | Select-Object -First 1
+    if (-not $line) { return 0 }
+    $parts = $line.Matches[0].Groups
+    if ($parts[1].Value -eq '1') { return [int]$parts[2].Value }
+    return [int]$parts[1].Value
 }
+
+# JAVA_HOME and the javac on PATH may be an older JDK, so fall back to the usual install folders.
+$candidates = @($JavaHome)
+$pathJavac = Get-Command javac -ErrorAction SilentlyContinue
+if ($pathJavac) { $candidates += Split-Path -Parent (Split-Path -Parent $pathJavac.Source) }
+$candidates += Get-ChildItem -Directory -ErrorAction SilentlyContinue -Path (
+    'C:\Program Files\Java', 'C:\Program Files\Eclipse Adoptium', 'C:\Program Files\Microsoft',
+    'C:\Program Files\Zulu', 'C:\Program Files\Amazon Corretto'
+) | Where-Object Name -Match 'jdk' | Sort-Object Name -Descending | ForEach-Object FullName
+$JavaHome = $candidates | Where-Object { $_ -and (Get-JdkMajor $_) -ge 17 } | Select-Object -First 1
+if (-not $JavaHome) {
+    throw 'mcfd-agent needs JDK 17 or newer. Install one or pass -JavaHome.'
+}
+# test.ps1 runs javac and java from PATH after calling this script.
+$env:PATH = (Join-Path $JavaHome 'bin') + ';' + $env:PATH
 
 $javac = Join-Path $JavaHome 'bin\javac.exe'
 $jar = Join-Path $JavaHome 'bin\jar.exe'
-if (-not (Test-Path -LiteralPath $javac) -or -not (Test-Path -LiteralPath $jar)) {
-    throw "A JDK with javac and jar is required; JAVA_HOME='$JavaHome'"
-}
 
 $root = Split-Path -Parent $PSCommandPath
 $build = Join-Path $root 'build\classes'

@@ -1,6 +1,6 @@
 # Entities and Players
 
-Methods and fields on `entity_ref` and `player_ref`. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+Methods and fields on `entity_ref` and `player_ref`. `teleport`, `damage`, `give`, `clear`, `loot_give`, the message methods and the sound methods also work on an `entity_set`, such as `selector("@a").title("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
 
 ## Actions
 

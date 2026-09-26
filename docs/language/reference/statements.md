@@ -289,7 +289,7 @@ A shorter form for strings, with exactly one statement per arm. Use `switch` whe
 fn count() -> void:
     let i = 0
     while i < 3:
-        mcf "say $(i)"
+        debug("$(i)")
         i = i + 1
 ```
 
@@ -300,13 +300,13 @@ A loop runs entirely within one tick unless its body sleeps. A long loop with no
 ```mcfc
 fn loops(values: array<int>) -> void:
     for i in 0..3:
-        mcf "say $(i)"
+        debug("$(i)")
     for i in 1..=3:
-        mcf "say $(i)"
+        debug("$(i)")
     for player in selector("@a"):
         player.add_tag("seen")
     for value in values:
-        mcf "say $(value)"
+        debug("$(value)")
 ```
 
 | Form | Iterates |
@@ -353,18 +353,21 @@ The body starts running right away, and the statement after the block runs witho
 ```mcfc
 fn sparkle(player: player_ref) -> void:
     as(player):
-        mc "say I am @s"
+        single(selector("@s")).add_tag("marked")
     at(player):
-        mc "particle minecraft:happy_villager ~ ~1 ~ 0.2 0.2 0.2 0 8"
+        block("~ ~1 ~").particle("minecraft:happy_villager", 8)
+        block("~ ~-1 ~").setblock("minecraft:gold_block")
 ```
 
 `as` changes who `@s` is, and `at` changes where `~ ~ ~` is. The anchor can be an `entity_ref` or an `entity_set`, in which case the body runs once per entity. These compile to `execute as` and `execute at`. To build a selector relative to an entity, use the function forms [`as(...)` and `at(...)`](./builtins#as-and-at).
 
 ### `mc`
 
+`mc` and `mcf` are for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [`TODO.md`](https://github.com/OliverMarcusson/MCFC/blob/main/TODO.md).
+
 ```mcfc
 fn setup() -> void:
-    mc "scoreboard objectives add health dummy"
+    mc "weather clear"
 ```
 
 Emits a Minecraft command exactly as written. `$(...)` isn't interpreted, so `mc "say $(x)"` prints `$(x)` literally.
@@ -374,7 +377,6 @@ Emits a Minecraft command exactly as written. `$(...)` isn't interpreted, so `mc
 ```mcfc
 fn reward(amount: int) -> void:
     mcf "xp add @a $(amount) levels"
-    mcf "say next reward is $(amount + 1)"
 ```
 
 Emits a command with each `$(expr)` replaced by its value at run time. It compiles to a Minecraft function macro. Values are copied into storage, and then `function ... with storage ...` is called. Use `mc` when there's nothing to substitute.

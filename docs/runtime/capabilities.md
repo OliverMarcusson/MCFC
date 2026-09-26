@@ -42,7 +42,7 @@ fn top_player(team: string) -> void:
     let r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", [team])
     if r.ok:
         let name = string(r.rows[0].name)
-        mcf "say Top player: $(name)"
+        selector("@a").tellraw("Top player: $(name)")
 ```
 
 ## Scope

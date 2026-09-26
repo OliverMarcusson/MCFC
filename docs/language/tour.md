@@ -9,7 +9,7 @@ Blocks open with `:` and are indented with spaces. Tabs are an error. `#` starts
 ```mcfc
 fn main() -> void:
     # runs on load and on /reload
-    mc "say loaded"
+    selector("@a").tellraw("loaded")
 ```
 
 ## Functions
@@ -53,7 +53,7 @@ fn main() -> void:
         debug("ok")
 
     for i in 0..3:
-        mcf "say $(i)"
+        debug("$(i)")
 
     for player in selector("@a"):
         player.add_tag("seen")
@@ -142,8 +142,8 @@ event player_join:
 command spawn:
     single(selector("@s")).teleport(block("0 64 0"))
 
-task autosave every_ticks(6000):
-    mc "save-all"
+task reminder every_ticks(6000):
+    selector("@a").actionbar("Five minutes passed")
 ```
 
 A `command` is run with `/trigger mcfcc_<name>`. With the optional agent there are 34 events in total, many of them cancellable. → [Events](./reference/events), [`command`](./reference/statements#command), [`task`](./reference/statements#task)
@@ -170,7 +170,7 @@ fn main() -> void:
     mcf "xp add @a $(n) levels"
 ```
 
-`mc` emits a command exactly as written. `mcf` fills in `$(...)` values at run time. → [`mc`](./reference/statements#mc), [`mcf`](./reference/statements#mcf)
+For commands MCFC has no feature for yet, `mc` emits a command exactly as written and `mcf` fills in `$(...)` values at run time. Use them only as a last resort. → [`mc`](./reference/statements#mc), [`mcf`](./reference/statements#mcf)
 
 ## Modules and std
 

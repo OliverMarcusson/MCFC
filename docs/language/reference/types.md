@@ -94,7 +94,7 @@ fn main() -> void:
     values.push(9)
     let third = values.get(2).orElse(0)
     for v in values:
-        mcf "say $(v)"
+        debug("$(v)")
 ```
 
 | Method | Returns |
@@ -119,7 +119,7 @@ fn main() -> void:
     counts["iron"] = 1
     let gold = counts.get("gold").orElse(0)
     for key in counts.keys():
-        mcf "say $(key)=$(counts[key])"
+        debug("$(key)=$(counts[key])")
 ```
 
 | Method | Returns |
@@ -141,7 +141,7 @@ This is what `array.get`, `dict.get` and [`find_first`](./builtins#selecting-ent
 fn main() -> void:
     let maybe = [4, 8].get(3)
     if maybe.isPresent():
-        mcf "say found"
+        debug("found")
     let count = maybe.orElse(0)
 ```
 
@@ -170,7 +170,7 @@ Some methods only work on players, and `heal` only works on non-players. The com
 
 ## `block_ref`
 
-A block position, created with `block("~ ~ ~")` or read from `entity.position`. `block(...)` needs a literal string. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, block("~1 ~ ~"))` or an [`at:` block](./statements#as-and-at).
+A block position, created with `block("~ ~ ~")` or read from `entity.position`. `block(...)` needs a literal string, so a position can't be computed at run time yet. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, block("~1 ~ ~"))` or an [`at:` block](./statements#as-and-at).
 
 | Method | Does |
 | --- | --- |

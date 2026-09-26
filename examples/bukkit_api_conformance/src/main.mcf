@@ -61,7 +61,7 @@ event entity_attack(event: entity_attack_event):
     player.state.arcade_score = player.state.arcade_score + 2
     if player.state.arcade_hits >= 3:
         player.state.arcade_hits = 0
-        mc 'give @s minecraft:cookie 1'
+        player.give("minecraft:cookie", 1)
         player.actionbar("3-hit combo! Cookie reward")
         player.playsound("minecraft:entity.arrow.hit_player", "master")
 

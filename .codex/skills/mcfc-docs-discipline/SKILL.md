@@ -65,6 +65,7 @@ Also update, when affected:
 - Plain technical prose: say what it does, what it takes, what it returns, and what breaks it. No marketing adjectives, no "powerful", no "seamless".
 - Lead with the example or table; keep prose to what the example does not show.
 - Mention generated commands only where a user needs them to predict cost or behavior.
+- Do not use `mc` or `mcf` in examples when a method, builtin or `debug(...)` does the job. They are a last resort. If an example genuinely needs one because the language lacks the feature, add the gap to `TODO.md` under LANGUAGE GAPS.
 
 ## Final Response Checklist
 

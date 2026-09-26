@@ -93,7 +93,7 @@ fn inspect(pig: entity_ref) -> void:
     let glowing = bool(pig.nbt.Glowing)
     let counts = {"wood": 2}
     if has_data(counts["stone"]):
-        mcf "say $(hp) hp"
+        debug("$(hp) hp")
 ```
 
 ## Debugging

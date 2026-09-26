@@ -38,12 +38,12 @@ Replace `src/main.mcf` with:
 
 ```mcfc
 fn main() -> void:
-    mc "say Coins pack loaded"
+    selector("@a").tellraw("Coins pack loaded")
 ```
 
-`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `mc` emits a Minecraft command exactly as written.
+`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `selector("@a")` matches every online player, and `tellraw` sends them a chat message.
 
-Run `/reload`. You should see `[Server] Coins pack loaded` in chat.
+Run `/reload`. You should see `Coins pack loaded` in chat.
 
 ## 4. Store coins per player
 
@@ -51,7 +51,7 @@ Run `/reload`. You should see `[Server] Coins pack loaded` in chat.
 player_state coins: int = "Coins"
 
 fn main() -> void:
-    mc "say Coins pack loaded"
+    selector("@a").tellraw("Coins pack loaded")
 
 task payday every_ticks(20):
     for player in selector("@a"):
@@ -74,7 +74,7 @@ The payout will be reused in step 7, so move it into a function:
 player_state coins: int = "Coins"
 
 fn main() -> void:
-    mc "say Coins pack loaded"
+    selector("@a").tellraw("Coins pack loaded")
 
 fn pay(player: player_ref, amount: int) -> void:
     player.state.coins = player.state.coins + amount
@@ -148,7 +148,7 @@ Call `remind(player)` at the end of `buy`. `async:` starts its body and returns 
 player_state coins: int = "Coins"
 
 fn main() -> void:
-    mc "say Coins pack loaded"
+    selector("@a").tellraw("Coins pack loaded")
 
 fn pay(player: player_ref, amount: int) -> void:
     player.state.coins = player.state.coins + amount

@@ -10,7 +10,7 @@ fn tick() -> void:
         player.teleport(block("0 100 0"))
 
 task announce every_ticks(1200):
-    mc "say One minute has passed"
+    selector("@a").tellraw("One minute has passed")
 ```
 
 `fn tick()` runs every tick (20 times per second). A `task` with `every_ticks(n)` runs every `n` ticks. Keep `tick` small, since it runs 20 times a second.
@@ -50,11 +50,9 @@ command dash:
 fn start_round() -> void:
     async:
         for i in 0..5:
-            for player in selector("@a"):
-                player.title("$(5 - i)")
+            selector("@a").title("$(5 - i)")
             sleep(1)
-        mc "title @a title \"Go!\""
-        mc "gamemode survival @a"
+        selector("@a").title("Go!")
 ```
 
 `sleep` pauses only the code inside `async:`. Without `async`, the function calling `start_round` would also wait.
@@ -118,17 +116,6 @@ fn offer(player: player_ref) -> void:
 
 Clicking the message runs the `accept` command as that player.
 
-## Commands with a dynamic position
-
-`block(...)` only accepts a literal string. To use a position computed at run time, use `mcf`:
-
-```mcfc
-command scatter:
-    let x = random(-500, 500)
-    let z = random(-500, 500)
-    mcf "spreadplayers $(x) $(z) 0 10 false @s"
-```
-
 ## Split code across files
 
 <!-- no-check -->
@@ -144,7 +131,7 @@ fn main() -> void:
 ```mcfc
 # src/shop.mcf
 pub fn setup() -> void:
-    mc "say shop ready"
+    selector("@a").tellraw("Shop ready")
 ```
 
 See [`mod`](/language/reference/statements#mod-and-pub) for where module files have to go.

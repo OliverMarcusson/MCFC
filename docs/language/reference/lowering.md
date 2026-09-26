@@ -10,6 +10,7 @@ MCFC compiles `.mcf` source into a vanilla datapack. The backend writes generate
   -> IR lowering
   -> conservative optimization
   -> datapack backend
+  -> whole-pack optimization
   -> data/<namespace>/function/*.mcfunction
 ```
 
@@ -90,4 +91,14 @@ Agent-backed events lower to generated `agent/event/<name>.mcfunction` entrypoin
 
 ## Optimization
 
-By default MCFC runs a conservative optimization pass. It folds literal expressions, removes self-assignments, drops `while false:` bodies, and simplifies `if` statements with literal conditions. Pass `--no-optimize` to see the output without these changes. `--emit-ir` writes the intermediate form to `debug/ir.txt`.
+By default MCFC runs a conservative optimization pass. It folds literal expressions, removes self-assignments, drops `while false:` bodies, and simplifies `if` statements with literal conditions.
+
+After the backend, a whole-pack pass rewrites the emitted commands to run fewer of them:
+
+- drops control-flow guards it can prove are zero, and turns long guarded tails into one early `return`
+- inlines short and single-use functions, then deletes functions nothing reaches
+- decides conditions and operations on scores holding known constants
+- substitutes single-use temporaries and folds `x = x + y` into one operation
+- removes writes to scores nothing reads, and merges identical functions
+
+Functions that are public, scheduled or referenced by name keep their files and entry behavior. Pass `--no-optimize` to see the output without these changes. `--emit-ir` writes the intermediate form to `debug/ir.txt`.

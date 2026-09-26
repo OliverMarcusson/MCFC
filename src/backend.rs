@@ -168,15 +168,11 @@ impl Guard {
         check_continue: bool,
     ) -> String {
         let mut prefix = format!("execute if score {} mcfc matches 0", self.ctrl_slot);
-        if check_break {
-            if let Some(slot) = &self.break_slot {
-                prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
-            }
+        if check_break && let Some(slot) = &self.break_slot {
+            prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
         }
-        if check_continue {
-            if let Some(slot) = &self.continue_slot {
-                prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
-            }
+        if check_continue && let Some(slot) = &self.continue_slot {
+            prefix.push_str(&format!(" if score {} mcfc matches 0", slot));
         }
         format!("{} run {}", prefix, command.into())
     }
@@ -620,21 +616,18 @@ impl Backend {
 
         for command in self.bukkit.commands.clone() {
             let mut contents = String::new();
-            if let Some(info) = self.functions.get(&command.handler) {
-                if info.params.len() == 2
-                    && info.params[0].1 == Type::Struct("command_sender".to_string())
-                    && info.params[1].1 == Type::Array(Box::new(Type::String))
-                {
-                    let sender =
-                        local_slot(0, &command.handler, &info.params[0].0, &info.params[0].1);
-                    let args =
-                        local_slot(0, &command.handler, &info.params[1].0, &info.params[1].1);
-                    contents.push_str(&format!(
+            if let Some(info) = self.functions.get(&command.handler)
+                && info.params.len() == 2
+                && info.params[0].1 == Type::Struct("command_sender".to_string())
+                && info.params[1].1 == Type::Array(Box::new(Type::String))
+            {
+                let sender = local_slot(0, &command.handler, &info.params[0].0, &info.params[0].1);
+                let args = local_slot(0, &command.handler, &info.params[1].0, &info.params[1].1);
+                contents.push_str(&format!(
                         "data modify storage {}:runtime {} set from storage {}:agent command.sender\ndata modify storage {}:runtime {} set from storage {}:agent command.args\n",
                         self.namespace, sender.storage_path(), self.namespace,
                         self.namespace, args.storage_path(), self.namespace,
                     ));
-                }
             }
             contents.push_str(&format!(
                 "scoreboard players set {} mcfc 0\nfunction {}:{}\n",
@@ -1049,15 +1042,32 @@ impl Backend {
                     then_body,
                     else_body,
                 } => {
-                    let cond_temp = self.new_temp();
                     let mut stmt_lines = Vec::new();
-                    self.compile_expr_into_named_slot(
-                        function,
-                        depth,
-                        condition,
-                        &cond_temp,
-                        &mut stmt_lines,
-                    );
+                    let clauses =
+                        self.compile_condition(function, depth, condition, &mut stmt_lines);
+                    // With an else branch, test the condition once: the then
+                    // branch may change what it reads.
+                    let reads_fresh_temp = matches!(clauses.as_slice(), [single]
+                        if single.strip_prefix("if score ")
+                            .and_then(|rest| rest.strip_suffix(" mcfc matches 1"))
+                            .is_some_and(|slot| slot.contains("___tmp")));
+                    let (then_test, else_test) = match clauses.as_slice() {
+                        _ if else_body.is_empty() => (clauses.join(" "), None),
+                        [single] if reads_fresh_temp => {
+                            (single.clone(), Some(negate_clause(single)))
+                        }
+                        _ => {
+                            let slot = numeric_slot(depth, &function.name, &self.new_temp());
+                            stmt_lines.push(format!(
+                                "execute store success score {slot} mcfc {}",
+                                clauses.join(" ")
+                            ));
+                            (
+                                format!("if score {slot} mcfc matches 1"),
+                                Some(format!("unless score {slot} mcfc matches 1")),
+                            )
+                        }
+                    };
                     self.extend_guarded(lines, guard, stmt_lines);
 
                     let (then_path, then_name) = self.new_block(function, depth, "if_then");
@@ -1081,10 +1091,8 @@ impl Backend {
                         },
                     );
                     lines.push(guard.wrap(format!(
-                        "execute if score {} mcfc matches 1 run function {}:{}",
-                        numeric_slot(depth, &function.name, &cond_temp),
-                        self.namespace,
-                        then_name
+                        "execute {then_test} run function {}:{}",
+                        self.namespace, then_name
                     )));
 
                     if !else_body.is_empty() {
@@ -1109,8 +1117,8 @@ impl Backend {
                             },
                         );
                         lines.push(guard.wrap(format!(
-                            "execute unless score {} mcfc matches 1 run function {}:{}",
-                            numeric_slot(depth, &function.name, &cond_temp),
+                            "execute {} run function {}:{}",
+                            else_test.as_deref().expect("else branches test one clause"),
                             self.namespace,
                             else_name
                         )));
@@ -1142,22 +1150,17 @@ impl Backend {
                         "scoreboard players set {} mcfc 0",
                         continue_slot
                     ))];
-                    let cond_temp = self.new_temp();
                     let mut cond_eval = Vec::new();
-                    self.compile_expr_into_named_slot(
-                        function,
-                        depth,
-                        condition,
-                        &cond_temp,
-                        &mut cond_eval,
-                    );
+                    let run_body = format!("function {}:{}", self.namespace, body_name);
+                    let run_body = if matches!(condition.kind, IrExprKind::Bool(true)) {
+                        run_body
+                    } else {
+                        let clauses =
+                            self.compile_condition(function, depth, condition, &mut cond_eval);
+                        format!("execute {} run {run_body}", clauses.join(" "))
+                    };
                     self.extend_guarded_allow_continue(&mut cond_lines, &loop_guard, cond_eval);
-                    cond_lines.push(loop_guard.wrap_allow_continue(format!(
-                        "execute if score {} mcfc matches 1 run function {}:{}",
-                        numeric_slot(depth, &function.name, &cond_temp),
-                        self.namespace,
-                        body_name
-                    )));
+                    cond_lines.push(loop_guard.wrap_allow_continue(run_body));
 
                     let mut body_lines = Vec::new();
                     self.emit_stmt_list(
@@ -1200,7 +1203,6 @@ impl Backend {
                         let break_slot = numeric_slot(depth, &function.name, &self.new_temp());
                         let continue_slot = numeric_slot(depth, &function.name, &self.new_temp());
                         let end_name = self.new_temp();
-                        let cond_temp = self.new_temp();
                         let (cond_path, cond_name) = self.new_block(function, depth, "for_cond");
                         let (body_path, body_name) = self.new_block(function, depth, "for_body");
                         let (step_path, step_name) = self.new_block(function, depth, "for_step");
@@ -1269,17 +1271,12 @@ impl Backend {
 
                         let mut cond_lines = Vec::new();
                         let mut cond_eval = Vec::new();
-                        self.compile_expr_into_named_slot(
-                            function,
-                            depth,
-                            &cond_expr,
-                            &cond_temp,
-                            &mut cond_eval,
-                        );
+                        let clauses =
+                            self.compile_condition(function, depth, &cond_expr, &mut cond_eval);
                         self.extend_guarded(&mut cond_lines, &loop_guard, cond_eval);
                         cond_lines.push(loop_guard.wrap(format!(
-                            "execute if score {} mcfc matches 1 run function {}:{}",
-                            numeric_slot(depth, &function.name, &cond_temp),
+                            "execute {} run function {}:{}",
+                            clauses.join(" "),
                             self.namespace,
                             body_name
                         )));
@@ -1455,20 +1452,14 @@ impl Backend {
                                     }),
                                 },
                             };
-                            let cond_temp = self.new_temp();
                             let mut cond_lines = Vec::new();
                             let mut cond_eval = Vec::new();
-                            self.compile_expr_into_named_slot(
-                                function,
-                                depth,
-                                &cond_expr,
-                                &cond_temp,
-                                &mut cond_eval,
-                            );
+                            let clauses =
+                                self.compile_condition(function, depth, &cond_expr, &mut cond_eval);
                             self.extend_guarded(&mut cond_lines, &loop_guard, cond_eval);
                             cond_lines.push(loop_guard.wrap(format!(
-                                "execute if score {} mcfc matches 1 run function {}:{}",
-                                numeric_slot(depth, &function.name, &cond_temp),
+                                "execute {} run function {}:{}",
+                                clauses.join(" "),
                                 self.namespace,
                                 body_name
                             )));
@@ -1579,6 +1570,15 @@ impl Backend {
                 susp_slot(depth, &function.name)
             ),
         ];
+        // The pause ran under this guard, so the loop's break and continue
+        // flags were 0 and still are. Saying so lets the pack optimizer drop
+        // their checks from the rest of the loop body.
+        for slot in [&guard.break_slot, &guard.continue_slot]
+            .into_iter()
+            .flatten()
+        {
+            lines.push(format!("scoreboard players set {slot} mcfc 0"));
+        }
         lines.extend(prefix);
         self.emit_contextual_continuation_items(
             function,
@@ -1708,7 +1708,7 @@ impl Backend {
 
         // Waiter clock (registered on the tick tag, active only while waiting):
         // poll the result, else count down to a timeout. Reload-safe.
-        let tick_lines = vec![
+        let tick_lines = [
             format!(
                 "execute unless score {} mcfc matches 1 run return 0",
                 wait_slot
@@ -2432,27 +2432,27 @@ impl Backend {
         }
 
         if matches!(path.base.ty, Type::EntityRef | Type::PlayerRef) {
-            if let Some(PathSegment::Field(first)) = path.segments.first() {
-                if first == "position" && path.segments.len() > 1 {
-                    let pos_slot =
-                        local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
-                    self.compose_entity_position_slot(&base_slot, &pos_slot, lines);
-                    let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
-                        &Type::BlockRef,
-                        &path.segments[1..],
-                    ));
-                    let storage_target =
-                        format!("{}:runtime {}", self.namespace, value_slot.storage_path());
-                    lines.push(self.block_command(
-                        &pos_slot,
-                        format!(
-                            "data modify block $(pos) {} set from storage {}",
-                            path_text, storage_target
-                        ),
-                        true,
-                    ));
-                    return;
-                }
+            if let Some(PathSegment::Field(first)) = path.segments.first()
+                && first == "position"
+                && path.segments.len() > 1
+            {
+                let pos_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
+                self.compose_entity_position_slot(&base_slot, &pos_slot, lines);
+                let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
+                    &Type::BlockRef,
+                    &path.segments[1..],
+                ));
+                let storage_target =
+                    format!("{}:runtime {}", self.namespace, value_slot.storage_path());
+                lines.push(self.block_command(
+                    &pos_slot,
+                    format!(
+                        "data modify block $(pos) {} set from storage {}",
+                        path_text, storage_target
+                    ),
+                    true,
+                ));
+                return;
             }
             if self.try_compile_player_path_assign(
                 function,
@@ -2662,10 +2662,10 @@ impl Backend {
             return;
         }
 
-        if matches!(path.base.ty, Type::EntityRef | Type::PlayerRef) {
-            if self.try_compile_player_path_read(function, depth, &base_slot, path, target, lines) {
-                return;
-            }
+        if matches!(path.base.ty, Type::EntityRef | Type::PlayerRef)
+            && self.try_compile_player_path_read(function, depth, &base_slot, path, target, lines)
+        {
+            return;
         }
 
         let path_text = render_nbt_path_segments(normalize_runtime_nbt_segments(
@@ -2771,21 +2771,20 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
-        if let crate::ast::ExprKind::Int(value) = &index.kind {
-            if *value >= 0 {
-                if let Some(end) = value.checked_add(1) {
-                    lines.push(format!(
-                        "data modify storage {}:runtime {} set string storage {}:runtime {} {} {}",
-                        self.namespace,
-                        target.storage_path(),
-                        self.namespace,
-                        source.storage_path(),
-                        value,
-                        end
-                    ));
-                    return;
-                }
-            }
+        if let crate::ast::ExprKind::Int(value) = &index.kind
+            && *value >= 0
+            && let Some(end) = value.checked_add(1)
+        {
+            lines.push(format!(
+                "data modify storage {}:runtime {} set string storage {}:runtime {} {} {}",
+                self.namespace,
+                target.storage_path(),
+                self.namespace,
+                source.storage_path(),
+                value,
+                end
+            ));
+            return;
         }
 
         let index_expr = self.lower_macro_path_expr(function, depth, index, &Type::Int);
@@ -3875,22 +3874,21 @@ impl Backend {
             "push" => {
                 if let Some(rendered) =
                     self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
+                    && let Some(value) = args.first()
                 {
-                    if let Some(value) = args.first() {
-                        let temp = self.new_temp();
-                        let temp_slot = local_slot(depth, &function.name, &temp, &Type::Nbt);
-                        self.compile_value_as_nbt(function, depth, value, &temp_slot, lines);
-                        lines.push(self.storage_path_command(
-                            format!(
-                                "data modify storage {}:runtime {} append from storage {}:runtime {}",
-                                self.namespace,
-                                rendered.path,
-                                self.namespace,
-                                temp_slot.storage_path()
-                            ),
-                            rendered.macro_storage,
-                        ));
-                    }
+                    let temp = self.new_temp();
+                    let temp_slot = local_slot(depth, &function.name, &temp, &Type::Nbt);
+                    self.compile_value_as_nbt(function, depth, value, &temp_slot, lines);
+                    lines.push(self.storage_path_command(
+                        format!(
+                            "data modify storage {}:runtime {} append from storage {}:runtime {}",
+                            self.namespace,
+                            rendered.path,
+                            self.namespace,
+                            temp_slot.storage_path()
+                        ),
+                        rendered.macro_storage,
+                    ));
                 }
                 return;
             }
@@ -4015,26 +4013,25 @@ impl Backend {
                     }
                     return;
                 }
-                if let Some(key) = args.first() {
-                    if let Some(receiver_path) =
+                if let Some(key) = args.first()
+                    && let Some(receiver_path) =
                         self.render_storage_expr_lvalue_path(function, depth, receiver, lines)
-                    {
-                        let key_rendered = self.render_dict_key_for_method(
-                            function,
-                            depth,
-                            key,
-                            receiver_path.path,
-                            receiver_path.macro_storage,
-                            lines,
-                        );
-                        lines.push(self.storage_path_command(
-                            format!(
-                                "data remove storage {}:runtime {}",
-                                self.namespace, key_rendered.path
-                            ),
-                            key_rendered.macro_storage,
-                        ));
-                    }
+                {
+                    let key_rendered = self.render_dict_key_for_method(
+                        function,
+                        depth,
+                        key,
+                        receiver_path.path,
+                        receiver_path.macro_storage,
+                        lines,
+                    );
+                    lines.push(self.storage_path_command(
+                        format!(
+                            "data remove storage {}:runtime {}",
+                            self.namespace, key_rendered.path
+                        ),
+                        key_rendered.macro_storage,
+                    ));
                 }
                 return;
             }
@@ -5817,7 +5814,7 @@ impl Backend {
             }
             for parent_path in parent_paths {
                 lines.push(self.inline_macro_command(
-                    &key_path,
+                    key_path,
                     format!(
                         "$(prefix)execute if entity $(selector) unless data storage {}:state {} run data modify storage {}:state {} set value {{}}",
                         self.namespace, parent_path, self.namespace, parent_path
@@ -5869,7 +5866,7 @@ impl Backend {
         } else {
             return;
         };
-        lines.push(self.inline_macro_command(&key_path, command));
+        lines.push(self.inline_macro_command(key_path, command));
     }
 
     fn try_compile_player_path_assign(
@@ -6305,14 +6302,15 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
-        if let Some(PathSegment::Field(field)) = path.segments.first() {
-            if field == "name" {
-                lines.push(format!(
-                    "data modify storage {}:runtime {} set value \"\"",
-                    self.namespace,
-                    target.storage_path()
-                ));
-                lines.push(format!(
+        if let Some(PathSegment::Field(field)) = path.segments.first()
+            && field == "name"
+        {
+            lines.push(format!(
+                "data modify storage {}:runtime {} set value \"\"",
+                self.namespace,
+                target.storage_path()
+            ));
+            lines.push(format!(
                     "execute if data storage {}:runtime {}.nbt.display.Name run data modify storage {}:runtime {} set from storage {}:runtime {}.nbt.display.Name",
                     self.namespace,
                     base_slot.storage_path(),
@@ -6321,8 +6319,7 @@ impl Backend {
                     self.namespace,
                     base_slot.storage_path()
                 ));
-                return;
-            }
+            return;
         }
         let rendered = self.render_storage_path(
             function,
@@ -7485,22 +7482,34 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        if op == UnaryOp::Not {
+            let target = target.numeric_name();
+            match self
+                .compile_condition(function, depth, expr, lines)
+                .as_slice()
+            {
+                [clause] => lines.push(format!(
+                    "execute store success score {target} mcfc {}",
+                    negate_clause(clause)
+                )),
+                clauses => {
+                    lines.push(format!(
+                        "execute store success score {target} mcfc {}",
+                        clauses.join(" ")
+                    ));
+                    lines.push(format!(
+                        "execute store success score {target} mcfc unless score {target} mcfc matches 1"
+                    ));
+                }
+            }
+            return;
+        }
         let temp = self.new_temp();
         let temp_slot = local_slot(depth, &function.name, &temp, &expr.ty);
         self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
 
         match op {
-            UnaryOp::Not => {
-                lines.push(format!(
-                    "scoreboard players set {} mcfc 1",
-                    target.numeric_name()
-                ));
-                lines.push(format!(
-                    "execute if score {} mcfc matches 1 run scoreboard players set {} mcfc 0",
-                    temp_slot.numeric_name(),
-                    target.numeric_name()
-                ));
-            }
+            UnaryOp::Not => unreachable!("handled above"),
             UnaryOp::Neg => {
                 lines.push(format!(
                     "scoreboard players set {} mcfc 0",
@@ -7515,6 +7524,122 @@ impl Backend {
         }
     }
 
+    /// The score holding an int, bool or enum operand: a variable's own slot,
+    /// or a temp the value is computed into.
+    fn numeric_operand(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        expr: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> String {
+        if let IrExprKind::Variable(name) = &expr.kind {
+            return numeric_slot(depth, &function.name, name);
+        }
+        let temp = self.new_temp();
+        let slot = local_slot(depth, &function.name, &temp, &expr.ty);
+        self.compile_expr_into_slot(function, depth, expr, &slot, lines);
+        slot.numeric_name().to_string()
+    }
+
+    /// `execute` clauses that hold exactly when `expr` is true, so a branch can
+    /// test the condition directly instead of through a 0/1 temp.
+    fn compile_condition(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        expr: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> Vec<String> {
+        match &expr.kind {
+            IrExprKind::Binary { op, left, right } if is_score_comparison(*op, left, right) => {
+                vec![self.comparison_clause(function, depth, *op, left, right, lines)]
+            }
+            IrExprKind::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+            } if is_simple_condition(right) => {
+                let mut clauses = self.compile_condition(function, depth, left, lines);
+                clauses.extend(self.compile_condition(function, depth, right, lines));
+                clauses
+            }
+            IrExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: inner,
+            } => {
+                let mut clauses = self.compile_condition(function, depth, inner, lines);
+                if let [clause] = clauses.as_mut_slice() {
+                    *clause = negate_clause(clause);
+                    return clauses;
+                }
+                let temp = self.new_temp();
+                let slot = numeric_slot(depth, &function.name, &temp);
+                lines.push(format!(
+                    "execute store success score {slot} mcfc {}",
+                    clauses.join(" ")
+                ));
+                vec![format!("unless score {slot} mcfc matches 1")]
+            }
+            _ => {
+                let slot = self.numeric_operand(function, depth, expr, lines);
+                vec![format!("if score {slot} mcfc matches 1")]
+            }
+        }
+    }
+
+    /// One `if|unless score ...` clause comparing two int, bool or enum values.
+    fn comparison_clause(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        op: BinaryOp,
+        left: &IrExpr,
+        right: &IrExpr,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let keyword = if op == BinaryOp::NotEq {
+            "unless"
+        } else {
+            "if"
+        };
+        // A literal on either side becomes a `matches` range.
+        let literal = |expr: &IrExpr| match expr.kind {
+            IrExprKind::Int(value) => Some(value),
+            IrExprKind::Bool(value) => Some(i64::from(value)),
+            _ => None,
+        };
+        let flipped = match op {
+            BinaryOp::Lt => BinaryOp::Gt,
+            BinaryOp::Lte => BinaryOp::Gte,
+            BinaryOp::Gt => BinaryOp::Lt,
+            BinaryOp::Gte => BinaryOp::Lte,
+            other => other,
+        };
+        let literal_side = match (literal(left), literal(right)) {
+            (_, Some(value)) => Some((left, op, value)),
+            (Some(value), None) => Some((right, flipped, value)),
+            (None, None) => None,
+        };
+        if let Some((operand, op, value)) = literal_side
+            && let Some(range) = literal_range(op, value)
+        {
+            let slot = self.numeric_operand(function, depth, operand, lines);
+            return format!("{keyword} score {slot} mcfc matches {range}");
+        }
+        let left_slot = self.numeric_operand(function, depth, left, lines);
+        let right_slot = self.numeric_operand(function, depth, right, lines);
+        let operator = match op {
+            BinaryOp::Eq | BinaryOp::NotEq => "=",
+            BinaryOp::Lt => "<",
+            BinaryOp::Lte => "<=",
+            BinaryOp::Gt => ">",
+            BinaryOp::Gte => ">=",
+            _ => unreachable!("not a comparison"),
+        };
+        format!("{keyword} score {left_slot} mcfc {operator} {right_slot} mcfc")
+    }
+
     fn compile_binary(
         &mut self,
         function: &IrFunction,
@@ -7525,6 +7650,14 @@ impl Backend {
         target: &SlotRef,
         lines: &mut Vec<String>,
     ) {
+        if is_score_comparison(op, left, right) {
+            let clause = self.comparison_clause(function, depth, op, left, right, lines);
+            lines.push(format!(
+                "execute store success score {} mcfc {clause}",
+                target.numeric_name()
+            ));
+            return;
+        }
         match op {
             BinaryOp::And => {
                 let left_temp = self.new_temp();
@@ -8669,6 +8802,68 @@ impl Backend {
     }
 }
 
+fn is_score_type(ty: &Type) -> bool {
+    matches!(ty, Type::Int | Type::Bool | Type::Enum(_))
+}
+
+/// A comparison that `execute if score` can test directly.
+fn is_score_comparison(op: BinaryOp, left: &IrExpr, right: &IrExpr) -> bool {
+    matches!(
+        op,
+        BinaryOp::Eq
+            | BinaryOp::NotEq
+            | BinaryOp::Lt
+            | BinaryOp::Lte
+            | BinaryOp::Gt
+            | BinaryOp::Gte
+    ) && is_score_type(&left.ty)
+        && is_score_type(&right.ty)
+}
+
+/// A condition `compile_condition` turns into clauses without emitting any
+/// command, so it is safe to test even when an `&&` would short-circuit it.
+fn is_simple_condition(expr: &IrExpr) -> bool {
+    let plain = |expr: &IrExpr| {
+        matches!(
+            expr.kind,
+            IrExprKind::Variable(_) | IrExprKind::Int(_) | IrExprKind::Bool(_)
+        )
+    };
+    match &expr.kind {
+        IrExprKind::Variable(_) => true,
+        IrExprKind::Binary { op, left, right } if is_score_comparison(*op, left, right) => {
+            plain(left) && plain(right)
+        }
+        IrExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } => is_simple_condition(left) && is_simple_condition(right),
+        _ => false,
+    }
+}
+
+fn negate_clause(clause: &str) -> String {
+    match clause.strip_prefix("if ") {
+        Some(rest) => format!("unless {rest}"),
+        None => format!("if {}", clause.strip_prefix("unless ").unwrap_or(clause)),
+    }
+}
+
+/// The `matches` range for `score <op> value`, if it fits in a score.
+fn literal_range(op: BinaryOp, value: i64) -> Option<String> {
+    let fits = |bound: i64| (i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&bound);
+    let range = match op {
+        BinaryOp::Eq | BinaryOp::NotEq => format!("{value}"),
+        BinaryOp::Lt => format!("..{}", value.checked_sub(1).filter(|v| fits(*v))?),
+        BinaryOp::Lte => format!("..{value}"),
+        BinaryOp::Gt => format!("{}..", value.checked_add(1).filter(|v| fits(*v))?),
+        BinaryOp::Gte => format!("{value}.."),
+        _ => return None,
+    };
+    fits(value).then_some(range)
+}
+
 fn continuation_after_stmts(stmts: &[IrStmt], tail: &[ContinuationItem]) -> Vec<ContinuationItem> {
     stmts
         .iter()
@@ -9107,10 +9302,10 @@ fn parse_quoted_message(value: &str) -> Option<(String, &str)> {
 }
 
 fn parse_display_message(value: &str) -> Option<String> {
-    if let Some((text, trailing)) = parse_quoted_message(value) {
-        if trailing.trim().is_empty() {
-            return Some(text);
-        }
+    if let Some((text, trailing)) = parse_quoted_message(value)
+        && trailing.trim().is_empty()
+    {
+        return Some(text);
     }
     Some(value.to_string())
 }
@@ -9770,17 +9965,16 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
         }
         let name = &function.name;
         if let Some(event) = name.strip_prefix("__mcfc_agent_event_") {
-            if let Some(event_type) = agent_event_type(event) {
-                if function.params.len() == 1
-                    && function.params[0].ty == Type::Struct(event_type.to_string())
-                {
-                    runtime.agent_handlers.push(AgentEventHandler {
-                        event: event.to_string(),
-                        handler: name.clone(),
-                        parameter: function.params[0].name.clone(),
-                        decision: ir_function_contains_cancel(function),
-                    });
-                }
+            if let Some(event_type) = agent_event_type(event)
+                && function.params.len() == 1
+                && function.params[0].ty == Type::Struct(event_type.to_string())
+            {
+                runtime.agent_handlers.push(AgentEventHandler {
+                    event: event.to_string(),
+                    handler: name.clone(),
+                    parameter: function.params[0].name.clone(),
+                    decision: ir_function_contains_cancel(function),
+                });
             }
             continue;
         }
@@ -9805,10 +9999,10 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
                 if let Ok(ticks) = ticks.parse::<u32>() {
                     runtime.every_tasks.push((task.to_string(), ticks));
                 }
-            } else if let Some((task, ticks)) = rest.rsplit_once("_after_ticks_") {
-                if let Ok(ticks) = ticks.parse::<u32>() {
-                    runtime.after_tasks.push((task.to_string(), ticks));
-                }
+            } else if let Some((task, ticks)) = rest.rsplit_once("_after_ticks_")
+                && let Ok(ticks) = ticks.parse::<u32>()
+            {
+                runtime.after_tasks.push((task.to_string(), ticks));
             }
         }
     }

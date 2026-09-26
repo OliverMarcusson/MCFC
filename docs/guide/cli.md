@@ -46,5 +46,5 @@ mcfc watch <input-file|project-dir|manifest> [--out <directory>] [--namespace <n
 - `--namespace <name>`: override generated namespace
 - `--emit-ast`: write `debug/typed_program.txt`
 - `--emit-ir`: write `debug/ir.txt`
-- `--no-optimize`: disable conservative IR optimization
+- `--no-optimize`: disable IR and whole-pack optimization
 - `--clean`: remove the output directory before writing generated files

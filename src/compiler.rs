@@ -9,6 +9,7 @@ use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{self, IrProgram};
 use crate::modules::{self, ModuleSource};
 use crate::optimizer;
+use crate::pack_opt;
 use crate::parser;
 use crate::project::{HelperConfig, collect_asset_files, collect_source_files, load_manifest};
 use crate::types::{self, HostModules, TypedProgram};
@@ -23,6 +24,8 @@ pub struct CompileOptions {
     pub tick_tag_values: Option<Vec<String>>,
     pub exports: Vec<ExportedFunction>,
     pub optimize: bool,
+    /// Run the whole-pack optimizer on the emitted commands (`pack_opt`).
+    pub optimize_pack: bool,
     pub helper: Option<HelperConfig>,
     /// Module layout of a merged multi-file source; empty for a single source.
     pub modules: Vec<ModuleSource>,
@@ -39,6 +42,7 @@ impl Default for CompileOptions {
             tick_tag_values: None,
             exports: Vec::new(),
             optimize: true,
+            optimize_pack: true,
             helper: None,
             modules: Vec::new(),
         }
@@ -89,7 +93,7 @@ pub fn compile_source(
     } else {
         ir_program
     };
-    let artifacts = backend::generate(
+    let mut artifacts = backend::generate(
         &ir_program,
         &BackendOptions {
             namespace: options.namespace.clone(),
@@ -99,6 +103,9 @@ pub fn compile_source(
             helper: options.helper.clone(),
         },
     );
+    if options.optimize && options.optimize_pack {
+        pack_opt::optimize(&mut artifacts.files);
+    }
     Ok(CompileResult {
         typed_program,
         ir_program,
@@ -287,7 +294,7 @@ fn validate_agent_manifest(options: &CompileOptions) -> Result<(), Diagnostics> 
 pub(crate) fn normalize_bukkit_declarations_source(source: &str) -> String {
     source
         .lines()
-        .map(|line| normalize_bukkit_declaration_line(line))
+        .map(normalize_bukkit_declaration_line)
         .collect::<Vec<_>>()
         .join("\n")
         + if source.ends_with('\n') { "\n" } else { "" }
@@ -315,43 +322,43 @@ fn normalize_bukkit_declaration_line(line: &str) -> String {
         .strip_prefix("command ")
         .and_then(|value| value.strip_suffix(':'))
     {
-        if let Some((name, rest)) = signature.split_once('(') {
-            if is_mcfc_identifier(name.trim()) {
-                return format!("fn __mcfc_command_{}({}", name.trim(), rest);
-            }
+        if let Some((name, rest)) = signature.split_once('(')
+            && is_mcfc_identifier(name.trim())
+        {
+            return format!("fn __mcfc_command_{}({}", name.trim(), rest);
         }
         if is_mcfc_identifier(signature.trim()) {
             return format!("fn __mcfc_command_{}() -> void:", signature.trim());
         }
     }
-    if let Some(rest) = trimmed.strip_prefix("task ") {
-        if let Some((name, schedule)) = rest.split_once(' ') {
-            if let Some(ticks) = schedule
-                .strip_prefix("every_ticks(")
-                .and_then(|value| value.strip_suffix("):"))
-                .filter(|value| {
-                    value
-                        .parse::<u32>()
-                        .ok()
-                        .filter(|value| *value > 0)
-                        .is_some()
-                })
-            {
-                return format!("fn __mcfc_task_{}_every_ticks_{}() -> void:", name, ticks);
-            }
-            if let Some(ticks) = schedule
-                .strip_prefix("after_ticks(")
-                .and_then(|value| value.strip_suffix("):"))
-                .filter(|value| {
-                    value
-                        .parse::<u32>()
-                        .ok()
-                        .filter(|value| *value > 0)
-                        .is_some()
-                })
-            {
-                return format!("fn __mcfc_task_{}_after_ticks_{}() -> void:", name, ticks);
-            }
+    if let Some(rest) = trimmed.strip_prefix("task ")
+        && let Some((name, schedule)) = rest.split_once(' ')
+    {
+        if let Some(ticks) = schedule
+            .strip_prefix("every_ticks(")
+            .and_then(|value| value.strip_suffix("):"))
+            .filter(|value| {
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .is_some()
+            })
+        {
+            return format!("fn __mcfc_task_{}_every_ticks_{}() -> void:", name, ticks);
+        }
+        if let Some(ticks) = schedule
+            .strip_prefix("after_ticks(")
+            .and_then(|value| value.strip_suffix("):"))
+            .filter(|value| {
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .is_some()
+            })
+        {
+            return format!("fn __mcfc_task_{}_after_ticks_{}() -> void:", name, ticks);
         }
     }
     line.to_string()
@@ -635,6 +642,15 @@ fn copy_project_assets(asset_root: &Path, artifacts: &mut BuildArtifacts) -> Res
 mod tests {
     use super::{CompileOptions, compile_source};
 
+    /// These tests check how the backend lowers code, so they read its output
+    /// before the whole-pack optimizer rewrites it.
+    fn lowering() -> CompileOptions {
+        CompileOptions {
+            optimize_pack: false,
+            ..CompileOptions::default()
+        }
+    }
+
     #[test]
     fn compiles_gameplay_entity_and_inventory_builtins() {
         let source = r#"
@@ -658,8 +674,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -717,8 +732,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -761,8 +775,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -795,8 +808,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -821,8 +833,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -848,8 +859,7 @@ fn main() -> void:
     player.tellraw(line)
     return
 ";
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -881,8 +891,7 @@ fn main() -> void:
     player.tellraw(line)
     return
 ";
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -932,8 +941,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result.artifacts.files;
         let joined = files.values().cloned().collect::<Vec<_>>().join("\n");
         let entry = files
@@ -975,8 +983,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result.artifacts.files;
         let joined = files.values().cloned().collect::<Vec<_>>().join("\n");
         let entry = files
@@ -1008,7 +1015,7 @@ fn main() -> void:
     async:
         return
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1020,7 +1027,7 @@ fn main() -> void:
     let player = single(selector("@p"))
     tellraw(player, "old")
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1032,7 +1039,7 @@ fn main() -> void:
 fn main() -> void:
     return
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1053,7 +1060,7 @@ fn main() -> void:
     return
 "#;
 
-        let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+        let error = compile_source(source, &lowering()).unwrap_err();
         let rendered = error.to_string();
         assert!(rendered.contains("sleep(...) may only appear as a standalone statement"));
         assert!(rendered.contains("sleep(...) seconds must be at least 1"));
@@ -1067,7 +1074,7 @@ fn main() -> void:
     let bad = "value $(sleep(1))"
     return
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1087,8 +1094,7 @@ fn main() -> void:
     return
 "#;
 
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -1113,7 +1119,7 @@ fn main() -> void:
     let player = single(selector("@p"))
     player.heal(1)
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1125,7 +1131,7 @@ fn main() -> void:
     let target = single(selector("@e"))
     target.heal(1)
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1154,7 +1160,7 @@ task pulse every_ticks(20):
         sleep(1)
         debug("pulse")
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .expect("handlers with async and sleep should compile");
         let generated = result
@@ -1197,7 +1203,7 @@ task pulse every_ticks(20):
 task later after_ticks(5):
     debug("later")
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .expect("Bukkit declarations should compile");
         let files = &result.artifacts.files;
@@ -1229,7 +1235,7 @@ command abcdefghij_one:
 command abcdefghij_two:
     debug("two")
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .expect("commands with shared objective prefixes should compile");
         let files = &result.artifacts.files;
@@ -1257,7 +1263,7 @@ command abcdefghij_two:
                 }),
                 ..Default::default()
             }),
-            ..CompileOptions::default()
+            ..lowering()
         };
         let result = compile_source(
             r#"
@@ -1289,7 +1295,7 @@ event chat(event: chat_event):
                 }),
                 ..crate::project::HelperConfig::default()
             }),
-            ..CompileOptions::default()
+            ..lowering()
         };
         let result = compile_source(
             "event chat(event: chat_event):\n    event.cancel()\n",
@@ -1323,7 +1329,7 @@ event chat(event: chat_event):
                 }),
                 ..crate::project::HelperConfig::default()
             }),
-            ..CompileOptions::default()
+            ..lowering()
         };
         let error = compile_source(
             "event player_connect(event: agent_event):\n    event.cancel()\n",
@@ -1337,7 +1343,7 @@ event chat(event: chat_event):
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
             "event chat(event: chat_event):\n    debug(event.message)\n",
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();
@@ -1356,7 +1362,7 @@ event chat(event: chat_event):
                 }),
                 ..Default::default()
             }),
-            ..CompileOptions::default()
+            ..lowering()
         };
         let result = compile_source(
             r#"
@@ -1392,7 +1398,7 @@ event player_interact_block(event: player_interact_block_event):
                 }),
                 ..Default::default()
             }),
-            ..CompileOptions::default()
+            ..lowering()
         };
         let error = compile_source("fn main() -> void:\n    return\n", &options)
             .unwrap_err()
@@ -1419,8 +1425,7 @@ fn main() -> void:
     let n = d.len()
     return
 "#;
-        let result =
-            compile_source(source, &CompileOptions::default()).expect("source should compile");
+        let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
             .files
@@ -1453,7 +1458,7 @@ fn main() -> void:
     let e = random_binomial(3, 4)
     return
 "#,
-            &CompileOptions::default(),
+            &lowering(),
         )
         .unwrap_err()
         .to_string();

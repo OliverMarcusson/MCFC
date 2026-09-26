@@ -358,10 +358,7 @@ fn collect_function_info(
     }
 }
 
-pub fn function_at_offset<'a>(
-    analysis: &'a AnalysisResult,
-    offset: usize,
-) -> Option<&'a FunctionInfo> {
+pub fn function_at_offset(analysis: &AnalysisResult, offset: usize) -> Option<&FunctionInfo> {
     analysis
         .functions
         .iter()

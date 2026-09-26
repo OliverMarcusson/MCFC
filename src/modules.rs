@@ -654,15 +654,13 @@ impl Resolver {
     }
 
     fn walk_path(&self, module: usize, path: &mut PathExpr, diagnostics: &mut Diagnostics) {
-        if path.segments.len() == 1 {
-            if let ExprKind::Variable(name) = &mut path.base.kind {
-                if let Ok(Some(resolved)) = self.resolve_struct(module, name) {
-                    if self.enum_names.contains(&resolved) {
-                        *name = resolved;
-                        return;
-                    }
-                }
-            }
+        if path.segments.len() == 1
+            && let ExprKind::Variable(name) = &mut path.base.kind
+            && let Ok(Some(resolved)) = self.resolve_struct(module, name)
+            && self.enum_names.contains(&resolved)
+        {
+            *name = resolved;
+            return;
         }
         self.walk_expr(module, &mut path.base, diagnostics);
         for segment in &mut path.segments {

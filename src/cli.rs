@@ -259,7 +259,7 @@ fn create_project(config: &NewProjectConfig) -> Result<(), String> {
     write_new_file(&src_dir.join("main.mcf"), &main_template(config))?;
     write_new_file(&assets_dir.join(".gitkeep"), "")?;
     write_new_file(&config.path.join("README.md"), &readme_template(config))?;
-    write_new_file(&config.path.join(".gitignore"), &gitignore_template(config))?;
+    write_new_file(&config.path.join(".gitignore"), gitignore_template(config))?;
 
     Ok(())
 }

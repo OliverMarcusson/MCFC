@@ -363,12 +363,11 @@ fn host_call_parts<'a>(
         method,
         args,
     } = &expr.kind
+        && let ExprKind::Variable(name) = &receiver.kind
+        && is_known_host_module(name)
+        && !env.contains_key(name)
     {
-        if let ExprKind::Variable(name) = &receiver.kind {
-            if is_known_host_module(name) && !env.contains_key(name) {
-                return Some((name.as_str(), method.as_str(), args.as_slice()));
-            }
-        }
+        return Some((name.as_str(), method.as_str(), args.as_slice()));
     }
     None
 }
@@ -1678,24 +1677,22 @@ fn type_check_block(
                     );
                     typed_arms.push((pattern, body));
                 }
-                if let Type::Enum(name) = &value.ty {
-                    if default_body.is_empty() {
-                        if let Some(variants) = struct_defs
-                            .get(name)
-                            .and_then(|def| def.enum_variants.as_ref())
-                        {
-                            let missing: Vec<_> = (0..variants.len()).filter(|index| !typed_arms.iter().any(|(pattern, _)| matches!(pattern.kind, TypedExprKind::Int(value) if value == *index as i64))).map(|index| variants[index].as_str()).collect();
-                            if !missing.is_empty() {
-                                diagnostics.push(Diagnostic::new(
-                                    format!(
-                                        "non-exhaustive switch on '{}': missing {}",
-                                        name,
-                                        missing.join(", ")
-                                    ),
-                                    statement.span.clone(),
-                                ));
-                            }
-                        }
+                if let Type::Enum(name) = &value.ty
+                    && default_body.is_empty()
+                    && let Some(variants) = struct_defs
+                        .get(name)
+                        .and_then(|def| def.enum_variants.as_ref())
+                {
+                    let missing: Vec<_> = (0..variants.len()).filter(|index| !typed_arms.iter().any(|(pattern, _)| matches!(pattern.kind, TypedExprKind::Int(value) if value == *index as i64))).map(|index| variants[index].as_str()).collect();
+                    if !missing.is_empty() {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "non-exhaustive switch on '{}': missing {}",
+                                name,
+                                missing.join(", ")
+                            ),
+                            statement.span.clone(),
+                        ));
                     }
                 }
                 let default_body = type_check_block(
@@ -2181,28 +2178,26 @@ fn type_check_expr(
         ExprKind::Path(path) => {
             if let (ExprKind::Variable(enum_name), [PathSegment::Field(variant)]) =
                 (&path.base.kind, path.segments.as_slice())
-            {
-                if let Some(variants) = struct_defs
+                && let Some(variants) = struct_defs
                     .get(enum_name)
                     .and_then(|def| def.enum_variants.as_ref())
-                {
-                    if let Some(index) = variants.iter().position(|name| name == variant) {
-                        return TypedExpr {
-                            kind: TypedExprKind::Int(index as i64),
-                            ty: Type::Enum(enum_name.clone()),
-                            ref_kind: RefKind::Unknown,
-                        };
-                    }
-                    diagnostics.push(Diagnostic::new(
-                        format!("unknown enum constant '{}.{}'", enum_name, variant),
-                        expr.span.clone(),
-                    ));
+            {
+                if let Some(index) = variants.iter().position(|name| name == variant) {
                     return TypedExpr {
-                        kind: TypedExprKind::Int(0),
+                        kind: TypedExprKind::Int(index as i64),
                         ty: Type::Enum(enum_name.clone()),
                         ref_kind: RefKind::Unknown,
                     };
                 }
+                diagnostics.push(Diagnostic::new(
+                    format!("unknown enum constant '{}.{}'", enum_name, variant),
+                    expr.span.clone(),
+                ));
+                return TypedExpr {
+                    kind: TypedExprKind::Int(0),
+                    ty: Type::Enum(enum_name.clone()),
+                    ref_kind: RefKind::Unknown,
+                };
             }
             let path = type_check_path(
                 path,
@@ -2424,32 +2419,33 @@ fn type_check_expr(
         } => {
             // Host calls (`http.get(...)`) are only valid in statement/let position;
             // reaching here means one was nested inside an expression.
-            if let ExprKind::Variable(name) = &receiver.kind {
-                if is_known_host_module(name) && !env.contains_key(name) {
-                    for arg in args {
-                        type_check_expr(
-                            arg,
-                            struct_defs,
-                            signatures,
-                            env,
-                            ref_env,
-                            called_functions,
-                            diagnostics,
-                        );
-                    }
-                    diagnostics.push(Diagnostic::new(
+            if let ExprKind::Variable(name) = &receiver.kind
+                && is_known_host_module(name)
+                && !env.contains_key(name)
+            {
+                for arg in args {
+                    type_check_expr(
+                        arg,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                }
+                diagnostics.push(Diagnostic::new(
                         format!(
                             "host call '{}.{}' may only appear as a standalone statement or a let initializer",
                             name, method
                         ),
                         expr.span.clone(),
                     ));
-                    return TypedExpr {
-                        kind: TypedExprKind::Int(0),
-                        ty: Type::Void,
-                        ref_kind: RefKind::Unknown,
-                    };
-                }
+                return TypedExpr {
+                    kind: TypedExprKind::Int(0),
+                    ty: Type::Void,
+                    ref_kind: RefKind::Unknown,
+                };
             }
             if let Some(builtin) = type_check_method_call(
                 receiver,
@@ -2605,19 +2601,19 @@ fn type_check_expr(
                 })
                 .collect();
             for (index, arg) in args.iter().enumerate() {
-                if let Some(expected) = params.get(index) {
-                    if expected != &arg.ty {
-                        diagnostics.push(Diagnostic::new(
-                            format!(
-                                "argument {} for '{}' must be '{}', found '{}'",
-                                index + 1,
-                                function,
-                                expected.as_str(),
-                                arg.ty.as_str()
-                            ),
-                            expr.span.clone(),
-                        ));
-                    }
+                if let Some(expected) = params.get(index)
+                    && expected != &arg.ty
+                {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "argument {} for '{}' must be '{}', found '{}'",
+                            index + 1,
+                            function,
+                            expected.as_str(),
+                            arg.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
                 }
             }
 
@@ -3736,13 +3732,13 @@ fn type_check_builtin_call(
                 diagnostics,
             );
             expect_arity(function, &args, 1, expr, diagnostics);
-            if let Some(arg) = args.first() {
-                if arg.ty != Type::String {
-                    diagnostics.push(Diagnostic::new(
-                        "selector(...) requires a 'string' argument",
-                        expr.span.clone(),
-                    ));
-                }
+            if let Some(arg) = args.first()
+                && arg.ty != Type::String
+            {
+                diagnostics.push(Diagnostic::new(
+                    "selector(...) requires a 'string' argument",
+                    expr.span.clone(),
+                ));
             }
             let raw = extract_string_literal(args.first(), "selector", expr, diagnostics);
             Some(TypedExpr {
@@ -3762,13 +3758,13 @@ fn type_check_builtin_call(
                 diagnostics,
             );
             expect_arity(function, &args, 1, expr, diagnostics);
-            if let Some(arg) = args.first() {
-                if arg.ty != Type::String {
-                    diagnostics.push(Diagnostic::new(
-                        "block(...) requires a 'string' argument",
-                        expr.span.clone(),
-                    ));
-                }
+            if let Some(arg) = args.first()
+                && arg.ty != Type::String
+            {
+                diagnostics.push(Diagnostic::new(
+                    "block(...) requires a 'string' argument",
+                    expr.span.clone(),
+                ));
             }
             let raw = extract_string_literal(args.first(), "block", expr, diagnostics);
             Some(TypedExpr {
@@ -4283,22 +4279,22 @@ fn type_check_method_call(
                     None
                 }
             };
-            if let (Some(expected), Some(arg)) = (expected, args.first_mut()) {
-                if *expected == Type::Nbt {
-                    *arg = coerce_expr_to_nbt(arg.clone());
-                }
+            if let (Some(expected), Some(arg)) = (expected, args.first_mut())
+                && *expected == Type::Nbt
+            {
+                *arg = coerce_expr_to_nbt(arg.clone());
             }
-            if let (Some(expected), Some(arg)) = (expected, args.first()) {
-                if &arg.ty != expected {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "push(...) value must be '{}', found '{}'",
-                            expected.as_str(),
-                            arg.ty.as_str()
-                        ),
-                        expr.span.clone(),
-                    ));
-                }
+            if let (Some(expected), Some(arg)) = (expected, args.first())
+                && &arg.ty != expected
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "push(...) value must be '{}', found '{}'",
+                        expected.as_str(),
+                        arg.ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
             }
             Some(TypedExpr {
                 kind: TypedExprKind::MethodCall {
@@ -4872,13 +4868,13 @@ fn type_check_method_call(
                 ));
             }
             expect_arity(method, &args, 3, expr, diagnostics);
-            if let Some(arg) = args.first() {
-                if arg.ty != Type::String {
-                    diagnostics.push(Diagnostic::new(
-                        "player.effect(...) effect name must be 'string'",
-                        expr.span.clone(),
-                    ));
-                }
+            if let Some(arg) = args.first()
+                && arg.ty != Type::String
+            {
+                diagnostics.push(Diagnostic::new(
+                    "player.effect(...) effect name must be 'string'",
+                    expr.span.clone(),
+                ));
             }
             if args.get(1).map(|arg| arg.ty.clone()) != Some(Type::Int) {
                 diagnostics.push(Diagnostic::new(
@@ -5095,7 +5091,7 @@ fn type_check_text_constructor(
         called_functions,
         diagnostics,
     );
-    if !(args.len() == 0 || args.len() == 1) {
+    if !(args.is_empty() || args.len() == 1) {
         diagnostics.push(Diagnostic::new(
             format!(
                 "wrong arity for 'text': expected 0 or 1, found {}",
@@ -5104,16 +5100,16 @@ fn type_check_text_constructor(
             expr.span.clone(),
         ));
     }
-    if let Some(arg) = args.first() {
-        if arg.ty != Type::String {
-            diagnostics.push(Diagnostic::new(
-                format!(
-                    "argument 1 for 'text' must be 'string', found '{}'",
-                    arg.ty.as_str()
-                ),
-                expr.span.clone(),
-            ));
-        }
+    if let Some(arg) = args.first()
+        && arg.ty != Type::String
+    {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "argument 1 for 'text' must be 'string', found '{}'",
+                arg.ty.as_str()
+            ),
+            expr.span.clone(),
+        ));
     }
     builtin_call_expr("text", args, Type::TextDef)
 }
@@ -5357,17 +5353,17 @@ fn type_check_gameplay_call(
         | GameplayBuiltinKind::Actionbar => {
             expect_arity(function, &args, 2, expr, diagnostics);
             expect_entity_target_arg(function, &args, 0, expr, diagnostics);
-            if let Some(message) = args.get(1) {
-                if !matches!(message.ty, Type::String | Type::TextDef) {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
-                            function,
-                            message.ty.as_str()
-                        ),
-                        expr.span.clone(),
-                    ));
-                }
+            if let Some(message) = args.get(1)
+                && !matches!(message.ty, Type::String | Type::TextDef)
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
+                        function,
+                        message.ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
             }
             builtin_call_expr(function, args, Type::Void)
         }
@@ -5435,17 +5431,17 @@ fn type_check_gameplay_call(
                 expr,
                 diagnostics,
             );
-            if let Some(name) = args.get(1) {
-                if !matches!(name.ty, Type::String | Type::TextDef) {
-                    diagnostics.push(Diagnostic::new(
-                        format!(
-                            "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
-                            function,
-                            name.ty.as_str()
-                        ),
-                        expr.span.clone(),
-                    ));
-                }
+            if let Some(name) = args.get(1)
+                && !matches!(name.ty, Type::String | Type::TextDef)
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "argument 2 for '{}' must be 'string' or 'text_def', found '{}'",
+                        function,
+                        name.ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
             }
             builtin_call_expr(function, args, Type::Void)
         }
@@ -6031,19 +6027,19 @@ fn expect_arg_matches(
     expr: &Expr,
     diagnostics: &mut Diagnostics,
 ) {
-    if let Some(arg) = args.get(index) {
-        if !predicate(&arg.ty) {
-            diagnostics.push(Diagnostic::new(
-                format!(
-                    "{}(...) {} must be {}, found '{}'",
-                    function,
-                    label,
-                    expected,
-                    arg.ty.as_str()
-                ),
-                expr.span.clone(),
-            ));
-        }
+    if let Some(arg) = args.get(index)
+        && !predicate(&arg.ty)
+    {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "{}(...) {} must be {}, found '{}'",
+                function,
+                label,
+                expected,
+                arg.ty.as_str()
+            ),
+            expr.span.clone(),
+        ));
     }
 }
 

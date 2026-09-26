@@ -14,6 +14,7 @@ MCFC is a Rust workspace with the compiler, CLI, language server, helper daemon,
   -> IR lowering
   -> conservative optimization
   -> datapack backend
+  -> whole-pack optimization
 ```
 
 Key modules:
@@ -22,6 +23,7 @@ Key modules:
 - `src/types.rs`, `src/analysis.rs`: type checking and editor-facing analysis
 - `src/ir.rs`, `src/optimizer.rs`: lowering and optimization
 - `src/backend.rs`: datapack generation
+- `src/pack_opt.rs`: whole-pack optimizer over the emitted commands
 - `src/project.rs`: manifest discovery and project file collection
 - `src/cli.rs`: command-line workflow
 - `src/lsp.rs`: language server implementation

@@ -149,10 +149,10 @@ impl Backend {
             );
         }
 
-        if let Some(config) = resolve_project_config_for_uri(&uri) {
-            if self.rebuild_project(config).await.is_ok() {
-                return;
-            }
+        if let Some(config) = resolve_project_config_for_uri(&uri)
+            && self.rebuild_project(config).await.is_ok()
+        {
+            return;
         }
 
         self.refresh_standalone_document(&uri).await;
@@ -248,7 +248,7 @@ impl Backend {
         }
 
         build_project_snapshot(config, &overrides)
-            .map_err(|error| tower_lsp::jsonrpc::Error::invalid_params(error))
+            .map_err(tower_lsp::jsonrpc::Error::invalid_params)
     }
 
     async fn ensure_document_context(&self, uri: &Url) -> Option<DocumentContext> {
@@ -380,10 +380,10 @@ impl LanguageServer for Backend {
             return;
         }
 
-        if let Some(config) = resolve_project_config_for_uri(&uri) {
-            if self.rebuild_project(config).await.is_ok() {
-                return;
-            }
+        if let Some(config) = resolve_project_config_for_uri(&uri)
+            && self.rebuild_project(config).await.is_ok()
+        {
+            return;
         }
 
         self.refresh_standalone_document(&uri).await;
@@ -769,8 +769,8 @@ impl Backend {
         }
         snapshot
             .segments
-            .iter()
-            .flat_map(|(path, _segment)| {
+            .keys()
+            .flat_map(|path| {
                 let text = fs::read_to_string(path).unwrap_or_default();
                 function_reference_ranges(&text, word)
                     .into_iter()
@@ -865,13 +865,13 @@ fn semantic_ranges(source: &str, offset: usize, word: &str) -> Vec<TextRange> {
     if previous_char(source, target.start) == Some('.') {
         return Vec::new();
     }
-    if let Some(scope) = scope_at_offset(source, offset) {
-        if local_definition_in_scope(source, &scope, word).is_some() {
-            return identifier_ranges(&source[scope.start..scope.end], word, false)
-                .into_iter()
-                .map(|range| TextRange::new(range.start + scope.start, range.end + scope.start))
-                .collect();
-        }
+    if let Some(scope) = scope_at_offset(source, offset)
+        && local_definition_in_scope(source, &scope, word).is_some()
+    {
+        return identifier_ranges(&source[scope.start..scope.end], word, false)
+            .into_iter()
+            .map(|range| TextRange::new(range.start + scope.start, range.end + scope.start))
+            .collect();
     }
     if function_definition_range(source, word).is_some() {
         return function_reference_ranges(source, word);
@@ -1493,15 +1493,14 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
         .typed_program
         .as_ref()
         .map(|program| &program.struct_defs)
+        && let Some(def) = struct_defs.get(word)
     {
-        if let Some(def) = struct_defs.get(word) {
-            let signature = if let Some(variants) = &def.enum_variants {
-                enum_signature(word, variants)
-            } else {
-                struct_signature(word, def)
-            };
-            return Some(format!("```mcfc\n{}\n```", signature));
-        }
+        let signature = if let Some(variants) = &def.enum_variants {
+            enum_signature(word, variants)
+        } else {
+            struct_signature(word, def)
+        };
+        return Some(format!("```mcfc\n{}\n```", signature));
     }
 
     if let Some(function) = analysis
@@ -1512,18 +1511,17 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
         return Some(format!("```mcfc\n{}\n```", function.signature()));
     }
 
-    if let Some(function) = function_at_offset(analysis, offset) {
-        if let Some(local) = analysis
+    if let Some(function) = function_at_offset(analysis, offset)
+        && let Some(local) = analysis
             .locals
             .iter()
             .find(|local| local.function == function.name && local.name == word)
-        {
-            return Some(format!(
-                "```mcfc\n{}: {}\n```",
-                local.name,
-                local.ty.as_str()
-            ));
-        }
+    {
+        return Some(format!(
+            "```mcfc\n{}: {}\n```",
+            local.name,
+            local.ty.as_str()
+        ));
     }
 
     builtin_hover(word).map(str::to_string)
@@ -1760,7 +1758,7 @@ fn is_declaration_completion_position(source: &str, offset: usize) -> bool {
     // still a declaration position, but indented code is always an expression.
     !before_cursor.starts_with(char::is_whitespace)
         && matches!(
-            before_cursor.trim_start().split_whitespace().next(),
+            before_cursor.split_whitespace().next(),
             None | Some(
                 "fn" | "struct"
                     | "enum"
@@ -2794,23 +2792,22 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
-    if let [name] = chain {
-        if let Some(variants) = analysis
+    if let [name] = chain
+        && let Some(variants) = analysis
             .typed_program
             .as_ref()
             .and_then(|program| program.struct_defs.get(name))
             .and_then(|def| def.enum_variants.as_ref())
-        {
-            return variants
-                .iter()
-                .map(|variant| CompletionItem {
-                    label: variant.clone(),
-                    kind: Some(CompletionItemKind::ENUM_MEMBER),
-                    detail: Some(format!("{name}.{variant}")),
-                    ..CompletionItem::default()
-                })
-                .collect();
-        }
+    {
+        return variants
+            .iter()
+            .map(|variant| CompletionItem {
+                label: variant.clone(),
+                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                detail: Some(format!("{name}.{variant}")),
+                ..CompletionItem::default()
+            })
+            .collect();
     }
     if let Some(items) = agent_event_member_completion_items(source, analysis, offset, chain) {
         return items;
@@ -3964,14 +3961,13 @@ fn local_type_at_offset(
     offset: usize,
     name: &str,
 ) -> Option<(Type, RefKind)> {
-    if let Some(function) = function_at_offset(analysis, offset) {
-        if let Some(local) = analysis
+    if let Some(function) = function_at_offset(analysis, offset)
+        && let Some(local) = analysis
             .locals
             .iter()
             .find(|local| local.function == function.name && local.name == name)
-        {
-            return Some((local.ty.clone(), local.ref_kind));
-        }
+    {
+        return Some((local.ty.clone(), local.ref_kind));
     }
 
     syntactic_locals_at_offset(source, offset)
@@ -4001,10 +3997,10 @@ fn local_nbt_origin_at_offset(
         if let Some(origin) = local.nbt_origin {
             return Some(origin);
         }
-        if let Some(ty) = local.ty {
-            if let Some(origin) = nbt_origin_for_type(&ty) {
-                return Some(origin);
-            }
+        if let Some(ty) = local.ty
+            && let Some(origin) = nbt_origin_for_type(&ty)
+        {
+            return Some(origin);
         }
     }
 
@@ -4403,14 +4399,13 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
             );
         } else if let Some(local) = parse_for_local(trimmed) {
             upsert_scoped_completion_local(&mut locals, local, indent);
-        } else if let Some(name) = assigned_local_name(trimmed) {
-            if let Some((local, _)) = locals
+        } else if let Some(name) = assigned_local_name(trimmed)
+            && let Some((local, _)) = locals
                 .iter_mut()
                 .rev()
                 .find(|(local, _)| local.name == name)
-            {
-                local.nbt_origin = None;
-            }
+        {
+            local.nbt_origin = None;
         }
 
         if opens_block(trimmed) {
@@ -4745,10 +4740,11 @@ fn diagnostic_to_lsp(
 pub fn range_from_text_range(source: &str, range: TextRange) -> Range {
     let start = range.start.min(source.len());
     let mut end = range.end.min(source.len());
-    if start == end && end < source.len() {
-        if let Some(ch) = source[end..].chars().next() {
-            end += ch.len_utf8();
-        }
+    if start == end
+        && end < source.len()
+        && let Some(ch) = source[end..].chars().next()
+    {
+        end += ch.len_utf8();
     }
     Range {
         start: offset_to_position(source, start),

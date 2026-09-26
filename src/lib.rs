@@ -12,6 +12,7 @@ pub mod minecraft_ids;
 pub mod minecraft_nbt_schema;
 pub mod modules;
 pub mod optimizer;
+pub mod pack_opt;
 pub mod parser;
 pub mod project;
 pub mod types;

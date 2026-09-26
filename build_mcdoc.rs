@@ -120,15 +120,15 @@ struct Metadata {
 
 impl Metadata {
     fn is_active(&self, version: &Version) -> bool {
-        if let Some(since) = &self.since {
-            if version < since {
-                return false;
-            }
+        if let Some(since) = &self.since
+            && version < since
+        {
+            return false;
         }
-        if let Some(until) = &self.until {
-            if version >= until {
-                return false;
-            }
+        if let Some(until) = &self.until
+            && version >= until
+        {
+            return false;
         }
         true
     }
@@ -976,10 +976,10 @@ impl<'a> FileParser<'a> {
         if let Some(absolute) = self.uses.get(raw) {
             return absolute.clone();
         }
-        if let Some((head, tail)) = raw.split_once("::") {
-            if let Some(absolute) = self.uses.get(head) {
-                return format!("{}::{tail}", absolute);
-            }
+        if let Some((head, tail)) = raw.split_once("::")
+            && let Some(absolute) = self.uses.get(head)
+        {
+            return format!("{}::{tail}", absolute);
         }
         if self.module_path == "::" {
             format!("::{raw}")
@@ -1069,17 +1069,13 @@ impl<'a> FileParser<'a> {
     }
 
     fn eat_optional_colon(&mut self) -> bool {
-        matches!(
-            self.next_if(|kind| matches!(kind, TokenKind::OptionalColon)),
-            Some(_)
-        )
+        self.next_if(|kind| matches!(kind, TokenKind::OptionalColon))
+            .is_some()
     }
 
     fn eat_spread(&mut self) -> bool {
-        matches!(
-            self.next_if(|kind| matches!(kind, TokenKind::Spread)),
-            Some(_)
-        )
+        self.next_if(|kind| matches!(kind, TokenKind::Spread))
+            .is_some()
     }
 
     fn next_if(&mut self, predicate: impl FnOnce(&TokenKind) -> bool) -> Option<TokenKind> {
@@ -1382,10 +1378,10 @@ impl SchemaReducer {
         if let Some(absolute) = context.uses.get(raw) {
             return absolute.clone();
         }
-        if let Some((head, tail)) = raw.split_once("::") {
-            if let Some(absolute) = context.uses.get(head) {
-                return format!("{}::{tail}", absolute);
-            }
+        if let Some((head, tail)) = raw.split_once("::")
+            && let Some(absolute) = context.uses.get(head)
+        {
+            return format!("{}::{tail}", absolute);
         }
         if context.module_path == "::" {
             format!("::{raw}")

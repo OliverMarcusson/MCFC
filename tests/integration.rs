@@ -4,6 +4,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mcfc::compiler::{CompileOptions, compile_project, compile_source};
 
+/// These tests check how the backend lowers code, so they read its output
+/// before the whole-pack optimizer rewrites it.
+fn lowering() -> CompileOptions {
+    CompileOptions {
+        optimize_pack: false,
+        ..CompileOptions::default()
+    }
+}
+
 #[test]
 fn compiles_straight_line_program() {
     let source = r#"
@@ -16,7 +25,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(
         result
             .artifacts
@@ -53,7 +62,7 @@ fn main() -> void: # signature comment:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -72,7 +81,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -100,7 +109,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -128,7 +137,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -157,7 +166,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -189,7 +198,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -212,7 +221,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -236,7 +245,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(
         result
             .artifacts
@@ -267,7 +276,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(result.artifacts.files.values().any(|file| {
         file.contains("execute as $(selector) run function mcfc:generated/main__d0__context_as_")
     }));
@@ -329,7 +338,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(result.artifacts.files.values().any(|file| {
         file.contains("execute at $(selector) run function mcfc:generated/main__d0__context_at_")
     }));
@@ -362,7 +371,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -392,7 +401,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -429,7 +438,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -460,7 +469,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -493,7 +502,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -523,7 +532,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -558,7 +567,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let setup = result
         .artifacts
         .files
@@ -640,7 +649,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -664,7 +673,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let setup = result
         .artifacts
         .files
@@ -716,7 +725,7 @@ fn main() -> void:
     mcf "say $(mob_title)"
     return
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("typed state compiles");
+    let result = compile_source(source, &lowering()).expect("typed state compiles");
     let generated = result
         .artifacts
         .files
@@ -754,9 +763,7 @@ fn main() -> void:
     marker.state.ratio = "bad"
     return
 "#;
-    let error = compile_source(source, &CompileOptions::default())
-        .unwrap_err()
-        .to_string();
+    let error = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(error.contains("state path requires 'string', found 'int'"));
     assert!(error.contains("state path requires 'Profile', found 'string'"));
     assert!(error.contains("state path requires 'float', found 'string'"));
@@ -772,9 +779,7 @@ entity_state info.name: string
 fn main() -> void:
     return
 "#;
-    let error = compile_source(source, &CompileOptions::default())
-        .unwrap_err()
-        .to_string();
+    let error = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(error.contains("overlapping player_state 'profile.title'"));
     assert!(error.contains("overlapping entity_state 'info.name'"));
 }
@@ -790,7 +795,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let setup = result
         .artifacts
         .files
@@ -849,7 +854,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -893,7 +898,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -927,7 +932,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -956,7 +961,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1007,7 +1012,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1045,7 +1050,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1083,7 +1088,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1109,7 +1114,7 @@ fn main() -> void:
         absolute.setblock("minecraft:gold_block")
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1138,7 +1143,7 @@ fn main() -> void:
         player.position.setblock("minecraft:gold_block")
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(
         !result
             .artifacts
@@ -1183,7 +1188,7 @@ fn tick() -> void:
     mc "say second"
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     assert!(
         result
             .artifacts
@@ -1233,7 +1238,7 @@ fn main() -> void:
     mc "say done"
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let setup = result
         .artifacts
         .files
@@ -1264,13 +1269,12 @@ fn main() -> void:
         mc "say shown"
 "#;
 
-    let optimized =
-        compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let optimized = compile_source(source, &lowering()).expect("source should compile");
     let unoptimized = compile_source(
         source,
         &CompileOptions {
             optimize: false,
-            ..CompileOptions::default()
+            ..lowering()
         },
     )
     .expect("source should compile");
@@ -1306,7 +1310,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let generated_files: Vec<_> = result
         .artifacts
         .files
@@ -1333,7 +1337,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let generated_files: Vec<_> = result.artifacts.files.keys().cloned().collect();
     assert!(generated_files.iter().any(|path| path.contains("if_else")));
     assert!(generated_files.iter().any(|path| path.contains("for_cond")));
@@ -1358,7 +1362,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -1381,7 +1385,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1404,7 +1408,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let joined = result
         .artifacts
         .files
@@ -1432,7 +1436,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -1463,7 +1467,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     assert!(files.values().any(|file| {
         file.contains("data remove storage mcfc:runtime frames.d0.main.values[$(index)]")
@@ -1485,7 +1489,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files: Vec<_> = result.artifacts.files.values().cloned().collect();
     assert!(files.iter().any(|file| file.contains("for_each_cond")));
     assert!(files.iter().any(|file| file.contains("for_each_step")));
@@ -1509,7 +1513,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -1538,7 +1542,7 @@ fn main() -> void:
     let found = probe({"a": item("minecraft:stone").as_nbt()}, "a", 0)
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     assert!(
         files
@@ -1570,7 +1574,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -1600,8 +1604,7 @@ fn main() -> void:
     let name = mode_name(mode)
     return
 "#;
-    let result =
-        compile_source(source, &CompileOptions::default()).expect("enum switch should compile");
+    let result = compile_source(source, &lowering()).expect("enum switch should compile");
     let files = result.artifacts.files;
     assert!(files.values().any(|file| file.contains("say survival")));
     assert!(files.values().any(|file| file.contains("say creative")));
@@ -1626,9 +1629,7 @@ fn main() -> void:
         case Mode.SURVIVAL:
             mc "say duplicate"
 "#;
-    let error = compile_source(source, &CompileOptions::default())
-        .unwrap_err()
-        .to_string();
+    let error = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(error.contains("duplicate switch case"));
     assert!(error.contains("non-exhaustive switch"));
     assert!(error.contains("CREATIVE"));
@@ -1655,7 +1656,7 @@ fn main() -> void:
             mc "say stop"
             mc "say waiting"
 "#;
-    let files = compile_source(source, &CompileOptions::default())
+    let files = compile_source(source, &lowering())
         .expect("switch should compile")
         .artifacts
         .files;
@@ -1692,7 +1693,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -1714,7 +1715,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("missing field 'Action.duration'"));
     assert!(rendered.contains("field 'Action.action' expects 'string', found 'int'"));
@@ -1730,7 +1731,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
@@ -1760,7 +1761,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("empty array literals require type context"));
     assert!(rendered.contains("array literals must contain values of one type"));
@@ -1789,7 +1790,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -1817,7 +1818,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("'break' may only appear inside a loop"));
     assert!(rendered.contains("'continue' may only appear inside a loop"));
@@ -1839,7 +1840,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("match value must have type 'string'"));
     assert!(rendered.contains("duplicate match arm 'a'"));
@@ -1855,7 +1856,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("single(selector(...)) requires no limit or 'limit=1'"));
     assert!(rendered.contains(
@@ -1874,7 +1875,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', 'player.inventory[index]', 'player.hotbar[index]', or an equipment namespace such as 'mainhand'"));
     assert!(rendered.contains("player.nbt.* is read-only"));
@@ -1891,7 +1892,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("undeclared entity.state.* supports only 'int' and 'bool' values"));
 }
@@ -1912,7 +1913,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(
         rendered.contains(
@@ -1939,7 +1940,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -1957,7 +1958,7 @@ fn b(x: int) -> int:
     return a(x)
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(error.to_string().contains("recursion is not supported"));
 }
 
@@ -1976,7 +1977,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("undefined variable 'missing'"));
     assert!(rendered.contains("undefined variable 'inner'"));
@@ -2016,7 +2017,7 @@ fn main() -> void:
     return
 "#;
 
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = result.artifacts.files;
     assert!(files.values().any(|file| file.contains("$(p1)")));
     assert!(
@@ -2051,7 +2052,7 @@ fn main() -> void:
     return
 "#;
 
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
     assert!(rendered.contains("as context block requires an 'entity_set' or 'entity_ref' anchor"));
     assert!(rendered.contains("at context block requires an 'entity_set' or 'entity_ref' anchor"));
@@ -2068,7 +2069,7 @@ fn old() -> void:
     return
 "#;
 
-    let book_error = compile_source(book_source, &CompileOptions::default()).unwrap_err();
+    let book_error = compile_source(book_source, &lowering()).unwrap_err();
     assert!(
         book_error
             .to_string()
@@ -2082,7 +2083,7 @@ fn main() -> void:
     return
 "#;
 
-    let legacy_error = compile_source(legacy_source, &CompileOptions::default()).unwrap_err();
+    let legacy_error = compile_source(legacy_source, &lowering()).unwrap_err();
     assert!(legacy_error.to_string().contains("target.tellraw(message)"));
 }
 
@@ -2403,7 +2404,7 @@ pub fn create() -> void:
         &out,
         &CompileOptions {
             clean: true,
-            ..CompileOptions::default()
+            ..lowering()
         },
     )
     .expect("project should compile");
@@ -2528,7 +2529,7 @@ fn project_errors_report_the_original_file_and_line() {
     let error = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
-        &CompileOptions::default(),
+        &lowering(),
     )
     .expect_err("root function used without 'use' should fail");
 
@@ -2578,7 +2579,7 @@ pub fn reset(p: Points) -> void:
 "#,
     )
     .unwrap();
-    let options = CompileOptions::default();
+    let options = lowering();
     let result = compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
         .expect("modules should resolve");
     let names: Vec<_> = result
@@ -2626,7 +2627,7 @@ fn unused(x: int) -> int:
     let result = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
-        &CompileOptions::default(),
+        &lowering(),
     )
     .expect("std should resolve");
     let mut names: Vec<_> = result
@@ -2642,7 +2643,7 @@ fn unused(x: int) -> int:
     let error = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
-        &CompileOptions::default(),
+        &lowering(),
     )
     .expect_err("std is reserved");
     assert!(error.contains("'std' is reserved"), "{error}");
@@ -2675,7 +2676,7 @@ fn mcfd_http_options() -> CompileOptions {
                 ..Default::default()
             },
         }),
-        ..CompileOptions::default()
+        ..lowering()
     }
 }
 
@@ -2817,7 +2818,7 @@ fn main() -> void:
 #[test]
 fn non_rpc_load_entry_is_not_guarded() {
     let source = "fn main() -> void:\n    mc \"say hi\"\n";
-    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    let result = compile_source(source, &lowering()).expect("should compile");
     let entry = result
         .artifacts
         .files
@@ -2833,7 +2834,7 @@ fn main() -> void:
     let r = http.get("https://api.example.com/data")
 "#;
     // No helper configured, so the http module is not enabled.
-    let result = compile_source(source, &CompileOptions::default());
+    let result = compile_source(source, &lowering());
     assert!(
         result.is_err(),
         "unconfigured host module should be rejected"
@@ -2863,7 +2864,7 @@ fn main() -> void:
     let c = 7 / 2
     let d = -8 / 2
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -2890,7 +2891,7 @@ fn main() -> void:
     if y < x:
         mc "say smaller"
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -2916,7 +2917,7 @@ fn floats_reject_mixing_with_ints() {
 fn main() -> void:
     let x = 1.5 + 2
 "#;
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(error.to_string().contains("cannot mix 'int' and 'float'"));
 }
 
@@ -2931,7 +2932,7 @@ fn main() -> void:
     let d = x % 4
     let f = 5.5 % 2.0
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -2961,7 +2962,7 @@ fn main() -> void:
     let parsed = "17".parse_int()
     let joined = "a" + "b"
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = &result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -3008,7 +3009,7 @@ fn main() -> void:
     xs.reverse()
     xs.clear()
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = &result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -3043,7 +3044,7 @@ fn main() -> void:
     let xs = [1, 2]
     let has = xs.contains("a")
 "#;
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
@@ -3058,7 +3059,7 @@ fn main() -> void:
     let s = "hi"
     s = s + "!"
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let main = result
         .artifacts
         .files
@@ -3101,7 +3102,7 @@ fn main() -> void:
     let result = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
-        &CompileOptions::default(),
+        &lowering(),
     )
     .expect("std should compile");
     let mut names: Vec<_> = result
@@ -3141,7 +3142,7 @@ fn main() -> void:
     let names = ["b", "a"]
     names.sort()
 "#;
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
@@ -3178,7 +3179,7 @@ fn main() -> void:
     fs.sort()
     let t = total(fs)
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("generics compile");
+    let result = compile_source(source, &lowering()).expect("generics compile");
     let mut names: Vec<_> = result
         .typed_program
         .functions
@@ -3218,9 +3219,7 @@ fn main() -> void:
     let a = same(1, "x")
     let b = make()
 "#;
-    let error = compile_source(source, &CompileOptions::default())
-        .unwrap_err()
-        .to_string();
+    let error = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(
         error.contains("arguments for 'same' give its type parameters different types"),
         "{error}"
@@ -3238,7 +3237,7 @@ fn main() -> void:
     let end = 8
     let span = end + 1
 "#;
-    compile_source(source, &CompileOptions::default()).expect("`end` should be a normal name");
+    compile_source(source, &lowering()).expect("`end` should be a normal name");
 }
 
 #[test]
@@ -3254,7 +3253,7 @@ fn main() -> void:
     let w = world_time()
     let b = border_size()
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("reads should compile");
+    let result = compile_source(source, &lowering()).expect("reads should compile");
     let files = &result.artifacts.files;
     let main = files
         .get("data/mcfc/function/generated/main__d0__entry.mcfunction")
@@ -3283,7 +3282,7 @@ fn main() -> void:
     let pig = single(selector("@e[type=minecraft:pig,limit=1]"))
     let food = pig.food()
 "#;
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
@@ -3298,7 +3297,7 @@ fn main() -> void:
     let half = 0.5
     let text = "v=" + half.to_string()
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("source should compile");
+    let result = compile_source(source, &lowering()).expect("source should compile");
     let files = &result.artifacts.files;
     let helper = files
         .get("data/mcfc/function/generated/float_text.mcfunction")
@@ -3334,7 +3333,7 @@ fn main() -> void:
     let x = wait()
     mcf "say after $(x)"
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    let result = compile_source(source, &lowering()).expect("should compile");
     let main = generated(&result, "main__d0__entry");
     assert!(!main.contains("say after"), "the rest must wait:\n{main}");
     assert!(
@@ -3371,7 +3370,7 @@ fn main() -> void:
     if wait() > 3:
         mc "say big"
 "#;
-    let error = compile_source(source, &CompileOptions::default()).unwrap_err();
+    let error = compile_source(source, &lowering()).unwrap_err();
     assert!(error.to_string().contains("'wait' can pause"), "{error}");
 }
 
@@ -3383,7 +3382,7 @@ fn main() -> void:
     xs.sort()
     mc "say sorted"
 "#;
-    let result = compile_source(source, &CompileOptions::default()).expect("should compile");
+    let result = compile_source(source, &lowering()).expect("should compile");
     assert!(generated(&result, "sort_slice").contains("#sort_budget mcfc 1000"));
     let tick = result
         .artifacts

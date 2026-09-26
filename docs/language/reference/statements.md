@@ -13,12 +13,15 @@ Statements perform work, control flow, or introduce declarations. MCFC uses `:` 
 | [`event name:`](./statements/event) | Declare an event handler. |
 | [`command name:`](./statements/command) | Declare a command handler. |
 | [`task name every_ticks(n):`](./statements/task) | Declare a scheduled task. |
-| [`player_state name: type = "Display"`](./statements/player-state) | Declare scoreboard-backed player state. |
+| [`player_state name: type = "Display"`](./statements/player-state) | Declare typed player state. |
+| [`entity_state name: type`](./statements/entity-state) | Declare typed state for entities. |
 | [`struct Name:`](./statements/struct) | Declare a named struct type with indented fields. |
+| [`enum Name:`](./statements/enum) | Declare a named set of constants. |
 | [`let name = expr`](./statements/let) | Create a local binding inferred from the initializer. |
 | [`name = expr`](./statements/assignment) | Assign a new value to an existing local or writable path. |
 | [`if condition:` / `else:`](./statements/if) | Branch on a `bool` expression. |
 | [`match value:`](./statements/match) | Branch on string arms and an optional `else` arm. |
+| [`switch value:`](./statements/switch) | Branch on enum, integer, or string cases with indented bodies. |
 | [`while condition:`](./statements/while) | Repeat while a `bool` expression is true. |
 | [`for name in start..end:`](./statements/for-range) | Iterate an integer range. |
 | [`for name in start..=end:`](./statements/for-range) | Iterate an inclusive integer range. |
@@ -38,7 +41,7 @@ Only function calls may be used as bare expression statements. For example, `deb
 
 Statements lower into generated `.mcfunction` files. Straight-line statements become command lines in the current generated function; nested blocks usually become generated helper functions guarded by scoreboard state.
 
-- `if`, `match`, `while`, and `for` use generated scoreboard guards and `execute if/unless score ... run function ...`.
+- `if`, `match`, `switch`, `while`, and `for` use generated scoreboard guards and `execute if/unless score ... run function ...`.
 - `break`, `continue`, and `return` set generated control slots that later commands check before continuing.
 - `async`, `sleep`, and host calls split code into continuation functions so the current execution path can pause or branch.
 - `as:` and `at:` wrap the generated body call with `execute as ...` or `execute at ...`.
@@ -57,6 +60,8 @@ struct Quest:
 fn describe(quest: Quest) -> void:
     debug(quest.name)
 ```
+
+Enums declare a fixed set of constants. A `switch` can branch on an enum value with a body for each constant; see [`enum`](./statements/enum) and [`switch`](./statements/switch).
 
 ## Locals And Assignment
 
@@ -96,6 +101,8 @@ fn handle(action: string) -> void:
         "pathfind" => debug("move")
         else => debug("idle")
 ```
+
+Use [`switch`](./statements/switch) for enum, integer, or string cases with multi-statement bodies.
 
 ## Loops
 

@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -37,6 +38,39 @@ public final class McfdAgent {
         install("dynamic", args, instance);
     }
 
+    static final String HOOKS_PROPERTY = "mcfd.hooks";
+
+    /**
+     * Emit `((Function) System.getProperties().get("mcfd.hooks")).apply(new
+     * Object[] {kind, event, source, payload})` as a boolean on the stack.
+     * `event` may be null, and a negative local pushes null.
+     */
+    static void emitDispatch(MethodVisitor mv, String kind, String event, int sourceLocal, int payloadLocal) {
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+        mv.visitLdcInsn(HOOKS_PROPERTY);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/Properties", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "java/util/function/Function");
+        mv.visitInsn(Opcodes.ICONST_4);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        Object[] values = {kind, event, sourceLocal, payloadLocal};
+        for (int index = 0; index < values.length; index++) {
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitInsn(Opcodes.ICONST_0 + index);
+            Object value = values[index];
+            if (value instanceof Integer) {
+                mv.visitVarInsn(Opcodes.ALOAD, (Integer) value);
+            } else if (value == null) {
+                mv.visitInsn(Opcodes.ACONST_NULL);
+            } else {
+                mv.visitLdcInsn(value);
+            }
+            mv.visitInsn(Opcodes.AASTORE);
+        }
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Boolean");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false);
+    }
+
     public static boolean isActive() {
         return instrumentation != null;
     }
@@ -49,6 +83,10 @@ public final class McfdAgent {
         instrumentation = instance;
         System.setProperty("mcfd.agent.active", "true");
         McfdHooks.configure(args);
+        // Injected code reaches the hooks through this JDK-typed property, not
+        // by naming McfdHooks: mod loaders such as Fabric's Knot refuse to
+        // load classes from a jar that was attached after startup.
+        System.getProperties().put(HOOKS_PROPERTY, (Function<Object[], Object>) McfdHooks::dispatch);
         MinecraftServerProbe transformer = new MinecraftServerProbe();
         instance.addTransformer(transformer, true);
         for (Class<?> loaded : instance.getAllLoadedClasses()) {
@@ -88,7 +126,8 @@ public final class McfdAgent {
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 SafeClassWriter writer = new SafeClassWriter(reader);
-                EventClassVisitor visitor = new EventClassVisitor(writer, className);
+                EventClassVisitor visitor =
+                        new EventClassVisitor(writer, className, methodsWithThreadCheck(reader));
                 reader.accept(visitor, ClassReader.EXPAND_FRAMES);
                 if (!visitor.hasChanges()) {
                     return null;
@@ -99,6 +138,63 @@ public final class McfdAgent {
             } catch (Throwable error) {
                 System.err.println("[mcfd-agent] failed to transform " + className + ": " + error);
                 return null;
+            }
+        }
+    }
+
+    static final String THREAD_CHECK_OWNER = "net/minecraft/network/protocol/PacketUtils";
+    static final String THREAD_CHECK_NAME = "ensureRunningOnSameThread";
+
+    /**
+     * Methods (name + descriptor) that call `PacketUtils.ensureRunningOnSameThread`.
+     * Vanilla runs such a packet handler on the network thread first, where
+     * that call hands the packet to the server thread and throws; the handler
+     * then runs again on the server thread. Their hooks go after the call so
+     * each packet fires one event, on the server thread.
+     */
+    static Set<String> methodsWithThreadCheck(ClassReader reader) {
+        Set<String> found = new HashSet<>();
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String callee, String calleeDescriptor, boolean isInterface) {
+                        if (THREAD_CHECK_OWNER.equals(owner) && THREAD_CHECK_NAME.equals(callee)) {
+                            found.add(name + descriptor);
+                        }
+                    }
+                };
+            }
+        }, ClassReader.SKIP_FRAMES);
+        return found;
+    }
+
+    /** Injects a hook at method entry, or right after the thread check when there is one. */
+    private abstract static class HookSiteVisitor extends MethodVisitor {
+        private boolean pending;
+
+        HookSiteVisitor(MethodVisitor delegate, boolean afterThreadCheck) {
+            super(Opcodes.ASM9, delegate);
+            this.pending = afterThreadCheck;
+        }
+
+        abstract void inject();
+
+        @Override
+        public void visitCode() {
+            super.visitCode();
+            if (!pending) {
+                inject();
+            }
+        }
+
+        @Override
+        public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+            if (pending && THREAD_CHECK_OWNER.equals(owner) && THREAD_CHECK_NAME.equals(name)) {
+                pending = false;
+                inject();
             }
         }
     }
@@ -116,12 +212,14 @@ public final class McfdAgent {
 
     private static final class EventClassVisitor extends ClassVisitor {
         private final String className;
+        private final Set<String> threadChecked;
         private final List<String> installedHooks = new ArrayList<>();
         private boolean changes;
 
-        EventClassVisitor(ClassVisitor delegate, String className) {
+        EventClassVisitor(ClassVisitor delegate, String className, Set<String> threadChecked) {
             super(Opcodes.ASM9, delegate);
             this.className = className;
+            this.threadChecked = threadChecked;
         }
 
         boolean hasChanges() {
@@ -141,15 +239,16 @@ public final class McfdAgent {
             }
             changes = true;
             installedHooks.add(name + " -> " + hook.event);
+            boolean after = threadChecked.contains(name + descriptor);
             if ("command".equals(hook.event)) {
-                return new CommandMethodVisitor(delegate);
+                return new CommandMethodVisitor(delegate, after);
             }
             if (!hook.cancellable) {
-                return new ObservationMethodVisitor(delegate, hook.event, hook.sourceLocal, hook.payloadLocal);
+                return new ObservationMethodVisitor(delegate, after, hook.event, hook.sourceLocal, hook.payloadLocal);
             }
             boolean returnsBoolean = "(Lnet/minecraft/core/BlockPos;)Z".equals(descriptor);
             return new CancellationMethodVisitor(
-                    delegate, hook.event, returnsBoolean, hook.sourceLocal, hook.payloadLocal);
+                    delegate, after, hook.event, returnsBoolean, hook.sourceLocal, hook.payloadLocal);
         }
 
         private static EventHook eventFor(String owner, String name, String descriptor) {
@@ -238,38 +337,35 @@ public final class McfdAgent {
     }
 
     /** A real MCFC root command is consumed only when the hook reports it handled. */
-    private static final class CommandMethodVisitor extends MethodVisitor {
-        CommandMethodVisitor(MethodVisitor delegate) {
-            super(Opcodes.ASM9, delegate);
+    private static final class CommandMethodVisitor extends HookSiteVisitor {
+        CommandMethodVisitor(MethodVisitor delegate, boolean afterThreadCheck) {
+            super(delegate, afterThreadCheck);
         }
 
         @Override
-        public void visitCode() {
-            super.visitCode();
+        void inject() {
             Label continueVanilla = new Label();
-            visitVarInsn(Opcodes.ALOAD, 0);
-            visitVarInsn(Opcodes.ALOAD, 1);
-            visitMethodInsn(
-                    Opcodes.INVOKESTATIC,
-                    "dev/mcfc/agent/McfdHooks",
-                    "handleCommand",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)Z",
-                    false);
+            emitDispatch(this, "command", null, 0, 1);
             visitJumpInsn(Opcodes.IFEQ, continueVanilla);
             visitInsn(Opcodes.RETURN);
             visitLabel(continueVanilla);
         }
     }
 
-    private static final class CancellationMethodVisitor extends MethodVisitor {
+    private static final class CancellationMethodVisitor extends HookSiteVisitor {
         private final String event;
         private final boolean returnsBoolean;
         private final int sourceLocal;
         private final int payloadLocal;
 
         CancellationMethodVisitor(
-                MethodVisitor delegate, String event, boolean returnsBoolean, int sourceLocal, int payloadLocal) {
-            super(Opcodes.ASM9, delegate);
+                MethodVisitor delegate,
+                boolean afterThreadCheck,
+                String event,
+                boolean returnsBoolean,
+                int sourceLocal,
+                int payloadLocal) {
+            super(delegate, afterThreadCheck);
             this.event = event;
             this.returnsBoolean = returnsBoolean;
             this.sourceLocal = sourceLocal;
@@ -277,18 +373,9 @@ public final class McfdAgent {
         }
 
         @Override
-        public void visitCode() {
-            super.visitCode();
+        void inject() {
             Label continueVanilla = new Label();
-            visitLdcInsn(event);
-            visitVarInsn(Opcodes.ALOAD, sourceLocal);
-            visitVarInsn(Opcodes.ALOAD, payloadLocal);
-            visitMethodInsn(
-                    Opcodes.INVOKESTATIC,
-                    "dev/mcfc/agent/McfdHooks",
-                    "before",
-                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;)Z",
-                    false);
+            emitDispatch(this, "before", event, sourceLocal, payloadLocal);
             visitJumpInsn(Opcodes.IFEQ, continueVanilla);
             if (returnsBoolean) {
                 visitInsn(Opcodes.ICONST_0);
@@ -301,30 +388,23 @@ public final class McfdAgent {
     }
 
     /** Entry hook for lifecycle/authoritative events that must never be cancelled. */
-    private static final class ObservationMethodVisitor extends MethodVisitor {
+    private static final class ObservationMethodVisitor extends HookSiteVisitor {
         private final String event;
         private final int sourceLocal;
         private final int payloadLocal;
 
-        ObservationMethodVisitor(MethodVisitor delegate, String event, int sourceLocal, int payloadLocal) {
-            super(Opcodes.ASM9, delegate);
+        ObservationMethodVisitor(
+                MethodVisitor delegate, boolean afterThreadCheck, String event, int sourceLocal, int payloadLocal) {
+            super(delegate, afterThreadCheck);
             this.event = event;
             this.sourceLocal = sourceLocal;
             this.payloadLocal = payloadLocal;
         }
 
         @Override
-        public void visitCode() {
-            super.visitCode();
-            visitLdcInsn(event);
-            visitVarInsn(Opcodes.ALOAD, sourceLocal);
-            visitVarInsn(Opcodes.ALOAD, payloadLocal);
-            visitMethodInsn(
-                    Opcodes.INVOKESTATIC,
-                    "dev/mcfc/agent/McfdHooks",
-                    "observe",
-                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;)V",
-                    false);
+        void inject() {
+            emitDispatch(this, "observe", event, sourceLocal, payloadLocal);
+            visitInsn(Opcodes.POP);
         }
     }
 }

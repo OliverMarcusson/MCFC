@@ -688,6 +688,98 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_typed_persistent_player_and_entity_state() {
+    let source = r#"
+struct Profile:
+    title: string
+    level: int
+player_state title: string = "Title"
+player_state ratio: float = "Ratio"
+player_state profile: Profile = "Profile"
+entity_state title: string
+entity_state ratio: float
+entity_state profile: Profile
+fn main() -> void:
+    let player = player_ref(single(selector("@p")))
+    let marker = single(selector("@e[type=minecraft:marker,limit=1]"))
+    player.state.title = "hero"
+    player.state.ratio = 1.5
+    player.state.profile = Profile{title: "knight", level: 5}
+    player.state.profile.level = 6
+    let title = player.state.title
+    let ratio = player.state.ratio
+    let level = player.state.profile.level
+    marker.state.title = title
+    marker.state.ratio = ratio
+    marker.state.profile = Profile{title: "mob", level: level}
+    let mob_title = marker.state.profile.title
+    mcf "say $(mob_title)"
+    return
+"#;
+    let result = compile_source(source, &CompileOptions::default()).expect("typed state compiles");
+    let generated = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let setup = result
+        .artifacts
+        .files
+        .get("data/mcfc/function/generated/setup.mcfunction")
+        .unwrap();
+    assert!(!setup.contains("mcfs_title"));
+    assert!(!setup.contains("mcfe_title"));
+    assert!(generated.contains("UUID[0]"));
+    assert!(generated.contains("UUID[3]"));
+    assert!(generated.contains("mcfc:state players.\"$(u0)_$(u1)_$(u2)_$(u3)\".title"));
+    assert!(generated.contains("mcfc:state entities.\"$(u0)_$(u1)_$(u2)_$(u3)\".profile.title"));
+    assert!(!setup.contains("mcfc:state"));
+}
+
+#[test]
+fn rejects_wrong_typed_state_assignments() {
+    let source = r#"
+struct Profile:
+    title: string
+player_state title: string = "Title"
+player_state profile: Profile = "Profile"
+entity_state ratio: float
+fn main() -> void:
+    let player = player_ref(single(selector("@p")))
+    let marker = single(selector("@e[type=minecraft:marker,limit=1]"))
+    player.state.title = 3
+    player.state.profile = "bad"
+    marker.state.ratio = "bad"
+    return
+"#;
+    let error = compile_source(source, &CompileOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("state path requires 'string', found 'int'"));
+    assert!(error.contains("state path requires 'Profile', found 'string'"));
+    assert!(error.contains("state path requires 'float', found 'string'"));
+}
+
+#[test]
+fn rejects_overlapping_state_declarations() {
+    let source = r#"
+player_state profile: string = "Profile"
+player_state profile.title: string = "Title"
+entity_state info: string
+entity_state info.name: string
+fn main() -> void:
+    return
+"#;
+    let error = compile_source(source, &CompileOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("overlapping player_state 'profile.title'"));
+    assert!(error.contains("overlapping entity_state 'info.name'"));
+}
+
+#[test]
 fn compiles_generic_entity_bool_state_conditions() {
     let source = r#"
 fn main() -> void:
@@ -1490,6 +1582,100 @@ fn main() -> void:
 }
 
 #[test]
+fn compiles_enum_switch_with_multistatement_cases() {
+    let source = r#"
+enum Mode:
+    SURVIVAL
+    CREATIVE
+fn mode_name(mode: Mode) -> string:
+    switch mode:
+        case Mode.SURVIVAL:
+            mc "say survival"
+            return "survival"
+        case Mode.CREATIVE:
+            mc "say creative"
+            return "creative"
+fn main() -> void:
+    let mode = Mode.CREATIVE
+    let name = mode_name(mode)
+    return
+"#;
+    let result =
+        compile_source(source, &CompileOptions::default()).expect("enum switch should compile");
+    let files = result.artifacts.files;
+    assert!(files.values().any(|file| file.contains("say survival")));
+    assert!(files.values().any(|file| file.contains("say creative")));
+    assert!(
+        files
+            .values()
+            .any(|file| file.contains("scoreboard players set") && file.contains("mcfc 1"))
+    );
+}
+
+#[test]
+fn rejects_non_exhaustive_and_duplicate_enum_switch_cases() {
+    let source = r#"
+enum Mode:
+    SURVIVAL
+    CREATIVE
+fn main() -> void:
+    let mode = Mode.SURVIVAL
+    switch mode:
+        case Mode.SURVIVAL:
+            mc "say first"
+        case Mode.SURVIVAL:
+            mc "say duplicate"
+"#;
+    let error = compile_source(source, &CompileOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("duplicate switch case"));
+    assert!(error.contains("non-exhaustive switch"));
+    assert!(error.contains("CREATIVE"));
+}
+
+#[test]
+fn compiles_int_and_string_switch_with_default() {
+    let source = r#"
+fn main() -> void:
+    let level = 2
+    switch level:
+        case 1:
+            mc "say one"
+        case 2:
+            mc "say two"
+            mc "say again"
+        default:
+            mc "say other"
+    let action = "start"
+    switch action:
+        case "start":
+            mc "say go"
+        default:
+            mc "say stop"
+            mc "say waiting"
+"#;
+    let files = compile_source(source, &CompileOptions::default())
+        .expect("switch should compile")
+        .artifacts
+        .files;
+    for command in [
+        "say one",
+        "say two",
+        "say again",
+        "say other",
+        "say go",
+        "say stop",
+        "say waiting",
+    ] {
+        assert!(
+            files.values().any(|file| file.contains(command)),
+            "missing {command}"
+        );
+    }
+}
+
+#[test]
 fn compiles_struct_literals_and_field_access() {
     let source = r#"
 struct Action:
@@ -1692,7 +1878,7 @@ fn main() -> void:
     let rendered = error.to_string();
     assert!(rendered.contains("player path access must use 'player.nbt', 'player.state', 'player.tags', 'player.team', 'player.position', 'player.inventory[index]', 'player.hotbar[index]', or an equipment namespace such as 'mainhand'"));
     assert!(rendered.contains("player.nbt.* is read-only"));
-    assert!(rendered.contains("player.state.* currently supports only 'int' and 'bool' values"));
+    assert!(rendered.contains("undeclared player.state.* supports only 'int' and 'bool' values"));
 }
 
 #[test]
@@ -1707,7 +1893,7 @@ fn main() -> void:
 
     let error = compile_source(source, &CompileOptions::default()).unwrap_err();
     let rendered = error.to_string();
-    assert!(rendered.contains("entity.state.* currently supports only 'int' and 'bool' values"));
+    assert!(rendered.contains("undeclared entity.state.* supports only 'int' and 'bool' values"));
 }
 
 #[test]

@@ -1117,6 +1117,7 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
     match name {
         "selector" => Some("selector(value: string) -> entity_set".to_string()),
         "single" => Some("single(value: entity_set) -> entity_ref".to_string()),
+        "find_first" => Some("find_first(value: entity_set) -> Optional<entity_ref>".to_string()),
         "player_ref" => Some("player_ref(entity: entity_ref) -> player_ref".to_string()),
         "entity" => Some("entity(id: string) -> entity_def".to_string()),
         "item" => Some("item(id: string) -> item_def".to_string()),
@@ -1327,6 +1328,24 @@ fn document_symbols_for_analysis(source: &str, analysis: &AnalysisResult) -> Vec
                 .collect()
         })
         .unwrap_or_default();
+    if let Some(program) = analysis.program.as_ref() {
+        symbols.extend(program.enums.iter().map(|enum_def| {
+            let range = range_from_text_range(
+                source,
+                analysis.source_map.to_original_range(enum_def.span.range),
+            );
+            DocumentSymbol {
+                name: enum_def.name.clone(),
+                detail: Some(enum_signature(&enum_def.name, &enum_def.variants)),
+                kind: tower_lsp::lsp_types::SymbolKind::ENUM,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            }
+        }));
+    }
     symbols.extend(
         analysis
             .functions
@@ -1377,6 +1396,24 @@ fn project_document_symbols(
                 deprecated: None,
                 range: range_from_text_range(local_text, range),
                 selection_range: range_from_text_range(local_text, range),
+                children: None,
+            });
+        }
+        for enum_def in &program.enums {
+            let Some(range) = segment
+                .merged_to_local_range(analysis.source_map.to_original_range(enum_def.span.range))
+            else {
+                continue;
+            };
+            let range = range_from_text_range(local_text, range);
+            symbols.push(DocumentSymbol {
+                name: enum_def.name.clone(),
+                detail: Some(enum_signature(&enum_def.name, &enum_def.variants)),
+                kind: tower_lsp::lsp_types::SymbolKind::ENUM,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
                 children: None,
             });
         }
@@ -1460,7 +1497,12 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
         .map(|program| &program.struct_defs)
     {
         if let Some(def) = struct_defs.get(word) {
-            return Some(format!("```mcfc\n{}\n```", struct_signature(word, def)));
+            let signature = if let Some(variants) = &def.enum_variants {
+                enum_signature(word, variants)
+            } else {
+                struct_signature(word, def)
+            };
+            return Some(format!("```mcfc\n{}\n```", signature));
         }
     }
 
@@ -1492,10 +1534,15 @@ fn hover_contents(analysis: &AnalysisResult, offset: usize, word: &str) -> Optio
 fn builtin_hover(word: &str) -> Option<&'static str> {
     match word {
         "struct" => Some("```mcfc\nstruct Name:\n    field: Type\n```"),
+        "enum" => Some("```mcfc\nenum Mode:\n    IDLE\n    RUNNING\n```"),
         "player_state" => Some("```mcfc\nplayer_state money: int = \"Money\"\n```"),
-        "match" => Some(
-            "```mcfc\nmatch value:\n    \"pattern\" =>\n        ...\n    else =>\n        ...\nend\n```",
+        "entity_state" => Some("```mcfc\nentity_state title: string\n```"),
+        "match" => Some("```mcfc\nmatch value:\n    \"pattern\" => ...\n    else => ...\n```"),
+        "switch" => Some(
+            "```mcfc\nswitch mode:\n    case Mode.IDLE:\n        ...\n    default:\n        ...\n```",
         ),
+        "case" => Some("A `switch` arm that matches an enum constant or integer value."),
+        "default" => Some("The fallback arm of a `switch` statement."),
         "mcf" => Some("```mcfc\nmcf \"say $(expr)\"\n```"),
         "async" => Some("```mcfc\nasync:\n    ...\n```"),
         "sleep" => Some("```mcfc\nsleep(seconds: int) -> void\n```"),
@@ -1505,6 +1552,12 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         ),
         "selector" => Some("```mcfc\nselector(value: string) -> entity_set\n```"),
         "single" => Some("```mcfc\nsingle(value: entity_set) -> entity_ref\n```"),
+        "find_first" => Some("```mcfc\nfind_first(value: entity_set) -> Optional<entity_ref>\n```"),
+        "isPresent" => Some("```mcfc\nOptional<T>.isPresent() -> bool\n```"),
+        "orElse" => Some("```mcfc\nOptional<T>.orElse(fallback: T) -> T\n```"),
+        "get" => Some(
+            "```mcfc\narray<T>.get(index: int) -> Optional<T>\ndict<T>.get(key: string) -> Optional<T>\n```",
+        ),
         "exists" => Some("```mcfc\nexists(value: entity_ref) -> bool\n```"),
         "has_data" => Some("```mcfc\nhas_data(value: storage_path) -> bool\n```"),
         "entity" => Some("```mcfc\nentity(id: string) -> entity_def\n```"),
@@ -1629,6 +1682,26 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
     } else {
         let mut items = expression_completion_items();
         items.extend(struct_type_items(analysis));
+        for (label, detail, insert_text) in [
+            (
+                "switch ...",
+                "Dispatch on an enum or integer value",
+                "switch ${1:value}:\n\tcase ${2:Mode.IDLE}:\n\t\t$0\n\tdefault:\n\t\t",
+            ),
+            (
+                "case ...",
+                "Match a switch value",
+                "case ${1:Mode.IDLE}:\n\t$0",
+            ),
+            ("default:", "Fallback switch arm", "default:\n\t$0"),
+        ] {
+            items.push(snippet_item(
+                label,
+                CompletionItemKind::KEYWORD,
+                detail,
+                insert_text,
+            ));
+        }
         items
     };
 
@@ -1690,7 +1763,16 @@ fn is_declaration_completion_position(source: &str, offset: usize) -> bool {
     !before_cursor.starts_with(char::is_whitespace)
         && matches!(
             before_cursor.trim_start().split_whitespace().next(),
-            None | Some("fn" | "struct" | "player_state" | "data" | "event" | "command" | "task")
+            None | Some(
+                "fn" | "struct"
+                    | "enum"
+                    | "player_state"
+                    | "entity_state"
+                    | "data"
+                    | "event"
+                    | "command"
+                    | "task"
+            )
         )
 }
 
@@ -2164,6 +2246,9 @@ fn static_completion_items(
                 "remove(${1:index})",
             ),
             ("has", "dict<T>.has(key: string) -> bool", "has(${1:key})"),
+            ("get", "array<T>.get(index: int) / dict<T>.get(key: string) -> Optional<T>", "get(${1:key})"),
+            ("isPresent", "Optional<T>.isPresent() -> bool", "isPresent()"),
+            ("orElse", "Optional<T>.orElse(fallback: T) -> T", "orElse(${1:fallback})"),
             (
                 "remove",
                 "dict<T>.remove(key: string) -> void",
@@ -2248,11 +2333,16 @@ fn static_completion_items(
     for keyword in [
         "fn",
         "struct",
+        "enum",
         "player_state",
+        "entity_state",
         "let",
         "return",
         "if",
         "match",
+        "switch",
+        "case",
+        "default",
         "else",
         "while",
         "for",
@@ -2285,6 +2375,7 @@ fn static_completion_items(
         ("string", "string"),
         ("array<>", "array<${1:int}>"),
         ("dict<>", "dict<${1:int}>"),
+        ("Optional<>", "Optional<${1:int}>"),
         ("entity_set", "entity_set"),
         ("entity_ref", "entity_ref"),
         ("player_ref", "player_ref"),
@@ -2343,9 +2434,19 @@ fn static_completion_items(
             "struct ${1:Name}:\n\t${2:field}: ${3:int}",
         ),
         (
+            "enum ...",
+            "Define named enum constants",
+            "enum ${1:Mode}:\n\t${2:IDLE}\n\t${3:RUNNING}",
+        ),
+        (
             "match ...",
             "Dispatch on a string value",
             "match ${1:value}:\n\t\"${2:pattern}\" => $0\n\telse => ",
+        ),
+        (
+            "switch ...",
+            "Dispatch on an enum or integer value",
+            "switch ${1:value}:\n\tcase ${2:Mode.IDLE}:\n\t\t$0\n\tdefault:\n\t\t",
         ),
         (
             "player_state",
@@ -2353,9 +2454,19 @@ fn static_completion_items(
             "player_state ${1:money}: ${2:int} = ${3:\"Money\"}",
         ),
         (
+            "entity_state",
+            "Declare typed persistent entity state",
+            "entity_state ${1:title}: ${2:string}",
+        ),
+        (
             "selector",
             "selector(value: string) -> entity_set",
             "selector(${1:\"@e\"})",
+        ),
+        (
+            "find_first",
+            "find_first(value: entity_set) -> Optional<entity_ref>",
+            "find_first(${1:selector(\"@e\")})",
         ),
         (
             "entity",
@@ -2692,6 +2803,24 @@ fn member_completion_items(
     offset: usize,
     chain: &[String],
 ) -> Vec<CompletionItem> {
+    if let [name] = chain {
+        if let Some(variants) = analysis
+            .typed_program
+            .as_ref()
+            .and_then(|program| program.struct_defs.get(name))
+            .and_then(|def| def.enum_variants.as_ref())
+        {
+            return variants
+                .iter()
+                .map(|variant| CompletionItem {
+                    label: variant.clone(),
+                    kind: Some(CompletionItemKind::ENUM_MEMBER),
+                    detail: Some(format!("{name}.{variant}")),
+                    ..CompletionItem::default()
+                })
+                .collect();
+        }
+    }
     if let Some(items) = agent_event_member_completion_items(source, analysis, offset, chain) {
         return items;
     }
@@ -2720,6 +2849,7 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::Float) => float_method_items(),
         Some(CompletionReceiver::String) => string_method_items(),
         Some(CompletionReceiver::Dict) => dict_method_items(),
+        Some(CompletionReceiver::Optional) => optional_method_items(),
         Some(CompletionReceiver::GenericEntityRef) => generic_entity_root_items(),
         Some(CompletionReceiver::PlayerEntityRef) => player_entity_root_items(),
         Some(CompletionReceiver::EntityDef) => entity_def_items(),
@@ -2906,6 +3036,11 @@ fn array_method_items() -> Vec<CompletionItem> {
     [
         ("len", "array<T>.len() -> int", "len()"),
         (
+            "get",
+            "array<T>.get(index: int) -> Optional<T>",
+            "get(${1:index})",
+        ),
+        (
             "push",
             "array<T>.push(value: T) -> void",
             "push(${1:value})",
@@ -3002,12 +3137,37 @@ fn float_method_items() -> Vec<CompletionItem> {
 fn dict_method_items() -> Vec<CompletionItem> {
     [
         ("has", "dict<T>.has(key: string) -> bool", "has(${1:key})"),
+        (
+            "get",
+            "dict<T>.get(key: string) -> Optional<T>",
+            "get(${1:key})",
+        ),
         ("keys", "dict<T>.keys() -> array<string>", "keys()"),
         ("len", "dict<T>.len() -> int", "len()"),
         (
             "remove",
             "dict<T>.remove(key: string) -> void",
             "remove(${1:key})",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, detail, insert_text)| {
+        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+    })
+    .collect()
+}
+
+fn optional_method_items() -> Vec<CompletionItem> {
+    [
+        (
+            "isPresent",
+            "Optional<T>.isPresent() -> bool",
+            "isPresent()",
+        ),
+        (
+            "orElse",
+            "Optional<T>.orElse(fallback: T) -> T",
+            "orElse(${1:fallback})",
         ),
     ]
     .into_iter()
@@ -3877,6 +4037,7 @@ enum CompletionReceiver {
     Float,
     String,
     Dict,
+    Optional,
     Struct(String),
     GenericEntityRef,
     PlayerEntityRef,
@@ -4096,6 +4257,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
         Type::Float => Some(CompletionReceiver::Float),
         Type::String => Some(CompletionReceiver::String),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
+        Type::Optional(_) => Some(CompletionReceiver::Optional),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
         Type::EntityRef => Some(if ref_kind == RefKind::Player {
             CompletionReceiver::PlayerEntityRef
@@ -4126,13 +4288,19 @@ fn struct_type_items(analysis: &AnalysisResult) -> Vec<CompletionItem> {
 
     struct_defs
         .iter()
-        .map(|(name, def)| {
-            snippet_item(
+        .map(|(name, def)| match &def.enum_variants {
+            Some(variants) => snippet_item(
+                name,
+                CompletionItemKind::ENUM,
+                &enum_signature(name, variants),
+                name,
+            ),
+            None => snippet_item(
                 name,
                 CompletionItemKind::STRUCT,
                 &struct_signature(name, def),
                 name,
-            )
+            ),
         })
         .collect()
 }
@@ -4167,11 +4335,16 @@ fn struct_signature(name: &str, def: &StructTypeDef) -> String {
         .map(|(field, ty)| format!("    {}: {}", field, ty.as_str()))
         .collect::<Vec<_>>()
         .join("\n");
-    if fields.is_empty() {
-        format!("struct {}:\nend", name)
-    } else {
-        format!("struct {}:\n{}\nend", name, fields)
-    }
+    format!("struct {}:\n{}", name, fields)
+}
+
+fn enum_signature(name: &str, variants: &[String]) -> String {
+    let body = variants
+        .iter()
+        .map(|variant| format!("    {variant}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("enum {name}:\n{body}")
 }
 
 fn struct_signature_from_fields(name: &str, fields: &[(String, Type)]) -> String {
@@ -4180,11 +4353,7 @@ fn struct_signature_from_fields(name: &str, fields: &[(String, Type)]) -> String
         .map(|(field, ty)| format!("    {}: {}", field, ty.as_str()))
         .collect::<Vec<_>>()
         .join("\n");
-    if body.is_empty() {
-        format!("struct {}:\nend", name)
-    } else {
-        format!("struct {}:\n{}\nend", name, body)
-    }
+    format!("struct {}:\n{}", name, body)
 }
 
 fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLocal> {
@@ -4560,6 +4729,9 @@ fn opens_block(line: &str) -> bool {
         || line.starts_with("while ")
         || line.starts_with("for ")
         || line.starts_with("match ")
+        || line.starts_with("switch ")
+        || line.starts_with("case ")
+        || line.starts_with("default:")
         || line.starts_with("as(")
         || line.starts_with("at("))
         && line.contains(':')

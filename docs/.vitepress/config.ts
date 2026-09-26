@@ -97,6 +97,7 @@ export default defineConfig({
               { text: 'string', link: '/language/reference/types/string' },
               { text: 'array<T>', link: '/language/reference/types/array' },
               { text: 'dict<T>', link: '/language/reference/types/dict' },
+              { text: 'Optional<T>', link: '/language/reference/types/optional' },
               { text: 'entity_set', link: '/language/reference/types/entity-set' },
               { text: 'entity_ref', link: '/language/reference/types/entity-ref' },
               { text: 'player_ref', link: '/language/reference/types/player-ref' },
@@ -118,6 +119,7 @@ export default defineConfig({
             items: [
               { text: 'selector', link: '/language/reference/builtins/selector' },
               { text: 'single', link: '/language/reference/builtins/single' },
+              { text: 'find_first', link: '/language/reference/builtins/find-first' },
               { text: 'exists', link: '/language/reference/builtins/exists' },
               { text: 'has_data', link: '/language/reference/builtins/has-data' },
               { text: 'block', link: '/language/reference/builtins/block' },

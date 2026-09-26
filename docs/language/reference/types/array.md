@@ -14,6 +14,7 @@ fn show(values: array<int>) -> void:
 | Method | Returns |
 | --- | --- |
 | `xs.len()` | The number of elements. |
+| `xs.get(index)` | `Optional<T>` containing the element at an `int` index, or absent if the index is missing. |
 | `xs.push(value)` | Adds `value` at the end. |
 | `xs.pop()` | Removes and returns the last element. |
 | `xs.remove(index)` | Removes and returns the element at `index`. |
@@ -27,8 +28,20 @@ fn show(values: array<int>) -> void:
 
 `push`, `pop`, `remove`, `insert`, `clear`, `reverse`, and `sort` change the array, so they need a variable or collection element such as `teams["red"]`, not a function result.
 
+```mcfc
+fn main() -> void:
+    let values = [3, 5]
+    let maybe_value = values.get(2)
+    let value = maybe_value.orElse(0)
+    mcf "say $(value)"
+```
+
+See [`Optional<T>`](./optional) for presence and fallback methods.
+
 ## Under The Hood
 
 `insert`, `clear`, `first`, and `last` are single `data` commands. `contains`, `index_of`, and `reverse` loop over the elements in a generated function that calls itself once per element. Two elements are equal when copying one onto the other changes nothing, so the check works for every element type, including structs.
+
+`get` checks the array's command-storage path and copies an existing element into an Optional storage compound. A dynamic index is read from a scoreboard slot and inserted into a generated command macro.
 
 `sort` is a merge sort. It splits the array into already ascending stretches, then merges them two at a time, only ever reading the first element of each, so it needs no macros. An `array<float>` compares through one `/compute` command per step. Each step moves one element, and a sort does at most 1,000 steps per tick, about 10,000 commands or roughly 10 ms of a 50 ms tick. Small arrays finish right away. Bigger ones pause the function, like `sleep`, and it carries on once the array is sorted: 5,000 random elements take about 3 seconds and 10,000 about 7. Any function that calls one that sorts pauses with it, so call such functions on their own line (see [`sleep`](../builtins/sleep)).

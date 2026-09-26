@@ -476,7 +476,11 @@ fn attach_agent(pid: &str) -> Result<(), String> {
 
 fn attach_agent_pid(pid: u32, options: &str) -> Result<(), String> {
     let (agent, launcher) = agent_jars()?;
-    let java = java_for_attach();
+    let target = running_java_processes()
+        .ok()
+        .and_then(|processes| processes.into_iter().find(|process| process.pid == pid));
+    let java = java_for_attach(target.as_ref())
+        .ok_or("no Java 9+ runtime with the jdk.attach module was found; set MCFD_JAVA")?;
     let launcher_arg = launcher.to_string_lossy().to_string();
     let agent_arg = agent.to_string_lossy().to_string();
     let mut command = Command::new(java);
@@ -681,40 +685,70 @@ fn normalize_windows_path(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn java_for_attach() -> std::ffi::OsString {
+/// Pick the `java.exe` that runs the attach helper. The target JVM's own
+/// runtime comes first, since it matches the game's Java version; Minecraft's
+/// bundled runtimes ship `jdk.attach`. Other candidates count only when their
+/// `release` file lists `jdk.attach`, which rules out Java 8 and bare JREs
+/// (a `JAVA_HOME` pointing at JDK 8 used to break attachment).
+fn java_for_attach(target: Option<&JavaProcess>) -> Option<PathBuf> {
     if let Some(java) = std::env::var_os("MCFD_JAVA") {
-        return java;
+        return Some(PathBuf::from(java));
+    }
+    let mut candidates = Vec::new();
+    if let Some(target) = target.and_then(|process| process_executable(&process.command_line)) {
+        candidates.push(target.with_file_name("java.exe"));
     }
     if let Some(home) = std::env::var_os("JAVA_HOME") {
-        let candidate = PathBuf::from(home).join("bin").join("java.exe");
-        if candidate.is_file() {
-            return candidate.into_os_string();
-        }
+        candidates.push(PathBuf::from(home).join("bin").join("java.exe"));
     }
-    for root in [
+    let mut roots: Vec<PathBuf> = [
         std::env::var_os("ProgramFiles"),
         std::env::var_os("ProgramW6432"),
     ]
     .into_iter()
     .flatten()
-    {
-        for vendor in ["Microsoft", "Java"] {
-            let directory = PathBuf::from(&root).join(vendor);
-            let Ok(entries) = std::fs::read_dir(directory) else {
-                continue;
-            };
-            let mut candidates: Vec<_> = entries
-                .flatten()
-                .map(|entry| entry.path().join("bin").join("java.exe"))
-                .filter(|candidate| candidate.is_file())
-                .collect();
-            candidates.sort();
-            if let Some(candidate) = candidates.pop() {
-                return candidate.into_os_string();
-            }
-        }
+    .flat_map(|root| {
+        ["Microsoft", "Java", "Eclipse Adoptium", "Zulu"]
+            .map(|vendor| PathBuf::from(&root).join(vendor))
+    })
+    .collect();
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        roots.push(PathBuf::from(home).join(".jdks"));
     }
-    "java".into()
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut found: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path().join("bin").join("java.exe"))
+            .collect();
+        // Newest first, so a later JDK wins over an older one from the same vendor.
+        found.sort();
+        found.reverse();
+        candidates.extend(found);
+    }
+    candidates.into_iter().find(|java| has_attach_module(java))
+}
+
+/// True when `java` belongs to a runtime whose `release` file lists `jdk.attach`.
+fn has_attach_module(java: &Path) -> bool {
+    let Some(home) = java.parent().and_then(Path::parent) else {
+        return false;
+    };
+    java.is_file()
+        && std::fs::read_to_string(home.join("release"))
+            .is_ok_and(|release| release.contains("jdk.attach"))
+}
+
+/// The executable at the start of a Windows command line, quoted or not.
+fn process_executable(command_line: &str) -> Option<PathBuf> {
+    let command_line = command_line.trim_start();
+    let path = match command_line.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?,
+        None => command_line.split_whitespace().next()?,
+    };
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 fn agent_jars() -> Result<(PathBuf, PathBuf), String> {
@@ -739,8 +773,10 @@ fn install_task() -> Result<(), String> {
     // `/TR` needs one argument containing a normally quoted executable path.
     // The previous form emitted literal backslashes before each quote (`\"`),
     // which Task Scheduler could not execute for installations under Program
-    // Files.
-    let task = format!("\"{}\" service run", exe.display());
+    // Files. The task runs the hidden-window script, since a visible
+    // console window closes mcfd along with it.
+    let script = write_startup_script(&exe)?;
+    let task = run_entry_command(&script);
     let status = Command::new("schtasks")
         .args([
             "/Create",
@@ -757,7 +793,9 @@ fn install_task() -> Result<(), String> {
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
-        let _ = remove_run_entry();
+        let _ = Command::new("reg")
+            .args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])
+            .status();
         Ok(())
     } else {
         // Some Windows configurations let a standard user install programs but
@@ -787,9 +825,18 @@ fn uninstall_task() -> Result<(), String> {
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "MCFC mcfd";
 
+/// Write the script that starts `mcfd service run` with no console window and
+/// its output appended to `mcfd.log` beside it.
+fn write_startup_script(exe: &Path) -> Result<PathBuf, String> {
+    let state = state_dir()?;
+    let script = state.join("mcfd-startup.vbs");
+    std::fs::write(&script, startup_script_body(exe, &state.join("mcfd.log")))
+        .map_err(|e| e.to_string())?;
+    Ok(script)
+}
+
 fn install_run_entry(exe: &Path) -> Result<(), String> {
-    let script = state_dir()?.join("mcfd-startup.vbs");
-    std::fs::write(&script, startup_script_body(exe)).map_err(|e| e.to_string())?;
+    let script = write_startup_script(exe)?;
     let command = run_entry_command(&script);
     let status = Command::new("reg")
         .args([
@@ -804,12 +851,13 @@ fn install_run_entry(exe: &Path) -> Result<(), String> {
     }
 }
 
-fn startup_script_body(exe: &Path) -> String {
+fn startup_script_body(exe: &Path, log: &Path) -> String {
     format!(
         r#"Set shell = CreateObject("WScript.Shell")
-shell.Run """{}"" service run", 0, False
+shell.Run "cmd /c """"{}"" service run >> ""{}"" 2>&1""", 0, False
 "#,
-        exe.display()
+        exe.display(),
+        log.display()
     )
 }
 
@@ -833,18 +881,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scheduled_task_action_quotes_the_executable_without_backslashes() {
-        let exe = PathBuf::from(r"C:\Program Files\MCFC\mcfd\mcfd.exe");
-        let task = format!("\"{}\" service run", exe.display());
-        assert_eq!(task, r#""C:\Program Files\MCFC\mcfd\mcfd.exe" service run"#);
+    fn finds_the_executable_of_a_jvm_command_line() {
+        assert_eq!(
+            process_executable(r#""C:\Program Files\Java\bin\javaw.exe" -Xmx4G -cp a.jar"#),
+            Some(PathBuf::from(r"C:\Program Files\Java\bin\javaw.exe"))
+        );
+        assert_eq!(
+            process_executable(r"C:\Users\Oliver\java\bin\javaw.exe  -Xms512m"),
+            Some(PathBuf::from(r"C:\Users\Oliver\java\bin\javaw.exe"))
+        );
+        assert_eq!(process_executable(""), None);
+    }
+
+    #[test]
+    fn attach_needs_a_runtime_with_jdk_attach() {
+        let root = std::env::temp_dir().join(format!("mcfd-attach-{}", std::process::id()));
+        for (name, release) in [
+            ("jdk8", r#"JAVA_VERSION="1.8.0""#),
+            ("jdk25", r#"MODULES="java.base jdk.attach""#),
+        ] {
+            let bin = root.join(name).join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("java.exe"), "").unwrap();
+            std::fs::write(root.join(name).join("release"), release).unwrap();
+        }
+        assert!(!has_attach_module(
+            &root.join("jdk8").join("bin").join("java.exe")
+        ));
+        assert!(has_attach_module(
+            &root.join("jdk25").join("bin").join("java.exe")
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn run_entry_uses_a_hidden_wscript_launcher() {
         let exe = PathBuf::from(r"C:\Program Files\MCFC\mcfd\mcfd.exe");
+        let log = PathBuf::from(r"C:\Users\Oliver\AppData\Local\MCFC\mcfd\mcfd.log");
         assert_eq!(
-            startup_script_body(&exe),
-            "Set shell = CreateObject(\"WScript.Shell\")\nshell.Run \"\"\"C:\\Program Files\\MCFC\\mcfd\\mcfd.exe\"\" service run\", 0, False\n"
+            startup_script_body(&exe, &log),
+            concat!(
+                "Set shell = CreateObject(\"WScript.Shell\")\n",
+                r#"shell.Run "cmd /c """"C:\Program Files\MCFC\mcfd\mcfd.exe"" service run >> ""C:\Users\Oliver\AppData\Local\MCFC\mcfd\mcfd.log"" 2>&1""", 0, False"#,
+                "\n"
+            )
         );
 
         let script = PathBuf::from(r"C:\Users\Oliver\AppData\Local\MCFC\mcfd\mcfd-startup.vbs");

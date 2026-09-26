@@ -43,7 +43,7 @@ When the receiver is context-sensitive, MCFC preserves executor and position by 
 | `team` | `string` | Writable team name. |
 | `position` | `block_ref` | Read-only current block position. |
 | `nbt.*` | `nbt` | Entity NBT read/write namespace. |
-| `state.*` | scoreboard-backed values | Player/entity state namespace. |
+| [`state.*`](./statements/player-state) | declared type or `int`/`bool` | Player and [entity](./statements/entity-state) state; numeric state uses scoreboards and declared string, float, or struct state uses persistent command storage. |
 | `mainhand.*` / `offhand.*` | item slot surface | Writable held item namespaces. |
 | `inventory[index]` | `item_slot` | Player inventory slot surface. |
 | `hotbar[index]` | `item_slot` | Player hotbar slot surface. |

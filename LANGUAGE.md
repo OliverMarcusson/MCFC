@@ -5,8 +5,8 @@
 The current language focuses on a compact core:
 
 - functions and typed locals
-- integer, boolean, string, array, dictionary, struct, entity, block, bossbar, and NBT values
-- `if`, `match`, `while`, range `for`, and selector `for`
+- integer, boolean, string, array, dictionary, `Optional<T>`, struct, enum, entity, block, bossbar, and NBT values
+- `if`, `match`, `switch`, `while`, range `for`, and selector `for`
 - `as(...)` and `at(...)` context composition and blocks
 - raw Minecraft commands with `mc` and macro commands with `mcf`
 - non-blocking `async:` blocks
@@ -268,13 +268,16 @@ respawn are observation-only and reject cancellation.
 
 Supported statements:
 
-- `player_state name: int|bool = "Display Name"`
+- `player_state name: int|bool|string|float|Struct = "Display Name"`
+- `entity_state name: int|bool|string|float|Struct`
 - `struct Name:` followed by indented fields
+- `enum Name:` followed by indented constants
 - `let name = expr`
 - `name = expr`
 - `if condition:` followed by an indented body
 - `if condition:` / `else:` with indented bodies
 - `match value:` with indented `"a" => stmt` and `else => stmt` arms
+- `switch value:` with indented `case constant:` and optional `default:` blocks
 - `while condition:` followed by an indented body
 - `for name in start..end:` followed by an indented body
 - `for name in start..=end:` followed by an indented body
@@ -365,6 +368,7 @@ Built-in types:
 - `string`
 - `array<T>`
 - `dict<T>`
+- `Optional<T>`
 - `entity_set`
 - `entity_ref`
 - `player_ref`
@@ -378,6 +382,7 @@ Built-in types:
 - `nbt`
 - `void`
 - named `struct` types
+- named `enum` types
 
 Type rules:
 
@@ -408,6 +413,7 @@ These remain ordinary functions:
 
 - `selector("...") -> entity_set`
 - `single(entity_set) -> entity_ref`
+- `find_first(entity_set) -> Optional<entity_ref>`
 - `exists(entity_ref) -> bool`
 - `has_data(storage_path) -> bool`
 - `entity(entity_id: string) -> entity_def`
@@ -599,6 +605,7 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 
 ### Collections
 
+- `array<T>.get(index: int) -> Optional<T>`
 - `array<T>.len() -> int`
 - `array<T>.push(value: T) -> void`
 - `array<T>.pop() -> T`
@@ -611,9 +618,30 @@ Joining and `to_string()` use a macro. A value containing `"` gives `""`, and a
 - `array<T>.reverse() -> void`, in place
 - `array<int>.sort()` and `array<float>.sort()` return `void`; they sort in place, smallest first
 - `dict<T>.has(key: string) -> bool`
+- `dict<T>.get(key: string) -> Optional<T>`
 - `dict<T>.remove(key: string) -> void`
 - `dict<T>.len() -> int`
 - `dict<T>.keys() -> array<string>`, in storage order
+
+`Optional<T>` represents a value that may be absent. `get` returns an absent
+value for a missing key or array index. `find_first` checks whether a selector
+matches an entity and returns `Optional<entity_ref>`. Use
+`value.isPresent() -> bool` to test presence and `value.orElse(fallback: T) -> T`
+to obtain a value. The fallback must have the same type as the contained value
+and is evaluated even when the Optional is present. `Optional<void>` is not
+valid; nested optionals are allowed for collections of
+optional values. `find_first` needs a direct `selector(...)` expression so it
+can enforce `limit=1` at compile time.
+
+```mcfc
+fn main() -> void:
+    let names = ["Alex"]
+    let name = names.get(2).orElse("unknown")
+    let maybe_player = find_first(selector("@a"))
+    if maybe_player.isPresent():
+        let player = maybe_player.orElse(single(selector("@s")))
+        player.add_tag("online")
+```
 
 `keys()` prints the dict through a macro and reads the keys out of the text. A
 string value anywhere in the dict that contains `'` or `"` makes it return `[]`.
@@ -623,8 +651,8 @@ string value anywhere in the dict that contains `'` or `"` makes it return `[]`.
 - `entity.nbt.*` reads and writes runtime entity NBT
 - `block.nbt.*` reads and writes runtime block-entity NBT
 - `player.nbt.*` reads vanilla player NBT
-- `player.state.*` stores MCFC-managed integer and boolean player state
-- `entity.state.*` stores MCFC-managed integer and boolean state on any `entity_ref`
+- `player.state.*` stores MCFC-managed typed player state
+- `entity.state.*` stores MCFC-managed typed state on any `entity_ref`
 - `player.tags.*` reads and writes player tags as booleans
 - `entity.team = "name"` assigns a team for any `entity_ref`
 - `player.hotbar[0..8] -> item_slot` reads and writes live player hotbar slots
@@ -653,10 +681,14 @@ For runtime entities and blocks, `.nbt.*` is the explicit NBT namespace. Raw
 paths such as `pig.CustomName` and `block("~ ~ ~").CustomName` still work as a
 compatibility shorthand for root NBT fields.
 
-`entity.state.*` and `player.state.*` currently support only `int` and `bool`
-values. MCFC creates the scoreboard objectives automatically when a state path is
-used. Player state uses the internal `mcfs_*` objective prefix and generic
-entity state uses `mcfe_*`.
+`entity.state.*` and `player.state.*` support declared `int`, `bool`, `string`,
+`float`, and named struct values. The `string`, `float`, and struct forms require
+an `entity_state` or `player_state` declaration. Undeclared paths remain available
+for `int` and `bool`. Integer and boolean state uses MCFC-managed scoreboard
+objectives, with `mcfs_*` for player state and `mcfe_*` for generic entity state.
+String, float, and struct state uses command storage keyed by the target UUID;
+missing values read as `""`, `0.0`, and `{}` respectively. This storage persists
+across datapack reloads, and entity values can remain after despawn.
 
 Example:
 
@@ -681,8 +713,17 @@ fn main() -> void:
 ```
 
 The generated objective remains MCFC-managed internally, but the sidebar label
-uses the declared display name. Undeclared `player.state.*` and `entity.state.*`
-paths still work and use generated objective names.
+uses the declared display name for integer and boolean state. A generic entity
+state declaration has no display name:
+
+```text
+entity_state label: string
+entity_state weight: float
+
+fn mark(entity: entity_ref) -> void:
+    entity.state.label = "Target"
+    entity.state.weight = 1.5
+```
 
 Equipment `.item` assignments accept either a string item id or an `item_def`:
 
@@ -951,6 +992,7 @@ The current backend maps values like this:
 - `string`: Minecraft data storage-backed
 - `array<T>`: Minecraft data storage-backed
 - `dict<T>`: Minecraft data storage-backed
+- `Optional<T>`: Minecraft data storage compound with a `present` byte and, when present, a `value`
 - `bossbar`: Minecraft data storage-backed handle containing the bossbar id
 
 Generated files are deterministic and use a reserved generated namespace layout.

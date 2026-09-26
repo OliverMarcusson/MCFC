@@ -117,9 +117,9 @@ sign the executable and installer during packaging.
 ## Language Highlights
 
 - functions with typed parameters and return types
-- integer, boolean, string, array, dictionary, struct, entity, block, bossbar,
-  item, NBT, and scoreboard-backed state values
-- `if`, `match`, `while`, range `for`, and selector `for`
+- integer, boolean, string, array, dictionary, `Optional<T>`, struct, enum,
+  entity, block, bossbar, item, NBT, and typed persistent player/entity state values
+- `if`, `match`, `switch`, `while`, range `for`, and selector `for`
 - `as(...)` and `at(...)` context composition
 - raw Minecraft commands with `mc`
 - macro commands with `mcf`

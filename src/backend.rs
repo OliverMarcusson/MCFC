@@ -50,6 +50,7 @@ struct Backend {
     temp_counter: usize,
     macro_counter: usize,
     state_objectives: Vec<ManagedObjective>,
+    state_storage_paths: BTreeSet<(bool, String)>,
     block_builder_state_fields: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     helper: Option<HelperConfig>,
     uses_rpc: bool,
@@ -210,6 +211,17 @@ impl Backend {
             temp_counter: 0,
             macro_counter: 0,
             state_objectives: collect_state_objectives(program),
+            state_storage_paths: program
+                .player_states
+                .iter()
+                .filter(|state| !matches!(state.ty, Type::Int | Type::Bool))
+                .map(|state| {
+                    (
+                        state.owner == crate::ast::StateOwner::Player,
+                        state.path.join("."),
+                    )
+                })
+                .collect(),
             block_builder_state_fields: collect_block_builder_state_fields(program),
             helper: None,
             uses_rpc: program_uses_rpc(program),
@@ -355,14 +367,14 @@ impl Backend {
                     control_slot(depth, function)
                 ));
                 for (name, ty) in &info.locals {
-                    if matches!(ty, Type::Int | Type::Bool) {
+                    if matches!(ty, Type::Int | Type::Bool | Type::Enum(_)) {
                         lines.push(format!(
                             "scoreboard players set {} mcfc 0",
                             numeric_slot(depth, function, name)
                         ));
                     }
                 }
-                if matches!(info.return_type, Type::Int | Type::Bool) {
+                if matches!(info.return_type, Type::Int | Type::Bool | Type::Enum(_)) {
                     lines.push(format!(
                         "scoreboard players set {} mcfc 0",
                         numeric_return_slot(depth, function)
@@ -1477,7 +1489,7 @@ impl Backend {
                             let loop_slot =
                                 local_slot(depth, &function.name, name, element.as_ref());
                             let command = match element.as_ref() {
-                                Type::Int | Type::Bool => format!(
+                                Type::Int | Type::Bool | Type::Enum(_) => format!(
                                     "execute store result score {} mcfc run data get storage {}:runtime {}[$(index)] 1",
                                     loop_slot.numeric_name(),
                                     self.namespace,
@@ -1642,7 +1654,7 @@ impl Backend {
         for arg in args {
             let arg_slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
             self.compile_expr_into_slot(function, depth, arg, &arg_slot, lines);
-            if matches!(arg.ty, Type::Int | Type::Bool) {
+            if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
                 lines.push(format!(
                     "data modify storage mcfc:rpc sites.{}.req.args append value 0",
                     site
@@ -2047,7 +2059,7 @@ impl Backend {
             let source = local_slot(parent_depth, &parent.name, &capture.name, &capture.ty);
             let target = local_slot(0, &async_function.name, &capture.name, &capture.ty);
             match capture.ty {
-                Type::Int | Type::Bool => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
                     target.numeric_name(),
                     source.numeric_name()
@@ -2166,7 +2178,7 @@ impl Backend {
             IrExprKind::Selector(value) => self.write_query_slot(target, "", value, lines),
             IrExprKind::Block(value) => self.write_block_slot(target, "", value, lines),
             IrExprKind::Variable(name) => match expr.ty {
-                Type::Int | Type::Bool => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
                     target.numeric_name(),
                     numeric_slot(depth, &function.name, name)
@@ -2175,6 +2187,7 @@ impl Backend {
                 | Type::Float
                 | Type::Array(_)
                 | Type::Dict(_)
+                | Type::Optional(_)
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
@@ -2307,7 +2320,7 @@ impl Backend {
                         self.function_entry_name(callee, callee_depth)
                     ));
                     match expr.ty {
-                        Type::Int | Type::Bool => lines.push(format!(
+                        Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                             "scoreboard players operation {} mcfc = {} mcfc",
                             target.numeric_name(),
                             numeric_return_slot(callee_depth, callee)
@@ -2316,6 +2329,7 @@ impl Backend {
                         | Type::Float
                         | Type::Array(_)
                         | Type::Dict(_)
+                        | Type::Optional(_)
                         | Type::Struct(_)
                         | Type::EntityDef
                         | Type::BlockDef
@@ -2391,6 +2405,7 @@ impl Backend {
             path.base.ty,
             Type::Array(_)
                 | Type::Dict(_)
+                | Type::Optional(_)
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::ItemDef
@@ -2636,6 +2651,7 @@ impl Backend {
             path.base.ty,
             Type::Array(_)
                 | Type::Dict(_)
+                | Type::Optional(_)
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
@@ -3281,7 +3297,7 @@ impl Backend {
         let temp_slot = local_slot(depth, &function.name, &temp, ty);
         self.compile_expr_into_slot(function, depth, &typed_expr, &temp_slot, lines);
         match ty {
-            Type::Int | Type::Bool => lines.push(format!(
+            Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                 "execute store result storage {}:runtime {}.{} int 1 run scoreboard players get {} mcfc",
                 self.namespace,
                 macro_storage,
@@ -3400,7 +3416,7 @@ impl Backend {
             ));
         }
         let command = match ty {
-            Type::Int | Type::Bool => format!(
+            Type::Int | Type::Bool | Type::Enum(_) => format!(
                 "execute store result score {} mcfc run data get storage {}:runtime {} 1",
                 target.numeric_name(),
                 self.namespace,
@@ -3495,7 +3511,7 @@ impl Backend {
             temp_slot.storage_path()
         ));
         RenderedStoragePath {
-            path: format!("{}.$(key)", root),
+            path: format!("{}.\"$(key)\"", root),
             macro_storage: Some(macro_storage),
         }
     }
@@ -3511,6 +3527,109 @@ impl Backend {
         lines: &mut Vec<String>,
     ) {
         match method {
+            "get" if matches!(receiver.ty, Type::Array(_) | Type::Dict(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                let Some(key) = args.first() else { return };
+                let rendered = if matches!(receiver.ty, Type::Dict(_)) {
+                    if let IrExprKind::String(value) = &key.kind {
+                        RenderedStoragePath {
+                            path: format!("{}.{}", source.storage_path(), quoted(value)),
+                            macro_storage: None,
+                        }
+                    } else {
+                        self.render_dict_key_for_method(
+                            function,
+                            depth,
+                            key,
+                            source.storage_path().to_string(),
+                            None,
+                            lines,
+                        )
+                    }
+                } else {
+                    let index_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                    self.compile_expr_into_slot(function, depth, key, &index_slot, lines);
+                    let macro_storage = format!(
+                        "frames.d{}.{}.__path{}",
+                        depth,
+                        sanitize(&function.name),
+                        self.new_temp()
+                    );
+                    lines.push(format!(
+                        "execute store result storage {}:runtime {}.index int 1 run scoreboard players get {} mcfc",
+                        self.namespace, macro_storage, index_slot.numeric_name()
+                    ));
+                    RenderedStoragePath {
+                        path: format!("{}[$(index)]", source.storage_path()),
+                        macro_storage: Some(macro_storage),
+                    }
+                };
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set value {{present:0b}}",
+                    self.namespace,
+                    target.storage_path()
+                ));
+                lines.push(self.storage_path_command(format!(
+                    "execute if data storage {}:runtime {} run data modify storage {}:runtime {}.present set value 1b",
+                    self.namespace, rendered.path, self.namespace, target.storage_path()
+                ), rendered.macro_storage.clone()));
+                lines.push(self.storage_path_command(
+                    format!(
+                        "data modify storage {}:runtime {}.value set from storage {}:runtime {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        rendered.path
+                    ),
+                    rendered.macro_storage,
+                ));
+                return;
+            }
+            "isPresent" if matches!(receiver.ty, Type::Optional(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                lines.push(format!(
+                    "execute store result score {} mcfc run data get storage {}:runtime {}.present 1",
+                    target.numeric_name(), self.namespace, source.storage_path()
+                ));
+                return;
+            }
+            "orElse" if matches!(receiver.ty, Type::Optional(_)) => {
+                let source = self.compile_storage_receiver(function, depth, receiver, lines);
+                let Some(fallback) = args.first() else { return };
+                self.compile_expr_into_slot(function, depth, fallback, target, lines);
+                let present = local_slot(depth, &function.name, &self.new_temp(), &Type::Bool);
+                lines.push(format!(
+                    "execute store result score {} mcfc run data get storage {}:runtime {}.present 1",
+                    present.numeric_name(), self.namespace, source.storage_path()
+                ));
+                let Type::Optional(value_ty) = &receiver.ty else {
+                    unreachable!()
+                };
+                let command = if matches!(value_ty.as_ref(), Type::Int | Type::Bool | Type::Enum(_))
+                {
+                    format!(
+                        "execute store result score {} mcfc run data get storage {}:runtime {}.value 1",
+                        target.numeric_name(),
+                        self.namespace,
+                        source.storage_path()
+                    )
+                } else {
+                    format!(
+                        "data modify storage {}:runtime {} set from storage {}:runtime {}.value",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        source.storage_path()
+                    )
+                };
+                lines.push(format!(
+                    "execute if score {} mcfc matches 1 run {}",
+                    present.numeric_name(),
+                    command
+                ));
+                return;
+            }
             "cancel" if matches!(&receiver.ty, Type::Struct(name) if name == "agent_event" || name.ends_with("_event")) =>
             {
                 lines.push(format!(
@@ -4419,6 +4538,31 @@ impl Backend {
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "find_first" if !self.functions.contains_key(callee) => {
+                let Some(query) = args.first() else {
+                    return true;
+                };
+                let source = self.compile_storage_receiver(function, depth, query, lines);
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set value {{present:0b}}",
+                    self.namespace,
+                    target.storage_path()
+                ));
+                lines.push(self.query_command(
+                    &source,
+                    format!(
+                        "execute if entity $(selector) run data modify storage {}:runtime {}.present set value 1b",
+                        self.namespace, target.storage_path()
+                    ),
+                    true,
+                ));
+                lines.push(format!(
+                    "execute if data storage {}:runtime {}{{present:1b}} run data modify storage {}:runtime {}.value set from storage {}:runtime {}",
+                    self.namespace, target.storage_path(), self.namespace, target.storage_path(),
+                    self.namespace, source.storage_path()
+                ));
+                true
+            }
             "gamerule" if !self.functions.contains_key(callee) => {
                 if let IrExprKind::String(name) = &args[0].kind {
                     lines.push(format!(
@@ -5590,6 +5734,144 @@ impl Backend {
         ));
     }
 
+    fn is_storage_state_path(&self, path: &IrPathExpr) -> bool {
+        if !matches!(path.segments.first(), Some(PathSegment::Field(name)) if name == "state") {
+            return false;
+        }
+        let is_player = path.base.ref_kind == RefKind::Player;
+        let mut fields = Vec::new();
+        for segment in path.segments.iter().skip(1) {
+            let PathSegment::Field(field) = segment else {
+                break;
+            };
+            fields.push(field.as_str());
+            if self
+                .state_storage_paths
+                .contains(&(is_player, fields.join(".")))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compile_storage_state_access(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        base_slot: &SlotRef,
+        path: &IrPathExpr,
+        source: Option<&SlotRef>,
+        target: Option<&SlotRef>,
+        lines: &mut Vec<String>,
+    ) {
+        let key_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+        let key_path = key_slot.storage_path();
+        lines.push(format!(
+            "data modify storage {}:runtime {} set value {{u0:0,u1:0,u2:0,u3:0}}",
+            self.namespace, key_path
+        ));
+        for member in ["prefix", "selector"] {
+            lines.push(format!(
+                "data modify storage {}:runtime {}.{} set from storage {}:runtime {}.{}",
+                self.namespace,
+                key_path,
+                member,
+                self.namespace,
+                base_slot.storage_path(),
+                member
+            ));
+        }
+        for index in 0..4 {
+            lines.push(self.query_command(
+                base_slot,
+                format!(
+                    "data modify storage {}:runtime {}.u{} set from entity $(selector) UUID[{}]",
+                    self.namespace, key_path, index, index
+                ),
+                true,
+            ));
+        }
+        let owner = if path.base.ref_kind == RefKind::Player {
+            "players"
+        } else {
+            "entities"
+        };
+        let state_path = render_nbt_path_segments(&path.segments[1..]);
+        let owner_path = format!("{}.\"$(u0)_$(u1)_$(u2)_$(u3)\"", owner);
+        let storage_path = format!("{}.{}", owner_path, state_path);
+        let command = if let Some(source) = source {
+            lines.push(format!(
+                "execute unless data storage {}:state {} run data modify storage {}:state {} set value {{}}",
+                self.namespace, owner, self.namespace, owner
+            ));
+            let mut parent_paths = vec![owner_path.clone()];
+            let mut nested = owner_path.clone();
+            for segment in path.segments.iter().skip(1).take(path.segments.len() - 2) {
+                if let PathSegment::Field(field) = segment {
+                    nested.push('.');
+                    nested.push_str(field);
+                    parent_paths.push(nested.clone());
+                }
+            }
+            for parent_path in parent_paths {
+                lines.push(self.inline_macro_command(
+                    &key_path,
+                    format!(
+                        "$(prefix)execute if entity $(selector) unless data storage {}:state {} run data modify storage {}:state {} set value {{}}",
+                        self.namespace, parent_path, self.namespace, parent_path
+                    ),
+                ));
+            }
+            format!(
+                "$(prefix)execute if entity $(selector) run data modify storage {}:state {} set from storage {}:runtime {}",
+                self.namespace,
+                storage_path,
+                self.namespace,
+                source.storage_path()
+            )
+        } else if let Some(target) = target {
+            match path.ty {
+                Type::Int | Type::Bool | Type::Enum(_) => {
+                    lines.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        target.numeric_name()
+                    ));
+                    format!(
+                        "$(prefix)execute if entity $(selector) store result score {} mcfc run data get storage {}:state {} 1",
+                        target.numeric_name(),
+                        self.namespace,
+                        storage_path
+                    )
+                }
+                _ => {
+                    let default = match path.ty {
+                        Type::String => "\"\"",
+                        Type::Float => "0.0f",
+                        _ => "{}",
+                    };
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set value {}",
+                        self.namespace,
+                        target.storage_path(),
+                        default
+                    ));
+                    format!(
+                        "$(prefix)execute if entity $(selector) run data modify storage {}:runtime {} set from storage {}:state {}",
+                        self.namespace,
+                        target.storage_path(),
+                        self.namespace,
+                        storage_path
+                    )
+                }
+            }
+        } else {
+            return;
+        };
+        lines.push(self.inline_macro_command(&key_path, command));
+    }
+
     fn try_compile_player_path_assign(
         &mut self,
         function: &IrFunction,
@@ -5608,6 +5890,18 @@ impl Backend {
             "state" => {
                 if path.segments.len() == 1 {
                     return false;
+                }
+                if self.is_storage_state_path(path) {
+                    self.compile_storage_state_access(
+                        function,
+                        depth,
+                        base_slot,
+                        path,
+                        Some(value_slot),
+                        None,
+                        lines,
+                    );
+                    return true;
                 }
                 let objective = state_objective(path.base.ref_kind, &path.segments[1..]);
                 let temp_name = self.new_temp();
@@ -5800,6 +6094,18 @@ impl Backend {
             "state" => {
                 if path.segments.len() == 1 {
                     return false;
+                }
+                if self.is_storage_state_path(path) {
+                    self.compile_storage_state_access(
+                        function,
+                        depth,
+                        base_slot,
+                        path,
+                        None,
+                        Some(target),
+                        lines,
+                    );
+                    return true;
                 }
                 let objective = state_objective(path.base.ref_kind, &path.segments[1..]);
                 lines.push(self.query_command(
@@ -6860,7 +7166,7 @@ impl Backend {
                     ),
                 ));
             }
-            Type::Int | Type::Bool => {
+            Type::Int | Type::Bool | Type::Enum(_) => {
                 let temp = self.new_temp();
                 let temp_slot = local_slot(depth, &function.name, &temp, &expr.ty);
                 self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
@@ -6875,6 +7181,7 @@ impl Backend {
             | Type::Float
             | Type::Array(_)
             | Type::Dict(_)
+            | Type::Optional(_)
             | Type::Struct(_)
             | Type::ItemSlot
             | Type::Bossbar => {
@@ -7422,7 +7729,7 @@ impl Backend {
             self.compile_expr_into_slot(function, depth, &placeholder.expr, &source_slot, lines);
             let target_path = format!("{}.{}", storage_base, placeholder.key);
             match placeholder.ty {
-                Type::Int | Type::Bool => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                     "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
                     self.namespace,
                     target_path,
@@ -7452,6 +7759,7 @@ impl Backend {
                 )),
                 Type::Array(_)
                 | Type::Dict(_)
+                | Type::Optional(_)
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
@@ -8096,7 +8404,7 @@ impl Backend {
         let result = return_slot(callee_depth, callee, &call.ty);
         let bind = |target: SlotRef| match call.ty {
             Type::Void => None,
-            Type::Int | Type::Bool => Some(format!(
+            Type::Int | Type::Bool | Type::Enum(_) => Some(format!(
                 "scoreboard players operation {} mcfc = {} mcfc",
                 target.numeric_name(),
                 result.numeric_name()
@@ -8284,7 +8592,7 @@ impl Backend {
             self.compile_expr_into_slot(function, depth, &placeholder.expr, &source_slot, lines);
             let target_path = format!("{}.{}", storage_base, placeholder.key);
             match placeholder.ty {
-                Type::Int | Type::Bool => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
                     "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
                     self.namespace,
                     target_path,
@@ -8314,6 +8622,7 @@ impl Backend {
                 )),
                 Type::Array(_)
                 | Type::Dict(_)
+                | Type::Optional(_)
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
@@ -8386,13 +8695,14 @@ impl SlotRef {
 
 fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
     match ty {
-        Type::Int | Type::Bool => SlotRef {
+        Type::Int | Type::Bool | Type::Enum(_) => SlotRef {
             name: numeric_slot(depth, function, name),
         },
         Type::String
         | Type::Float
         | Type::Array(_)
         | Type::Dict(_)
+        | Type::Optional(_)
         | Type::Struct(_)
         | Type::EntityDef
         | Type::BlockDef
@@ -8415,13 +8725,14 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
 
 fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
     match ty {
-        Type::Int | Type::Bool => SlotRef {
+        Type::Int | Type::Bool | Type::Enum(_) => SlotRef {
             name: numeric_return_slot(depth, function),
         },
         Type::String
         | Type::Float
         | Type::Array(_)
         | Type::Dict(_)
+        | Type::Optional(_)
         | Type::Struct(_)
         | Type::EntityDef
         | Type::BlockDef
@@ -9240,14 +9551,33 @@ fn collect_block_builder_state_fields_from_path(
 fn collect_state_objectives(program: &IrProgram) -> Vec<ManagedObjective> {
     let mut names = BTreeMap::<String, Option<String>>::new();
     for state in &program.player_states {
+        if !matches!(state.ty, Type::Int | Type::Bool) {
+            names.insert(
+                format!(
+                    "__storage_{}_{}",
+                    state.owner == crate::ast::StateOwner::Player,
+                    state.path.join(".")
+                ),
+                None,
+            );
+            continue;
+        }
         let segments = state
             .path
             .iter()
             .map(|segment| PathSegment::Field(segment.clone()))
             .collect::<Vec<_>>();
         names.insert(
-            player_state_objective(&segments),
-            Some(state.display_name.clone()),
+            if state.owner == crate::ast::StateOwner::Player {
+                player_state_objective(&segments)
+            } else {
+                entity_state_objective(&segments)
+            },
+            if state.owner == crate::ast::StateOwner::Player {
+                Some(state.display_name.clone())
+            } else {
+                None
+            },
         );
     }
     for function in &program.functions {
@@ -9255,6 +9585,7 @@ fn collect_state_objectives(program: &IrProgram) -> Vec<ManagedObjective> {
     }
     names
         .into_iter()
+        .filter(|(objective, _)| !objective.starts_with("__storage_"))
         .map(|(objective, display_name)| ManagedObjective {
             objective,
             display_name,
@@ -9382,9 +9713,21 @@ fn collect_objectives_from_path(path: &IrPathExpr, names: &mut BTreeMap<String, 
         && matches!(path.segments.first(), Some(PathSegment::Field(name)) if name == "state")
         && matches!(path.base.ty, Type::EntityRef | Type::PlayerRef)
     {
-        names
-            .entry(state_objective(path.base.ref_kind, &path.segments[1..]))
-            .or_insert(None);
+        let is_player = path.base.ref_kind == RefKind::Player;
+        let mut fields = Vec::new();
+        let mut storage = false;
+        for segment in path.segments.iter().skip(1) {
+            let PathSegment::Field(field) = segment else {
+                break;
+            };
+            fields.push(field.as_str());
+            storage |= names.contains_key(&format!("__storage_{}_{}", is_player, fields.join(".")));
+        }
+        if !storage {
+            names
+                .entry(state_objective(path.base.ref_kind, &path.segments[1..]))
+                .or_insert(None);
+        }
     }
     collect_objectives_from_expr(&path.base, names);
 }

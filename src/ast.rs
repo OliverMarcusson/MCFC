@@ -3,10 +3,19 @@ use crate::diagnostics::Span;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
     pub player_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
     pub mods: Vec<ModDecl>,
     pub uses: Vec<UseDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumDef {
+    pub name: String,
+    pub is_pub: bool,
+    pub variants: Vec<String>,
+    pub span: Span,
 }
 
 /// `mod name` — declares a child module loaded from `name.mcf` or `name/mod.mcf`.
@@ -42,10 +51,17 @@ pub struct StructField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerStateDef {
+    pub owner: StateOwner,
     pub path: Vec<String>,
     pub ty: Type,
     pub display_name: String,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateOwner {
+    Player,
+    Entity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +91,9 @@ pub enum Type {
     String,
     Array(Box<Type>),
     Dict(Box<Type>),
+    Optional(Box<Type>),
     Struct(String),
+    Enum(String),
     Bossbar,
     EntitySet,
     EntityRef,
@@ -99,7 +117,9 @@ impl Type {
             Type::String => "string".to_string(),
             Type::Array(element) => format!("array<{}>", element.as_str()),
             Type::Dict(value) => format!("dict<{}>", value.as_str()),
+            Type::Optional(value) => format!("Optional<{}>", value.as_str()),
             Type::Struct(name) => name.clone(),
+            Type::Enum(name) => name.clone(),
             Type::Bossbar => "bossbar".to_string(),
             Type::EntitySet => "entity_set".to_string(),
             Type::EntityRef => "entity_ref".to_string(),
@@ -151,6 +171,11 @@ pub enum StmtKind {
         arms: Vec<MatchArm>,
         else_body: Vec<Stmt>,
     },
+    Switch {
+        value: Expr,
+        arms: Vec<SwitchArm>,
+        default_body: Vec<Stmt>,
+    },
     Context {
         kind: ContextKind,
         anchor: Expr,
@@ -200,6 +225,12 @@ pub enum ForKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchArm {
     pub pattern: String,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchArm {
+    pub pattern: Expr,
     pub body: Vec<Stmt>,
 }
 

@@ -12,6 +12,7 @@ MCFC is statically typed. Local variables infer their type from their initialize
 | [`string`](./types/string) | Text values and Minecraft identifiers/selectors. |
 | [`array<T>`](./types/array) | Ordered collection of values of type `T`. |
 | [`dict<T>`](./types/dict) | String-keyed map of values of type `T`. |
+| [`Optional<T>`](./types/optional) | A value that may be absent; use `isPresent()` and `orElse(...)`. |
 | [`entity_set`](./types/entity-set) | A selector result that may contain multiple entities. |
 | [`entity_ref`](./types/entity-ref) | A single entity reference. |
 | [`player_ref`](./types/player-ref) | A single player reference. |
@@ -25,6 +26,7 @@ MCFC is statically typed. Local variables infer their type from their initialize
 | [`nbt`](./types/nbt) | NBT-like storage path or payload value. |
 | [`void`](./types/void) | Function return type for no returned value. |
 | [named `struct` types](./types/struct) | User-defined structured values. |
+| [named `enum` types](./statements/enum) | User-defined sets of named constants. |
 
 ## Type Rules
 
@@ -43,8 +45,9 @@ Builder values have one important convenience: `entity_def`, `block_def`, and `i
 
 MCFC maps typed values onto Minecraft's limited runtime primitives:
 
-- numeric and boolean values live in scoreboard slots
+- numeric, boolean, and enum values live in scoreboard slots
 - strings, arrays, dictionaries, structs, text components, and builder payloads live in command storage
+- Optional values live in command storage as a presence flag and contained value
 - entity and block references are selectors/positions plus execution context
 - `nbt` values are storage paths or live NBT paths used by `data` commands
 

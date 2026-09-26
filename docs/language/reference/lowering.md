@@ -31,9 +31,12 @@ Generated files are deterministic and use reserved generated paths under the pac
 | `int` | scoreboard value in the generated `mcfc` objective or a state objective |
 | `float` | command storage float tag, computed with one `/compute` command per expression |
 | `bool` | scoreboard value, conventionally `0` or `1` |
+| `enum` | scoreboard value assigned by constant declaration order, starting at `0` |
 | `string` | command storage |
 | `array<T>` / `dict<T>` | command storage |
+| `Optional<T>` | command-storage compound with `present` byte and `value` when present |
 | `struct` | command storage object or decomposed fields, depending on use |
+| declared string, float, or struct player/entity state | `<namespace>:state` command storage keyed by the target's UUID |
 | `entity_set` | selector string plus context |
 | `entity_ref` / `player_ref` | selector or executor-aware reference |
 | `block_ref` | position string plus context |
@@ -41,11 +44,15 @@ Generated files are deterministic and use reserved generated paths under the pac
 | `bossbar` | command-storage handle containing the bossbar id |
 | `nbt` | command-storage path or live NBT path |
 
+Declared `int` and `bool` player/entity state use managed scoreboard objectives. The command storage for other declared state persists across datapack reloads; setup does not clear it.
+
+Safe collection `get` checks whether the element or key exists at its storage path, then sets the Optional `present` flag and copies its value when found. Dynamic array indices and dictionary keys use generated command macros. `find_first` checks the one-entity selector with `execute if entity` before setting the flag. `isPresent()` reads the flag into a scoreboard boolean. `orElse(...)` evaluates the fallback first, then replaces it with the stored value if present.
+
 ## Control Flow
 
 MCFC uses scoreboard guard slots to model branches, loops, `break`, `continue`, `return`, and suspended execution. Blocks that need to resume later are split into generated continuation functions.
 
-`if`, `match`, and loops generally become `execute if/unless score ... run function ...` calls into generated block functions. Loop counters and guard flags live in scoreboards.
+`if`, `match`, `switch`, and loops generally become `execute if/unless score ... run function ...` calls into generated block functions. A `switch` stores its value once and lowers its cases into nested branches. Loop counters and guard flags live in scoreboards.
 
 ## Commands
 

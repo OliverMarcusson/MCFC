@@ -27,6 +27,7 @@ impl Parser {
 
     fn parse_program(mut self) -> Result<Program, Diagnostics> {
         let mut structs = Vec::new();
+        let mut enums = Vec::new();
         let mut player_states = Vec::new();
         let mut functions = Vec::new();
         let mut mods = Vec::new();
@@ -41,19 +42,25 @@ impl Parser {
             }
             if self.at(&TokenKind::Struct) {
                 structs.push(self.parse_struct(is_pub));
+            } else if self.at_word("enum") {
+                enums.push(self.parse_enum(is_pub));
             } else if self.at(&TokenKind::Fn) {
                 functions.push(self.parse_function(is_pub));
             } else if self.at_word("mod") {
                 mods.push(self.parse_mod(is_pub));
             } else if is_pub {
-                self.error_here("expected 'fn', 'struct', or 'mod' after 'pub'");
+                self.error_here("expected 'fn', 'struct', 'enum', or 'mod' after 'pub'");
                 self.recover_top_level();
             } else if self.at_word("use") {
                 self.parse_use(&mut uses);
             } else if self.at(&TokenKind::PlayerState) {
                 player_states.push(self.parse_player_state());
+            } else if self.at_word("entity_state") {
+                player_states.push(self.parse_entity_state());
             } else {
-                self.error_here("expected player_state, struct, function, mod, or use declaration");
+                self.error_here(
+                    "expected player_state, entity_state, struct, enum, function, mod, or use declaration",
+                );
                 self.recover_top_level();
             }
             self.skip_newlines();
@@ -61,11 +68,40 @@ impl Parser {
 
         self.diagnostics.into_result(Program {
             structs,
+            enums,
             player_states,
             functions,
             mods,
             uses,
         })
+    }
+
+    fn parse_enum(&mut self, is_pub: bool) -> EnumDef {
+        let span = self.bump().span;
+        let name = self.expect_identifier("expected enum name");
+        self.expect(TokenKind::Colon, "expected ':' after enum name");
+        self.expect_statement_break("expected newline after enum name");
+        self.expect(TokenKind::Indent, "expected indented enum body");
+        self.skip_newlines();
+        let mut variants = Vec::new();
+        while !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
+            variants.push(self.expect_identifier("expected enum constant"));
+            self.expect_statement_break("expected newline after enum constant");
+            self.skip_newlines();
+        }
+        self.expect(TokenKind::Dedent, "expected dedent after enum body");
+        if variants.is_empty() {
+            self.diagnostics.push(Diagnostic::new(
+                "enum requires at least one constant",
+                span.clone(),
+            ));
+        }
+        EnumDef {
+            name,
+            is_pub,
+            variants,
+            span,
+        }
     }
 
     fn parse_mod(&mut self, is_pub: bool) -> ModDecl {
@@ -192,9 +228,29 @@ impl Parser {
         let display_name = self.expect_string("expected string display name");
         self.expect_statement_break("expected newline after player state declaration");
         PlayerStateDef {
+            owner: StateOwner::Player,
             path,
             ty,
             display_name,
+            span: start,
+        }
+    }
+
+    fn parse_entity_state(&mut self) -> PlayerStateDef {
+        let start = self.bump().span;
+        let mut path = Vec::new();
+        path.push(self.expect_identifier("expected entity state name"));
+        while self.eat(&TokenKind::Dot) {
+            path.push(self.expect_identifier("expected entity state path segment"));
+        }
+        self.expect(TokenKind::Colon, "expected ':' after entity state name");
+        let ty = self.parse_type();
+        self.expect_statement_break("expected newline after entity state declaration");
+        PlayerStateDef {
+            owner: StateOwner::Entity,
+            display_name: path.join("."),
+            path,
+            ty,
             span: start,
         }
     }
@@ -264,6 +320,13 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Stmt {
         let span = self.current_span();
+        if self.at_word("switch") {
+            self.bump();
+            return Stmt {
+                kind: self.parse_switch_stmt(span.clone()),
+                span,
+            };
+        }
         let kind = match self.peek().kind.clone() {
             TokenKind::Let => {
                 self.bump();
@@ -390,6 +453,53 @@ impl Parser {
         };
 
         Stmt { kind, span }
+    }
+
+    fn parse_switch_stmt(&mut self, span: Span) -> StmtKind {
+        let value = self.parse_expr();
+        self.expect(TokenKind::Colon, "expected ':' after switch value");
+        self.expect_statement_break("expected newline after switch value");
+        self.expect(TokenKind::Indent, "expected indented switch body");
+        self.skip_newlines();
+        let mut arms = Vec::new();
+        let mut default_body = Vec::new();
+        let mut seen_default = false;
+        while !self.at(&TokenKind::Dedent) && !self.at(&TokenKind::Eof) {
+            if self.at_word("case") {
+                self.bump();
+                let pattern = self.parse_expr();
+                self.expect(TokenKind::Colon, "expected ':' after case value");
+                self.expect_statement_break("expected newline after case value");
+                let body = self.parse_indented_block("expected indented case body");
+                arms.push(SwitchArm { pattern, body });
+            } else if self.at_word("default") {
+                self.bump();
+                if seen_default {
+                    self.diagnostics.push(Diagnostic::new(
+                        "duplicate default arm",
+                        self.current_span(),
+                    ));
+                }
+                seen_default = true;
+                self.expect(TokenKind::Colon, "expected ':' after default");
+                self.expect_statement_break("expected newline after default");
+                default_body = self.parse_indented_block("expected indented default body");
+            } else {
+                self.error_here("expected 'case' or 'default' in switch");
+                self.recover_statement();
+            }
+            self.skip_newlines();
+        }
+        self.expect(TokenKind::Dedent, "expected dedent after switch body");
+        if arms.is_empty() && default_body.is_empty() {
+            self.diagnostics
+                .push(Diagnostic::new("switch requires at least one arm", span));
+        }
+        StmtKind::Switch {
+            value,
+            arms,
+            default_body,
+        }
     }
 
     fn parse_match_stmt(&mut self, span: Span) -> StmtKind {
@@ -788,6 +898,12 @@ impl Parser {
                     let value = self.parse_type();
                     self.expect(TokenKind::Gt, "expected '>' after dictionary value type");
                     Type::Dict(Box::new(value))
+                }
+                "Optional" => {
+                    self.expect(TokenKind::Lt, "expected '<' after 'Optional'");
+                    let value = self.parse_type();
+                    self.expect(TokenKind::Gt, "expected '>' after Optional value type");
+                    Type::Optional(Box::new(value))
                 }
                 "bossbar" => Type::Bossbar,
                 _ => Type::Struct(self.parse_path_rest(name)),

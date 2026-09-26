@@ -21,8 +21,8 @@ fn main() -> void:
 ## Core Features
 
 - functions with typed parameters and return types
-- integer, boolean, string, array, dictionary, struct, entity, block, item, bossbar, NBT, and scoreboard-backed state values
-- `if`, `match`, `while`, range `for`, and selector `for`
+- integer, boolean, string, array, dictionary, `Optional<T>`, struct, enum, entity, block, item, bossbar, NBT, and typed player/entity state values
+- `if`, `match`, `switch`, `while`, range `for`, and selector `for`
 - `as(...)` and `at(...)` execution context composition
 - raw Minecraft commands with `mc`
 - macro commands with `mcf`

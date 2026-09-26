@@ -48,7 +48,7 @@ current counter into the generated seen counter, then die:
 After the agent attaches, start the quiet Event Arcade with `/arcade`, then test:
 
 - Send `spark` in chat for a +3 score bonus.
-- Break blocks: every five gives an emerald.
+- Break a block: the `block_break` handler cancels it, so the block stays. This checks cancellation.
 - Attack an entity: every three-hit combo gives a cookie.
 - Sneak-interact with an entity for +1 score.
 - Right-click a block: the action bar shows its face and coordinates.

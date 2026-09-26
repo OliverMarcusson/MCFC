@@ -68,6 +68,24 @@ public final class McfdHooks {
         return policy + routeDescription + commandDescription;
     }
 
+    /**
+     * Entry point for injected code, published as the `mcfd.hooks` system
+     * property. Arguments are {kind, event, source, payload}; the result says
+     * whether vanilla handling should be skipped.
+     */
+    static Object dispatch(Object[] call) {
+        String kind = (String) call[0];
+        switch (kind) {
+            case "before":
+                return before((String) call[1], call[2], call[3]);
+            case "command":
+                return handleCommand(call[2], call[3]);
+            default:
+                observe((String) call[1], call[2], call[3]);
+                return Boolean.FALSE;
+        }
+    }
+
     public static boolean before(String event, Object source, Object payload) {
         boolean synchronous = decisionRoutes.containsKey(event);
         boolean cancel = synchronous && decide(event, source, payload);
@@ -156,7 +174,10 @@ public final class McfdHooks {
     private static boolean readDecision(Object server, String namespace) {
         try {
             Object storage = invokeNoArgs(server, "getCommandStorage");
-            Class<?> idClass = Class.forName("net.minecraft.resources.Identifier");
+            // Resolve through the game's own loader: under a mod loader such as
+            // Fabric, the agent's loader would find a second, unrelated copy.
+            Class<?> idClass = Class.forName(
+                    "net.minecraft.resources.Identifier", false, storage.getClass().getClassLoader());
             Object id = idClass.getMethod("parse", String.class).invoke(null, namespace + ":agent");
             Object root = storage.getClass().getMethod("get", idClass).invoke(storage, id);
             Object decision = root.getClass().getMethod("getCompoundOrEmpty", String.class).invoke(root, "decision");

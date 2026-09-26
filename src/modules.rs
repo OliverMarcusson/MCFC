@@ -6,7 +6,7 @@
 //! struct literals, and types to those names. Root-module items keep their bare
 //! names, so single-file programs compile exactly as before.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast::*;
@@ -198,6 +198,7 @@ struct Module {
 
 struct Resolver {
     modules: Vec<Module>,
+    enum_names: HashSet<String>,
 }
 
 /// Renames child-module items to their full paths and resolves every path.
@@ -263,6 +264,7 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         .map(|f| module_of(&f.span))
         .collect();
     let struct_modules: Vec<usize> = program.structs.iter().map(|s| module_of(&s.span)).collect();
+    let enum_modules: Vec<usize> = program.enums.iter().map(|s| module_of(&s.span)).collect();
     for (function, &module) in program.functions.iter().zip(&function_modules) {
         modules[module]
             .functions
@@ -271,8 +273,20 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
     for (def, &module) in program.structs.iter().zip(&struct_modules) {
         modules[module].structs.insert(def.name.clone(), def.is_pub);
     }
+    for (def, &module) in program.enums.iter().zip(&enum_modules) {
+        modules[module].structs.insert(def.name.clone(), def.is_pub);
+    }
 
-    let mut resolver = Resolver { modules };
+    let mut resolver = Resolver {
+        modules,
+        enum_names: HashSet::new(),
+    };
+    resolver.enum_names = program
+        .enums
+        .iter()
+        .zip(&enum_modules)
+        .map(|(def, &module)| resolver.struct_name(module, &def.name))
+        .collect();
     for decl in &program.uses {
         let module = module_of(&decl.span);
         if let Err(message) = resolver.add_import(module, decl) {
@@ -284,6 +298,9 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         for field in &mut def.fields {
             resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
         }
+        def.name = resolver.struct_name(module, &def.name);
+    }
+    for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
         def.name = resolver.struct_name(module, &def.name);
     }
     for (function, &module) in program.functions.iter_mut().zip(&function_modules) {
@@ -605,6 +622,18 @@ impl Resolver {
                 }
                 self.walk_stmts(module, else_body, diagnostics);
             }
+            StmtKind::Switch {
+                value,
+                arms,
+                default_body,
+            } => {
+                self.walk_expr(module, value, diagnostics);
+                for arm in arms {
+                    self.walk_expr(module, &mut arm.pattern, diagnostics);
+                    self.walk_stmts(module, &mut arm.body, diagnostics);
+                }
+                self.walk_stmts(module, default_body, diagnostics);
+            }
             StmtKind::Context { anchor, body, .. } => {
                 self.walk_expr(module, anchor, diagnostics);
                 self.walk_stmts(module, body, diagnostics);
@@ -625,6 +654,16 @@ impl Resolver {
     }
 
     fn walk_path(&self, module: usize, path: &mut PathExpr, diagnostics: &mut Diagnostics) {
+        if path.segments.len() == 1 {
+            if let ExprKind::Variable(name) = &mut path.base.kind {
+                if let Ok(Some(resolved)) = self.resolve_struct(module, name) {
+                    if self.enum_names.contains(&resolved) {
+                        *name = resolved;
+                        return;
+                    }
+                }
+            }
+        }
         self.walk_expr(module, &mut path.base, diagnostics);
         for segment in &mut path.segments {
             if let PathSegment::Index(index) = segment {

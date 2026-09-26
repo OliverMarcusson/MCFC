@@ -28,6 +28,8 @@ Run the reflection dispatch self-test:
 
 The adapter instruments named vanilla server methods for chat, inventory, interaction, lifecycle, player-state, and item events. It emits a human-readable `[mcfd-agent] event=...` line followed by a versioned JSON record that `mcfd` parses.
 
+Injected hook sites call the agent only through JDK types (a `java.util.function.Function` stored in the `mcfd.hooks` system property), so the agent also works under mod loaders such as Fabric, which refuse classes from jars attached after startup.
+
 Subscribed MCFC event handlers are invoked on the server thread as the affected player. Declared no-argument commands can also receive real root-command routes.
 
 ::: warning Version pin

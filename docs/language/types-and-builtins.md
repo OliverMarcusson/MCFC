@@ -2,13 +2,13 @@
 
 ## Built-in Types
 
-MCFC includes primitive values, collections, Minecraft reference types, builder handles, `bossbar`, `nbt`, `void`, and named `struct` types.
+MCFC includes primitive values, collections, [`Optional<T>`](./reference/types/optional), Minecraft reference types, builder handles, `bossbar`, `nbt`, `void`, and named `struct` and `enum` types.
 
 See the [built-in types reference](./reference/builtin-types) for the complete list and type rules. Locals infer their type from the initializer. Assignments must keep the original variable type, function arguments must match declared parameter types, and return expressions must match declared return types.
 
 ## Function-style Builtins
 
-Frequently used builtins include selectors, single-entity narrowing, block/entity/item/text builders, bossbars, debugging, sleep helpers, random numbers, summoning, and NBT conversion helpers.
+Frequently used builtins include selectors, single-entity narrowing, safe [`find_first`](./reference/builtins/find-first) lookup, block/entity/item/text builders, bossbars, debugging, sleep helpers, random numbers, summoning, and NBT conversion helpers.
 
 ```mcfc
 let players = selector("@a")

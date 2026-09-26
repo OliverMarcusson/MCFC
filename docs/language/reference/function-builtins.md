@@ -6,7 +6,7 @@ Function-style builtins are ordinary calls that create references, builder handl
 
 Many builtins do not become runtime function calls. Instead, the compiler recognizes them and lowers them directly:
 
-- `selector`, `single`, `block`, `as`, and `at` build selector/position references used by later `execute` commands.
+- `selector`, `single`, `find_first`, `block`, `as`, and `at` build or check selector/position references used by later `execute` commands.
 - `entity`, `item`, `text`, and `block_type` allocate builder payloads in command storage.
 - `summon`, `debug`, `sleep`, `sleep_ticks`, `random`, and conversion builtins emit Minecraft commands or generated continuation functions.
 - `int`, `bool`, and `string` convert between storage/NBT paths and scoreboard or storage-backed values.
@@ -17,6 +17,7 @@ Many builtins do not become runtime function calls. Instead, the compiler recogn
 | --- | --- | --- |
 | [`selector(value: string)`](./builtins/selector) | `entity_set` | Wraps a Minecraft selector or player name. |
 | [`single(value: entity_set)`](./builtins/single) | `entity_ref` | Narrows a selector to one entity. |
+| [`find_first(value: entity_set)`](./builtins/find-first) | `Optional<entity_ref>` | Returns a single entity reference when the selector matches. |
 | [`exists(value: entity_ref)`](./builtins/exists) | `bool` | Tests whether the reference exists. |
 | [`has_data(path)`](./builtins/has-data) | `bool` | Tests whether a storage/NBT path has data. |
 | [`block(pos: string)`](./builtins/block) | `block_ref` | Creates a block reference from coordinates. |

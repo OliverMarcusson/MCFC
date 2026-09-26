@@ -420,6 +420,7 @@ fn substitute(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
         Type::Struct(name) => bindings.get(name).cloned().unwrap_or_else(|| ty.clone()),
         Type::Array(inner) => Type::Array(Box::new(substitute(inner, bindings))),
         Type::Dict(inner) => Type::Dict(Box::new(substitute(inner, bindings))),
+        Type::Optional(inner) => Type::Optional(Box::new(substitute(inner, bindings))),
         _ => ty.clone(),
     }
 }
@@ -436,7 +437,9 @@ fn bind_type_params(
         (Type::Struct(name), _) if type_params.contains(name) => {
             bindings.entry(name.clone()).or_insert_with(|| arg.clone()) == arg
         }
-        (Type::Array(param), Type::Array(arg)) | (Type::Dict(param), Type::Dict(arg)) => {
+        (Type::Array(param), Type::Array(arg))
+        | (Type::Dict(param), Type::Dict(arg))
+        | (Type::Optional(param), Type::Optional(arg)) => {
             bind_type_params(param, arg, type_params, bindings)
         }
         _ => true,
@@ -462,6 +465,7 @@ fn instance_name(function: &str, types: &[Type]) -> String {
 #[derive(Debug, Clone)]
 pub struct StructTypeDef {
     pub fields: BTreeMap<String, Type>,
+    pub enum_variants: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -660,7 +664,13 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             for (field, ty) in fields {
                 field_map.insert(field.to_string(), ty);
             }
-            struct_defs.insert(name.to_string(), StructTypeDef { fields: field_map });
+            struct_defs.insert(
+                name.to_string(),
+                StructTypeDef {
+                    fields: field_map,
+                    enum_variants: None,
+                },
+            );
         }
     }
 
@@ -684,8 +694,65 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 ));
             }
         }
-        struct_defs.insert(struct_def.name.clone(), StructTypeDef { fields });
+        struct_defs.insert(
+            struct_def.name.clone(),
+            StructTypeDef {
+                fields,
+                enum_variants: None,
+            },
+        );
     }
+
+    for enum_def in &program.enums {
+        if struct_defs.contains_key(&enum_def.name) {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate type '{}'", enum_def.name),
+                enum_def.span.clone(),
+            ));
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        for variant in &enum_def.variants {
+            if !seen.insert(variant) {
+                diagnostics.push(Diagnostic::new(
+                    format!("duplicate enum constant '{}.{}'", enum_def.name, variant),
+                    enum_def.span.clone(),
+                ));
+            }
+        }
+        struct_defs.insert(
+            enum_def.name.clone(),
+            StructTypeDef {
+                fields: BTreeMap::new(),
+                enum_variants: Some(enum_def.variants.clone()),
+            },
+        );
+    }
+    let mut normalized = program.clone();
+    for state in &mut normalized.player_states {
+        resolve_enum_type(&mut state.ty, &struct_defs);
+    }
+    for def in &mut normalized.structs {
+        for field in &mut def.fields {
+            resolve_enum_type(&mut field.ty, &struct_defs);
+        }
+    }
+    for function in &mut normalized.functions {
+        for param in &mut function.params {
+            resolve_enum_type(&mut param.ty, &struct_defs);
+        }
+        resolve_enum_type(&mut function.return_type, &struct_defs);
+    }
+    for def in &normalized.structs {
+        if let Some(registered) = struct_defs.get_mut(&def.name) {
+            registered.fields = def
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), field.ty.clone()))
+                .collect();
+        }
+    }
+    let program = &normalized;
 
     for struct_def in &program.structs {
         for field in &struct_def.fields {
@@ -699,6 +766,9 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
     }
 
     let mut player_state_names = HashSet::new();
+    let mut entity_state_names = HashSet::new();
+    let mut player_state_types = BTreeMap::new();
+    let mut entity_state_types = BTreeMap::new();
     for state in &program.player_states {
         for segment in &state.path {
             if !is_storage_path_safe_key(segment) {
@@ -711,19 +781,66 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 ));
             }
         }
-        if !matches!(state.ty, Type::Int | Type::Bool) {
+        if !matches!(
+            state.ty,
+            Type::Int | Type::Bool | Type::String | Type::Float | Type::Struct(_)
+        ) {
             diagnostics.push(Diagnostic::new(
-                "player_state declarations currently support only 'int' and 'bool'",
+                "state declarations support 'int', 'bool', 'string', 'float', and struct types",
                 state.span.clone(),
             ));
         }
-        if !player_state_names.insert(state.path.join(".")) {
+        validate_declared_type(
+            &state.ty,
+            &struct_defs,
+            state.span.clone(),
+            &mut diagnostics,
+        );
+        let (names, types, kind) = if state.owner == StateOwner::Player {
+            (
+                &mut player_state_names,
+                &mut player_state_types,
+                "player_state",
+            )
+        } else {
+            (
+                &mut entity_state_names,
+                &mut entity_state_types,
+                "entity_state",
+            )
+        };
+        let path_name = state.path.join(".");
+        if names.iter().any(|existing: &String| {
+            existing.starts_with(&format!("{path_name}."))
+                || path_name.starts_with(&format!("{existing}."))
+        }) {
             diagnostics.push(Diagnostic::new(
-                format!("duplicate player_state '{}'", state.path.join(".")),
+                format!("overlapping {kind} '{path_name}'"),
                 state.span.clone(),
             ));
         }
+        if !names.insert(path_name.clone()) {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate {kind} '{path_name}'"),
+                state.span.clone(),
+            ));
+        }
+        types.insert(path_name, state.ty.clone());
     }
+    struct_defs.insert(
+        "@mcfc/player_state".to_string(),
+        StructTypeDef {
+            fields: player_state_types,
+            enum_variants: None,
+        },
+    );
+    struct_defs.insert(
+        "@mcfc/entity_state".to_string(),
+        StructTypeDef {
+            fields: entity_state_types,
+            enum_variants: None,
+        },
+    );
 
     for function in &program.functions {
         // Type parameters stand in for any type, so validate them as `int`.
@@ -1166,10 +1283,20 @@ fn type_check_block(
                                         "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet"
                                     ) && field == "item"
                                 );
+                            let typed_state_write = matches!(
+                                typed_path.segments.first(),
+                                Some(PathSegment::Field(name)) if name == "state"
+                            ) && typed_path
+                                .segment_types
+                                .iter()
+                                .skip(1)
+                                .any(|ty| *ty != Type::Nbt);
                             if !matches!(
                                 value.ty,
                                 Type::Int | Type::Bool | Type::String | Type::Nbt | Type::TextDef
-                            ) && !(is_player_slot_write && value.ty == Type::ItemDef)
+                            ) && !(typed_state_write
+                                && matches!(value.ty, Type::Float | Type::Struct(_)))
+                                && !(is_player_slot_write && value.ty == Type::ItemDef)
                                 && !(is_equipment_item_write && value.ty == Type::ItemDef)
                             {
                                 diagnostics.push(Diagnostic::new(
@@ -1484,6 +1611,110 @@ fn type_check_block(
                     diagnostics,
                 );
                 lower_string_match_stmt(value, typed_arms, else_body)
+            }
+            StmtKind::Switch {
+                value,
+                arms,
+                default_body,
+            } => {
+                let value = type_check_expr(
+                    value,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                if !matches!(value.ty, Type::Enum(_) | Type::Int | Type::String) {
+                    diagnostics.push(Diagnostic::new(
+                        "switch value must be an enum, int, or string",
+                        statement.span.clone(),
+                    ));
+                }
+                let mut seen = BTreeSet::new();
+                let mut typed_arms = Vec::new();
+                for arm in arms {
+                    let pattern = type_check_expr(
+                        &arm.pattern,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                    if pattern.ty != value.ty
+                        || !matches!(
+                            pattern.kind,
+                            TypedExprKind::Int(_) | TypedExprKind::String(_)
+                        )
+                    {
+                        diagnostics.push(Diagnostic::new(
+                            "case must be a constant of the switch value's type",
+                            arm.pattern.span.clone(),
+                        ));
+                    }
+                    let key = format!("{:?}", pattern.kind);
+                    if !seen.insert(key) {
+                        diagnostics.push(Diagnostic::new(
+                            "duplicate switch case",
+                            arm.pattern.span.clone(),
+                        ));
+                    }
+                    let body = type_check_block(
+                        &arm.body,
+                        return_type,
+                        struct_defs,
+                        signatures,
+                        &mut env.clone(),
+                        &mut ref_env.clone(),
+                        locals,
+                        called_functions,
+                        loop_depth,
+                        in_async,
+                        host,
+                        diagnostics,
+                    );
+                    typed_arms.push((pattern, body));
+                }
+                if let Type::Enum(name) = &value.ty {
+                    if default_body.is_empty() {
+                        if let Some(variants) = struct_defs
+                            .get(name)
+                            .and_then(|def| def.enum_variants.as_ref())
+                        {
+                            let missing: Vec<_> = (0..variants.len()).filter(|index| !typed_arms.iter().any(|(pattern, _)| matches!(pattern.kind, TypedExprKind::Int(value) if value == *index as i64))).map(|index| variants[index].as_str()).collect();
+                            if !missing.is_empty() {
+                                diagnostics.push(Diagnostic::new(
+                                    format!(
+                                        "non-exhaustive switch on '{}': missing {}",
+                                        name,
+                                        missing.join(", ")
+                                    ),
+                                    statement.span.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                let default_body = type_check_block(
+                    default_body,
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    &mut env.clone(),
+                    &mut ref_env.clone(),
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    in_async,
+                    host,
+                    diagnostics,
+                );
+                let temp_name = format!("__switch_{}", statement.span.line);
+                locals.insert(temp_name.clone(), value.ty.clone());
+                lower_switch_stmt(value, typed_arms, default_body, temp_name)
             }
             StmtKind::Context { kind, anchor, body } => {
                 let anchor = type_check_expr(
@@ -1948,6 +2179,31 @@ fn type_check_expr(
             }
         }
         ExprKind::Path(path) => {
+            if let (ExprKind::Variable(enum_name), [PathSegment::Field(variant)]) =
+                (&path.base.kind, path.segments.as_slice())
+            {
+                if let Some(variants) = struct_defs
+                    .get(enum_name)
+                    .and_then(|def| def.enum_variants.as_ref())
+                {
+                    if let Some(index) = variants.iter().position(|name| name == variant) {
+                        return TypedExpr {
+                            kind: TypedExprKind::Int(index as i64),
+                            ty: Type::Enum(enum_name.clone()),
+                            ref_kind: RefKind::Unknown,
+                        };
+                    }
+                    diagnostics.push(Diagnostic::new(
+                        format!("unknown enum constant '{}.{}'", enum_name, variant),
+                        expr.span.clone(),
+                    ));
+                    return TypedExpr {
+                        kind: TypedExprKind::Int(0),
+                        ty: Type::Enum(enum_name.clone()),
+                        ref_kind: RefKind::Unknown,
+                    };
+                }
+            }
             let path = type_check_path(
                 path,
                 struct_defs,
@@ -2125,7 +2381,7 @@ fn type_check_expr(
                         BinaryOp::Eq | BinaryOp::NotEq => {
                             if !matches!(
                                 left.ty,
-                                Type::Int | Type::Float | Type::Bool | Type::String
+                                Type::Int | Type::Float | Type::Bool | Type::String | Type::Enum(_)
                             ) {
                                 diagnostics.push(Diagnostic::new(
                                     "equality operators currently support only 'int', 'float', 'bool', and 'string'",
@@ -2402,6 +2658,33 @@ fn type_check_path(
     let mut player_slot_namespace: Option<String> = None;
     for (index, segment) in segments.iter().enumerate() {
         let next_segment = segments.get(index + 1);
+        if index > 0
+            && is_entity_ref_type(&base.ty)
+            && matches!(segments.first(), Some(PathSegment::Field(name)) if name == "state")
+        {
+            let declared_path = segments[1..=index]
+                .iter()
+                .map(|segment| match segment {
+                    PathSegment::Field(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(declared_path) = declared_path {
+                let map_name = if base.ref_kind == RefKind::Player {
+                    "@mcfc/player_state"
+                } else {
+                    "@mcfc/entity_state"
+                };
+                if let Some(declared_ty) = struct_defs
+                    .get(map_name)
+                    .and_then(|def| def.fields.get(&declared_path.join(".")))
+                {
+                    current_ty = declared_ty.clone();
+                    segment_types.push(current_ty.clone());
+                    continue;
+                }
+            }
+        }
         match (&current_ty, segment) {
             (Type::EntityRef | Type::PlayerRef, PathSegment::Field(field))
                 if field == "position" =>
@@ -2851,8 +3134,44 @@ fn validate_declared_type(
             validate_collection_value_type(value, span.clone(), diagnostics);
             validate_declared_type(value, struct_defs, span, diagnostics);
         }
-        Type::Struct(name) if !struct_defs.contains_key(name) => {
+        Type::Optional(value) => {
+            if *value.as_ref() == Type::Void {
+                diagnostics.push(Diagnostic::new(
+                    "Optional value must be a non-void type",
+                    span.clone(),
+                ));
+            }
+            validate_declared_type(value, struct_defs, span, diagnostics);
+        }
+        Type::Enum(name)
+            if !struct_defs
+                .get(name)
+                .is_some_and(|def| def.enum_variants.is_some()) =>
+        {
+            diagnostics.push(Diagnostic::new(format!("unknown enum '{}'", name), span))
+        }
+        Type::Struct(name)
+            if !struct_defs
+                .get(name)
+                .is_some_and(|def| def.enum_variants.is_none()) =>
+        {
             diagnostics.push(Diagnostic::new(format!("unknown struct '{}'", name), span))
+        }
+        _ => {}
+    }
+}
+
+fn resolve_enum_type(ty: &mut Type, defs: &BTreeMap<String, StructTypeDef>) {
+    match ty {
+        Type::Struct(name)
+            if defs
+                .get(name)
+                .is_some_and(|def| def.enum_variants.is_some()) =>
+        {
+            *ty = Type::Enum(name.clone());
+        }
+        Type::Array(inner) | Type::Dict(inner) | Type::Optional(inner) => {
+            resolve_enum_type(inner, defs)
         }
         _ => {}
     }
@@ -2868,7 +3187,9 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
             | Type::Nbt
             | Type::Array(_)
             | Type::Dict(_)
+            | Type::Optional(_)
             | Type::Struct(_)
+            | Type::Enum(_)
             | Type::EntityDef
             | Type::BlockDef
             | Type::ItemDef
@@ -3456,6 +3777,41 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             })
         }
+        "find_first" => {
+            let mut args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 1, expr, diagnostics);
+            if let Some(arg) = args.first_mut() {
+                if arg.ty != Type::EntitySet {
+                    diagnostics.push(Diagnostic::new(
+                        "find_first(...) requires an 'entity_set' argument",
+                        expr.span.clone(),
+                    ));
+                } else if !can_narrow_single_selector(arg) {
+                    diagnostics.push(Diagnostic::new(
+                        "find_first(...) requires a direct selector(...) expression so it can enforce limit=1",
+                        expr.span.clone(),
+                    ));
+                } else {
+                    rewrite_single_limit(arg, diagnostics, expr.span.clone());
+                }
+            }
+            Some(TypedExpr {
+                kind: TypedExprKind::Call {
+                    function: function.to_string(),
+                    args,
+                },
+                ty: Type::Optional(Box::new(Type::EntityRef)),
+                ref_kind: RefKind::Unknown,
+            })
+        }
         "single" => {
             let args = type_check_args(
                 args,
@@ -3770,6 +4126,50 @@ fn type_check_method_call(
         diagnostics,
     );
     match method {
+        "get" if matches!(receiver.ty, Type::Array(_) | Type::Dict(_)) => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            let (element, key_type) = match &receiver.ty {
+                Type::Array(element) => (element.as_ref().clone(), Type::Int),
+                Type::Dict(element) => (element.as_ref().clone(), Type::String),
+                _ => unreachable!(),
+            };
+            if args.first().is_some_and(|arg| arg.ty != key_type) {
+                diagnostics.push(Diagnostic::new(
+                    format!("get(...) key must be '{}'", key_type.as_str()),
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(
+                receiver,
+                method,
+                args,
+                Type::Optional(Box::new(element)),
+            ))
+        }
+        "isPresent" if matches!(receiver.ty, Type::Optional(_)) => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Bool))
+        }
+        "orElse" if matches!(receiver.ty, Type::Optional(_)) => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            let Type::Optional(value) = receiver.ty.clone() else {
+                unreachable!()
+            };
+            if let Some(arg) = args.first_mut() {
+                *arg = coerce_expr_to_expected_type(arg.clone(), &value);
+                if arg.ty != *value {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "orElse(...) fallback must be '{}', found '{}'",
+                            value.as_str(),
+                            arg.ty.as_str()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
+            }
+            Some(method_call_expr(receiver, method, args, *value))
+        }
         "to_string" if matches!(receiver.ty, Type::Int | Type::Float | Type::String) => {
             expect_arity(method, &args, 0, expr, diagnostics);
             Some(concat_strings(vec![receiver]))
@@ -5736,6 +6136,7 @@ fn is_nbt_compatible_type(ty: &Type) -> bool {
             | Type::Nbt
             | Type::Array(_)
             | Type::Dict(_)
+            | Type::Optional(_)
             | Type::Struct(_)
             | Type::ItemDef
             | Type::TextDef
@@ -5918,12 +6319,18 @@ fn validate_player_path_write(
             span,
         )),
         "state" => {
-            if !matches!(value.ty, Type::Int | Type::Bool) {
+            let declared = path.segment_types.iter().skip(1).any(|ty| *ty != Type::Nbt);
+            if declared && path.ty != value.ty {
+                diagnostics.push(Diagnostic::new(
+                    format!("state path requires '{}', found '{}'", path.ty.as_str(), value.ty.as_str()),
+                    span,
+                ));
+            } else if !declared && !matches!(value.ty, Type::Int | Type::Bool) {
                 diagnostics.push(Diagnostic::new(
                     if path.base.ref_kind == RefKind::Player {
-                        "player.state.* currently supports only 'int' and 'bool' values"
+                        "undeclared player.state.* supports only 'int' and 'bool' values"
                     } else {
-                        "entity.state.* currently supports only 'int' and 'bool' values"
+                        "undeclared entity.state.* supports only 'int' and 'bool' values"
                     },
                     span,
                 ));
@@ -6215,6 +6622,55 @@ fn lower_string_match_stmt(
         })
 }
 
+fn lower_switch_stmt(
+    value: TypedExpr,
+    arms: Vec<(TypedExpr, Vec<TypedStmt>)>,
+    default_body: Vec<TypedStmt>,
+    temp_name: String,
+) -> TypedStmtKind {
+    let temp = TypedExpr {
+        kind: TypedExprKind::Variable(temp_name.clone()),
+        ty: value.ty.clone(),
+        ref_kind: value.ref_kind,
+    };
+    let mut else_body = default_body;
+    for (pattern, body) in arms.into_iter().rev() {
+        let condition = TypedExpr {
+            kind: TypedExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(temp.clone()),
+                right: Box::new(pattern),
+            },
+            ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
+        };
+        else_body = vec![TypedStmt {
+            kind: TypedStmtKind::If {
+                condition,
+                then_body: body,
+                else_body,
+            },
+        }];
+    }
+    let mut body = vec![TypedStmt {
+        kind: TypedStmtKind::Let {
+            name: temp_name,
+            ty: value.ty.clone(),
+            value,
+        },
+    }];
+    body.extend(else_body);
+    TypedStmtKind::If {
+        condition: TypedExpr {
+            kind: TypedExprKind::Bool(true),
+            ty: Type::Bool,
+            ref_kind: RefKind::Unknown,
+        },
+        then_body: body,
+        else_body: Vec::new(),
+    }
+}
+
 fn extract_string_literal(
     arg: Option<&TypedExpr>,
     function: &str,
@@ -6230,6 +6686,16 @@ fn extract_string_literal(
             ));
             String::new()
         }
+    }
+}
+
+fn can_narrow_single_selector(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::Selector(_) => true,
+        TypedExprKind::At { value, .. } | TypedExprKind::As { value, .. } => {
+            can_narrow_single_selector(value)
+        }
+        _ => false,
     }
 }
 

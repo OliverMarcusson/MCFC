@@ -25,7 +25,7 @@
     ["'", "'"]
   ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(?:fn\\b.*|struct\\b.*:|(?:event|command|task)\\b.*:|(?:if|else(?:\\s+if)?|while|for|as|at|match)\\b.*:|async\\s*:)\\s*(?:#.*)?$",
-    "decreaseIndentPattern": "^\\s*else\\s*:\\s*(?:#.*)?$"
+    "increaseIndentPattern": "^\\s*(?:fn\\b.*|(?:struct|enum)\\b.*:|(?:event|command|task)\\b.*:|(?:if|else(?:\\s+if)?|while|for|as|at|match|switch|case|default)\\b.*:|async\\s*:)\\s*(?:#.*)?$",
+    "decreaseIndentPattern": "^\\s*(?:else|case\\b.*|default)\\s*:\\s*(?:#.*)?$"
   }
 }

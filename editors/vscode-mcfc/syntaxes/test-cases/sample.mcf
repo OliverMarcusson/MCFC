@@ -2,6 +2,10 @@
 
 data player.coins: int = 0
 
+enum Mode:
+    IDLE
+    RUNNING
+
 event player_join:
     let player = single(selector("@s"))
     player.tellraw("Welcome to MCFC")
@@ -25,6 +29,7 @@ fn classify(value: int) -> string
         return "large"
 
 fn main() -> void
+    let mode = Mode.IDLE
     let player = single(selector("@p"))
     let me = player_ref(player)
     let pig = single(selector("@e[type=pig,limit=1]"))
@@ -94,6 +99,12 @@ fn main() -> void
     if me.inventory[0].exists:
         me.inventory[0].count = me.inventory[0].count + 1
         me.hotbar[0].clear()
+
+    switch mode:
+        case Mode.IDLE:
+            mcf "say idle"
+        case Mode.RUNNING:
+            mcf "say running"
 
     match label:
         "small" => mcf "say $(label) $(values.len())"

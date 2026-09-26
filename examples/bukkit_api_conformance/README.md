@@ -24,7 +24,7 @@ Install `dist/` as a normal datapack, reload, then run:
 
 The generated runtime verifies:
 
-- `data player.*` aliases for scoreboard-backed state
+- `player_state` scoreboard-backed state
 - first-seen player join dispatch
 - death-count dispatch
 - a one-shot load task

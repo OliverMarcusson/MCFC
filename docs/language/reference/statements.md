@@ -2,7 +2,7 @@
 
 Blocks start with `:` and are indented with spaces. Tabs are an error. `#` starts a comment.
 
-**Top level:** [`fn`](#fn) · [`struct`](#struct) · [`enum`](#enum) · [`mod` / `pub`](#mod-and-pub) · [`use`](#use) · [`player_state`](#player-state) · [`entity_state`](#entity-state) · [`data`](#data) · [`event`](./events) · [`command`](#command) · [`task`](#task)
+**Top level:** [`fn`](#fn) · [`struct`](#struct) · [`enum`](#enum) · [`mod` / `pub`](#mod-and-pub) · [`use`](#use) · [`player_state`](#player-state) · [`entity_state`](#entity-state) · [`event`](./events) · [`command`](#command) · [`task`](#task)
 
 **In a function:** [`let`](#let) · [assignment](#assignment) · [`if`](#if) · [`switch`](#switch) · [`match`](#match) · [`while`](#while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
@@ -195,15 +195,6 @@ fn mark(entity: entity_ref) -> void:
 ```
 
 Scoreboard objectives are named `mcfe_*`. Stored values aren't removed when the entity despawns.
-
-### `data`
-
-```mcfc
-data player.coins: int = 0
-data player.ready: bool = false
-```
-
-This is an older form of `int` and `bool` player state. You read it as `player.data.coins`. Use `player_state` instead.
 
 ### `command`
 

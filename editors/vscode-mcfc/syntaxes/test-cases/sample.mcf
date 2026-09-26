@@ -1,6 +1,6 @@
 # MCFC syntax highlighting fixture
 
-data player.coins: int = 0
+player_state coins: int = "coins"
 
 enum Mode:
     IDLE
@@ -15,7 +15,7 @@ event chat(event: chat_event):
 
 command status:
     let player = single(selector("@s"))
-    player.tellraw("coins=$(player.data.coins)")
+    player.tellraw("coins=$(player.state.coins)")
 
 task heartbeat every_ticks(20):
     debug("heartbeat")

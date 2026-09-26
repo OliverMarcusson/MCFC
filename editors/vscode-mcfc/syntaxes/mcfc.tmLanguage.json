@@ -206,11 +206,6 @@
           "captures": { "1": { "name": "keyword.declaration.mcfc" }, "2": { "name": "entity.name.function.mcfc" } }
         },
         {
-          "name": "meta.declaration.data.mcfc",
-          "match": "\\b(data)\\s+(player)\\.([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": { "1": { "name": "keyword.declaration.mcfc" }, "2": { "name": "support.type.mcfc" }, "3": { "name": "variable.other.member.mcfc" } }
-        },
-        {
           "name": "entity.name.function.call.mcfc",
           "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
         }
@@ -220,7 +215,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|match|switch|case|default|else|while|for|in|break|continue|return|struct|enum|player_state|entity_state|data|event|command|task|async)\\b"
+          "match": "\\b(?:if|match|switch|case|default|else|while|for|in|break|continue|return|struct|enum|player_state|entity_state|event|command|task|async)\\b"
         },
         {
           "name": "keyword.other.module.mcfc",

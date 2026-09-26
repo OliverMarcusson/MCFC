@@ -297,7 +297,7 @@ fn normalize_bukkit_declaration_line(line: &str) -> String {
     // These declarations are top-level by design.  Nested text is left alone,
     // including comments and strings in function bodies.
     if line.starts_with(char::is_whitespace) {
-        return line.replace(".data.", ".state.");
+        return line.to_string();
     }
 
     let trimmed = line.trim();
@@ -354,24 +354,7 @@ fn normalize_bukkit_declaration_line(line: &str) -> String {
             }
         }
     }
-    if let Some(rest) = trimmed.strip_prefix("data player.") {
-        if let Some((name, declaration)) = rest.split_once(':') {
-            if is_mcfc_identifier(name) {
-                if let Some((ty, default)) = declaration.split_once('=') {
-                    let ty = ty.trim();
-                    let default = default.trim();
-                    // Vanilla scoreboards initialise to zero/false.  Rejecting
-                    // non-zero defaults here would turn a useful parse error
-                    // into a silent semantic surprise, so leave them for the
-                    // normal parser until default initialisers are added.
-                    if matches!((ty, default), ("int", "0") | ("bool", "false")) {
-                        return format!("player_state {}: {} = \"{}\"", name, ty, name);
-                    }
-                }
-            }
-        }
-    }
-    line.replace(".data.", ".state.")
+    line.to_string()
 }
 
 /// Parse the typed form of an agent event declaration. Vanilla lifecycle events
@@ -1150,14 +1133,14 @@ fn main() -> void:
     }
 
     #[test]
-    fn compiles_vanilla_bukkit_declarations_and_data_aliases() {
+    fn compiles_vanilla_bukkit_declarations() {
         let result = compile_source(
             r#"
-data player.coins: int = 0
+player_state coins: int = "Coins"
 
 event player_join:
     let player = single(selector("@s"))
-    player.data.coins = player.data.coins + 1
+    player.state.coins = player.state.coins + 1
 
 event player_death:
     debug("dead")
@@ -1372,14 +1355,6 @@ event player_interact_block(event: player_interact_block_event):
             .unwrap_err()
             .to_string();
         assert!(error.contains("observation-only"));
-    }
-
-    #[test]
-    fn bukkit_data_rejects_non_zero_defaults_until_managed_storage_exists() {
-        let error = compile_source("data player.coins: int = 10\n", &CompileOptions::default())
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("expected player_state"));
     }
 
     #[test]

@@ -3,7 +3,6 @@
   "Enum": { "prefix": "enum", "body": ["enum ${1:Mode}:", "    ${2:IDLE}", "    ${3:RUNNING}"], "description": "Named enum constants" },
   "Switch": { "prefix": "switch", "body": ["switch ${1:mode}:", "    case ${2:Mode.IDLE}:", "        ${0}", "    default:", "        "], "description": "Switch over an enum or integer" },
   "Switch case": { "prefix": "case", "body": ["case ${1:Mode.IDLE}:", "    ${0}"], "description": "Switch case arm" },
-  "Player data": { "prefix": "data-player", "body": "data player.${1:name}: ${2:int} = ${3:0}", "description": "Scoreboard-backed player data" },
   "Player state": { "prefix": "player-state", "body": "player_state ${1:title}: ${2:string} = \"${3:Title}\"", "description": "Declare typed persistent player state" },
   "Entity state": { "prefix": "entity-state", "body": "entity_state ${1:title}: ${2:string}", "description": "Declare typed persistent entity state" },
   "Safe array lookup": { "prefix": "array-get", "body": "${1:items}.get(${2:index}).orElse(${3:fallback})", "description": "Look up an array value with a fallback" },

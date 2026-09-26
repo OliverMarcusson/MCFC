@@ -2,7 +2,7 @@
 //! Keep additions here so compiler, language server, and editor tooling share
 //! the names users write instead of maintaining independent stale lists.
 
-pub const TOP_LEVEL_DECLARATIONS: &[&str] = &["data", "event", "command", "task"];
+pub const TOP_LEVEL_DECLARATIONS: &[&str] = &["event", "command", "task"];
 pub const VANILLA_EVENTS: &[&str] = &["player_join", "player_death"];
 pub const AGENT_EVENTS: &[&str] = &[
     "chat",

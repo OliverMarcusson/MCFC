@@ -505,7 +505,7 @@ fn launch(level: int) -> void:
     #[test]
     fn analyzes_bukkit_style_declarations_with_the_compiler_frontend() {
         let analysis = analyze_source(
-            r#"data player.coins: int = 0
+            r#"player_state coins: int = "Coins"
 event chat(event: chat_event):
     event.player.tellraw(event.message)
 command status:

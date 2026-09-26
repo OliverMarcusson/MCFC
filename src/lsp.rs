@@ -1453,9 +1453,7 @@ fn source_declaration_symbols(source: &str) -> Vec<DocumentSymbol> {
     for line in source.lines() {
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
-        let (keyword, kind) = if trimmed.starts_with("data player.") {
-            ("data player.", SymbolKind::FIELD)
-        } else if trimmed.starts_with("event ") {
+        let (keyword, kind) = if trimmed.starts_with("event ") {
             ("event ", SymbolKind::EVENT)
         } else if trimmed.starts_with("command ") {
             ("command ", SymbolKind::FUNCTION)
@@ -1768,7 +1766,6 @@ fn is_declaration_completion_position(source: &str, offset: usize) -> bool {
                     | "enum"
                     | "player_state"
                     | "entity_state"
-                    | "data"
                     | "event"
                     | "command"
                     | "task"
@@ -2357,7 +2354,6 @@ fn static_completion_items(
         "and",
         "or",
         "not",
-        "data",
         "event",
         "command",
         "task",
@@ -2403,11 +2399,6 @@ fn static_completion_items(
     }
 
     for (label, detail, insert_text) in [
-        (
-            "data player...",
-            "Declare scoreboard-backed Bukkit-style player data",
-            "data player.${1:name}: ${2:int} = ${3:0}",
-        ),
         (
             "event player_join",
             "Vanilla lifecycle event",

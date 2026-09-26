@@ -1133,6 +1133,49 @@ fn main() -> void:
     }
 
     #[test]
+    fn async_and_sleep_in_handlers_do_not_register_extra_commands() {
+        let result = compile_source(
+            r#"
+command buy:
+    let player = single(selector("@s"))
+    async:
+        sleep(3)
+        player.tellraw("later")
+    sleep_ticks(5)
+    player.tellraw("done")
+
+event player_join:
+    async:
+        sleep(1)
+        debug("joined")
+
+task pulse every_ticks(20):
+    async:
+        sleep(1)
+        debug("pulse")
+"#,
+            &CompileOptions::default(),
+        )
+        .expect("handlers with async and sleep should compile");
+        let generated = result
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(generated.contains("scoreboard objectives add mcfcc_buy trigger"));
+        assert!(!generated.contains("mcfcc_buy_"), "extra trigger objective");
+        let agent_commands = result
+            .artifacts
+            .files
+            .keys()
+            .filter(|path| path.contains("/agent/command/"))
+            .collect::<Vec<_>>();
+        assert_eq!(agent_commands.len(), 1, "{agent_commands:?}");
+    }
+
+    #[test]
     fn compiles_vanilla_bukkit_declarations() {
         let result = compile_source(
             r#"

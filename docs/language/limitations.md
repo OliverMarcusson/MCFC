@@ -26,7 +26,6 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Statements
 
 - `sleep`, `sleep_ticks`, host calls and calls to functions that pause have to be statements of their own. See [Functions that pause](./reference/statements#functions-that-pause).
-- Put `async` and `sleep` in a helper function rather than directly in a `command` body.
 
 ## Platform
 

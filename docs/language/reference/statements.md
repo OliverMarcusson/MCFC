@@ -206,8 +206,6 @@ command status:
 
 Players run the command with `/trigger mcfcc_status`, which needs no operator permissions. The handler runs as that player. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
 
-Put `async` and `sleep` in a function you call from the handler, not directly in the handler body.
-
 ### `task`
 
 ```mcfc

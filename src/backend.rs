@@ -9763,6 +9763,11 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
     let mut runtime = BukkitRuntime::default();
     let mut command_objectives = BTreeSet::new();
     for function in &program.functions {
+        // Async bodies inside a handler are named after it, such as
+        // `__mcfc_command_buy__async_1`; only the declared handler is a hook.
+        if function.generated {
+            continue;
+        }
         let name = &function.name;
         if let Some(event) = name.strip_prefix("__mcfc_agent_event_") {
             if let Some(event_type) = agent_event_type(event) {

@@ -3532,6 +3532,107 @@ void main() {
     assert!(predicate.contains("\"jump\":true"));
 }
 
+#[test]
+fn advancement_events_generate_triggers_and_rewards() {
+    let source = r#"
+@EventHandler
+void onPlace(BlockPlaceEvent event) {
+    var block = event.block();
+    if (block.isPresent()) { block.get().setBlock("minecraft:gold_block"); }
+}
+@EventHandler
+void onEat(PlayerItemConsumeEvent event) { event.player().sendMessage("ate"); }
+@EventHandler
+void onUse(PlayerUseItemEvent event) { event.player().sendMessage("using"); }
+@EventHandler
+void onKill(PlayerKillEntityEvent event) { event.player().sendMessage("kill"); }
+@EventHandler
+void onHit(PlayerHurtEntityEvent event) { event.entity().damage(1); }
+@EventHandler
+void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
+"#;
+    let result = compile_source(source, &lowering()).expect("advancement events should compile");
+    let files = &result.artifacts.files;
+    for (kind, trigger) in [
+        ("block_place", "placed_block"),
+        ("player_item_consume", "consume_item"),
+        ("player_use_item", "using_item"),
+        ("player_kill_entity", "player_killed_entity"),
+        ("player_hurt_entity", "player_hurt_entity"),
+        ("player_interact_entity", "player_interacted_with_entity"),
+    ] {
+        let advancement = files
+            .get(&format!("data/mcfc/advancement/mcfc_event/{kind}.json"))
+            .unwrap_or_else(|| panic!("missing advancement for {kind}"));
+        assert!(advancement.contains(&format!("\"minecraft:{trigger}\"")));
+        let reward = files
+            .get(&format!(
+                "data/mcfc/function/generated/bukkit/{kind}.mcfunction"
+            ))
+            .unwrap();
+        assert!(reward.starts_with(&format!(
+            "advancement revoke @s only mcfc:mcfc_event/{kind}"
+        )));
+    }
+    let hurt = files
+        .get("data/mcfc/function/generated/bukkit/player_hurt_entity.mcfunction")
+        .unwrap();
+    assert!(
+        hurt.contains("@e[nbt={HurtTime:10s}] if function mcfc:generated/bukkit/attacked_by_self")
+    );
+    assert!(hurt.contains("unless entity @e[tag=mcfc_event_target] anchored eyes"));
+    assert!(hurt.contains("attribute @s minecraft:entity_interaction_range get 10"));
+    let place = files
+        .get("data/mcfc/function/generated/bukkit/block_place.mcfunction")
+        .unwrap();
+    assert!(place.contains("attribute @s minecraft:block_interaction_range get 10"));
+    assert!(
+        place.contains("mcfc_event.block.value.pos set from storage mcfc:runtime mcfc_ray.pos")
+    );
+    assert!(
+        hurt.trim_end()
+            .ends_with("tag @e[tag=mcfc_event_target] remove mcfc_event_target")
+    );
+    let output = files.values().cloned().collect::<String>();
+    assert!(output.contains("set from storage mcfc:runtime mcfc_event.block"));
+    // Record fields holding refs must be written, or `event.player()` is empty.
+    assert!(output.contains("selector set value \"@s\""));
+    assert!(output.contains("@e[tag=mcfc_event_target,limit=1]"));
+}
+
+#[test]
+fn raycasts_return_optional_block_and_entity() {
+    let source = r#"
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var block = player.getTargetBlock(5.0);
+    if (block.isPresent()) {
+        block.get().setBlock("minecraft:gold_block");
+    }
+    var target = player.getTargetEntity(8.0);
+    if (target.isPresent()) {
+        target.get().damage(2);
+    }
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("raycasts should compile");
+    let files = &result.artifacts.files;
+    let output = files.values().cloned().collect::<String>();
+    for expected in [
+        "anchored eyes positioned ^ ^ ^ run function mcfc:generated/raycast/start",
+        "set value {present:1b,value:{prefix:\"\"}}",
+        "value.pos set from storage mcfc:runtime mcfc_ray.pos",
+        "run tag @e[tag=mcfc_ray_hit] add mcfc_ray_",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+    let step = files
+        .get("data/mcfc/function/generated/raycast/step.mcfunction")
+        .unwrap();
+    assert!(step.contains("unless block ~ ~ ~ #minecraft:replaceable"));
+    assert!(step.contains("positioned ^ ^ ^0.1 run function mcfc:generated/raycast/step"));
+}
+
 /// Replays the scoreboard half of the generated impulse function and checks
 /// that the bit scores the enchantment reads add back up to the input.
 #[test]

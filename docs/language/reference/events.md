@@ -11,6 +11,12 @@ A function annotated with `@EventHandler` runs when something happens in game. I
 | --- | --- |
 | `PlayerJoinEvent` | Once per player, the first time the pack sees them. Tracked with the tag `mcfc_join_<namespace>`, so it doesn't run again on later logins. |
 | `PlayerDeathEvent` | Each time a player dies, detected through a `deathCount` objective. |
+| `BlockPlaceEvent` | When a player places a block. Has `block()`. |
+| `PlayerItemConsumeEvent` | When a player finishes eating or drinking an item. |
+| `PlayerUseItemEvent` | Every tick while a player uses an item, such as drawing a bow or eating. |
+| `PlayerKillEntityEvent` | When a player kills an entity. |
+| `PlayerHurtEntityEvent` | When a player hurts an entity, including with projectiles, or left-clicks an interaction entity. Has `entity()`. |
+| `PlayerInteractEntityEvent` | When a player right-clicks an entity, including an interaction entity. Has `entity()`. |
 
 Vanilla handlers run as the affected player, which is `event.player()`:
 
@@ -27,6 +33,10 @@ void onPlayerDeath(PlayerDeathEvent event) {
     player.state.deaths = player.state.deaths + 1;
 }
 ```
+
+Minecraft doesn't say which entity or block was involved, so MCFC finds it after the fact. `entity()` is the entity this player hurt this tick for `PlayerHurtEntityEvent`, and otherwise the first entity along the player's view within their `entity_interaction_range`. It is only valid inside the handler. `block()` is an `Optional<Block>`: the first block along the view within the player's `block_interaction_range`. It is empty or wrong when the placed block is replaceable, such as snow layers or tall grass, because the ray passes through those.
+
+Interaction entities are invisible hitboxes. Summon one to make a clickable area, and handle clicks with `PlayerInteractEntityEvent` and `PlayerHurtEntityEvent`.
 
 For something that runs repeatedly, use [`@Every`](./statements#every-and-after) or `void tick()`. For something players run, use [`@Command`](./statements#command).
 
@@ -88,4 +98,4 @@ Agent events are tied to Minecraft 26.3. The agent sends events that arrive as n
 
 ## Under the hood
 
-Vanilla events are checked by the generated tick function. Agent events call `agent/event/<name>.mcfunction`, where `<name>` is the event type in snake case without `Event`, such as `block_break`. The agent writes the payload to command storage, and the wrapper copies it into the handler's parameter before calling it. `event.cancel()` writes `decision.cancel` to storage, and the agent reads it back before letting the action through.
+Join and death are checked by the generated tick function. The other vanilla events use an advancement per event, `advancement/mcfc_event/<name>.json`, whose reward function revokes it and calls the handler. Agent events call `agent/event/<name>.mcfunction`, where `<name>` is the event type in snake case without `Event`, such as `block_break`. The agent writes the payload to command storage, and the wrapper copies it into the handler's parameter before calling it. `event.cancel()` writes `decision.cancel` to storage, and the agent reads it back before letting the action through.

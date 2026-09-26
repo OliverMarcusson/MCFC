@@ -57,6 +57,7 @@ struct Backend {
     uses_food: bool,
     uses_impulse: bool,
     uses_health: bool,
+    uses_raycast: bool,
     bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
@@ -81,6 +82,8 @@ struct ManagedObjective {
 struct BukkitRuntime {
     join_handlers: Vec<String>,
     death_handlers: Vec<String>,
+    /// `(event kind, handler)` for events raised by an advancement trigger.
+    advancement_handlers: Vec<(String, String)>,
     agent_handlers: Vec<AgentEventHandler>,
     commands: Vec<BukkitCommand>,
     every_tasks: Vec<(String, u32)>,
@@ -227,6 +230,7 @@ impl Backend {
             uses_food: false,
             uses_impulse: false,
             uses_health: false,
+            uses_raycast: false,
             bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
             suspending: suspending_functions(program),
@@ -267,6 +271,9 @@ impl Backend {
         }
         if self.uses_health {
             self.emit_health_runtime();
+        }
+        if self.uses_raycast {
+            self.emit_raycast_runtime();
         }
         self.emit_bukkit_runtime();
         // Agent-only packs do not otherwise need the RPC runtime, but mcfd must
@@ -582,6 +589,136 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
         );
     }
 
+    /// Steps 0.1 blocks from the eyes until a non-replaceable block or, in entity
+    /// mode, a hitbox other than the caster's. `#ray_hit` is 1 for a block, 2 for an entity.
+    fn emit_raycast_runtime(&mut self) {
+        let ns = &self.namespace;
+        let files = [
+            (
+                "start",
+                format!(
+                    "tag @s add mcfc_ray_source\nscoreboard players set #ray_hit mcfc 0\nfunction {ns}:generated/raycast/step\ntag @s remove mcfc_ray_source"
+                ),
+            ),
+            (
+                "step",
+                format!(
+                    "execute unless block ~ ~ ~ #minecraft:replaceable run return run function {ns}:generated/raycast/block\n\
+execute if score #ray_mode mcfc matches 1 as @e[dx=0,dy=0,dz=0,tag=!mcfc_ray_source] positioned ~-0.99 ~-0.99 ~-0.99 if entity @s[dx=0,dy=0,dz=0] run return run function {ns}:generated/raycast/entity\n\
+scoreboard players remove #ray_steps mcfc 1\n\
+execute if score #ray_steps mcfc matches 1.. positioned ^ ^ ^0.1 run function {ns}:generated/raycast/step"
+                ),
+            ),
+            (
+                "entity",
+                "tag @s add mcfc_ray_hit\nscoreboard players set #ray_hit mcfc 2".to_string(),
+            ),
+            (
+                "block",
+                format!(
+                    "scoreboard players set #ray_hit mcfc 1\n\
+execute align xyz run summon minecraft:marker ~ ~ ~ {{Tags:[\"mcfc_ray_marker\"]}}\n\
+execute store result storage {ns}:runtime mcfc_ray.x int 1 run data get entity @e[type=minecraft:marker,tag=mcfc_ray_marker,limit=1] Pos[0]\n\
+execute store result storage {ns}:runtime mcfc_ray.y int 1 run data get entity @e[type=minecraft:marker,tag=mcfc_ray_marker,limit=1] Pos[1]\n\
+execute store result storage {ns}:runtime mcfc_ray.z int 1 run data get entity @e[type=minecraft:marker,tag=mcfc_ray_marker,limit=1] Pos[2]\n\
+kill @e[type=minecraft:marker,tag=mcfc_ray_marker]\n\
+function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
+                ),
+            ),
+            (
+                "pos",
+                format!(
+                    "$data modify storage {ns}:runtime mcfc_ray.pos set value \"$(x) $(y) $(z)\""
+                ),
+            ),
+        ];
+        for (name, body) in files {
+            self.files.insert(
+                format!("data/{ns}/function/generated/raycast/{name}.mcfunction"),
+                body + "\n",
+            );
+        }
+    }
+
+    /// Each advancement event gets an advancement whose reward runs as the player,
+    /// revokes itself so it fires again, and calls the handler.
+    fn emit_advancement_events(&mut self) {
+        let ns = self.namespace.clone();
+        for (kind, handler) in self.bukkit.advancement_handlers.clone() {
+            let (_, trigger) = crate::language_catalog::ADVANCEMENT_EVENTS
+                .iter()
+                .find(|(event, _)| *event == kind)
+                .unwrap();
+            self.files.insert(
+                format!("data/{ns}/advancement/mcfc_event/{kind}.json"),
+                format!(
+                    "{{\"criteria\":{{\"event\":{{\"trigger\":\"minecraft:{trigger}\"}}}},\"rewards\":{{\"function\":\"{ns}:generated/bukkit/{kind}\"}}}}
+"
+                ),
+            );
+            let mut lines = vec![format!("advancement revoke @s only {ns}:mcfc_event/{kind}")];
+            let has_entity = crate::language_catalog::vanilla_event_has_entity(&kind);
+            if kind == "player_hurt_entity" {
+                // The victim was hurt this tick (HurtTime 10) by this player. That
+                // misses interaction entities, which the look ray below finds.
+                lines.push("tag @s add mcfc_event_self".to_string());
+                lines.push(format!(
+                    "execute as @e[nbt={{HurtTime:10s}}] if function {ns}:generated/bukkit/attacked_by_self run tag @s add mcfc_event_target"
+                ));
+                lines.push("tag @s remove mcfc_event_self".to_string());
+                self.files.insert(
+                    format!("data/{ns}/function/generated/bukkit/attacked_by_self.mcfunction"),
+                    "return run execute on attacker if entity @s[tag=mcfc_event_self]
+"
+                    .to_string(),
+                );
+            }
+            if crate::language_catalog::vanilla_event_has_block(&kind) {
+                self.emit_raycast_runtime();
+                let out = format!("storage {ns}:runtime mcfc_event.block");
+                lines.extend([
+                    ray_reach_steps("block"),
+                    "scoreboard players set #ray_mode mcfc 0".to_string(),
+                    format!("execute anchored eyes positioned ^ ^ ^ run function {ns}:generated/raycast/start"),
+                    format!("data modify {out} set value {{present:0b}}"),
+                    format!("execute if score #ray_hit mcfc matches 1 run data modify {out} set value {{present:1b,value:{{prefix:\"\"}}}}"),
+                    format!("execute if score #ray_hit mcfc matches 1 run data modify {out}.value.pos set from storage {ns}:runtime mcfc_ray.pos"),
+                ]);
+            }
+            if has_entity {
+                self.emit_raycast_runtime();
+                lines.extend([
+                    ray_reach_steps("entity"),
+                    "scoreboard players set #ray_mode mcfc 1".to_string(),
+                    format!(
+                        "execute unless entity @e[tag=mcfc_event_target] anchored eyes positioned ^ ^ ^ run function {ns}:generated/raycast/start"
+                    ),
+                    "execute if score #ray_hit mcfc matches 2 run tag @e[tag=mcfc_ray_hit] add mcfc_event_target".to_string(),
+                    "tag @e[tag=mcfc_ray_hit] remove mcfc_ray_hit".to_string(),
+                ]);
+            }
+            lines.push(format!(
+                "scoreboard players set {} mcfc 0",
+                control_slot(0, &handler)
+            ));
+            lines.push(format!(
+                "function {ns}:{}",
+                self.function_entry_name(&handler, 0)
+            ));
+            if has_entity {
+                lines.push("tag @e[tag=mcfc_event_target] remove mcfc_event_target".to_string());
+            }
+            self.files.insert(
+                format!("data/{ns}/function/generated/bukkit/{kind}.mcfunction"),
+                lines.join(
+                    "
+",
+                ) + "
+",
+            );
+        }
+    }
+
     /// Caps max health at the target with a modifier, then heals to the cap.
     /// The heal lands on a later player tick, so the cap stays for two ticks.
     fn emit_health_runtime(&mut self) {
@@ -817,6 +954,8 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
                 lines.join("\n") + "\n",
             );
         }
+
+        self.emit_advancement_events();
 
         // The JVM agent writes a typed event compound into `<ns>:agent current`
         // and invokes this wrapper as the affected player. Copying the compound
@@ -3891,6 +4030,44 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
                     true,
                 ));
             }
+            "getTargetBlock" | "getTargetEntity" => {
+                self.uses_raycast = true;
+                let entity = method == "getTargetEntity";
+                let out = target.storage_path();
+                lines.push(format!(
+                    "execute store result score #ray_steps mcfc run data get storage {ns}:runtime {path}.arg0 10"
+                ));
+                lines.push(format!(
+                    "scoreboard players set #ray_mode mcfc {}",
+                    u8::from(entity)
+                ));
+                lines.push(self.query_command(&query, format!(
+                    "execute as $(selector) at @s anchored eyes positioned ^ ^ ^ run function {ns}:generated/raycast/start"
+                ), true));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {out} set value {{present:0b}}"
+                ));
+                if entity {
+                    // ponytail: the hit keeps a per-call-site tag until that site casts
+                    // again; a UUID selector would make the ref independent of the site.
+                    let tag = format!("mcfc_ray_{}", self.new_temp());
+                    lines.push(format!("tag @e[tag={tag}] remove {tag}"));
+                    lines.push(format!(
+                        "execute if score #ray_hit mcfc matches 2 run tag @e[tag=mcfc_ray_hit] add {tag}"
+                    ));
+                    lines.push("tag @e[tag=mcfc_ray_hit] remove mcfc_ray_hit".to_string());
+                    lines.push(format!(
+                        "execute if score #ray_hit mcfc matches 2 run data modify storage {ns}:runtime {out} set value {{present:1b,value:{{prefix:\"\",selector:\"@e[tag={tag},limit=1]\"}}}}"
+                    ));
+                } else {
+                    lines.push(format!(
+                        "execute if score #ray_hit mcfc matches 1 run data modify storage {ns}:runtime {out} set value {{present:1b,value:{{prefix:\"\"}}}}"
+                    ));
+                    lines.push(format!(
+                        "execute if score #ray_hit mcfc matches 1 run data modify storage {ns}:runtime {out}.value.pos set from storage {ns}:runtime mcfc_ray.pos"
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -3909,7 +4086,7 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
             "setVelocity" | "addVelocity" | "getAttribute" | "setAttribute" | "setRotation"
             | "lookAt" | "yawTo" | "pitchTo" | "setHealth" | "setFoodLevel" | "input_forward"
             | "input_backward" | "input_left" | "input_right" | "input_jump" | "input_sneak"
-            | "input_sprint" => {
+            | "input_sprint" | "getTargetBlock" | "getTargetEntity" => {
                 self.compile_entity_system_method(
                     function, depth, receiver, method, args, target, lines,
                 );
@@ -4953,6 +5130,15 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "__mcfc_event_block" => {
+                lines.push(format!(
+                    "data modify storage {}:runtime {} set from storage {}:runtime mcfc_event.block",
+                    self.namespace,
+                    target.storage_path(),
+                    self.namespace
+                ));
+                true
+            }
             "find_first" if !self.functions.contains_key(callee) => {
                 let Some(query) = args.first() else {
                     return true;
@@ -7599,7 +7785,11 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
             | Type::Optional(_)
             | Type::Struct(_)
             | Type::ItemSlot
-            | Type::Bossbar => {
+            | Type::Bossbar
+            | Type::EntitySet
+            | Type::EntityRef
+            | Type::PlayerRef
+            | Type::BlockRef => {
                 self.compile_expr_into_slot(function, depth, expr, target, lines);
             }
             _ => {}
@@ -10438,6 +10628,14 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
             match kind {
                 "player_join" => runtime.join_handlers.push(name.clone()),
                 "player_death" => runtime.death_handlers.push(name.clone()),
+                _ if crate::language_catalog::ADVANCEMENT_EVENTS
+                    .iter()
+                    .any(|(event, _)| *event == kind) =>
+                {
+                    runtime
+                        .advancement_handlers
+                        .push((kind.to_string(), name.clone()));
+                }
                 _ => {}
             }
             continue;
@@ -10463,6 +10661,15 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
         }
     }
     runtime
+}
+
+/// Ray steps (0.1 blocks) covering the player's `block` or `entity` reach, plus
+/// one block because reach is measured to the target's edge, not its inside.
+fn ray_reach_steps(kind: &str) -> String {
+    format!(
+        "execute store result score #ray_steps mcfc run attribute @s minecraft:{kind}_interaction_range get 10
+scoreboard players add #ray_steps mcfc 10"
+    )
 }
 
 pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {

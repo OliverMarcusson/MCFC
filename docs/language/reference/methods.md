@@ -26,6 +26,8 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | `setRotation(yaw: float, pitch: float)` | Sets rotation in degrees. | `rotate` |
 | `lookAt(target: Entity \| Block)` | Rotates to face a target's feet or a block position. | `rotate ... facing` |
 | `yawTo(target: Entity \| Block)`, `pitchTo(target: Entity \| Block)` | Reads the facing angle toward a target. | Temporary marker and `Rotation` NBT |
+| `getTargetBlock(maxDistance: float)` | `Optional<Block>`, the first block along the view that isn't replaceable (air, water, grass and similar). | Generated 0.1-block step function |
+| `getTargetEntity(maxDistance: float)` | `Optional<Entity>`, the first entity along the view. Blocks stop the ray. | Generated 0.1-block step function |
 | `effect(id, seconds: int, amplifier: int)` | Applies a status effect | `effect give` |
 | `give(id, count: int)`, `give(ItemStack)` | Gives items | `give` |
 | `clear(id, count: int)` | Removes items | `clear` |

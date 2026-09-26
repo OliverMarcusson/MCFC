@@ -1564,6 +1564,12 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "addVelocity" => Some("`Entity.addVelocity(x: float, y: float, z: float) -> void`"),
         "lookAt" => Some("`Entity.lookAt(target: Entity|Block) -> void`"),
         "yawTo" => Some("`Entity.yawTo(target: Entity|Block) -> float`"),
+        "getTargetBlock" => Some(
+            "`Entity.getTargetBlock(maxDistance: float) -> Optional<Block>`: first solid block along the view",
+        ),
+        "getTargetEntity" => Some(
+            "`Entity.getTargetEntity(maxDistance: float) -> Optional<Entity>`: first entity along the view, stopped by blocks",
+        ),
         "pitchTo" => Some("`Entity.pitchTo(target: Entity|Block) -> float`"),
         "setHealth" => {
             Some("`Entity.setHealth(points: float) -> void` (players finish on a later tick)")
@@ -3084,6 +3090,18 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             "pitchTo",
             "entity.pitchTo(target: Entity|Block) -> float",
             "pitchTo(${1:target})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "getTargetBlock",
+            "entity.getTargetBlock(maxDistance: float) -> Optional<Block>",
+            "getTargetBlock(${1:maxDistance})",
+            CompletionItemKind::METHOD,
+        ),
+        (
+            "getTargetEntity",
+            "entity.getTargetEntity(maxDistance: float) -> Optional<Entity>",
+            "getTargetEntity(${1:maxDistance})",
             CompletionItemKind::METHOD,
         ),
         (

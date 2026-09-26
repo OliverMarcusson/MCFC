@@ -2,7 +2,36 @@
 //! Keep additions here so compiler, language server, and editor tooling share
 //! the names users write instead of maintaining independent stale lists.
 
-pub const VANILLA_EVENTS: &[&str] = &["player_join", "player_death"];
+pub const VANILLA_EVENTS: &[&str] = &[
+    "player_join",
+    "player_death",
+    "block_place",
+    "player_item_consume",
+    "player_use_item",
+    "player_kill_entity",
+    "player_hurt_entity",
+    "player_interact_entity",
+];
+
+/// Vanilla events raised by an advancement trigger, with the trigger they use.
+pub const ADVANCEMENT_EVENTS: &[(&str, &str)] = &[
+    ("block_place", "placed_block"),
+    ("player_item_consume", "consume_item"),
+    ("player_use_item", "using_item"),
+    ("player_kill_entity", "player_killed_entity"),
+    ("player_hurt_entity", "player_hurt_entity"),
+    ("player_interact_entity", "player_interacted_with_entity"),
+];
+
+/// Vanilla events whose payload also has `block()`, the block involved.
+pub fn vanilla_event_has_block(kind: &str) -> bool {
+    kind == "block_place"
+}
+
+/// Vanilla events whose payload also has `entity()`, the other entity involved.
+pub fn vanilla_event_has_entity(kind: &str) -> bool {
+    matches!(kind, "player_hurt_entity" | "player_interact_entity")
+}
 pub const AGENT_EVENTS: &[&str] = &[
     "chat",
     "inventory_click",

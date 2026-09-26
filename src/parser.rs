@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::language_catalog::{
     VANILLA_EVENTS, event_kind_for_type, event_type_name, internal_function_name,
-    internal_method_name, java_name_for,
+    internal_method_name, java_name_for, vanilla_event_has_block, vanilla_event_has_entity,
 };
 use crate::lexer::{Token, TokenKind, lex};
 
@@ -386,10 +386,33 @@ impl Parser {
                         vec![call("single", vec![at_s], &param.span)],
                         &param.span,
                     );
+                    let mut fields = vec![("player".to_string(), player)];
+                    if vanilla_event_has_entity(kind) {
+                        // The generated reward function tags the other entity.
+                        let target = call(
+                            "selector",
+                            vec![string_expr(
+                                "@e[tag=mcfc_event_target,limit=1]",
+                                &param.span,
+                            )],
+                            &param.span,
+                        );
+                        fields.push((
+                            "entity".to_string(),
+                            call("single", vec![target], &param.span),
+                        ));
+                    }
+                    if vanilla_event_has_block(kind) {
+                        // The generated reward function stores the ray hit.
+                        fields.push((
+                            "block".to_string(),
+                            call("__mcfc_event_block", Vec::new(), &param.span),
+                        ));
+                    }
                     let event = Expr {
                         kind: ExprKind::StructLiteral {
                             name: event_type_name(kind),
-                            fields: vec![("player".to_string(), player)],
+                            fields,
                         },
                         span: param.span.clone(),
                     };

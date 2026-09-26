@@ -716,10 +716,20 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
     }
     // `@EventHandler void onJoin(PlayerJoinEvent event)`: vanilla events carry the player.
     for kind in VANILLA_EVENTS {
+        let mut fields = BTreeMap::from([("player".to_string(), Type::PlayerRef)]);
+        if crate::language_catalog::vanilla_event_has_entity(kind) {
+            fields.insert("entity".to_string(), Type::EntityRef);
+        }
+        if crate::language_catalog::vanilla_event_has_block(kind) {
+            fields.insert(
+                "block".to_string(),
+                Type::Optional(Box::new(Type::BlockRef)),
+            );
+        }
         struct_defs.insert(
             event_type_name(kind),
             StructTypeDef {
-                fields: BTreeMap::from([("player".to_string(), Type::PlayerRef)]),
+                fields,
                 enum_variants: None,
             },
         );
@@ -4062,6 +4072,14 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             })
         }
+        "__mcfc_event_block" => Some(TypedExpr {
+            kind: TypedExprKind::Call {
+                function: function.to_string(),
+                args: Vec::new(),
+            },
+            ty: Type::Optional(Box::new(Type::BlockRef)),
+            ref_kind: RefKind::Unknown,
+        }),
         "find_first" => {
             let mut args = type_check_args(
                 args,
@@ -5320,6 +5338,35 @@ fn type_check_method_call(
                 diagnostics,
             );
             Some(method_call_expr(receiver, method, args, Type::Float))
+        }
+        "getTargetBlock" | "getTargetEntity" => {
+            if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{method}() requires an Entity receiver"),
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::Float,
+                "max distance",
+                expr,
+                diagnostics,
+            );
+            let hit = if method == "getTargetBlock" {
+                Type::BlockRef
+            } else {
+                Type::EntityRef
+            };
+            Some(method_call_expr(
+                receiver,
+                method,
+                args,
+                Type::Optional(Box::new(hit)),
+            ))
         }
         "clear" if receiver.ty == Type::ItemSlot => {
             expect_arity(method, &args, 0, expr, diagnostics);

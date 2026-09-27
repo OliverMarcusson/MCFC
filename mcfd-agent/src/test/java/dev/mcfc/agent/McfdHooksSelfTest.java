@@ -21,14 +21,17 @@ public final class McfdHooksSelfTest {
             Sidebars.checkPackets(new java.net.URLClassLoader(urls.toArray(new java.net.URL[0])));
             System.out.println("sidebar packets build against the game jar");
         }
-        McfdHooks.configure("routes=demo:chat,player_interact_block;commands=demo:status");
+        McfdHooks.configure("routes=demo:chat,player_interact_block|absent:chat;commands=demo:status");
         FakeServer server = new FakeServer();
         FakePlayer player = new FakePlayer(server, "Tester");
         FakeListener listener = new FakeListener(player);
 
         boolean cancelled = McfdHooks.before("chat", listener, new FakeChatPacket("hello"));
         require(!cancelled, "chat should be observe-only in this test");
-        require(server.commands.commands.size() == 2, "chat should emit a storage write and function call");
+        require(server.commands.commands.size() == 2,
+                "chat should emit a storage write and function call, and skip the unloaded 'absent' pack");
+        require(server.commands.sources.stream().allMatch(source -> source == SUPPRESSED),
+                "agent commands must run with suppressed output");
         require(
                 server.commands.commands.get(0).contains("data modify storage demo:agent current set value")
                         && server.commands.commands.get(0).contains("message:\"hello\""),
@@ -79,13 +82,38 @@ public final class McfdHooksSelfTest {
         public Object createCommandSourceStack() {
             return this;
         }
+
+        public Object withSuppressedOutput() {
+            return SUPPRESSED;
+        }
+
+        public FakeFunctions getFunctions() {
+            return new FakeFunctions();
+        }
     }
+
+    static final Object SUPPRESSED = new Object();
 
     public static final class FakeCommands {
         final List<String> commands = new ArrayList<>();
+        final List<Object> sources = new ArrayList<>();
 
         public void performPrefixedCommand(Object source, String command) {
+            sources.add(source);
             commands.add(command);
+        }
+    }
+
+    public record FakeId(String value) {
+        public static FakeId parse(String value) {
+            return new FakeId(value);
+        }
+    }
+
+    /** Only the `demo` pack is loaded. */
+    public static final class FakeFunctions {
+        public java.util.Optional<Object> get(FakeId id) {
+            return id.value().startsWith("demo:") ? java.util.Optional.of(id) : java.util.Optional.empty();
         }
     }
 

@@ -129,6 +129,7 @@ public final class McfdHooks {
                 String playerName = stringValue(player, "getScoreboardName");
                 String data = eventData(event, source, payload, false, playerName);
                 for (String namespace : namespaces) {
+                    if (!hasFunction(server, namespace + ":agent/event/" + event)) continue;
                     runCommand(server, server, "data modify storage " + namespace + ":agent decision set value {cancel:0b}");
                     dispatchOnServer(server, player, namespace, event, data);
                     result.set(result.get() || readDecision(server, namespace));
@@ -284,6 +285,7 @@ public final class McfdHooks {
 
     private static void dispatchOnServer(Object server, Object player, String namespace, String event, String data) {
         try {
+            if (!hasFunction(server, namespace + ":agent/event/" + event)) return;
             runCommand(server, server, "data modify storage " + namespace + ":agent current set value " + data);
             if ("player_quit".equals(event)) {
                 runCommand(server, server, "function " + namespace + ":agent/event/" + event);
@@ -307,6 +309,7 @@ public final class McfdHooks {
     private static void dispatchCommandOnServer(
             Object server, Object player, String namespace, String root, String command) {
         try {
+            if (!hasFunction(server, namespace + ":agent/command/" + root)) return;
             String playerName = stringValue(player, "getScoreboardName");
             String[] parts = command.trim().split("\\s+");
             StringBuilder args = new StringBuilder("[");
@@ -348,9 +351,32 @@ public final class McfdHooks {
         }
     }
 
+    /**
+     * mcfd routes by game instance, not by world, so a route can name a pack
+     * the open world doesn't have. Only dispatch to handlers that are loaded.
+     */
+    private static boolean hasFunction(Object server, String function) {
+        try {
+            Object functions = invokeNoArgs(server, "getFunctions");
+            for (java.lang.reflect.Method get : functions.getClass().getMethods()) {
+                if (get.getName().equals("get") && get.getParameterCount() == 1) {
+                    // The parameter type is the game's Identifier, from the game's own loader.
+                    Class<?> idClass = get.getParameterTypes()[0];
+                    Object id = idClass.getMethod("parse", String.class).invoke(null, function);
+                    return ((java.util.Optional<?>) get.invoke(functions, id)).isPresent();
+                }
+            }
+            throw new NoSuchMethodException("ServerFunctionManager.get");
+        } catch (Throwable error) {
+            System.err.println("[mcfd-agent] function lookup failed function=" + function + " error=" + error);
+            return false;
+        }
+    }
+
     static void runCommand(Object server, Object sender, String command) throws Exception {
         Object commands = invokeNoArgs(server, "getCommands");
-        Object source = invokeNoArgs(sender, "createCommandSourceStack");
+        // Suppressed: the server source would otherwise echo every command to ops.
+        Object source = invokeNoArgs(invokeNoArgs(sender, "createCommandSourceStack"), "withSuppressedOutput");
         for (java.lang.reflect.Method method : commands.getClass().getMethods()) {
             if (method.getName().equals("performPrefixedCommand") && method.getParameterCount() == 2) {
                 method.invoke(commands, source, command);

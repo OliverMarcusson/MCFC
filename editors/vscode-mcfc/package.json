@@ -49,6 +49,14 @@
         "path": "./syntaxes/mcfc.tmLanguage.json"
       }
     ],
+    "semanticTokenTypes": [
+      { "id": "annotation", "superType": "type", "description": "Style for annotations." },
+      { "id": "record", "superType": "class", "description": "Style for records." },
+      { "id": "recordComponent", "superType": "parameter", "description": "Style for record components." }
+    ],
+    "semanticTokenScopes": [
+      { "language": "mcfc", "scopes": { "annotation": ["storage.type.annotation.java"] } }
+    ],
     "snippets": [
       { "language": "mcfc", "path": "./snippets/mcfc.code-snippets" }
     ],

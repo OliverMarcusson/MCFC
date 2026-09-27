@@ -327,14 +327,7 @@ impl LanguageServer for Backend {
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
                             legend: SemanticTokensLegend {
-                                token_types: vec![
-                                    SemanticTokenType::FUNCTION,
-                                    SemanticTokenType::STRUCT,
-                                    SemanticTokenType::PARAMETER,
-                                    SemanticTokenType::VARIABLE,
-                                    SemanticTokenType::TYPE,
-                                    SemanticTokenType::KEYWORD,
-                                ],
+                                token_types: semantic_token_legend(),
                                 token_modifiers: Vec::new(),
                             },
                             full: Some(SemanticTokensFullOptions::Bool(true)),
@@ -1157,28 +1150,241 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
     }
 }
 
+// Semantic token types, in the order of the legend: the ones the Java language
+// server uses, so themes colour MCFC like Java.
+const TOKEN_NAMESPACE: u32 = 0;
+const TOKEN_CLASS: u32 = 1;
+const TOKEN_ENUM: u32 = 2;
+const TOKEN_ENUM_MEMBER: u32 = 3;
+const TOKEN_TYPE_PARAMETER: u32 = 4;
+const TOKEN_METHOD: u32 = 5;
+const TOKEN_PROPERTY: u32 = 6;
+const TOKEN_VARIABLE: u32 = 7;
+const TOKEN_PARAMETER: u32 = 8;
+const TOKEN_ANNOTATION: u32 = 9;
+const TOKEN_RECORD: u32 = 10;
+const TOKEN_RECORD_COMPONENT: u32 = 11;
+
+fn semantic_token_legend() -> Vec<SemanticTokenType> {
+    [
+        "namespace",
+        "class",
+        "enum",
+        "enumMember",
+        "typeParameter",
+        "method",
+        "property",
+        "variable",
+        "parameter",
+        "annotation",
+        "record",
+        "recordComponent",
+    ]
+    .into_iter()
+    .map(SemanticTokenType::new)
+    .collect()
+}
+
+/// Words the TextMate grammar colours as keywords; they get no semantic token.
+const KEYWORD_IDENTIFIERS: &[&str] = &[
+    "int",
+    "float",
+    "boolean",
+    "void",
+    "var",
+    "record",
+    "enum",
+    "public",
+    "private",
+    "static",
+    "final",
+    "import",
+    "switch",
+    "case",
+    "default",
+    "yield",
+    "assert",
+    "as",
+    "at",
+    "this",
+    "null",
+    "instanceof",
+];
+
+/// Classifies every identifier in the open file the way the Java language
+/// server would. It lexes `source` itself, so positions always match the
+/// editor; the analysis only says which names are records, enums and world
+/// state.
 fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken> {
-    let mut entries: Vec<(u32, u32, u32, u32)> = Vec::new();
-    for function in &analysis.functions {
-        let position = offset_to_position(source, function.name_range.start);
-        entries.push((
-            position.line,
-            position.character,
-            function.name.len() as u32,
-            0,
-        ));
-    }
+    use crate::lexer::TokenKind;
+
+    let Ok(tokens) = crate::lexer::lex(source) else {
+        return Vec::new();
+    };
+    let short = |name: &str| name.rsplit("::").next().unwrap_or(name).to_string();
+    let mut records = HashSet::new();
+    let mut enums = HashSet::new();
+    let mut world_states = HashSet::new();
     if let Some(program) = &analysis.program {
-        for struct_def in &program.structs {
-            let position = offset_to_position(source, struct_def.span.range.start);
-            entries.push((
-                position.line,
-                position.character,
-                struct_def.name.len() as u32,
-                1,
-            ));
-        }
+        records.extend(program.structs.iter().map(|def| short(&def.name)));
+        enums.extend(program.enums.iter().map(|def| short(&def.name)));
+        world_states.extend(
+            program
+                .world_states
+                .iter()
+                .map(|state| state.path.join(".")),
+        );
     }
+
+    let kind_at = |index: usize| tokens.get(index).map(|token| &token.kind);
+    let identifier = |index: usize| match kind_at(index) {
+        Some(TokenKind::Identifier(name)) => Some(name.as_str()),
+        _ => None,
+    };
+    let is_all_caps = |name: &str| {
+        name.len() > 1
+            && name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    };
+
+    let mut entries: Vec<(u32, u32, u32, u32)> = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut params: HashSet<String> = HashSet::new();
+    let mut type_params: HashSet<String> = HashSet::new();
+    let mut in_import = false;
+    let mut in_enum_body = false;
+    // The paren depth inside a top-level declaration's parameter list, and
+    // whether that list is a record's components.
+    let mut param_list: Option<(usize, bool)> = None;
+
+    for (index, token) in tokens.iter().enumerate() {
+        match &token.kind {
+            TokenKind::LeftBrace => brace_depth += 1,
+            TokenKind::RightBrace => {
+                brace_depth = brace_depth.saturating_sub(1);
+                if brace_depth == 0 {
+                    params.clear();
+                    type_params.clear();
+                    in_enum_body = false;
+                }
+            }
+            TokenKind::Semicolon => in_import = false,
+            TokenKind::LeftParen => {
+                if let Some((depth, _)) = &mut param_list {
+                    *depth += 1;
+                }
+            }
+            TokenKind::RightParen => {
+                if let Some((depth, _)) = &mut param_list {
+                    *depth -= 1;
+                    if *depth == 0 {
+                        param_list = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        let TokenKind::Identifier(name) = &token.kind else {
+            continue;
+        };
+        let previous = index.checked_sub(1).and_then(kind_at);
+        let before_previous = index.checked_sub(2).and_then(identifier);
+        let next = kind_at(index + 1);
+
+        if name == "import" && brace_depth == 0 {
+            in_import = true;
+        }
+        if name == "enum" {
+            in_enum_body = true;
+        }
+        // `<T>` before a top-level function's return type.
+        if brace_depth == 0
+            && previous == Some(&TokenKind::Lt)
+            && next == Some(&TokenKind::Gt)
+            && before_previous == Some("public")
+        {
+            type_params.insert(name.clone());
+        }
+        if KEYWORD_IDENTIFIERS.contains(&name.as_str()) {
+            continue;
+        }
+
+        let token_type = if previous == Some(&TokenKind::At) {
+            TOKEN_ANNOTATION
+        } else if in_import {
+            if enums.contains(name) {
+                TOKEN_ENUM
+            } else if records.contains(name) {
+                TOKEN_RECORD
+            } else if name.starts_with(char::is_uppercase) {
+                TOKEN_CLASS
+            } else {
+                TOKEN_NAMESPACE
+            }
+        } else if previous == Some(&TokenKind::Dot) {
+            if next == Some(&TokenKind::LeftParen) {
+                TOKEN_METHOD
+            } else if before_previous.is_some_and(|receiver| enums.contains(receiver)) {
+                TOKEN_ENUM_MEMBER
+            } else {
+                TOKEN_PROPERTY
+            }
+        } else if next == Some(&TokenKind::LeftParen) {
+            if previous == Some(&TokenKind::New) {
+                if records.contains(name) {
+                    TOKEN_RECORD
+                } else {
+                    TOKEN_CLASS
+                }
+            } else if brace_depth == 0 && param_list.is_none() {
+                // A declaration: its parameter list follows.
+                let is_record = identifier(index.wrapping_sub(1)) == Some("record");
+                param_list = Some((0, is_record));
+                if is_record {
+                    TOKEN_RECORD
+                } else {
+                    TOKEN_METHOD
+                }
+            } else {
+                TOKEN_METHOD
+            }
+        } else if type_params.contains(name) {
+            TOKEN_TYPE_PARAMETER
+        } else if enums.contains(name) {
+            TOKEN_ENUM
+        } else if records.contains(name) {
+            TOKEN_RECORD
+        } else if (in_enum_body && brace_depth > 0)
+            || (is_all_caps(name) && identifier(index.wrapping_sub(1)) == Some("case"))
+        {
+            TOKEN_ENUM_MEMBER
+        } else if name.starts_with(char::is_uppercase) && !is_all_caps(name) {
+            TOKEN_CLASS
+        } else if let Some((_, is_record)) = param_list
+            && brace_depth == 0
+            && matches!(next, Some(TokenKind::Comma | TokenKind::RightParen))
+        {
+            params.insert(name.clone());
+            if is_record {
+                TOKEN_RECORD_COMPONENT
+            } else {
+                TOKEN_PARAMETER
+            }
+        } else if params.contains(name) {
+            TOKEN_PARAMETER
+        } else if world_states.contains(name) {
+            TOKEN_PROPERTY
+        } else {
+            TOKEN_VARIABLE
+        };
+        let position = offset_to_position(source, token.range.start);
+        let length = source[token.range.start..token.range.end]
+            .encode_utf16()
+            .count() as u32;
+        entries.push((position.line, position.character, length, token_type));
+    }
+
     entries.sort();
     let mut previous_line = 0u32;
     let mut previous_start = 0u32;
@@ -5208,7 +5414,7 @@ mod tests {
         ProjectConfig, build_project_snapshot, builtin_hover, completion_items, infer_expr_type,
         offset_to_position, position_to_offset, project_diagnostics_for_segment,
         project_document_symbols, range_from_text_range, resolve_project_config_for_path,
-        semantic_ranges,
+        semantic_ranges, semantic_token_legend, semantic_tokens,
     };
     use crate::analysis::analyze_source;
     use crate::diagnostics::TextRange;
@@ -6557,5 +6763,67 @@ void main() {
             source.find("stage.name").unwrap() + "stage.".len(),
         );
         assert!(stage.iter().any(|item| item.label == "ordinal"));
+    }
+
+    #[test]
+    fn semantic_tokens_classify_like_java() {
+        let source = r#"import std.vec.Vec3;
+record Space(String name, int price) {}
+enum Mode { SURVIVAL, CREATIVE }
+@WorldState int builtLayout;
+// a comment with words in it
+@Command("bk_start")
+void start(Player player) {
+    if (builtLayout != LAYOUT()) {
+        Space hovered = new Space("a", 1);
+        player.sendMessage(hovered.name());
+    }
+    Mode mode = Mode.CREATIVE;
+}
+int LAYOUT() {
+    return 9;
+}
+"#;
+        let analysis = analyze_source(source);
+        let legend = semantic_token_legend();
+        let mut line = 0;
+        let mut start = 0;
+        let mut found = Vec::new();
+        for token in semantic_tokens(source, &analysis) {
+            if token.delta_line > 0 {
+                line += token.delta_line;
+                start = 0;
+            }
+            start += token.delta_start;
+            let text: String = source.lines().nth(line as usize).unwrap()
+                [start as usize..(start + token.length) as usize]
+                .to_string();
+            found.push(format!(
+                "{text}={}",
+                legend[token.token_type as usize].as_str()
+            ));
+        }
+        let found = found.join(" ");
+        for expected in [
+            "std=namespace",
+            "Vec3=class",
+            "Space=record",
+            "name=recordComponent",
+            "Mode=enum",
+            "SURVIVAL=enumMember",
+            "WorldState=annotation",
+            "builtLayout=property",
+            "start=method",
+            "Player=class",
+            "player=parameter",
+            "LAYOUT=method",
+            "hovered=variable",
+            "sendMessage=method",
+            "CREATIVE=enumMember",
+        ] {
+            assert!(found.contains(expected), "missing {expected} in {found}");
+        }
+        assert!(!found.contains("comment"), "{found}");
+        assert!(!found.contains("int="), "{found}");
     }
 }

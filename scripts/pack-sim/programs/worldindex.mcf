@@ -1,0 +1,16 @@
+// A world state used as an index reads and writes the right element.
+record Space(String name, int price) {}
+@WorldState List<Space> spaces;
+@WorldState List<Integer> counts;
+@WorldState int token;
+
+void main() {
+    spaces = List.of(new Space("a", 1), new Space("b", 2), new Space("c", 3));
+    counts = List.of(0, 0, 0);
+    token = 2;
+    counts[token] = 7;
+    counts[token - 1] = counts[token] + 1;
+    for (Player p : Selector.of("@a")) {
+        p.sendMessage("$(spaces[token].name()) $(counts[0]) $(counts[1]) $(counts[2])");
+    }
+}

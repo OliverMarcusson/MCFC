@@ -478,6 +478,40 @@ fn world_state_type(struct_defs: &BTreeMap<String, StructTypeDef>, name: &str) -
     struct_defs.get(WORLD_STATE)?.fields.get(name).cloned()
 }
 
+/// Renames world state variables that no local shadows to their `@world.` form.
+fn qualify_world_state(
+    expr: &mut Expr,
+    env: &HashMap<String, Type>,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+) {
+    match &mut expr.kind {
+        ExprKind::Variable(name) => {
+            if !env.contains_key(name.as_str()) && world_state_type(struct_defs, name).is_some() {
+                *name = format!("{WORLD_STATE_PREFIX}{name}");
+            }
+        }
+        ExprKind::Unary { expr, .. } => qualify_world_state(expr, env, struct_defs),
+        ExprKind::Binary { left, right, .. } => {
+            qualify_world_state(left, env, struct_defs);
+            qualify_world_state(right, env, struct_defs);
+        }
+        ExprKind::Call { args, .. } => {
+            for arg in args {
+                qualify_world_state(arg, env, struct_defs);
+            }
+        }
+        ExprKind::Path(path) => {
+            qualify_world_state(&mut path.base, env, struct_defs);
+            for segment in &mut path.segments {
+                if let PathSegment::Index(index) = segment {
+                    qualify_world_state(index, env, struct_defs);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Replace type parameters in the local declarations of one generic copy,
 /// so `List<T> out = List.of();` gets the copy's element type.
 fn substitute_body(body: &mut [Stmt], bindings: &BTreeMap<String, Type>) {
@@ -3103,7 +3137,7 @@ fn type_check_path(
         called_functions,
         diagnostics,
     );
-    let segments =
+    let mut segments =
         normalize_builder_path_segments(&base.ty, &path.segments, span.clone(), diagnostics);
     let mut current_ty = base.ty.clone();
     let mut collection_mode = false;
@@ -3489,6 +3523,12 @@ fn type_check_path(
             }
         }
         segment_types.push(current_ty.clone());
+    }
+    // Index expressions reach the backend untyped, so name world state here.
+    for segment in &mut segments {
+        if let PathSegment::Index(index) = segment {
+            qualify_world_state(index, env, struct_defs);
+        }
     }
     let typed = TypedPathExpr {
         base: Box::new(base),

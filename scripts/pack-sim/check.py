@@ -41,6 +41,7 @@ BUDGET = {
     "timed": 392,
     "trig": 1426,
     "nested": 78,
+    "worldindex": 65,
 }
 
 

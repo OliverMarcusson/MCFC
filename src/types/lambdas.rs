@@ -573,6 +573,7 @@ fn lambda_class(
         module: module.to_string(),
         is_abstract: false,
         is_override: false,
+        varargs: false,
     };
     let param = |name: &str, ty: Type| Param {
         name: name.to_string(),
@@ -948,7 +949,20 @@ fn each_part_mut(stmt: &mut Stmt, visit: &mut dyn FnMut(PartMut)) {
             visit(PartMut::Stmts(body));
         }
         StmtKind::Block(body) | StmtKind::Async { body } => visit(PartMut::Stmts(body)),
-        StmtKind::Return(Some(value)) | StmtKind::Expr(value) => visit(PartMut::Expr(value)),
+        StmtKind::Try {
+            body,
+            catches,
+            finally,
+        } => {
+            visit(PartMut::Stmts(body));
+            for catch in catches {
+                visit(PartMut::Stmts(&mut catch.body));
+            }
+            visit(PartMut::Stmts(finally));
+        }
+        StmtKind::Return(Some(value)) | StmtKind::Expr(value) | StmtKind::Throw(value) => {
+            visit(PartMut::Expr(value))
+        }
         StmtKind::Return(None)
         | StmtKind::Break
         | StmtKind::Continue

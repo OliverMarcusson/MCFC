@@ -144,6 +144,9 @@ pub struct Function {
     pub is_abstract: bool,
     /// Marked `@Override`; the type checker checks that it overrides something.
     pub is_override: bool,
+    /// `int sum(int... values)`: the last parameter is a list the call's
+    /// extra arguments fill.
+    pub varargs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +286,14 @@ pub enum StmtKind {
     Break,
     Continue,
     Return(Option<Expr>),
+    /// `throw value;`. Lowered by `exceptions::lower` before type checking.
+    Throw(Expr),
+    /// `try { ... } catch (A | B name) { ... } finally { ... }`, lowered with `Throw`.
+    Try {
+        body: Vec<Stmt>,
+        catches: Vec<Catch>,
+        finally: Vec<Stmt>,
+    },
     RawCommand(String),
     MacroCommand(String),
     Expr(Expr),
@@ -304,6 +315,15 @@ pub enum SleepUnit {
 pub enum AssignTarget {
     Variable(String),
     Path(PathExpr),
+}
+
+/// `catch (A | B name) { body }`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Catch {
+    pub types: Vec<Type>,
+    pub name: String,
+    pub body: Vec<Stmt>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,6 +432,8 @@ pub enum ExprKind {
 pub enum UnaryOp {
     Not,
     Neg,
+    /// `~x`
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

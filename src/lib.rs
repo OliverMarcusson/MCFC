@@ -4,6 +4,7 @@ pub mod backend;
 pub mod cli;
 pub mod compiler;
 pub mod diagnostics;
+pub mod exceptions;
 pub mod generics;
 pub mod ir;
 pub mod language_catalog;

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
@@ -125,6 +125,20 @@ struct Parser {
     class_body: Option<bool>,
     /// Set while parsing a `case` label, whose `->` isn't a lambda's.
     in_case_label: bool,
+    /// The loops around the statement being parsed, innermost last.
+    loops: Vec<LoopFrame>,
+}
+
+/// A loop being parsed, for `break label;` and `continue label;`. A jump out
+/// of inner loops sets a flag and breaks; after each loop in between, a check
+/// of the flag breaks again, until the labeled loop breaks or continues.
+struct LoopFrame {
+    label: Option<String>,
+    /// The flags jumps to this loop set: `(break, continue)`, and whether used.
+    flags: (String, String),
+    used: (bool, bool),
+    /// Outer loops a jump from inside this one goes to, by index in `loops`.
+    jumps: BTreeSet<usize>,
 }
 
 impl Parser {
@@ -136,6 +150,7 @@ impl Parser {
             final_scopes: Vec::new(),
             class_body: None,
             in_case_label: false,
+            loops: Vec::new(),
         }
     }
 
@@ -749,6 +764,7 @@ impl Parser {
             module: String::new(),
             is_abstract: false,
             is_override: false,
+            varargs: false,
         }
     }
 
@@ -957,10 +973,21 @@ impl Parser {
         self.expect(TokenKind::LeftParen, "expected '(' after function name");
         let mut params = Vec::new();
         let mut finals = Vec::new();
+        let mut varargs = false;
         while !self.at(&TokenKind::RightParen) && !self.at(&TokenKind::Eof) {
             let span = self.current_span();
             let is_final = self.eat_word("final");
-            let ty = self.parse_type();
+            let mut ty = self.parse_type();
+            if varargs {
+                self.error_at("only the last parameter can be '...'", span.clone());
+            }
+            if self.at(&TokenKind::Dot) && matches!(self.peek_at(1), TokenKind::Dot) {
+                self.bump();
+                self.bump();
+                self.expect(TokenKind::Dot, "expected '...' after the parameter type");
+                ty = Type::Array(Box::new(ty));
+                varargs = true;
+            }
             let name = self.expect_identifier("expected parameter name");
             if is_final {
                 finals.push(name.clone());
@@ -971,6 +998,13 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RightParen, "expected ')' after parameters");
+        // `throws A, B` only documents: every exception is unchecked.
+        if self.eat_word("throws") {
+            self.parse_type();
+            while self.eat(&TokenKind::Comma) {
+                self.parse_type();
+            }
+        }
         let is_abstract = self.eat(&TokenKind::Semicolon);
         self.final_scopes.push(finals);
         let body = if is_abstract {
@@ -993,6 +1027,7 @@ impl Parser {
             module: String::new(),
             is_abstract,
             is_override: false,
+            varargs,
         }
     }
 
@@ -1267,6 +1302,147 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Stmt {
         let span = self.current_span();
+        let label = match (self.peek().kind.clone(), self.peek_at(1)) {
+            (TokenKind::Identifier(name), TokenKind::Colon)
+                if !matches!(self.peek_at(2), TokenKind::Colon) =>
+            {
+                self.bump();
+                self.bump();
+                Some(name)
+            }
+            _ => None,
+        };
+        if matches!(
+            self.peek().kind,
+            TokenKind::While | TokenKind::For | TokenKind::Do
+        ) {
+            return self.parse_loop(label, span);
+        }
+        if let Some(label) = label {
+            self.error_at(
+                &format!("only loops can have a label like '{label}:'"),
+                span,
+            );
+        }
+        self.parse_stmt_inner()
+    }
+
+    /// A loop, with the flags and checks its labeled jumps need around it.
+    fn parse_loop(&mut self, label: Option<String>, span: Span) -> Stmt {
+        let name = label.clone().unwrap_or_default();
+        let flag = |kind: &str| format!("__{kind}_{name}_{}_{}", span.line, span.column);
+        self.loops.push(LoopFrame {
+            label,
+            flags: (flag("break"), flag("continue")),
+            used: (false, false),
+            jumps: BTreeSet::new(),
+        });
+        let stmt = self.parse_stmt_inner();
+        let frame = self.loops.pop().expect("pushed above");
+        let at = |kind: ExprKind| Expr {
+            kind,
+            span: span.clone(),
+        };
+        let stmt_at = |kind: StmtKind| Stmt {
+            kind,
+            span: span.clone(),
+        };
+        let set = |flag: &str, value: bool| {
+            stmt_at(StmtKind::Assign {
+                target: AssignTarget::Variable(flag.to_string()),
+                value: at(ExprKind::Bool(value)),
+            })
+        };
+        let when = |flag: &str, then_body: Vec<Stmt>| {
+            stmt_at(StmtKind::If {
+                condition: at(ExprKind::Variable(flag.to_string())),
+                then_body,
+                else_body: Vec::new(),
+            })
+        };
+        let mut out = Vec::new();
+        for (used, flag) in [
+            (frame.used.0, &frame.flags.0),
+            (frame.used.1, &frame.flags.1),
+        ] {
+            if used {
+                out.push(stmt_at(StmtKind::Let {
+                    name: flag.clone(),
+                    ty: None,
+                    value: at(ExprKind::Bool(false)),
+                }));
+            }
+        }
+        out.push(stmt);
+        let enclosing = self.loops.len().checked_sub(1);
+        for target in frame.jumps {
+            let (used, (break_flag, continue_flag)) =
+                (self.loops[target].used, self.loops[target].flags.clone());
+            if used.0 {
+                out.push(when(&break_flag, vec![stmt_at(StmtKind::Break)]));
+            }
+            if used.1 && Some(target) == enclosing {
+                out.push(when(
+                    &continue_flag,
+                    vec![set(&continue_flag, false), stmt_at(StmtKind::Continue)],
+                ));
+            } else if used.1 {
+                out.push(when(&continue_flag, vec![stmt_at(StmtKind::Break)]));
+            }
+        }
+        if out.len() == 1 {
+            return out.pop().expect("one statement");
+        }
+        stmt_at(StmtKind::Block(out))
+    }
+
+    /// `break label;` or `continue label;`.
+    fn labeled_jump(&mut self, label: &str, is_break: bool, span: Span) -> StmtKind {
+        let jump = if is_break {
+            StmtKind::Break
+        } else {
+            StmtKind::Continue
+        };
+        let Some(target) = self
+            .loops
+            .iter()
+            .rposition(|frame| frame.label.as_deref() == Some(label))
+        else {
+            self.error_at(&format!("no loop labeled '{label}' is around this"), span);
+            return jump;
+        };
+        if target + 1 == self.loops.len() {
+            return jump;
+        }
+        let frame = &mut self.loops[target];
+        let flag = if is_break {
+            frame.used.0 = true;
+            frame.flags.0.clone()
+        } else {
+            frame.used.1 = true;
+            frame.flags.1.clone()
+        };
+        for frame in &mut self.loops[target + 1..] {
+            frame.jumps.insert(target);
+        }
+        let at = |kind| Stmt {
+            kind,
+            span: span.clone(),
+        };
+        StmtKind::Block(vec![
+            at(StmtKind::Assign {
+                target: AssignTarget::Variable(flag),
+                value: Expr {
+                    kind: ExprKind::Bool(true),
+                    span: span.clone(),
+                },
+            }),
+            at(StmtKind::Break),
+        ])
+    }
+
+    fn parse_stmt_inner(&mut self) -> Stmt {
+        let span = self.current_span();
         let kind = match self.peek().kind.clone() {
             TokenKind::LeftBrace => StmtKind::Block(self.parse_block("block")),
             TokenKind::If => {
@@ -1340,15 +1516,22 @@ impl Parser {
                     body: self.parse_block("async block"),
                 }
             }
-            TokenKind::Break => {
-                self.bump();
-                self.expect_semicolon("break");
-                StmtKind::Break
-            }
-            TokenKind::Continue => {
-                self.bump();
-                self.expect_semicolon("continue");
-                StmtKind::Continue
+            TokenKind::Break | TokenKind::Continue => {
+                let is_break = self.bump().kind == TokenKind::Break;
+                let what = if is_break { "break" } else { "continue" };
+                let label = match self.peek().kind.clone() {
+                    TokenKind::Identifier(label) => {
+                        self.bump();
+                        Some(label)
+                    }
+                    _ => None,
+                };
+                self.expect_semicolon(what);
+                match label {
+                    Some(label) => self.labeled_jump(&label, is_break, span.clone()),
+                    None if is_break => StmtKind::Break,
+                    None => StmtKind::Continue,
+                }
             }
             TokenKind::Return => {
                 self.bump();
@@ -1394,6 +1577,62 @@ impl Parser {
                         span: span.clone(),
                     }],
                     else_body: Vec::new(),
+                }
+            }
+            TokenKind::Identifier(word)
+                if word == "throw"
+                    && !matches!(
+                        self.peek_at(1),
+                        TokenKind::Assign
+                            | TokenKind::Semicolon
+                            | TokenKind::Dot
+                            | TokenKind::LeftParen
+                    ) =>
+            {
+                self.bump();
+                let value = self.parse_expr();
+                self.expect_semicolon("throw");
+                StmtKind::Throw(value)
+            }
+            TokenKind::Identifier(word)
+                if word == "try" && matches!(self.peek_at(1), TokenKind::LeftBrace) =>
+            {
+                self.bump();
+                let body = self.parse_block("try body");
+                let mut catches = Vec::new();
+                while self.at_word("catch") {
+                    let span = self.current_span();
+                    self.bump();
+                    self.expect(TokenKind::LeftParen, "expected '(' after 'catch'");
+                    let mut types = vec![self.parse_type()];
+                    while self.eat(&TokenKind::Pipe) {
+                        types.push(self.parse_type());
+                    }
+                    let name = self.expect_identifier("expected the caught exception's name");
+                    self.expect(
+                        TokenKind::RightParen,
+                        "expected ')' after the catch parameter",
+                    );
+                    let body = self.parse_block("catch body");
+                    catches.push(Catch {
+                        types,
+                        name,
+                        body,
+                        span,
+                    });
+                }
+                let finally = if self.eat_word("finally") {
+                    self.parse_block("finally body")
+                } else {
+                    Vec::new()
+                };
+                if catches.is_empty() && finally.is_empty() {
+                    self.error_at("a 'try' needs a 'catch' or a 'finally'", span.clone());
+                }
+                StmtKind::Try {
+                    body,
+                    catches,
+                    finally,
                 }
             }
             TokenKind::Identifier(word)
@@ -1891,10 +2130,22 @@ impl Parser {
                 break;
             }
             let span = self.bump().span;
+            let mut unsigned = false;
             if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-                self.bump();
+                let second = self.bump();
+                // `>>>` is a third adjacent `>`.
+                unsigned = op == BinaryOp::Shr
+                    && self.at(&TokenKind::Gt)
+                    && self.peek().range.start == second.range.end;
+                if unsigned {
+                    self.bump();
+                }
             }
             let right = self.parse_expr_bp(right_bp);
+            if unsigned {
+                left = self.unsigned_shift(left, right, span);
+                continue;
+            }
             left = Expr {
                 kind: ExprKind::Binary {
                     op,
@@ -1905,6 +2156,39 @@ impl Parser {
             };
         }
         left
+    }
+
+    /// `x >>> n` is `(x >> n) & mask`, clearing the bits the sign filled in.
+    /// ponytail: needs a literal `n`; a variable count needs a runtime mask.
+    fn unsigned_shift(&mut self, value: Expr, count: Expr, span: Span) -> Expr {
+        let ExprKind::Int(bits) = count.kind else {
+            self.error_at(
+                "'>>>' needs a number of bits written as a literal, like 'x >>> 4'",
+                span.clone(),
+            );
+            return value;
+        };
+        if !(0..32).contains(&bits) {
+            self.error_at("'>>>' shifts by 0 to 31 bits", span.clone());
+            return value;
+        }
+        if bits == 0 {
+            return value;
+        }
+        let at = |kind| Expr {
+            kind,
+            span: span.clone(),
+        };
+        let shifted = at(ExprKind::Binary {
+            op: BinaryOp::Shr,
+            left: Box::new(value),
+            right: Box::new(count),
+        });
+        at(ExprKind::Binary {
+            op: BinaryOp::BitAnd,
+            left: Box::new(shifted),
+            right: Box::new(at(ExprKind::Int((1i64 << (32 - bits)) - 1))),
+        })
     }
 
     /// `<<` and `>>` are two adjacent `<` or `>` tokens, so `List<List<int>>`
@@ -1929,6 +2213,7 @@ impl Parser {
         let op = match self.peek().kind {
             TokenKind::Bang => Some(UnaryOp::Not),
             TokenKind::Minus => Some(UnaryOp::Neg),
+            TokenKind::Tilde => Some(UnaryOp::BitNot),
             _ => None,
         };
         if let Some(op) = op {
@@ -2385,6 +2670,76 @@ impl Parser {
         expr
     }
 
+    /// `String.format("%s has %d", name, kills)` is `"" + name + " has " + kills`.
+    /// ponytail: `%s`, `%d` and `%%` only, and the format is a literal; widths
+    /// and precision need runtime padding.
+    fn format_call(&mut self, args: Vec<Expr>, span: Span) -> Expr {
+        let mut args = args.into_iter();
+        let Some(Expr {
+            kind: ExprKind::String(format),
+            ..
+        }) = args.next()
+        else {
+            self.error_at(
+                "String.format(...) needs a string literal first",
+                span.clone(),
+            );
+            return string_expr("", &span);
+        };
+        let mut out = string_expr("", &span);
+        let mut text = String::new();
+        let mut chars = format.chars();
+        while let Some(c) = chars.next() {
+            if c != '%' {
+                text.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('%') => text.push('%'),
+                Some('s' | 'd') => {
+                    let Some(arg) = args.next() else {
+                        self.error_at(
+                            "String.format(...) has more '%' fields than values",
+                            span.clone(),
+                        );
+                        break;
+                    };
+                    for part in [string_expr(&std::mem::take(&mut text), &span), arg] {
+                        out = Expr {
+                            kind: ExprKind::Binary {
+                                op: BinaryOp::Add,
+                                left: Box::new(out),
+                                right: Box::new(part),
+                            },
+                            span: span.clone(),
+                        };
+                    }
+                }
+                other => {
+                    let field = other.map(String::from).unwrap_or_default();
+                    self.error_at(
+                        &format!("String.format(...) supports '%s', '%d' and '%%', not '%{field}'"),
+                        span.clone(),
+                    );
+                }
+            }
+        }
+        if args.next().is_some() {
+            self.error_at(
+                "String.format(...) has more values than '%' fields",
+                span.clone(),
+            );
+        }
+        Expr {
+            kind: ExprKind::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(out),
+                right: Box::new(string_expr(&text, &span)),
+            },
+            span,
+        }
+    }
+
     /// `Math.pow(a, b)` becomes the method `"Math.pow"` on `a`, `String.valueOf(x)`
     /// becomes `"" + x`, and `String.join(sep, parts)` calls `std.str.join`. The
     /// dotted names can't be written as methods in source.
@@ -2402,11 +2757,14 @@ impl Parser {
             "Math" => MATH_METHODS.contains(&method) || MATH_STD_FUNCTIONS.contains(&method),
             "Integer" => matches!(method, "parseInt" | "toString"),
             "Float" => method == "toString",
-            "String" => matches!(method, "valueOf" | "join"),
+            "String" => matches!(method, "valueOf" | "join" | "format"),
             _ => false,
         };
         if !known {
             self.error_at(&format!("unknown method '{class}.{method}'"), span.clone());
+        }
+        if class == "String" && method == "format" {
+            return self.format_call(args, span);
         }
         if class == "String" && method == "join" {
             return Expr {
@@ -2573,6 +2931,18 @@ impl Parser {
             "boolean" | "Boolean" => Type::Bool,
             "String" => Type::String,
             "void" => Type::Void,
+            // Scores are 32-bit ints, so Java's other number types have no match.
+            "long" | "short" | "byte" | "char" | "Long" | "Short" | "Byte" | "Character" => {
+                self.error_at(
+                    &format!("MCFC has no '{name}'; numbers are 'int' (32-bit) or 'float'"),
+                    span,
+                );
+                Type::Int
+            }
+            "double" | "Double" => {
+                self.error_at("MCFC has no 'double'; use 'float'", span);
+                Type::Float
+            }
             "Selector" => Type::EntitySet,
             "Entity" => Type::EntityRef,
             "Player" => Type::PlayerRef,

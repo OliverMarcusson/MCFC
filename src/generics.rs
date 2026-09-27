@@ -663,7 +663,7 @@ pub fn fill_diamond(value: &mut Expr, declared: &Type) {
 }
 
 /// One part of a statement for a walker to visit.
-enum Part<'a> {
+pub enum Part<'a> {
     Expr(&'a mut Expr),
     Stmts(&'a mut [Stmt]),
     Type(&'a mut Type),
@@ -671,7 +671,7 @@ enum Part<'a> {
 
 /// Calls `visit` for each expression, nested block and declared type directly
 /// in `stmt`.
-fn each_stmt_part(stmt: &mut Stmt, visit: &mut dyn FnMut(Part)) {
+pub fn each_stmt_part(stmt: &mut Stmt, visit: &mut dyn FnMut(Part)) {
     match &mut stmt.kind {
         StmtKind::Let { ty, value, .. } => {
             if let Some(ty) = ty {
@@ -729,7 +729,21 @@ fn each_stmt_part(stmt: &mut Stmt, visit: &mut dyn FnMut(Part)) {
             visit(Part::Stmts(body));
         }
         StmtKind::Block(body) | StmtKind::Async { body } => visit(Part::Stmts(body)),
-        StmtKind::Return(Some(value)) | StmtKind::Expr(value) => visit(Part::Expr(value)),
+        StmtKind::Try {
+            body,
+            catches,
+            finally,
+        } => {
+            visit(Part::Stmts(body));
+            for catch in catches {
+                catch.types.iter_mut().for_each(|ty| visit(Part::Type(ty)));
+                visit(Part::Stmts(&mut catch.body));
+            }
+            visit(Part::Stmts(finally));
+        }
+        StmtKind::Return(Some(value)) | StmtKind::Expr(value) | StmtKind::Throw(value) => {
+            visit(Part::Expr(value))
+        }
         StmtKind::Return(None)
         | StmtKind::Break
         | StmtKind::Continue

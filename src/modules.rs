@@ -42,6 +42,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("color.mcf", include_str!("../std/color.mcf")),
     ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
+    ("exception.mcf", include_str!("../std/exception.mcf")),
     ("function.mcf", include_str!("../std/function.mcf")),
     ("gamemode.mcf", include_str!("../std/gamemode.mcf")),
     ("heap.mcf", include_str!("../std/heap.mcf")),
@@ -519,6 +520,18 @@ impl Resolver {
         {
             found.extend(targets.iter().cloned());
         }
+        // `Exception` and its subclasses need no import, as in `java.lang`.
+        if found.is_empty()
+            && module == from
+            && let Some(prelude) = self
+                .modules
+                .iter()
+                .position(|entry| entry.path == ["std", "exception"])
+            && prelude != module
+            && self.modules[prelude].structs.get(name) == Some(&true)
+        {
+            found.push(Target::Struct(self.struct_name(prelude, name)));
+        }
         Ok(found)
     }
 
@@ -775,7 +788,27 @@ impl Resolver {
             StmtKind::Async { body } | StmtKind::Block(body) => {
                 self.walk_stmts(scope, body, diagnostics)
             }
-            StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
+            StmtKind::Try {
+                body,
+                catches,
+                finally,
+            } => {
+                self.walk_stmts(scope, body, diagnostics);
+                for catch in catches {
+                    for ty in &mut catch.types {
+                        self.resolve_type(
+                            scope.module,
+                            scope.generics,
+                            ty,
+                            &catch.span,
+                            diagnostics,
+                        );
+                    }
+                    self.walk_stmts(scope, &mut catch.body, diagnostics);
+                }
+                self.walk_stmts(scope, finally, diagnostics);
+            }
+            StmtKind::Return(Some(value)) | StmtKind::Expr(value) | StmtKind::Throw(value) => {
                 self.walk_expr(scope, value, diagnostics)
             }
             StmtKind::MacroCommand(command) => self.resolve_placeholders(scope, command),
@@ -1284,6 +1317,18 @@ fn collect_locals(stmts: &[Stmt], locals: &mut HashSet<String>) {
             }
             StmtKind::Context { body, .. } | StmtKind::Async { body } | StmtKind::Block(body) => {
                 collect_locals(body, locals)
+            }
+            StmtKind::Try {
+                body,
+                catches,
+                finally,
+            } => {
+                collect_locals(body, locals);
+                for catch in catches {
+                    locals.insert(catch.name.clone());
+                    collect_locals(&catch.body, locals);
+                }
+                collect_locals(finally, locals);
             }
             _ => {}
         }

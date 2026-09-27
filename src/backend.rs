@@ -9386,9 +9386,11 @@ scoreboard objectives add smithed.actionbar.freeze dummy
 
         match op {
             UnaryOp::Not => unreachable!("handled above"),
-            UnaryOp::Neg => {
+            // `~x` is `-1 - x` in two's complement.
+            UnaryOp::Neg | UnaryOp::BitNot => {
+                let start = if op == UnaryOp::Neg { 0 } else { -1 };
                 lines.push(format!(
-                    "scoreboard players set {} mcfc 0",
+                    "scoreboard players set {} mcfc {start}",
                     target.numeric_name()
                 ));
                 lines.push(format!(

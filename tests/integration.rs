@@ -5031,3 +5031,67 @@ fn lambdas_are_checked() {
     ))
     .expect("captures and static method references compile");
 }
+
+#[test]
+fn phase_five_syntax_is_checked() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let rejected = [
+        ("void main() { long n = 1; }\n", "MCFC has no 'long'"),
+        (
+            "void main() { double n = 1.0; }\n",
+            "MCFC has no 'double'; use 'float'",
+        ),
+        (
+            "void main() { int bits = 3; int n = 8 >>> bits; }\n",
+            "'>>>' needs a number of bits written as a literal",
+        ),
+        (
+            "void main() { float n = ~1.5; }\n",
+            "'~' requires an 'int' operand",
+        ),
+        (
+            "void main() { while (true) { break outer; } }\n",
+            "no loop labeled 'outer' is around this",
+        ),
+        (
+            "void main() { outer: if (true) {} }\n",
+            "only loops can have a label like 'outer:'",
+        ),
+        (
+            "int sum(int... values, int last) { return 0; }\nvoid main() {}\n",
+            "only the last parameter can be '...'",
+        ),
+        (
+            "void main() { String s = String.format(\"%x\", 1); }\n",
+            "supports '%s', '%d' and '%%', not '%x'",
+        ),
+        (
+            "void main() { String s = String.format(\"%s\"); }\n",
+            "more '%' fields than values",
+        ),
+        (
+            "void main() { String s = String.format(\"hi\", 1); }\n",
+            "more values than '%' fields",
+        ),
+        (
+            "void main() { try { int n = 1; } }\n",
+            "a 'try' needs a 'catch' or a 'finally'",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(source).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    compile(
+        "int half(int value) throws IllegalArgumentException {\n    if (value % 2 != 0) {\n        throw new IllegalArgumentException(\"odd\");\n    }\n    return value / 2;\n}\nvoid main() {\n    int n = 0;\n    try {\n        n = half(3);\n    } catch (Exception error) {\n        n = -1;\n    }\n}\n",
+    )
+    .expect("throw, throws and try compile");
+}

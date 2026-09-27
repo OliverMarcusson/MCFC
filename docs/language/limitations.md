@@ -10,6 +10,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 - **Records don't implement interfaces**, and generic methods aren't virtual.
 - **Lists and maps are values.** Assigning or passing a `List` or `Map` copies it, unlike Java, where both names would see the same list. This is on purpose: a copy is one storage command, while a shared list would make every element read and write a macro call through the object heap. Class objects are shared, so wrap a list in a class when several places must see one list.
 - **Lambdas copy what they capture.** Since lists and maps are values, `x -> seen.add(x)` adds to the lambda's own copy of `seen`. Capture a class object instead. A generic call only infers type arguments from an expression lambda's result, not from a block's `return`.
+- **Exceptions differ from Java.** `finally` doesn't run when the `try` or `catch` body leaves with `return`, `break` or `continue`. When a call in the middle of an expression throws, the rest of the expression still runs; the check comes after the statement. The runtime never throws on its own: dividing by zero or reading past the end of a list gives a value, not an exception.
 - **No generic records.** Generic type parameters work on functions and methods, but record declarations are not generic.
 - **Enum constructors** can only assign parameters to fields (`this.mass = mass;`), and fields are `final`.
 - **Only `toString()` and `equals(other)`** can be marked `@Override`.

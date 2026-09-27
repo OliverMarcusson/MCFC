@@ -48,6 +48,26 @@ void main() {
 
 Every type parameter must appear in a parameter's type, because there's no `f<int>(...)` call syntax. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
 
+#### Varargs
+
+```mcfc
+int sum(int... values) {
+    int total = 0;
+    for (int value : values) {
+        total += value;
+    }
+    return total;
+}
+
+void main() {
+    int none = sum();
+    int some = sum(1, 2, 3);
+    int listed = sum(List.of(4, 5));
+}
+```
+
+The last parameter can take any number of arguments, as a `List`. Passing a `List` there passes it as it is.
+
 #### Overloading
 
 Functions and methods can share a name when their parameter types differ:
@@ -770,7 +790,61 @@ int clampZero(int value) {
 }
 ```
 
-`break` and `continue` apply to the innermost loop. In a `void` function, use `return;` on its own. Otherwise, `return expr;` must match the declared return type.
+`break` and `continue` apply to the innermost loop, or to the loop with that label:
+
+```mcfc
+void findPair(List<Integer> values) {
+    search:
+    for (int first : values) {
+        for (int second : values) {
+            if (first + second == 10) {
+                break search;
+            }
+        }
+    }
+}
+```
+
+In a `void` function, use `return;` on its own. Otherwise, `return expr;` must match the declared return type.
+
+### `throw`, `try`, `catch`, `finally`
+
+```mcfc
+class NotEnough extends RuntimeException {
+    NotEnough(int missing) {
+        super("missing " + missing);
+    }
+}
+
+int spend(int coins, int amount) {
+    if (amount < 0) {
+        throw new IllegalArgumentException("negative amount");
+    }
+    if (amount > coins) {
+        throw new NotEnough(amount - coins);
+    }
+    return coins - amount;
+}
+
+void buy() {
+    int coins = 10;
+    try {
+        coins = spend(coins, 15);
+    } catch (NotEnough error) {
+        Log.warn(error.getMessage());
+    } catch (IllegalArgumentException | IllegalStateException error) {
+        Log.error("bad purchase");
+    } finally {
+        Log.info("coins left: " + coins);
+    }
+}
+```
+
+- Exceptions are classes that extend `Exception`. `RuntimeException`, `IllegalArgumentException`, `IllegalStateException` and `UnsupportedOperationException` come with MCFC and need no import. Each takes a message, which `getMessage()` returns.
+- The first `catch` whose type matches runs. `catch (A | B e)` catches either, and `e` is then an `Exception`. An exception no `catch` matches goes on to the caller after `finally` runs.
+- Every exception is unchecked: `throws` after the parameters is allowed but only documents.
+- An exception nothing catches is logged with [`Log.error`](./builtins#logging) where it leaves a function no code calls, such as `main`, `tick` or an event handler. In a `@Test`, it fails the test.
+- After each call that can throw, the caller checks for an exception, so a program without `throw` pays nothing. See [limitations](../limitations) for what differs from Java.
 
 ### `async`
 

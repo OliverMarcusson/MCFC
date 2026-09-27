@@ -91,6 +91,47 @@ fn type_check_expected(
     )
 }
 
+/// The arguments of a call to `sum(int... values)`: the extra ones, from the
+/// varargs parameter on, become one list, unless a list is passed there already.
+#[allow(clippy::too_many_arguments)]
+fn pack_varargs(
+    signature: Option<&FunctionSignature>,
+    args: &[Expr],
+    span: &Span,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+) -> Vec<Expr> {
+    let Some(signature) = signature.filter(|signature| signature.varargs) else {
+        return args.to_vec();
+    };
+    let fixed = signature.params.len() - 1;
+    if args.len() < fixed {
+        return args.to_vec();
+    }
+    if args.len() == signature.params.len() {
+        let last = type_check_expr(
+            &args[fixed],
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            &mut BTreeSet::new(),
+            &mut Diagnostics::new(),
+        );
+        if matches!(last.ty, Type::Array(_)) {
+            return args.to_vec();
+        }
+    }
+    let mut packed = args[..fixed].to_vec();
+    packed.push(Expr {
+        kind: ExprKind::ArrayLiteral(args[fixed..].to_vec()),
+        span: span.clone(),
+    });
+    packed
+}
+
 /// `bb.max` written in source: properties are read and written through get/set methods.
 fn check_property_syntax(
     base_ty: &Type,
@@ -516,6 +557,8 @@ pub struct FunctionSignature {
     pub instance: bool,
     /// Declared in a record or enum.
     pub method: bool,
+    /// The last parameter takes the call's extra arguments as a list.
+    pub varargs: bool,
 }
 
 fn display_function(name: &str) -> String {
@@ -1164,6 +1207,7 @@ fn gc_functions(
         module: String::new(),
         is_abstract: false,
         is_override: false,
+        varargs: false,
     };
     let mut names = 0;
     let mut out = Vec::new();
@@ -1849,10 +1893,11 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             with_lambdas.classes.push(class.clone());
             with_lambdas.functions.extend(functions.iter().cloned());
         }
-        let expanded = crate::generics::expand(&with_lambdas, &mut wanted, &mut diagnostics);
+        let mut expanded = crate::generics::expand(&with_lambdas, &mut wanted, &mut diagnostics);
         if !diagnostics.0.is_empty() {
             return Err(diagnostics);
         }
+        crate::exceptions::lower(&mut expanded);
         let result = type_check_expanded(&expanded, host);
         let late = crate::generics::take_late();
         let found = lambdas::take_found();
@@ -2415,6 +2460,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                     .first()
                     .is_some_and(|param| param.name == "this"),
                 method: function.owner.is_some(),
+                varargs: function.varargs,
             },
         );
     }
@@ -2430,6 +2476,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                 is_pub: true,
                 instance: false,
                 method: false,
+                varargs: false,
             },
         );
     }
@@ -2521,6 +2568,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                         .first()
                         .is_some_and(|param| param.name == "this"),
                     method: generic.owner.is_some(),
+                    varargs: generic.varargs,
                 },
             );
             functions.push(type_check_function(
@@ -2562,6 +2610,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                     is_pub: true,
                     instance: false,
                     method: false,
+                    varargs: false,
                 },
             );
         }
@@ -2858,6 +2907,14 @@ fn type_check_block(
             continue;
         }
         let kind = match &statement.kind {
+            // `exceptions::lower` replaces these before type checking.
+            StmtKind::Throw(_) | StmtKind::Try { .. } => {
+                diagnostics.push(Diagnostic::new(
+                    "'throw' and 'try' can't be used here",
+                    statement.span.clone(),
+                ));
+                continue;
+            }
             // A write through an object that can't be a macro index, like
             // `a.items()[0].x = 1;`, goes through a local holding the object.
             StmtKind::Assign {
@@ -4507,7 +4564,7 @@ fn type_check_expr(
                     ),
                     &Type::Bool,
                 ),
-                UnaryOp::Neg => {
+                UnaryOp::Neg | UnaryOp::BitNot => {
                     let operand = type_check_expr(
                         expr,
                         struct_defs,
@@ -4535,10 +4592,11 @@ fn type_check_expr(
                     Type::Bool
                 }
                 UnaryOp::Neg if operand.ty == Type::Float => Type::Float,
-                UnaryOp::Neg => {
+                UnaryOp::Neg | UnaryOp::BitNot => {
                     if operand.ty != Type::Int {
+                        let symbol = if *op == UnaryOp::Neg { '-' } else { '~' };
                         diagnostics.push(Diagnostic::new(
-                            "'-' requires an 'int' operand",
+                            format!("'{symbol}' requires an 'int' operand"),
                             expr.span.clone(),
                         ));
                     }
@@ -5079,18 +5137,40 @@ fn type_check_expr(
                 return builtin;
             }
             // `take(new Box<>(1))`: a diamond takes the parameter's type arguments.
-            let mut raw_args = args.clone();
+            let mut raw_args = pack_varargs(
+                signatures.get(function),
+                args,
+                &expr.span,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+            );
             if let Some(signature) = signatures.get(function) {
                 for (arg, param) in raw_args.iter_mut().zip(&signature.params) {
                     crate::generics::fill_diamond(arg, param);
                 }
             }
             // Lambdas wait for the parameter types, once the call is picked.
+            let params = signatures.get(function).map(|signature| &signature.params);
             let mut args: Vec<_> = raw_args
                 .iter()
-                .map(|arg| {
+                .enumerate()
+                .map(|(index, arg)| {
                     if lambdas::is_function_value(arg) {
                         return lambdas::pending();
+                    }
+                    // `log("a")` to `void log(String... parts)`: an empty list.
+                    if let ExprKind::ArrayLiteral(items) = &arg.kind
+                        && items.is_empty()
+                        && let Some(param @ Type::Array(_)) =
+                            params.and_then(|params| params.get(index))
+                    {
+                        return TypedExpr {
+                            kind: TypedExprKind::ArrayLiteral(Vec::new()),
+                            ty: param.clone(),
+                            ref_kind: RefKind::Unknown,
+                        };
                     }
                     type_check_expr(
                         arg,
@@ -11486,6 +11566,7 @@ fn class_functions(
             body,
             is_abstract: false,
             is_override: false,
+            varargs: false,
             ..function.clone()
         });
     }
@@ -11530,6 +11611,7 @@ fn class_functions(
                 .map_or(String::new(), |(module, _)| module.to_string()),
             is_abstract: false,
             is_override: false,
+            varargs: false,
         });
     }
     out

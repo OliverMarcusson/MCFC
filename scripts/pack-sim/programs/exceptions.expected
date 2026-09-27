@@ -1,0 +1,6 @@
+say spends ok/6 short3/6 bad(negative -1)/6
+say result 1006
+say loops 101
+say nested f1 outer:inner
+say bad 7
+tellraw @a[tag=mcfc.log] [exceptions ERROR] uncaught exception: missing 94

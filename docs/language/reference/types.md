@@ -44,7 +44,7 @@
 
 Integer `/` rounds down, and `%` takes the sign of the divisor, the same as Minecraft's scoreboard `/=` and `%=`. So `-7 / 2` is `-4` and `-7 % 3` is `2`. Casting a float with `(int)` also floors: `(int) -2.7` is `-3`. Dividing by `0` leaves the left side unchanged. Overflow wraps.
 
-`&`, `|`, `^`, `<<` and `>>` work like Java's on 32-bit ints, with Java's precedence, and the shift count is taken modulo 32. `>>` keeps the sign. There's no `>>>` or `~`; use `-x - 1` for `~x`. Scoreboards have no bit operations, so `&`, `|` and `^` run a generated loop of up to 32 steps, and `<<` and `>>` multiply or divide by a power of two.
+`&`, `|`, `^`, `<<` and `>>` work like Java's on 32-bit ints, with Java's precedence, and the shift count is taken modulo 32. `>>` keeps the sign, and `>>>` fills with zeros; its bit count must be a literal, like `x >>> 4`. `~x` flips every bit, the same as `-1 - x`. Scoreboards have no bit operations, so `&`, `|` and `^` run a generated loop of up to 32 steps, and `<<` and `>>` multiply or divide by a power of two.
 
 `n.toString()` converts to text. `Integer.parseInt("42")` goes the other way and returns `0` if the text isn't a whole number.
 
@@ -103,6 +103,8 @@ void main() {
 | `toString()` | The same string |
 
 `String.join(separator, parts)` joins a `List<String>` with `separator` between each part, like Java: `String.join(", ", names)`.
+
+`String.format(format, values...)` fills `%s` and `%d` with the values in order, and `%%` is a `%`: `String.format("%s has %d kills", name, kills)`. The format must be a string literal, and widths and precision (`%5d`, `%.2f`) aren't supported.
 
 `Integer.parseInt(s)` returns a number or `0` for invalid text. `String.valueOf(x)`, `Integer.toString(x)` and `Float.toString(x)` convert values to text.
 

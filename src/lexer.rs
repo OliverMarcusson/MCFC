@@ -49,6 +49,7 @@ pub enum TokenKind {
     Amp,
     Pipe,
     Caret,
+    Tilde,
     PlusPlus,
     MinusMinus,
     Plus,
@@ -205,6 +206,7 @@ const PUNCTUATION: &[(&str, TokenKind)] = &[
     ("&", TokenKind::Amp),
     ("|", TokenKind::Pipe),
     ("^", TokenKind::Caret),
+    ("~", TokenKind::Tilde),
     ("<", TokenKind::Lt),
     (">", TokenKind::Gt),
 ];

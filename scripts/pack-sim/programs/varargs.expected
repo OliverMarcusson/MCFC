@@ -1,0 +1,4 @@
+say sums 0 1 6 9
+say joined a-b-c [] 2 3
+say log: hello world
+say alex has 7 kills (100%)

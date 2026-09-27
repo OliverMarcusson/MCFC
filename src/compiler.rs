@@ -346,6 +346,7 @@ pub(crate) fn normalize_special_functions(mut program: Program) -> Result<Progra
             module: String::new(),
             is_abstract: false,
             is_override: false,
+            varargs: false,
         };
         for index in &tick_void_indices {
             merged.body.extend(program.functions[*index].body.clone());

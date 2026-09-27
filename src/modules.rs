@@ -779,6 +779,7 @@ impl Resolver {
                     path
                 }
             };
+            reject_tick_call(&function, args, &span, diagnostics);
             expr.kind = ExprKind::Call {
                 function,
                 args: std::mem::take(args),
@@ -797,6 +798,7 @@ impl Resolver {
                     Ok(None) => {}
                     Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
                 }
+                reject_tick_call(function, args, &span, diagnostics);
                 for arg in args {
                     self.walk_expr(scope, arg, diagnostics);
                 }
@@ -957,6 +959,17 @@ struct Scope<'a> {
     generics: &'a [String],
     /// Every parameter and local name in the function; these shadow modules.
     locals: &'a HashSet<String>,
+}
+
+/// Every module's `tick()` merges into the one datapack tick, so calling it
+/// would run all of them again from inside themselves.
+fn reject_tick_call(function: &str, args: &[Expr], span: &Span, diagnostics: &mut Diagnostics) {
+    if function == "tick" && args.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            "tick() can't be called: every module's tick() already runs each tick",
+            span.clone(),
+        ));
+    }
 }
 
 fn collect_locals(stmts: &[Stmt], locals: &mut HashSet<String>) {

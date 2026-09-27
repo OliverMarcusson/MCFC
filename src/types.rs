@@ -6650,13 +6650,28 @@ fn check_sidebar_args(name: &str, args: &[TypedExpr], expr: &Expr, diagnostics: 
         "sidebar_remove_line" | "removeSidebarLine" => (true, false),
         _ => (false, false),
     };
-    expect_arity(
-        name,
-        args,
-        usize::from(has_line) + usize::from(has_text),
-        expr,
-        diagnostics,
-    );
+    // The shared sidebar's `setLine` takes an optional right-aligned value.
+    let text_value = |ty: &Type| matches!(ty, Type::String | Type::TextDef);
+    if name == "sidebar_line" && args.len() == 3 {
+        expect_arg_matches(
+            name,
+            args,
+            2,
+            text_value,
+            "a String or Component",
+            "value",
+            expr,
+            diagnostics,
+        );
+    } else {
+        expect_arity(
+            name,
+            args,
+            usize::from(has_line) + usize::from(has_text),
+            expr,
+            diagnostics,
+        );
+    }
     if has_line {
         expect_arg_type(name, args, 0, Type::Int, "line", expr, diagnostics);
     }
@@ -6665,7 +6680,7 @@ fn check_sidebar_args(name: &str, args: &[TypedExpr], expr: &Expr, diagnostics: 
             name,
             args,
             usize::from(has_line),
-            |ty| matches!(ty, Type::String | Type::TextDef),
+            text_value,
             "a String or Component",
             "text",
             expr,

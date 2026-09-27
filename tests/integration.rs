@@ -2932,6 +2932,25 @@ fn project_errors_report_the_original_file_and_line() {
 }
 
 #[test]
+fn calling_a_module_tick_is_rejected() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(src_dir.join("main.mcf"), "\nvoid tick() {\n    game.tick();\n}\n").unwrap();
+    fs::write(src_dir.join("game.mcf"), "\npublic void tick() {\n}\n").unwrap();
+
+    let error = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect_err("tick merges into one function, so calling it would recurse");
+
+    assert!(error.contains("tick() can't be called"), "{error}");
+}
+
+#[test]
 fn project_modules_resolve_imports_and_privacy() {
     let project = temp_path();
     let src_dir = project.join("src");
@@ -4322,6 +4341,7 @@ fn sidebars_are_shared_or_per_player_through_the_agent() {
 void main() {
     Sidebar.setTitle("Arena");
     Sidebar.setLine(2, "Kills");
+    Sidebar.setLine(4, "Gold", "12");
     Sidebar.removeLine(3);
     var player = (Player) Selector.of("@p").getFirst();
     player.setSidebarLine(1, "Coins");
@@ -4340,6 +4360,9 @@ void main() {
         "scoreboard players display name mcfc.line.$(line) mcfc_sidebar $(text)",
         "scoreboard players reset mcfc.line.$(line) mcfc_sidebar",
         "scoreboard players reset * mcfc_sidebar",
+        "scoreboard players display numberformat mcfc.line.$(line) mcfc_sidebar fixed $(value)",
+        "scoreboard players display numberformat mcfc.line.$(line) mcfc_sidebar
+",
     ] {
         assert!(output.contains(expected), "missing {expected}");
     }

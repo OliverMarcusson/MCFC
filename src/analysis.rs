@@ -93,7 +93,20 @@ pub fn analyze_modules(
             for (info, function) in functions.iter_mut().zip(&program.functions) {
                 info.name = function.name.clone();
             }
-            match types::type_check(&program, host_modules) {
+            // Every module's `tick()` merges into one, as in a build.
+            let checked = match crate::compiler::normalize_special_functions(program.clone()) {
+                Ok(checked) => checked,
+                Err(diagnostics) => {
+                    return AnalysisResult {
+                        diagnostics: diagnostics.0,
+                        program: Some(program),
+                        typed_program: None,
+                        functions,
+                        locals: Vec::new(),
+                    };
+                }
+            };
+            match types::type_check(&checked, host_modules) {
                 Ok(typed_program) => {
                     let locals = collect_locals(&typed_program);
                     AnalysisResult {

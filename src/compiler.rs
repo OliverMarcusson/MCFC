@@ -301,7 +301,7 @@ fn is_mcfc_identifier(value: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnostics> {
+pub(crate) fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
     let tick_indices = program
         .functions

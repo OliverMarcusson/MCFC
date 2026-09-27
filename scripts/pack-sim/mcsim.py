@@ -415,6 +415,9 @@ class Sim:
         if head == "fill":
             self.trace.append(" ".join(t))
             return True, 1
+        if head in ("forceload", "setworldspawn"):
+            self.trace.append(" ".join(t))
+            return True, 1
         if head == "time" and t[1:] == ["query", "gametime"]:
             return True, self.gametime
         if head == "random" and t[1] == "value":
@@ -687,6 +690,9 @@ class Sim:
                 elif kind == "entity":
                     ok = any(self.selects(t[i + 2], m) for m in self.markers)
                     i += 3
+                elif kind == "loaded":
+                    ok = True  # the simulated world is always loaded
+                    i += 5
                 elif kind == "function":
                     value, success = self.run_function(t[i + 2])
                     ok = success and value not in (None, 0)
@@ -726,6 +732,9 @@ class Sim:
                 # One pretend player: enough for code that talks to players.
                 i += 2
                 continue
+            if w == "as" and t[i + 1].startswith("@a["):
+                # The pretend player carries no tags or trigger scores.
+                return False, 0
             if w == "align" and t[i + 1] == "xyz":
                 self.pos = [float(math.floor(c)) for c in self.pos]
                 i += 2

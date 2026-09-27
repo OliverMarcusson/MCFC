@@ -531,6 +531,9 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 "data modify storage {}:runtime frames set value {{}}",
                 self.namespace
             ),
+            // A call chain cut off by the command limit never pops its
+            // recursion frames; left in the world, they pile up every tick.
+            format!("data remove storage {}:runtime stack", self.namespace),
         ];
         for objective in &self.state_objectives {
             if let Some(display_name) = &objective.display_name {
@@ -4775,11 +4778,13 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         let data = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
         let path = data.storage_path().to_string();
         lines.push(format!(
-            "data modify storage {ns}:runtime {path} set value {{text:{{text:\"\"}}}}"
+            "data modify storage {ns}:runtime {path} set value {{text:{{text:\"\"}},value:{{text:\"\"}}}}"
         ));
-        for arg in args {
+        for (index, arg) in args.iter().enumerate() {
             let slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
             self.compile_expr_into_slot(function, depth, arg, &slot, lines);
+            // `setLine`'s third argument is the right-aligned value.
+            let field = if index == 2 { "value" } else { "text" };
             lines.push(if arg.ty == Type::Int {
                 format!(
                     "execute store result storage {ns}:runtime {path}.line int 1 run scoreboard players get {} mcfc",
@@ -4787,12 +4792,12 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 )
             } else if arg.ty == Type::TextDef {
                 format!(
-                    "data modify storage {ns}:runtime {path}.text set from storage {ns}:runtime {}",
+                    "data modify storage {ns}:runtime {path}.{field} set from storage {ns}:runtime {}",
                     slot.storage_path()
                 )
             } else {
                 format!(
-                    "data modify storage {ns}:runtime {path}.text.text set from storage {ns}:runtime {}",
+                    "data modify storage {ns}:runtime {path}.{field}.text set from storage {ns}:runtime {}",
                     slot.storage_path()
                 )
             });
@@ -4821,6 +4826,11 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 lines.push(self.inline_macro_command(&path, format!(
                     "execute store result score mcfc.line.$(line) mcfc_sidebar run data get storage {ns}:runtime {path}.line -1"
                 )));
+                lines.push(self.inline_macro_command(&path, if args.len() == 3 {
+                    "scoreboard players display numberformat mcfc.line.$(line) mcfc_sidebar fixed $(value)".to_string()
+                } else {
+                    "scoreboard players display numberformat mcfc.line.$(line) mcfc_sidebar".to_string()
+                }));
                 "scoreboard players display name mcfc.line.$(line) mcfc_sidebar $(text)".to_string()
             }
             "sidebar_remove_line" => {

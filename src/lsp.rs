@@ -1741,7 +1741,7 @@ Log.setLevel(level: String)
 Shown to players tagged `mcfc.log`.",
         ),
         "Sidebar" => Some(
-            "```mcfc\nSidebar.setTitle(text: String)\nSidebar.setLine(line: int, text: String)\nSidebar.removeLine(line: int)\nSidebar.clear()\n```\nThe sidebar every player sees. Line 0 is on top.",
+            "```mcfc\nSidebar.setTitle(text: String)\nSidebar.setLine(line: int, text: String)\nSidebar.setLine(line: int, text: String, value: String)\nSidebar.removeLine(line: int)\nSidebar.clear()\n```\nThe sidebar every player sees. Line 0 is on top.",
         ),
         "getFirst" => Some("```mcfc\nSelector.getFirst() -> Entity\nList<T>.getFirst() -> T\n```"),
         "findFirst" => Some("```mcfc\nSelector.findFirst() -> Optional<Entity>\n```"),
@@ -6607,6 +6607,32 @@ void main() {
 
         assert_eq!(local_range.start, local_call_offset);
         assert_eq!(local_range.end, local_call_offset + "alpha".len());
+    }
+
+    #[test]
+    fn module_ticks_merge_without_diagnostics() {
+        let project = temp_path().join("project");
+        let src_dir = project.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        write_file(&project.join("mcfc.toml"), "namespace = \"sample\"\n");
+        write_file(&src_dir.join("main.mcf"), "void tick() {\n}\n");
+        write_file(&src_dir.join("game.mcf"), "void tick() {\n}\n");
+
+        let snapshot = build_project_snapshot(
+            &ProjectConfig {
+                manifest_path: project.join("mcfc.toml"),
+                source_root: src_dir,
+                host_modules: crate::types::HostModules::for_editor(),
+            },
+            &HashMap::new(),
+        )
+        .expect("snapshot should build");
+
+        assert!(
+            snapshot.analysis.diagnostics.is_empty(),
+            "{:?}",
+            snapshot.analysis.diagnostics
+        );
     }
 
     #[test]

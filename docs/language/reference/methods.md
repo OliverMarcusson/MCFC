@@ -91,8 +91,9 @@ void showScore(Player player) {
     Sidebar.setTitle("Arena");
     Sidebar.setLine(0, "Red: 3");
     Sidebar.setLine(1, "Blue: 5");
-    Sidebar.removeLine(2);
-    player.setSidebarLine(3, "Your coins: 12");
+    Sidebar.setLine(2, "Time", "4:30");
+    Sidebar.removeLine(3);
+    player.setSidebarLine(4, "Your coins: 12");
 }
 ```
 
@@ -100,6 +101,7 @@ void showScore(Player player) {
 | --- | --- |
 | `Sidebar.setTitle(text)` | Sets the title. `text` is a `String` or `Component`. |
 | `Sidebar.setLine(line, text)` | Sets or replaces a line. |
+| `Sidebar.setLine(line, text, value)` | The same, with `value` right-aligned at the line's end, where a score would show. `value` is a `String` or `Component`. |
 | `Sidebar.removeLine(line)` | Removes a line. |
 | `Sidebar.clear()` | Removes every line. |
 

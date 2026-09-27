@@ -3777,6 +3777,10 @@ void main() {
         .get("data/mcfc/predicate/mcfc_input_jump.json")
         .unwrap();
     assert!(predicate.contains("\"jump\":true"));
+    // 26.3 renamed the loot condition key from `condition` to `type`.
+    assert!(predicate.starts_with("{\"type\":\"minecraft:entity_properties\""));
+    // 26.2 made entity predicates a map keyed by sub-predicate.
+    assert!(predicate.contains("\"type_specific/player\":{\"input\":{\"jump\":true}}"));
 }
 
 #[test]
@@ -3933,6 +3937,7 @@ void main() {
     let files = &result.artifacts.files;
     let enchantment = files.get("data/mcfc/enchantment/impulse.json").unwrap();
     assert_eq!(enchantment.matches("minecraft:apply_impulse").count(), 96);
+    assert!(!enchantment.contains("\"condition\""), "26.3 loot conditions use `type`");
     assert!(enchantment.contains("\"name\":\"#impulse_0_31\""));
     assert!(enchantment.contains("\"magnitude\":-214748.3648"));
     let body = files

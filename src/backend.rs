@@ -4337,7 +4337,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         if let Some(key) = method.strip_prefix("input_") {
             let predicate = format!("data/{ns}/predicate/mcfc_input_{key}.json");
             self.files.insert(predicate, format!(
-                "{{\"type\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":{{\"type_specific\":{{\"type\":\"minecraft:player\",\"input\":{{\"{key}\":true}}}}}}}}"
+                "{{\"type\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":{{\"type_specific/player\":{{\"input\":{{\"{key}\":true}}}}}}}}"
             ));
             lines.push(format!(
                 "scoreboard players set {} mcfc 0",

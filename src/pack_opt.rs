@@ -7,14 +7,19 @@
 //!    (`execute if score <flag> mcfc matches 0 run ...`) may be nonzero at each
 //!    line and drops the checks it proves true.
 //! 2. Inlining: calls to one-line functions become the line itself; a bare
-//!    call to a function with a single caller is replaced by its body.
+//!    call to a function with a single caller is replaced by its body. So is a
+//!    small block behind score conditions it can't change (each line gets the
+//!    conditions), and a block a function ends with (behind `return` checks).
+//!    These save files, which Realms can only take a few thousand of.
 //! 3. Temp propagation: a backend temp written once and read once has its
 //!    source (a score, a storage path or a constant) substituted into the read.
 //! 4. Early return: a run of lines all guarded by the same flag becomes one
 //!    `return` check followed by unguarded lines.
 //! 5. `run execute` chains are flattened.
-//! 6. Identical functions are merged.
-//! 7. Functions nothing references are dropped, and so are setup lines for
+//! 6. Macro helpers that differ only in the frame paths, scores and string
+//!    text they name take those as arguments instead, so step 7 merges them.
+//! 7. Identical functions are merged.
+//! 8. Functions nothing references are dropped, and so are setup lines for
 //!    scores nothing reads.
 //!
 //! The analysis is conservative: anything it cannot classify (dynamic calls,
@@ -40,7 +45,14 @@ pub fn optimize(files: &mut BTreeMap<String, String>) {
     pack.pool_constants();
     pack.remove_known_guards(true);
     while pack.remove_dead_scores() {}
+    // Dropping dead writes shrinks more bodies to one line.
+    if pack.inline_rounds(true) {
+        while pack.remove_dead_scores() {}
+    }
+    while pack.flatten_tail_blocks() | pack.inline_guarded_blocks() {}
     pack.flatten_execute_chains();
+    // Last of the rewrites: the scores it moves into strings are hidden from them.
+    pack.template_macros();
     pack.merge_identical();
     pack.remove_unreachable();
     pack.store(files);
@@ -48,6 +60,10 @@ pub fn optimize(files: &mut BTreeMap<String, String>) {
 
 /// A bare call to a body this short is copied in whoever else calls it.
 const INLINE_MAX_LINES: usize = 4;
+
+/// A block behind conditions is inlined up to this size: past it, re-checking
+/// the conditions on every line costs more than the call it saves.
+const GUARDED_INLINE_MAX_LINES: usize = 3;
 
 /// An early return pays for itself once it replaces this many guards.
 const EARLY_RETURN_MIN_LINES: usize = 3;
@@ -127,6 +143,77 @@ fn id_tokens(text: &str) -> Vec<(usize, usize)> {
         }
     }
     tokens
+}
+
+/// What differs between otherwise identical macro helpers: frame storage
+/// paths (`frames.d0.f.x`), frame scores (`$d0_f_x`) and the text of quoted
+/// strings around their `$(...)` placeholders. A line with a backslash keeps
+/// its strings, since an escaped quote could end one early.
+fn macro_arg_spans(line: &str) -> Vec<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let quoted = !line.contains('\\');
+    let mut tokens = Vec::new();
+    let mut at = 1;
+    while at < bytes.len() {
+        if quoted && bytes[at] == b'"' {
+            let Some(close) = line[at + 1..].find('"').map(|i| at + 1 + i) else {
+                break;
+            };
+            let mut run = at + 1;
+            while run < close {
+                let next = line[run..close].find("$(").map_or(close, |i| run + i);
+                if next > run {
+                    tokens.push((run, next));
+                }
+                run = line[next..close].find(')').map_or(close, |i| next + i + 1);
+            }
+            at = close + 1;
+            continue;
+        }
+        let starts = bytes[at - 1] == b' '
+            && (line[at..].starts_with("frames.d")
+                || bytes[at] == b'$'
+                    && bytes.get(at + 2).is_some_and(|b| b.is_ascii_digit())
+                    && bytes[at + 1] == b'd');
+        if !starts {
+            at += 1;
+            continue;
+        }
+        let mut end = at + 1;
+        while end < bytes.len()
+            && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'_' | b'.'))
+        {
+            end += 1;
+        }
+        while bytes[end - 1] == b'.' {
+            end -= 1;
+        }
+        tokens.push((at, end));
+        at = end;
+    }
+    tokens
+}
+
+/// `execute <score clauses> run function X`: the clauses and the scores they read.
+fn score_guarded_call(line: &str) -> Option<(Vec<String>, Vec<String>)> {
+    let rest = line.strip_prefix("execute ")?;
+    let run = rest.find(" run function ")?;
+    let words: Vec<&str> = rest[..run].split(' ').collect();
+    let mut clauses = Vec::new();
+    let mut holders = Vec::new();
+    let mut at = 0;
+    while at < words.len() {
+        let len = if words.get(at + 4) == Some(&"matches") {
+            6
+        } else {
+            7
+        };
+        let clause = words.get(at..at + len)?.join(" ");
+        holders.extend(clause_holders(score_clause(&clause)?));
+        clauses.push(clause);
+        at += len;
+    }
+    Some((clauses, holders))
 }
 
 fn classify(line: &str, start: usize, end: usize) -> RefKind {
@@ -1251,6 +1338,23 @@ impl Pack {
 
     /// Every score a function may write, including through its calls; None
     /// when that is unknowable.
+    /// Every score `lines` may write, given each function's summary.
+    fn lines_write(
+        &self,
+        lines: &[String],
+        summaries: &HashMap<String, Option<HashSet<String>>>,
+    ) -> Option<HashSet<String>> {
+        lines.iter().try_fold(HashSet::new(), |mut acc, line| {
+            acc.extend(Self::line_writes(line)?);
+            for reference in self.refs(line) {
+                if matches!(reference.kind, RefKind::Call { .. }) {
+                    acc.extend(summaries[&reference.id].clone()?);
+                }
+            }
+            Some(acc)
+        })
+    }
+
     fn score_summaries(&self) -> HashMap<String, Option<HashSet<String>>> {
         let mut summaries: HashMap<String, Option<HashSet<String>>> = self
             .funcs
@@ -1260,15 +1364,7 @@ impl Pack {
         loop {
             let mut changed = false;
             for (id, lines) in &self.funcs {
-                let summary = lines.iter().try_fold(HashSet::new(), |mut acc, line| {
-                    acc.extend(Self::line_writes(line)?);
-                    for reference in self.refs(line) {
-                        if matches!(reference.kind, RefKind::Call { .. }) {
-                            acc.extend(summaries[&reference.id].clone()?);
-                        }
-                    }
-                    Some(acc)
-                });
+                let summary = self.lines_write(lines, &summaries);
                 if summaries[id] != summary {
                     summaries.insert(id.clone(), summary);
                     changed = true;
@@ -1958,6 +2054,215 @@ impl Pack {
         }
     }
 
+    /// A block with one caller, called behind score conditions, moves into the
+    /// caller with the conditions on each of its lines: the same commands run,
+    /// one file fewer. Only when nothing in the block can change those scores.
+    fn inline_guarded_blocks(&mut self) -> bool {
+        let unknown = self.entry_unknown();
+        let counts = self.call_counts();
+        let summaries = self.score_summaries();
+        let mut changed = false;
+        let ids: Vec<String> = self.funcs.keys().cloned().collect();
+        for id in ids {
+            let lines = self.funcs[&id].clone();
+            let mut out = Vec::with_capacity(lines.len());
+            for line in lines {
+                let Some((call, clauses)) = self.single_caller_block(&id, &line, &counts, &unknown)
+                else {
+                    out.push(line);
+                    continue;
+                };
+                let body = &self.funcs[&call];
+                // Each line rechecks the conditions, so the lines before the
+                // last must leave them alone; the last can change them.
+                let keeps = |(clauses, holders): (Vec<String>, Vec<String>)| {
+                    let written = self.lines_write(&body[..body.len() - 1], &summaries)?;
+                    holders
+                        .iter()
+                        .all(|h| !written.contains(h))
+                        .then(|| clauses.join(" "))
+                };
+                match keeps(clauses).filter(|_| body.len() <= GUARDED_INLINE_MAX_LINES) {
+                    Some(clauses) => {
+                        for body_line in body {
+                            out.push(format!("execute {clauses} run {body_line}"));
+                        }
+                        changed = true;
+                    }
+                    None => out.push(line),
+                }
+            }
+            self.funcs.insert(id, out);
+        }
+        self.remove_unreachable();
+        changed
+    }
+
+    /// `line` is `execute <score clauses> run function B`, and B is a block
+    /// only this line calls, with no `return` or macro lines: B and the clauses.
+    fn single_caller_block(
+        &self,
+        caller: &str,
+        line: &str,
+        counts: &HashMap<String, usize>,
+        unknown: &BTreeSet<String>,
+    ) -> Option<(String, (Vec<String>, Vec<String>))> {
+        let [call] = self.refs(line).try_into().ok()?;
+        let body = &self.funcs[&call.id];
+        (call.end == line.len()
+            && call.id != caller
+            && counts.get(&call.id) == Some(&1)
+            && !unknown.contains(&call.id)
+            && !body.is_empty()
+            && Self::inlinable(body))
+        .then_some(())?;
+        Some((call.id, score_guarded_call(line)?))
+    }
+
+    /// A function that ends in `execute <clauses> run function B` returns
+    /// when a clause fails instead, and runs B's lines itself: the same
+    /// commands, one file fewer. Not for functions whose value is read, since
+    /// the `return` would change it.
+    fn flatten_tail_blocks(&mut self) -> bool {
+        let unknown = self.entry_unknown();
+        let observed = self.value_observed();
+        let counts = self.call_counts();
+        let mut changed = false;
+        let ids: Vec<String> = self.funcs.keys().cloned().collect();
+        for id in ids {
+            if observed.contains(&id) {
+                continue;
+            }
+            // Blocks moved into their caller earlier in this loop are gone.
+            let Some(last) = self.funcs.get(&id).and_then(|lines| lines.last()).cloned() else {
+                continue;
+            };
+            let Some((call, (clauses, _))) =
+                self.single_caller_block(&id, &last, &counts, &unknown)
+            else {
+                continue;
+            };
+            let body = self.funcs.remove(&call).unwrap();
+            let lines = self.funcs.get_mut(&id).unwrap();
+            lines.pop();
+            for clause in clauses {
+                lines.push(format!("execute {} run return 0", negate_clause(&clause)));
+            }
+            lines.extend(body);
+            changed = true;
+        }
+        changed
+    }
+
+    /// A macro helper is one line per call site, so a pack has hundreds that
+    /// differ only in the frame path, score or string text they name. Where
+    /// two or more share a shape, those become arguments: each call copies its
+    /// arguments to `__macro`, adds them, and calls with that instead.
+    fn template_macros(&mut self) {
+        const SCRATCH: &str = "__macro";
+        let unknown = self.entry_unknown();
+        let mut shapes: HashMap<Vec<String>, Vec<(String, Vec<String>)>> = HashMap::new();
+        for (id, lines) in &self.funcs {
+            if unknown.contains(id) || !lines.iter().all(|line| line.starts_with('$')) {
+                continue;
+            }
+            let mut names: Vec<String> = Vec::new();
+            let shape = lines
+                .iter()
+                .map(|line| {
+                    let mut out = String::new();
+                    let mut last = 0;
+                    for (start, end) in macro_arg_spans(line) {
+                        let name = &line[start..end];
+                        let index =
+                            names
+                                .iter()
+                                .position(|seen| seen == name)
+                                .unwrap_or_else(|| {
+                                    names.push(name.to_string());
+                                    names.len() - 1
+                                });
+                        out.push_str(&line[last..start]);
+                        out.push_str(&format!("$(mcfc_t{index})"));
+                        last = end;
+                    }
+                    out.push_str(&line[last..]);
+                    out
+                })
+                .collect();
+            if !names.is_empty() {
+                shapes.entry(shape).or_default().push((id.clone(), names));
+            }
+        }
+        // Each helper's call sites, as `(caller, line)`; `None` once one can't be rewritten.
+        let mut sites: HashMap<String, Option<Vec<(String, usize)>>> = shapes
+            .values()
+            .filter(|helpers| helpers.len() > 1)
+            .flatten()
+            .map(|(id, _)| (id.clone(), Some(Vec::new())))
+            .collect();
+        for (caller, lines) in &self.funcs {
+            for (index, line) in lines.iter().enumerate() {
+                for reference in self.refs(line) {
+                    let Some(entry) = sites.get_mut(&reference.id) else {
+                        continue;
+                    };
+                    let rest = &line[reference.end..];
+                    let plain = !line.starts_with('$')
+                        && rest
+                            .strip_prefix(" with storage ")
+                            .is_some_and(|args| args.split(' ').count() == 2);
+                    match (entry.as_mut(), plain && self.refs(line).len() == 1) {
+                        (Some(list), true) => list.push((caller.clone(), index)),
+                        _ => *entry = None,
+                    }
+                }
+            }
+        }
+        let mut inserts: HashMap<String, BTreeMap<usize, Vec<String>>> = HashMap::new();
+        for (shape, helpers) in shapes {
+            let helpers: Vec<_> = helpers
+                .into_iter()
+                .filter_map(|(id, names)| Some((sites.remove(&id)??, id, names)))
+                .collect();
+            if helpers.len() < 2 {
+                continue;
+            }
+            for (calls, id, names) in helpers {
+                for (caller, index) in calls {
+                    let line = &mut self.funcs.get_mut(&caller).unwrap()[index];
+                    let with = line.rfind(" with storage ").unwrap();
+                    let (storage, path) = line[with + " with storage ".len()..]
+                        .split_once(' ')
+                        .unwrap();
+                    let (storage, path) = (storage.to_string(), path.to_string());
+                    line.replace_range(with.., &format!(" with storage {storage} {SCRATCH}"));
+                    let mut setup = vec![format!(
+                        "data modify storage {storage} {SCRATCH} set from storage {storage} {path}"
+                    )];
+                    for (at, name) in names.iter().enumerate() {
+                        setup.push(format!(
+                            "data modify storage {storage} {SCRATCH}.mcfc_t{at} set value \"{name}\""
+                        ));
+                    }
+                    inserts.entry(caller).or_default().insert(index, setup);
+                }
+                self.funcs.insert(id, shape.clone());
+            }
+        }
+        for (caller, at) in inserts {
+            let lines = std::mem::take(self.funcs.get_mut(&caller).unwrap());
+            let mut out = Vec::with_capacity(lines.len() + at.len() * 2);
+            for (index, line) in lines.into_iter().enumerate() {
+                if let Some(setup) = at.get(&index) {
+                    out.extend(setup.iter().cloned());
+                }
+                out.push(line);
+            }
+            self.funcs.insert(caller, out);
+        }
+    }
+
     fn merge_identical(&mut self) {
         loop {
             let pinned = self.pinned();
@@ -2053,7 +2358,12 @@ mod tests {
                  execute if score $c mcfc matches 0 run say c\n\
                  execute if score $c mcfc matches 0 run say d\n",
             ),
-            ("generated/g", "say g\nscoreboard players set $c mcfc 1\n"),
+            // Writes $x, the score its call checks, before its last line, so
+            // it stays a call.
+            (
+                "generated/g",
+                "say g\nscoreboard players set $x mcfc 0\nscoreboard players set $c mcfc 1\n",
+            ),
         ]);
         optimize(&mut files);
         assert_eq!(
@@ -2063,6 +2373,49 @@ mod tests {
              execute unless score $c mcfc matches 0 run return 0\n\
              say b\nsay c\nsay d\n"
         );
+    }
+
+    #[test]
+    fn a_block_a_function_ends_with_moves_in_behind_returns() {
+        let mut files = pack(&[
+            ("main", "execute as @a run function t:generated/f\n"),
+            (
+                "generated/f",
+                "say f\nexecute if score $a mcfc matches 1 if score $b mcfc matches 0 run function t:generated/g\n",
+            ),
+            (
+                "generated/g",
+                "say 1\nscoreboard players set $a mcfc 0\nsay 3\nsay 4\nsay 5\n",
+            ),
+        ]);
+        optimize(&mut files);
+        assert_eq!(
+            body(&files, "generated/f"),
+            "say f\n\
+             execute unless score $a mcfc matches 1 run return 0\n\
+             execute unless score $b mcfc matches 0 run return 0\n\
+             say 1\nscoreboard players set $a mcfc 0\nsay 3\nsay 4\nsay 5\n"
+        );
+        assert_eq!(body(&files, "generated/g"), "<missing>");
+    }
+
+    #[test]
+    fn inlines_a_small_block_behind_conditions_it_cannot_change() {
+        let mut files = pack(&[
+            (
+                "main",
+                "execute if score $x mcfc matches 1 run function t:generated/g\nsay end\n",
+            ),
+            ("generated/g", "say g\nscoreboard players set $y mcfc 1\n"),
+        ]);
+        optimize(&mut files);
+        assert_eq!(
+            body(&files, "main"),
+            "execute if score $x mcfc matches 1 run say g\n\
+             execute if score $x mcfc matches 1 run scoreboard players set $y mcfc 1\n\
+             say end\n"
+        );
+        assert_eq!(body(&files, "generated/g"), "<missing>");
     }
 
     #[test]
@@ -2216,6 +2569,64 @@ mod tests {
             "execute if score $d0_m_j mcfc matches 2 run return run scoreboard players set $d0_m_b mcfc 1\n\
              say a\nsay b\nfunction t:generated/body\n"
         );
+    }
+
+    #[test]
+    fn macro_helpers_take_their_frame_names_as_arguments() {
+        let mut files = pack(&[
+            (
+                "main",
+                "function t:generated/a with storage t:runtime frames.d0.main.x\n\
+                 execute if score $d0_main_c mcfc matches 0 run function t:generated/b with storage t:runtime frames.d0.main.y\n",
+            ),
+            (
+                "generated/a",
+                "$data modify storage t:runtime frames.d0.main.p set from entity $(s) Pos\n",
+            ),
+            (
+                "generated/b",
+                "$data modify storage t:runtime frames.d0.main.q set from entity $(s) Pos\n",
+            ),
+        ]);
+        optimize(&mut files);
+        assert_eq!(
+            body(&files, "generated/a"),
+            "$data modify storage t:runtime $(mcfc_t0) set from entity $(s) Pos\n"
+        );
+        assert_eq!(body(&files, "generated/b"), "<missing>");
+        assert_eq!(
+            body(&files, "main"),
+            "data modify storage t:runtime __macro set from storage t:runtime frames.d0.main.x\n\
+             data modify storage t:runtime __macro.mcfc_t0 set value \"frames.d0.main.p\"\n\
+             function t:generated/a with storage t:runtime __macro\n\
+             data modify storage t:runtime __macro set from storage t:runtime frames.d0.main.y\n\
+             data modify storage t:runtime __macro.mcfc_t0 set value \"frames.d0.main.q\"\n\
+             execute if score $d0_main_c mcfc matches 0 run function t:generated/a with storage t:runtime __macro\n"
+        );
+    }
+
+    #[test]
+    fn macro_helpers_take_their_string_text_as_arguments() {
+        let mut files = pack(&[
+            (
+                "main",
+                "function t:generated/a with storage t:runtime frames.d0.main.x\n\
+                 function t:generated/b with storage t:runtime frames.d0.main.x\n\
+                 function t:generated/c with storage t:runtime frames.d0.main.x\n",
+            ),
+            ("generated/a", "$say \"Hi $(n)!\"\n"),
+            ("generated/b", "$say \"Bye $(n)?\"\n"),
+            // A backslash could hide a quote, so this one keeps its text.
+            ("generated/c", "$say \"a\\\"b $(n)\"\n"),
+        ]);
+        optimize(&mut files);
+        assert_eq!(
+            body(&files, "generated/a"),
+            "$say \"$(mcfc_t0)$(n)$(mcfc_t1)\"\n"
+        );
+        assert_eq!(body(&files, "generated/b"), "<missing>");
+        assert_eq!(body(&files, "generated/c"), "$say \"a\\\"b $(n)\"\n");
+        assert!(body(&files, "main").contains("__macro.mcfc_t0 set value \"Bye \"\n"));
     }
 
     #[test]

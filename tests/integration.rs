@@ -2144,9 +2144,9 @@ void main() {
             .unwrap_or_else(|| panic!("no {part} function"))
     };
     // Like Java, the condition (and its call) runs before every iteration.
-    assert!(find("while_cond").contains("generated/finish__d1__entry"));
+    assert!(find("while_cond").contains("generated/finish__d0__entry"));
     let main = find("main__d0__entry");
-    assert!(!main.contains("generated/finish__d1__entry"));
+    assert!(!main.contains("generated/finish__d0__entry"));
     // `continue` jumps to the update, which then re-tests the condition.
     let step = find("while_step");
     assert!(step.contains("scoreboard players add") || step.contains("+= "));
@@ -4235,7 +4235,7 @@ void main() {
     assert!(!main.contains("say after"), "the rest must wait:\n{main}");
     assert!(
         main.contains(
-            "frames.d1.wait.__resume.fn set value \"mcfc:generated/main__d0__sleep_resume_"
+            "frames.d0.wait.__resume.fn set value \"mcfc:generated/main__d0__sleep_resume_"
         ),
         "{main}"
     );
@@ -4247,11 +4247,11 @@ void main() {
         .artifacts
         .files
         .iter()
-        .find(|(path, _)| path.contains("generated/wait__d1__sleep_resume_"))
+        .find(|(path, _)| path.contains("generated/wait__d0__sleep_resume_"))
         .map(|(_, body)| body.clone())
         .expect("wait resume");
     assert!(
-        resume.ends_with("run function mcfc:generated/wait__d1__finish\n"),
+        resume.ends_with("run function mcfc:generated/wait__d0__finish\n"),
         "{resume}"
     );
 }

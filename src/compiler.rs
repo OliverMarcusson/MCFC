@@ -149,9 +149,6 @@ fn prune_unreachable(mut program: TypedProgram, exports: &[ExportedFunction]) ->
         .functions
         .retain(|function| reachable.contains(&function.name));
     program
-        .call_depths
-        .retain(|name, _| reachable.contains(name));
-    program
         .recursion_groups
         .retain(|name, _| reachable.contains(name));
     program

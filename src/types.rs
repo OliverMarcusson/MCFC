@@ -479,7 +479,6 @@ pub struct TypedProgram {
     pub world_states: Vec<PlayerStateDef>,
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
-    pub call_depths: BTreeMap<String, usize>,
     /// Recursive functions to their group id; see `analyze_calls`.
     pub recursion_groups: BTreeMap<String, usize>,
 }
@@ -2582,7 +2581,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
         }
     }
 
-    let (call_depths, recursion_groups) = analyze_calls(&functions);
+    let recursion_groups = analyze_calls(&functions);
 
     diagnostics.into_result(TypedProgram {
         struct_defs,
@@ -2590,7 +2589,6 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
         function_signatures: signatures,
         player_states: program.player_states.clone(),
         world_states,
-        call_depths,
         recursion_groups,
     })
 }
@@ -10901,13 +10899,10 @@ fn is_plain_player_name_target(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
-/// Call depths and recursion groups. A group is a cycle in the call graph (a
-/// strongly connected component of 2+ functions, or one that calls itself);
-/// its members share one frame depth and save their frames around calls to
-/// each other. Depths are longest paths over the graph with groups condensed.
-fn analyze_calls(
-    functions: &[TypedFunction],
-) -> (BTreeMap<String, usize>, BTreeMap<String, usize>) {
+/// Recursion groups. A group is a cycle in the call graph (a strongly
+/// connected component of 2+ functions, or one that calls itself); its members
+/// save their frames around calls to each other.
+fn analyze_calls(functions: &[TypedFunction]) -> BTreeMap<String, usize> {
     let graph: BTreeMap<&str, Vec<&str>> = functions
         .iter()
         .map(|function| {
@@ -10921,30 +10916,16 @@ fn analyze_calls(
             tarjan.visit(name, &graph);
         }
     }
-    // Tarjan emits a component only after every component it calls.
-    let mut component_of = HashMap::new();
-    let mut depths = BTreeMap::new();
     let mut groups = BTreeMap::new();
     for (id, component) in tarjan.components.iter().enumerate() {
-        for name in component {
-            component_of.insert(*name, id);
-        }
-        let depth = component
-            .iter()
-            .flat_map(|name| &graph[name])
-            .filter(|callee| component_of.get(*callee) != Some(&id))
-            .map(|callee| 1 + depths.get(*callee).copied().unwrap_or(0))
-            .max()
-            .unwrap_or(0);
         let recursive = component.len() > 1 || graph[component[0]].contains(&component[0]);
-        for name in component {
-            depths.insert(name.to_string(), depth);
-            if recursive {
+        if recursive {
+            for name in component {
                 groups.insert(name.to_string(), id);
             }
         }
     }
-    (depths, groups)
+    groups
 }
 
 #[derive(Default)]

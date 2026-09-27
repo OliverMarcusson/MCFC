@@ -45,7 +45,6 @@ struct Backend {
     namespace: String,
     files: BTreeMap<String, String>,
     functions: BTreeMap<String, FunctionInfo>,
-    max_depth: usize,
     block_counter: usize,
     temp_counter: usize,
     macro_counter: usize,
@@ -221,7 +220,6 @@ impl Backend {
             namespace,
             files: BTreeMap::new(),
             functions,
-            max_depth: program.call_depths.values().copied().max().unwrap_or(0) + 1,
             block_counter: 0,
             temp_counter: 0,
             macro_counter: 0,
@@ -280,10 +278,10 @@ impl Backend {
         self.emit_setup();
         self.emit_main_entry();
         self.emit_tick_entry();
+        // One copy per function: only a recursive call can find its callee
+        // already running, and it saves and restores the frame itself.
         for function in &program.functions {
-            for depth in 0..=self.max_depth {
-                self.emit_function_variant(function, depth);
-            }
+            self.emit_function_variant(function, 0);
         }
         if self.uses_food {
             self.emit_food_runtime();
@@ -589,29 +587,27 @@ function {ns}:{}
             }
         }
 
-        for depth in 0..=self.max_depth {
-            for (function, info) in &self.functions {
-                lines.push(format!(
-                    "scoreboard players set {} mcfc 0",
-                    control_slot(depth, function)
-                ));
-                for (name, ty) in &info.locals {
-                    if matches!(ty, Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)) {
-                        lines.push(format!(
-                            "scoreboard players set {} mcfc 0",
-                            numeric_slot(depth, function, name)
-                        ));
-                    }
-                }
-                if matches!(
-                    info.return_type,
-                    Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
-                ) {
+        for (function, info) in &self.functions {
+            lines.push(format!(
+                "scoreboard players set {} mcfc 0",
+                control_slot(0, function)
+            ));
+            for (name, ty) in &info.locals {
+                if matches!(ty, Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)) {
                     lines.push(format!(
                         "scoreboard players set {} mcfc 0",
-                        numeric_return_slot(depth, function)
+                        numeric_slot(0, function, name)
                     ));
                 }
+            }
+            if matches!(
+                info.return_type,
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+            ) {
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    numeric_return_slot(0, function)
+                ));
             }
         }
 
@@ -1557,7 +1553,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         let path = self.function_entry_path(&function.name, depth);
         let mut lines = Vec::new();
         if function.name == crate::types::GC_LOCALS {
-            lines = self.gc_local_marks(depth);
+            lines = self.gc_local_marks();
         }
         let guard = Guard::for_function(depth, &function.name);
         self.emit_stmt_list(
@@ -1581,25 +1577,15 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
     }
 
     /// The garbage collector's roots in locals: every object-typed local of
-    /// every function, at every depth. Finished calls leave stale values, which
-    /// only keep an object alive longer; paused ones need them. A local holding
-    /// objects in storage is copied to world state for its scan function.
-    fn gc_local_marks(&self, depth: usize) -> Vec<String> {
-        let callee_depth = depth + 1;
-        if callee_depth > self.max_depth {
-            return Vec::new();
-        }
+    /// every function. Finished calls leave stale values, which only keep an
+    /// object alive longer; paused ones need them. A local holding objects in
+    /// storage is copied to world state for its scan function.
+    fn gc_local_marks(&self) -> Vec<String> {
         let ns = &self.namespace;
         let call = |callee: &str| {
             [
-                format!(
-                    "scoreboard players set {} mcfc 0",
-                    control_slot(callee_depth, callee)
-                ),
-                format!(
-                    "function {ns}:{}",
-                    self.function_entry_name(callee, callee_depth)
-                ),
+                format!("scoreboard players set {} mcfc 0", control_slot(0, callee)),
+                format!("function {ns}:{}", self.function_entry_name(callee, 0)),
             ]
         };
         let mut lines = Vec::new();
@@ -1613,24 +1599,22 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 if !is_object && !self.functions.contains_key(&scan) {
                     continue;
                 }
-                for local_depth in 0..=self.max_depth {
-                    let slot = local_slot(local_depth, name, local, ty);
-                    if is_object {
-                        lines.push(format!(
-                            "scoreboard players operation {} mcfc = {} mcfc",
-                            numeric_slot(callee_depth, "std::heap::mark", "id"),
-                            slot.numeric_name()
-                        ));
-                        lines.extend(call("std::heap::mark"));
-                    } else {
-                        let world = format!("{}{scratch}", crate::types::WORLD_STATE_PREFIX);
-                        lines.push(format!(
-                            "data modify storage {ns}:runtime {} set from storage {ns}:runtime {}",
-                            string_slot(0, "", &world),
-                            slot.storage_path()
-                        ));
-                        lines.extend(call(&scan));
-                    }
+                let slot = local_slot(0, name, local, ty);
+                if is_object {
+                    lines.push(format!(
+                        "scoreboard players operation {} mcfc = {} mcfc",
+                        numeric_slot(0, "std::heap::mark", "id"),
+                        slot.numeric_name()
+                    ));
+                    lines.extend(call("std::heap::mark"));
+                } else {
+                    let world = format!("{}{scratch}", crate::types::WORLD_STATE_PREFIX);
+                    lines.push(format!(
+                        "data modify storage {ns}:runtime {} set from storage {ns}:runtime {}",
+                        string_slot(0, "", &world),
+                        slot.storage_path()
+                    ));
+                    lines.extend(call(&scan));
                 }
             }
         }
@@ -3164,12 +3148,12 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 if self.compile_builtin_call(function, depth, callee, args, target, lines) {
                     return;
                 }
-                // A call inside a recursion group reuses this depth's frames,
-                // so the caller saves its own frame around it.
+                // Every function has one frame, and a call inside a recursion
+                // group can come back to this one, so it saves its frame around it.
                 let recursive = self.recursion_groups.get(&function.name).is_some()
                     && self.recursion_groups.get(&function.name)
                         == self.recursion_groups.get(callee);
-                let callee_depth = if recursive { depth } else { depth + 1 };
+                let callee_depth = depth;
                 if let Some(info) = self.functions.get(callee).cloned() {
                     let mut call = Vec::new();
                     let mut temps = Vec::new();
@@ -10550,7 +10534,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
         lines: &mut Vec<String>,
     ) {
         let ns = self.namespace.clone();
-        let callee_depth = depth + 1;
+        let callee_depth = depth;
         let callee_susp = susp_slot(callee_depth, callee);
         let resume = string_slot(callee_depth, callee, "__resume");
         let result = return_slot(callee_depth, callee, &call.ty);

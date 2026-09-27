@@ -289,6 +289,14 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
         def.name = resolver.struct_name(module, &def.name);
     }
+    for state in program
+        .player_states
+        .iter_mut()
+        .chain(program.world_states.iter_mut())
+    {
+        let module = module_of(&state.span);
+        resolver.resolve_type(module, &[], &mut state.ty, &state.span, &mut diagnostics);
+    }
     for (function, &module) in program.functions.iter_mut().zip(&function_modules) {
         let generics = &function.type_params;
         for param in &mut function.params {

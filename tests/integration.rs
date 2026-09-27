@@ -4479,4 +4479,17 @@ fn wildcard_imports_bring_in_public_names() {
     )
     .unwrap();
     assert!(compile().is_err(), "a wildcard needs a module");
+
+    // State declarations resolve imported records too.
+    fs::write(
+        src_dir.join("util.mcf"),
+        "public record Space(String name, int price) {}\n",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        "import util.*;\n\n@WorldState List<Space> spaces;\n@PlayerState Space picked;\n\nvoid main() {\n    spaces = List.of(new Space(\"a\", 1));\n    var n = spaces[0].price();\n}\n",
+    )
+    .unwrap();
+    compile().expect("state types resolve through imports");
 }

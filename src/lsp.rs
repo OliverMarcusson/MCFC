@@ -3537,6 +3537,31 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
                 "player.getDimension() -> String",
                 "getDimension()",
             ),
+            (
+                "setGameMode",
+                "player.setGameMode(mode: int)",
+                "setGameMode(${1:mode})",
+            ),
+            (
+                "setLevel",
+                "player.setLevel(levels: int)",
+                "setLevel(${1:levels})",
+            ),
+            (
+                "giveExp",
+                "player.giveExp(points: int)",
+                "giveExp(${1:points})",
+            ),
+            (
+                "giveExpLevels",
+                "player.giveExpLevels(levels: int)",
+                "giveExpLevels(${1:levels})",
+            ),
+            (
+                "countItem",
+                "player.countItem(item: String) -> int",
+                "countItem(${1:item})",
+            ),
         ]
         .into_iter()
         .map(|(label, detail, insert_text)| {

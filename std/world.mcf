@@ -1,0 +1,45 @@
+// World settings. Each is one command; the names are Minecraft's own.
+
+import std.str;
+
+// "clear", "rain" or "thunder", until the weather changes by itself.
+public void setWeather(String weather) {
+    mcf("weather $(weather)");
+}
+
+// Time of day in ticks: 0 is sunrise, 6000 noon, 13000 night, 18000 midnight.
+public void setTimeOfDay(int ticks) {
+    mcf("time set $(ticks)");
+}
+
+// "peaceful", "easy", "normal" or "hard".
+public void setDifficulty(String difficulty) {
+    mcf("difficulty $(difficulty)");
+}
+
+// Sets a true/false game rule, such as "keep_inventory".
+public void setGameRule(String rule, boolean value) {
+    var text = "false";
+    if (value) {
+        text = "true";
+    }
+    mcf("gamerule $(rule) $(text)");
+}
+
+// Sets a number game rule, such as "random_tick_speed".
+public void setGameRuleValue(String rule, int value) {
+    mcf("gamerule $(rule) $(value)");
+}
+
+// Shows an `int` player state, such as "coins", in a scoreboard display slot:
+// "sidebar", "below_name" or "list". It replaces what the slot showed,
+// including the shared Sidebar lines.
+public void showState(String state, String slot) {
+    var objective = "mcfs_" + str.replace(state, ".", "_");
+    mcf("scoreboard objectives setdisplay $(slot) $(objective)");
+}
+
+// Empties a display slot.
+public void hideSlot(String slot) {
+    mcf("scoreboard objectives setdisplay $(slot)");
+}

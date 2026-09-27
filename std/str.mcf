@@ -135,3 +135,50 @@ String mapChars(String s, Map<String, String> table) {
     }
     return out;
 }
+
+// `x` rounded to `decimals` places, always showing them: formatFloat(3.14159, 2)
+// is "3.14" and formatFloat(2.0, 1) is "2.0". Keep `x` times 10^decimals within
+// int range; 7 significant digits is all a float holds anyway.
+public String formatFloat(float x, int decimals) {
+    var scale = 1;
+    for (int i = 0; i < decimals; i++) {
+        scale = scale * 10;
+    }
+    var scaled = Math.round(x * scale);
+    var sign = "";
+    if (scaled < 0) {
+        sign = "-";
+        scaled = -scaled;
+    }
+    var whole = (scaled / scale).toString();
+    if (decimals <= 0) {
+        return sign + whole;
+    }
+    var fraction = (scaled % scale).toString();
+    while (fraction.length() < decimals) {
+        fraction = "0" + fraction;
+    }
+    return sign + whole + "." + fraction;
+}
+
+// `n` with a comma between each group of three digits: 1234567 is "1,234,567".
+public String withCommas(int n) {
+    var digits = n.toString();
+    var sign = "";
+    if (digits.startsWith("-")) {
+        sign = "-";
+        digits = digits.substring(1);
+    }
+    var out = "";
+    var count = 0;
+    var i = digits.length() - 1;
+    while (i >= 0) {
+        if (count > 0 && count % 3 == 0) {
+            out = "," + out;
+        }
+        out = digits.charAt(i) + out;
+        count += 1;
+        i -= 1;
+    }
+    return sign + out;
+}

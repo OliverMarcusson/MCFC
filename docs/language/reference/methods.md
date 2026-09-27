@@ -1,6 +1,6 @@
 # Entities and Players
 
-Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").sendTitle("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, `effect`, `addTag`, `removeTag`, `setGameMode`, the experience methods, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").sendTitle("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
 
 ## Selecting and checking entities
 
@@ -35,6 +35,10 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | `clear(id, count: int)` | Removes items | `clear` |
 | `lootGive(table)` | Gives loot from a loot table | `loot give` |
 | `addTag(name)`, `removeTag(name)` | Adds or removes a scoreboard tag | `tag` |
+| `setGameMode(mode: int)` | 0 survival, 1 creative, 2 adventure, 3 spectator, the numbers `getGameMode()` returns. Other numbers do nothing. | `gamemode` |
+| `setLevel(levels: int)` | Sets the experience level | `xp set` |
+| `giveExpLevels(levels: int)`, `giveExp(points: int)` | Adds levels, or points that fill the bar. Negative numbers remove. | `xp add` |
+| `countItem(id) -> int` | How many of an item the player carries. Players only; see [`std.inventory`](./std#std-inventory) for costs. | `clear ... 0` |
 | `hasTag(name) -> boolean` | Tests for a tag | |
 | `debugEntity(label)` | Makes the entity glow for 3 seconds | `effect give ... glowing` |
 
@@ -44,6 +48,7 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | --- | --- |
 | `sendMessage(msg)` | `tellraw` |
 | `sendTitle(msg)` | `title ... title` |
+| `sendTitle(title, subtitle)`, `sendTitle(title, subtitle, fadeIn, stay, fadeOut)` | `title ... subtitle`, `title ... times`; times in ticks. `subtitle` is a `String`. |
 | `sendActionBar(msg)`, `sendActionBar(msg, priority)` | `title ... actionbar`, [coordinated](#action-bar-priorities) |
 | `playSound(sound, category)` | `playsound` |
 | `stopSound(category, sound)` | `stopsound` |

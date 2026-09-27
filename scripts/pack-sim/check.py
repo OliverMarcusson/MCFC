@@ -34,6 +34,7 @@ BUDGET = {
     "javaish": 132,
     "sleepy": 171,
     "stdlib": 1316,
+    "stdlib2": 1188,
     "strings": 119,
     "switchy": 68,
     "timed": 392,

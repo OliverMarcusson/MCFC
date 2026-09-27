@@ -5,6 +5,8 @@ pub struct Program {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub player_states: Vec<PlayerStateDef>,
+    /// `@WorldState` fields: one value for the whole world, read by name.
+    pub world_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
     pub uses: Vec<UseDecl>,
 }
@@ -53,6 +55,7 @@ pub struct PlayerStateDef {
 pub enum StateOwner {
     Player,
     Entity,
+    World,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

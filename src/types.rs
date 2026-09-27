@@ -400,6 +400,7 @@ fn host_call_parts<'a>(
 pub struct TypedProgram {
     pub struct_defs: BTreeMap<String, StructTypeDef>,
     pub player_states: Vec<PlayerStateDef>,
+    pub world_states: Vec<PlayerStateDef>,
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
     pub call_depths: BTreeMap<String, usize>,
@@ -465,6 +466,16 @@ fn is_simple_index(expr: &Expr) -> bool {
             ),
         _ => false,
     }
+}
+
+/// Where `@WorldState` types live in `struct_defs`, like `@mcfc/player_state`.
+const WORLD_STATE: &str = "@mcfc/world_state";
+/// A world state `round` becomes the variable `@world.round`; the backend gives
+/// it one global slot instead of a per-call one.
+pub const WORLD_STATE_PREFIX: &str = "@world.";
+
+fn world_state_type(struct_defs: &BTreeMap<String, StructTypeDef>, name: &str) -> Option<Type> {
+    struct_defs.get(WORLD_STATE)?.fields.get(name).cloned()
 }
 
 /// Replace type parameters in the local declarations of one generic copy,
@@ -957,6 +968,47 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
         types.insert(path_name, state.ty.clone());
     }
+    let mut world_state_types = BTreeMap::new();
+    for state in &program.world_states {
+        if !matches!(
+            state.ty,
+            Type::Int
+                | Type::Bool
+                | Type::String
+                | Type::Float
+                | Type::Struct(_)
+                | Type::Dict(_)
+                | Type::Array(_)
+        ) {
+            diagnostics.push(Diagnostic::new(
+                "@WorldState supports 'int', 'boolean', 'String', 'float', records, lists and maps",
+                state.span.clone(),
+            ));
+        }
+        validate_declared_type(
+            &state.ty,
+            &struct_defs,
+            state.span.clone(),
+            &mut diagnostics,
+        );
+        let name = state.path.join(".");
+        if world_state_types
+            .insert(name.clone(), state.ty.clone())
+            .is_some()
+        {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate @WorldState '{name}'"),
+                state.span.clone(),
+            ));
+        }
+    }
+    struct_defs.insert(
+        WORLD_STATE.to_string(),
+        StructTypeDef {
+            fields: world_state_types,
+            enum_variants: None,
+        },
+    );
     struct_defs.insert(
         "@mcfc/player_state".to_string(),
         StructTypeDef {
@@ -1107,6 +1159,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         functions,
         function_signatures: signatures,
         player_states: program.player_states.clone(),
+        world_states: program.world_states.clone(),
         call_depths,
         recursion_groups,
     })
@@ -1424,7 +1477,14 @@ fn type_check_block(
                 );
                 let target = match target {
                     AssignTarget::Variable(name) => {
-                        let Some(existing) = env.get(name).cloned() else {
+                        let (slot_name, existing) = match env.get(name) {
+                            Some(ty) => (name.clone(), Some(ty.clone())),
+                            None => (
+                                format!("{WORLD_STATE_PREFIX}{name}"),
+                                world_state_type(struct_defs, name),
+                            ),
+                        };
+                        let Some(existing) = existing else {
                             diagnostics.push(Diagnostic::new(
                                 format!("undefined variable '{}'", name),
                                 statement.span.clone(),
@@ -1443,7 +1503,7 @@ fn type_check_block(
                                 statement.span.clone(),
                             ));
                         }
-                        TypedAssignTarget::Variable(name.clone())
+                        TypedAssignTarget::Variable(slot_name)
                     }
                     AssignTarget::Path(path) => {
                         let typed_path = type_check_path(
@@ -2534,6 +2594,11 @@ fn type_check_expr(
                 kind: TypedExprKind::Variable(name.clone()),
                 ty: ty.clone(),
                 ref_kind: ref_env.get(name).copied().unwrap_or(RefKind::Unknown),
+            },
+            None if world_state_type(struct_defs, name).is_some() => TypedExpr {
+                kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}{name}")),
+                ty: world_state_type(struct_defs, name).unwrap(),
+                ref_kind: RefKind::Unknown,
             },
             None => {
                 diagnostics.push(Diagnostic::new(
@@ -4709,6 +4774,27 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    // Player actions written in `std/player.mcf`; they take a `Player` or a `Selector`.
+    let std_method = match (method, args.len()) {
+        ("setGameMode" | "setLevel" | "giveExp" | "giveExpLevels", _) => Some(method),
+        ("sendTitle", 2) => Some("sendTitleSubtitle"),
+        ("sendTitle", 5) => Some("sendTitleTimed"),
+        _ => None,
+    };
+    if let Some(std_method) = std_method
+        && (is_entity_ref_type(&receiver.ty) || receiver.ty == Type::EntitySet)
+    {
+        let mut call_args = vec![receiver_expr.clone()];
+        call_args.extend(args.iter().cloned());
+        return Some(recheck(
+            ExprKind::Call {
+                function: format!("std::player::{std_method}"),
+                args: call_args,
+            },
+            called_functions,
+            diagnostics,
+        ));
+    }
     // `bb.getMax()` reads the `max` property.
     if args.is_empty()
         && let Some(property) = accessor_property(method, "get")
@@ -6019,7 +6105,9 @@ fn type_check_method_call(
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
         "add_tag" | "remove_tag" | "has_tag" => {
-            if !is_entity_ref_type(&receiver.ty) {
+            // Adding and removing apply to every match of a selector; `hasTag` asks one entity.
+            let set_ok = method != "has_tag" && receiver.ty == Type::EntitySet;
+            if !is_entity_ref_type(&receiver.ty) && !set_ok {
                 diagnostics.push(Diagnostic::new(
                     format!("{} requires an 'Entity' receiver", display_call(method)),
                     expr.span.clone(),
@@ -6046,8 +6134,24 @@ fn type_check_method_call(
                 ref_kind: RefKind::Unknown,
             })
         }
-        "effect" => {
+        "countItem" => {
             if !is_entity_ref_type(&receiver.ty) {
+                diagnostics.push(Diagnostic::new(
+                    "countItem(...) requires a 'Player' receiver",
+                    expr.span.clone(),
+                ));
+            }
+            expect_arity(method, &args, 1, expr, diagnostics);
+            if args.first().is_some_and(|arg| arg.ty != Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    "countItem(...) item must be a 'String', such as \"minecraft:emerald\"",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::Int))
+        }
+        "effect" => {
+            if !is_entity_ref_type(&receiver.ty) && receiver.ty != Type::EntitySet {
                 diagnostics.push(Diagnostic::new(
                     "effect(...) requires an 'Entity' receiver",
                     expr.span.clone(),

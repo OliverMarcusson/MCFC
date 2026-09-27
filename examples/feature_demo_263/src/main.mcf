@@ -14,6 +14,15 @@ import std.math.gcd;
 import std.math.lerp;
 import std.math;
 import std.cooldown;
+import std.inventory;
+import std.region;
+import std.team;
+import std.timer;
+import std.world;
+import std.str;
+
+@WorldState
+int demoRuns;
 
 void tick() {
     if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
@@ -54,6 +63,8 @@ void runTests() {
     reads();
     sleepTicks(1);
     newFeatures();
+    sleepTicks(1);
+    gaps();
     sleepTicks(1);
     floatSortTest(3000);
     sortTest(1000, 0);
@@ -325,4 +336,66 @@ void floatSortTest(int size) {
         }
     }
     check("sort_float_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
+}
+
+// Player, world, team, inventory, region and timer helpers. Each check puts
+// back what it changes.
+void gaps() {
+    var p = (Player) Selector.of("@a[limit=1]").getFirst();
+    var before = demoRuns;
+    demoRuns += 1;
+    check("world_state", demoRuns == before + 1, demoRuns.toString());
+
+    var mode = p.getGameMode();
+    p.setGameMode(2);
+    check("set_game_mode", p.getGameMode() == 2, p.getGameMode().toString());
+    p.setGameMode(mode);
+
+    var level = p.getLevel();
+    p.setLevel(5);
+    p.giveExpLevels(2);
+    check("set_level", p.getLevel() == 7, p.getLevel().toString());
+    p.setLevel(level);
+
+    p.sendTitle("MCFC", "subtitle check", 5, 30, 5);
+
+    var all = Selector.of("@a");
+    all.addTag("mcfc_demo_tag");
+    check("selector_add_tag", p.hasTag("mcfc_demo_tag"), "");
+    all.removeTag("mcfc_demo_tag");
+    check("selector_remove_tag", !p.hasTag("mcfc_demo_tag"), "");
+
+    var had = p.countItem("minecraft:emerald");
+    p.give("minecraft:emerald", 5);
+    check("count_item", p.countItem("minecraft:emerald") == had + 5, p.countItem("minecraft:emerald").toString());
+    check("inventory_take", inventory.take(p, "minecraft:emerald", 3) && p.countItem("minecraft:emerald") == had + 2, p.countItem("minecraft:emerald").toString());
+    check("inventory_take_too_many", !inventory.take(p, "minecraft:emerald", 1000), "");
+    p.clear("minecraft:emerald", 2);
+
+    var keep = gamerule("keep_inventory");
+    world.setGameRule("keep_inventory", keep == 0);
+    check("set_game_rule", gamerule("keep_inventory") != keep, gamerule("keep_inventory").toString());
+    world.setGameRule("keep_inventory", keep == 1);
+
+    team.create("mcfc_demo", "gold");
+    team.join(p, "mcfc_demo");
+    check("team_join", Selector.of("@a[team=mcfc_demo]").findFirst().isPresent(), "");
+    team.leave(p);
+    team.remove("mcfc_demo");
+
+    var x = (int) Math.floor(p.getX());
+    var y = (int) Math.floor(p.getY());
+    var z = (int) Math.floor(p.getZ());
+    var around = region.of(Block.of(x + 2, y + 2, z + 2), Block.of(x - 2, y - 1, z - 2));
+    var away = region.of(Block.of(x + 10, y, z + 10), Block.of(x + 12, y + 2, z + 12));
+    check("region_contains", region.contains(around, p) && !region.contains(away, p), "");
+    check("region_count", region.countPlayers(around) >= 1, region.countPlayers(around).toString());
+
+    timer.start("mcfc_demo", 100);
+    check("timer_running", timer.running("mcfc_demo") && timer.remaining("mcfc_demo") == 100, timer.remaining("mcfc_demo").toString());
+    timer.stop("mcfc_demo");
+    check("timer_stopped", !timer.running("mcfc_demo"), "");
+
+    check("format_float", str.formatFloat(3.14159, 2) == "3.14", str.formatFloat(3.14159, 2));
+    check("with_commas", str.withCommas(1234567) == "1,234,567", str.withCommas(1234567));
 }

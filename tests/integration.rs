@@ -1946,6 +1946,120 @@ void main() {
 }
 
 #[test]
+fn player_world_and_team_helpers_lower_to_commands() {
+    let source = r#"
+import std.world;
+import std.team;
+import std.inventory;
+import std.region;
+import std.timer;
+
+@WorldState
+int round;
+
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    var all = Selector.of("@a");
+    player.setGameMode(1);
+    all.setLevel(3);
+    player.giveExp(10);
+    all.sendTitle("Go", "round 1", 5, 40, 5);
+    all.addTag("playing");
+    all.effect("minecraft:speed", 5, 1);
+    var emeralds = player.countItem("minecraft:emerald");
+    var paid = inventory.take(player, "minecraft:emerald", 3);
+    world.setWeather("clear");
+    world.setGameRule("keep_inventory", true);
+    world.showState("coins", "sidebar");
+    team.create("red", "red");
+    team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
+    var arena = region.of(Block.of(0, 60, 0), Block.of(10, 70, 10));
+    region.tagPlayers(arena, "inside");
+    timer.start("round", 600);
+    round = round + 1;
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("helpers should compile");
+    let files = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    for needle in [
+        "gamemode $(",
+        "xp set @s $(",
+        "xp add @s $(",
+        "title @s times $(",
+        "title @s subtitle",
+        "tag $(selector) add $(tag)",
+        "effect give $(selector)",
+        "clear $(selector) $(item) 0",
+        "weather $(",
+        "gamerule $(",
+        "scoreboard objectives setdisplay $(",
+        "team join $(",
+        "world.stdTimers",
+        "$world_round",
+        "execute unless score $world_round mcfc matches -2147483648.. run scoreboard players set $world_round mcfc 0",
+    ] {
+        assert!(files.contains(needle), "missing {needle}");
+    }
+}
+
+#[test]
+fn rejects_invalid_world_state() {
+    let source = r#"
+@WorldState
+int round;
+
+@WorldState
+int round;
+
+@WorldState
+Selector players;
+
+void main() {
+    round = "x";
+}
+"#;
+    let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
+    assert!(rendered.contains("duplicate @WorldState 'round'"));
+    assert!(rendered.contains("@WorldState supports"));
+    assert!(rendered.contains("cannot assign 'String' to variable 'round'"));
+}
+
+#[test]
+fn rejects_dotted_world_state_names() {
+    let source = "@WorldState
+int game.phase;
+
+void main() {
+}
+";
+    let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
+    assert!(rendered.contains("a @WorldState name can't have dots"));
+}
+
+#[test]
 fn for_condition_runs_every_iteration_and_continue_runs_the_update() {
     let source = r#"
 int finish() {

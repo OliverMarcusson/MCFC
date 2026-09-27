@@ -193,6 +193,27 @@ void mark(Entity entity) {
 
 Scoreboard objectives are named `mcfe_*`. Stored values aren't removed when the entity despawns.
 
+### `@WorldState`
+
+One value for the whole world, such as the current round. Read and write it by name, like a variable:
+
+```mcfc
+@WorldState
+int round;
+
+@WorldState
+List<Integer> topScores;
+
+void endRound(int best) {
+    round = round + 1;
+    topScores.add(best);
+}
+```
+
+Allowed types are `int`, `boolean`, `String`, `float`, records, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
+
+`int` and `boolean` values are the scores `$world_<name>` in the `mcfc` objective; other types are in `<namespace>:runtime` storage at `world.<name>`.
+
 ### `@Command`
 
 ```mcfc

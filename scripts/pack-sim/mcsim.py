@@ -604,7 +604,9 @@ class Sim:
             return math.pow(self.compute(p["base"]), self.compute(p["exponent"]))
         simple = {"negate": lambda x: -x, "floor": math.floor, "ceil": math.ceil,
                   "truncate": math.trunc, "abs": abs, "sqrt": math.sqrt,
-                  "sin": math.sin, "cos": math.cos, "round": round}
+                  "sin": math.sin, "cos": math.cos,
+                  # half up, like Java's Math.round; the game rounds 2.5 to 3
+                  "round": lambda x: math.floor(x + 0.5)}
         if kind in simple:
             return float(simple[kind](one()))
         raise Unsupported("compute " + kind)

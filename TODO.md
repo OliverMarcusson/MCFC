@@ -4,14 +4,6 @@ TODOS:
 OVERHAUL:
 - make MCFC modular and extendable. Developers should be able to create rust extensions to the compiler that adds more features like more commands, types, datastructures and more. Modularize the current compiler.
 
-LANGUAGE GAPS (things docs currently need `mc`/`mcf` for):
-- Set a player's game mode (`game_mode()` can only read it).
-- Experience: add/set levels and points (`xp_level()` can only read).
-- World control: weather, time of day, difficulty, and writing game rules (`gamerule()` can only read).
-- `effect`, `add_tag`, `remove_tag` on an `entity_set`; `tellraw`, `title`, `give`, `teleport` etc. already accept one.
-- Titles: subtitle and fade times (`title()` only sets the main title).
-- Show `player_state` on the sidebar or below names (`scoreboard objectives setdisplay`).
-
 BUGS (found while writing docs):
 - Whole-program errors (recursion, `event.cancel()` on an observation-only event) point at line 1 and print a `# source: <path>` line instead of the offending code.
 - An empty `[]` passed as a function argument fails with "empty array literals require type context" even when the parameter type is known.

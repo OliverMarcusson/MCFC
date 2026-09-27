@@ -1,0 +1,63 @@
+// Box-shaped areas, such as an arena, given by two opposite corner blocks.
+// Both corners are inside the region.
+
+import std.math;
+
+public record Region(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {}
+
+// The region between two corners, in any order.
+public Region of(Block a, Block b) {
+    var ax = a.getX();
+    var ay = a.getY();
+    var az = a.getZ();
+    var bx = b.getX();
+    var by = b.getY();
+    var bz = b.getZ();
+    return new Region(math.min(ax, bx), math.min(ay, by), math.min(az, bz), math.max(ax, bx), math.max(ay, by), math.max(az, bz));
+}
+
+// `true` when the entity's feet are in one of the region's blocks.
+public boolean contains(Region r, Entity entity) {
+    var x = entity.getX();
+    var y = entity.getY();
+    var z = entity.getZ();
+    return x >= r.minX() && x < r.maxX() + 1 && y >= r.minY() && y < r.maxY() + 1 && z >= r.minZ() && z < r.maxZ() + 1;
+}
+
+// How many players are inside.
+public int countPlayers(Region r) {
+    var n = 0;
+    for (var player : Selector.of("@a")) {
+        if (contains(r, player)) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+// Gives `tag` to the players inside and takes it from everyone else, so
+// `Selector.of("@a[tag=...]")` selects them.
+public void tagPlayers(Region r, String tag) {
+    for (var player : Selector.of("@a")) {
+        if (contains(r, player)) {
+            player.addTag(tag);
+        } else {
+            player.removeTag(tag);
+        }
+    }
+}
+
+// A random block inside, for spawn points and drops.
+public Block randomBlock(Region r) {
+    return Block.of(random(r.minX(), r.maxX()), random(r.minY(), r.maxY()), random(r.minZ(), r.maxZ()));
+}
+
+// The middle block, rounded down.
+public Block center(Region r) {
+    return Block.of((r.minX() + r.maxX()) / 2, (r.minY() + r.maxY()) / 2, (r.minZ() + r.maxZ()) / 2);
+}
+
+// Fills the whole region; large regions need `fill`'s 32768-block limit in mind.
+public void fill(Region r, String block) {
+    Block.of(r.minX(), r.minY(), r.minZ()).fill(Block.of(r.maxX(), r.maxY(), r.maxZ()), block);
+}

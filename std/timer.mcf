@@ -1,0 +1,32 @@
+// Named timers shared by the whole world, such as the time left in a round.
+// Each stores the game tick it ends at, so timers survive reloads.
+
+@WorldState
+Map<String, Integer> stdTimers;
+
+// Starts or restarts `name`, lasting `ticks`.
+public void start(String name, int ticks) {
+    var ends = stdTimers;
+    ends.put(name, gameTime() + ticks);
+    stdTimers = ends;
+}
+
+// Ticks left, or 0 once it has run out or if it was never started.
+public int remaining(String name) {
+    var left = stdTimers.getOrDefault(name, 0) - gameTime();
+    if (left < 0) {
+        return 0;
+    }
+    return left;
+}
+
+public boolean running(String name) {
+    return remaining(name) > 0;
+}
+
+// Ends `name` now.
+public void stop(String name) {
+    var ends = stdTimers;
+    ends.remove(name);
+    stdTimers = ends;
+}

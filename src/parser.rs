@@ -99,6 +99,7 @@ impl Parser {
             structs: Vec::new(),
             enums: Vec::new(),
             player_states: Vec::new(),
+            world_states: Vec::new(),
             functions: Vec::new(),
             uses: Vec::new(),
         };
@@ -279,9 +280,10 @@ impl Parser {
         let owner = match annotations.first().map(|a| a.name.as_str()) {
             Some("PlayerState") => StateOwner::Player,
             Some("EntityState") => StateOwner::Entity,
+            Some("WorldState") => StateOwner::World,
             _ => {
                 self.diagnostics.push(Diagnostic::new(
-                    "top-level variables need @PlayerState or @EntityState",
+                    "top-level variables need @PlayerState, @EntityState or @WorldState",
                     span,
                 ));
                 return;
@@ -303,6 +305,7 @@ impl Parser {
                     match owner {
                         StateOwner::Player => "@PlayerState takes an optional display name string",
                         StateOwner::Entity => "@EntityState takes no arguments",
+                        StateOwner::World => "@WorldState takes no arguments",
                     },
                     annotations[0].span.clone(),
                 ));
@@ -310,6 +313,22 @@ impl Parser {
             }
         };
         self.reject_annotations(&annotations[1..], "a state declaration");
+        if owner == StateOwner::World {
+            if path.len() > 1 {
+                self.diagnostics.push(Diagnostic::new(
+                    "a @WorldState name can't have dots",
+                    span.clone(),
+                ));
+            }
+            program.world_states.push(PlayerStateDef {
+                owner,
+                path,
+                ty,
+                display_name,
+                span,
+            });
+            return;
+        }
         program.player_states.push(PlayerStateDef {
             owner,
             path,

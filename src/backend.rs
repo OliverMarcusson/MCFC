@@ -51,6 +51,7 @@ struct Backend {
     macro_counter: usize,
     state_objectives: Vec<ManagedObjective>,
     state_storage_paths: BTreeSet<(bool, String)>,
+    world_states: Vec<crate::ast::PlayerStateDef>,
     block_builder_state_fields: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     helper: Option<HelperConfig>,
     uses_rpc: bool,
@@ -225,6 +226,7 @@ impl Backend {
             temp_counter: 0,
             macro_counter: 0,
             state_objectives: collect_state_objectives(program),
+            world_states: program.world_states.clone(),
             state_storage_paths: program
                 .player_states
                 .iter()
@@ -304,6 +306,7 @@ impl Backend {
         if self.uses_escape {
             self.emit_escape_runtime();
         }
+        self.emit_world_state_defaults();
         if self.uses_log {
             // Default level info; `Log.setLevel` persists across reloads.
             let ns = self.namespace.clone();
@@ -464,6 +467,59 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 "data/minecraft/tags/function/tick.json".to_string(),
                 render_tag_file(&values),
             );
+        }
+    }
+
+    /// World state keeps its value across reloads; a missing one starts empty.
+    /// Only states some function reads or writes get a line, so an unused
+    /// `@WorldState` in `std` costs nothing.
+    fn emit_world_state_defaults(&mut self) {
+        let mut lines = String::new();
+        for state in &self.world_states {
+            let name = format!(
+                "{}{}",
+                crate::types::WORLD_STATE_PREFIX,
+                state.path.join(".")
+            );
+            let slot = if matches!(state.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+                numeric_slot(0, "", &name)
+            } else {
+                string_slot(0, "", &name)
+            };
+            let used = self.files.values().any(|body| {
+                body.match_indices(&slot).any(|(at, _)| {
+                    !body[at + slot.len()..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                })
+            });
+            if !used {
+                continue;
+            }
+            let default = match &state.ty {
+                Type::Int | Type::Bool | Type::Enum(_) => {
+                    lines.push_str(&format!(
+                        "execute unless score {slot} mcfc matches -2147483648.. run scoreboard players set {slot} mcfc 0
+"
+                    ));
+                    continue;
+                }
+                Type::String => "\"\"",
+                Type::Float => "0.0f",
+                Type::Array(_) => "[]",
+                _ => "{}",
+            };
+            lines.push_str(&format!(
+                "execute unless data storage {ns}:runtime {slot} run data modify storage {ns}:runtime {slot} set value {default}
+",
+                ns = self.namespace
+            ));
+        }
+        let setup = format!(
+            "data/{}/function/generated/setup.mcfunction",
+            self.namespace
+        );
+        if let Some(body) = self.files.get_mut(&setup) {
+            body.push_str(&lines);
         }
     }
 
@@ -5492,6 +5548,37 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                         &receiver_slot,
                         format!(
                             "execute as $(selector) if entity @s[tag=$(tag)] run scoreboard players set {} mcfc 1",
+                            target.numeric_name()
+                        ),
+                        true,
+                    ));
+                }
+                return;
+            }
+            // `clear` with a count of 0 removes nothing and returns how many match.
+            "countItem" => {
+                let receiver_slot =
+                    local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);
+                self.compile_expr_into_slot(function, depth, receiver, &receiver_slot, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                if let Some(arg) = args.first() {
+                    let item_slot =
+                        local_slot(depth, &function.name, &self.new_temp(), &Type::String);
+                    self.compile_expr_into_slot(function, depth, arg, &item_slot, lines);
+                    lines.push(format!(
+                        "data modify storage {}:runtime {}.item set from storage {}:runtime {}",
+                        self.namespace,
+                        receiver_slot.storage_path(),
+                        self.namespace,
+                        item_slot.storage_path()
+                    ));
+                    lines.push(self.query_command(
+                        &receiver_slot,
+                        format!(
+                            "execute store result score {} mcfc run clear $(selector) $(item) 0",
                             target.numeric_name()
                         ),
                         true,
@@ -10822,6 +10909,9 @@ fn control_slot(depth: usize, function: &str) -> String {
 }
 
 fn numeric_slot(depth: usize, function: &str, name: &str) -> String {
+    if let Some(world) = name.strip_prefix(crate::types::WORLD_STATE_PREFIX) {
+        return format!("$world_{}", sanitize(world));
+    }
     format!("$d{}_{}_{}", depth, sanitize(function), sanitize(name))
 }
 
@@ -10830,6 +10920,9 @@ fn numeric_return_slot(depth: usize, function: &str) -> String {
 }
 
 fn string_slot(depth: usize, function: &str, name: &str) -> String {
+    if let Some(world) = name.strip_prefix(crate::types::WORLD_STATE_PREFIX) {
+        return format!("world.{}", sanitize(world));
+    }
     format!(
         "frames.d{}.{}.{}",
         depth,

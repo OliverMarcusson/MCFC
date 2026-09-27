@@ -42,14 +42,20 @@ const STD_FILES: &[(&str, &str)] = &[
     ("color.mcf", include_str!("../std/color.mcf")),
     ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
+    ("inventory.mcf", include_str!("../std/inventory.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("noise.mcf", include_str!("../std/noise.mcf")),
+    ("player.mcf", include_str!("../std/player.mcf")),
     ("random.mcf", include_str!("../std/random.mcf")),
+    ("region.mcf", include_str!("../std/region.mcf")),
     ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
+    ("team.mcf", include_str!("../std/team.mcf")),
     ("time.mcf", include_str!("../std/time.mcf")),
+    ("timer.mcf", include_str!("../std/timer.mcf")),
     ("vec.mcf", include_str!("../std/vec.mcf")),
+    ("world.mcf", include_str!("../std/world.mcf")),
 ];
 
 fn std_source(file: &Path) -> Option<&'static str> {

@@ -1819,7 +1819,7 @@ impl Pack {
         {
             return false;
         }
-        match score_writes(line) {
+        match writes_of(line, false) {
             Writes::Unknown => false,
             Writes::Some(written) => !written
                 .iter()
@@ -1841,7 +1841,8 @@ impl Pack {
             {
                 false
             }
-            TempDef::ScoreCopy { source, .. } => match score_writes(line) {
+            // Zero writes count here: `t = x; x = 0; x -= t` must keep `t`.
+            TempDef::ScoreCopy { source, .. } => match writes_of(line, false) {
                 Writes::Unknown => false,
                 Writes::Some(holders) => !holders.contains(&source.as_str()),
             },

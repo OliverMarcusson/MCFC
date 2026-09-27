@@ -114,6 +114,139 @@ void showUptime() {
 | `String formatTicks(int ticks)` | `"m:ss"`, or `"h:mm:ss"` from one hour up, in whole seconds rounded down. `1300` is `"1:05"`. Negative ticks count as `0`. |
 | `String padLeft(int value, int width)` | `value` with zeros in front up to `width` characters: `padLeft(5, 2)` is `"05"`. |
 
+## `std.timer`
+
+Named timers for the whole world, such as the time left in a round. For one timer per player, use [`std.cooldown`](#std-cooldown).
+
+```mcfc
+import std.timer;
+import std.time;
+
+void startRound() {
+    timer.start("round", 6000);
+}
+
+@Every(ticks = 20)
+void showClock() {
+    if (timer.running("round")) {
+        Sidebar.setLine(0, "Time " + time.formatTicks(timer.remaining("round")));
+    }
+}
+```
+
+| Function | Does |
+| --- | --- |
+| `void start(String name, int ticks)` | Starts or restarts `name`. |
+| `int remaining(String name)` | Ticks left, or `0` once it ran out or if it never started. |
+| `boolean running(String name)` | `true` while ticks remain. |
+| `void stop(String name)` | Ends `name` now. |
+
+Timers store the [`gameTime()`](./builtins) they end at in the [`@WorldState`](./statements#worldstate) `stdTimers`, so they keep counting across reloads.
+
+## `std.region`
+
+Box-shaped areas such as an arena, given by two opposite corner blocks. Both corners are inside.
+
+```mcfc
+import std.region;
+
+void round() {
+    var arena = region.of(Block.of(0, 60, 0), Block.of(40, 80, 40));
+    region.tagPlayers(arena, "in_arena");
+    Selector.of("@a[tag=!in_arena]").sendActionBar("Get back to the arena");
+    Selector.of("@a[tag=in_arena]").teleport(region.randomBlock(arena));
+}
+```
+
+| Function | Returns |
+| --- | --- |
+| `Region of(Block a, Block b)` | The region between two corners, in any order. `Region` is a record of `minX`, `minY`, `minZ`, `maxX`, `maxY` and `maxZ`, so `new Region(...)` works too after `import std.region.Region;`. |
+| `boolean contains(Region r, Entity entity)` | `true` when the entity's feet are in one of the region's blocks. |
+| `int countPlayers(Region r)` | How many players are inside. |
+| `void tagPlayers(Region r, String tag)` | Gives `tag` to the players inside and removes it from everyone else. `Selector.of` needs a literal, so select them afterwards with `@a[tag=...]`. |
+| `Block randomBlock(Region r)` | A random block inside. |
+| `Block center(Region r)` | The middle block, rounded down. |
+| `void fill(Region r, String block)` | Fills the region, within `fill`'s 32768-block limit. |
+
+`countPlayers` and `tagPlayers` check every online player, a few commands each.
+
+## `std.team`
+
+Scoreboard teams. Select a team's players with `Selector.of("@a[team=red]")`.
+
+```mcfc
+import std.team;
+
+void setupTeams() {
+    team.create("red", "red");
+    team.create("blue", "blue");
+    team.setFriendlyFire("red", false);
+    team.setFriendlyFire("blue", false);
+    team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
+}
+```
+
+| Function | Does |
+| --- | --- |
+| `void create(String name, String color)` | Creates the team if it's missing and sets its color, such as `"red"`. |
+| `void remove(String name)` | Removes the team. |
+| `<T> void join(T target, String team)`, `<T> void leave(T target)` | `target` is a `Player` or a `Selector`. |
+| `void setFriendlyFire(String team, boolean allowed)` | Whether teammates can hurt each other. |
+| `void split(Selector players, List<String> teams)` | Deals `players` into `teams` in turn, so sizes differ by at most one. Pass a selector with `sort=random` for random teams. |
+
+## `std.inventory`
+
+Costs for shops. `item` is an ID such as `"minecraft:emerald"`. To count items, use [`player.countItem(id)`](./methods).
+
+```mcfc
+import std.inventory;
+
+@Command("buy")
+void buy(Player player) {
+    if (inventory.take(player, "minecraft:emerald", 5)) {
+        player.give("minecraft:diamond_sword", 1);
+    } else {
+        player.sendMessage("A sword costs 5 emeralds");
+    }
+}
+```
+
+| Function | Returns |
+| --- | --- |
+| `boolean has(Player player, String item, int count)` | `true` when the player carries at least `count`. |
+| `boolean take(Player player, String item, int count)` | Removes `count` and returns `true`, or removes nothing and returns `false` when the player has fewer. |
+
+## `std.world`
+
+World settings, each one command. The names are Minecraft's own.
+
+```mcfc
+import std.world;
+
+@PlayerState("Kills")
+int kills;
+
+void startGame() {
+    world.setWeather("clear");
+    world.setTimeOfDay(6000);
+    world.setDifficulty("hard");
+    world.setGameRule("keep_inventory", true);
+    world.showState("kills", "sidebar");
+}
+```
+
+| Function | Does |
+| --- | --- |
+| `void setWeather(String weather)` | `"clear"`, `"rain"` or `"thunder"`. |
+| `void setTimeOfDay(int ticks)` | `0` sunrise, `6000` noon, `13000` night, `18000` midnight. |
+| `void setDifficulty(String difficulty)` | `"peaceful"`, `"easy"`, `"normal"` or `"hard"`. |
+| `void setGameRule(String rule, boolean value)` | A true/false rule, such as `"keep_inventory"`. |
+| `void setGameRuleValue(String rule, int value)` | A number rule, such as `"random_tick_speed"`. |
+| `void showState(String state, String slot)` | Shows an `int` [player state](./statements#playerstate) in `"sidebar"`, `"below_name"` or `"list"`. It replaces what the slot showed, including the shared [`Sidebar`](./methods#sidebar). |
+| `void hideSlot(String slot)` | Empties a display slot. |
+
+To read a game rule, use the [`gamerule(name)`](./builtins) builtin.
+
 ## `std.noise`
 
 Perlin noise: smooth random-looking values for terrain, particle paths and motion. The same inputs always give the same value.
@@ -166,6 +299,8 @@ Shapes replace what's there, like `fill`.
 | `String replace(String s, String target, String replacement)` | `s` with every `target` replaced. |
 | `List<String> split(String s, String separator)` | The parts between each `separator`, without trailing empty parts. |
 | `String join(String separator, List<String> parts)` | `parts` with `separator` between each. `String.join` calls this. |
+| `String formatFloat(float x, int decimals)` | `x` rounded to `decimals` places, always showing them: `formatFloat(3.14159, 2)` is `"3.14"`, `formatFloat(2.0, 1)` is `"2.0"`. |
+| `String withCommas(int n)` | `n` with commas between groups of three digits: `withCommas(1234567)` is `"1,234,567"`. |
 | `String toUpperCase(String s)`, `String toLowerCase(String s)` | `s` with ASCII letters changed. |
 
 The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`, `split`, `toUpperCase` and `toLowerCase` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so they cost a few commands per character. `startsWith`, `endsWith`, `find` and `contains` never paste the text into a command, so `"` and `\` are safe. The others build new strings by joining, which has the [joining limits](./types#string).
@@ -194,6 +329,10 @@ void main() {
 | `Vec3 cross(Vec3 a, Vec3 b)` | The cross product, perpendicular to both. |
 | `float length(Vec3 v)` | The length of `v`. |
 | `Vec3 normalize(Vec3 v)` | `v` scaled to length 1. The zero vector stays zero. |
+
+## `std.player`
+
+The code behind [`setGameMode`, `setLevel`, `giveExp`, `giveExpLevels` and the longer `sendTitle` forms](./methods) on `Player` and `Selector`. Call those methods instead of importing this module.
 
 ## `std.attribute`
 

@@ -1,0 +1,5 @@
+say f 3.14 -1.3 2.0 8
+say c 1,234,567 -1,000 999 0
+say world 1 1
+say timer 1 20 0
+say later 0 0 1

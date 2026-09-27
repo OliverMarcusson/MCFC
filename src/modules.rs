@@ -210,6 +210,8 @@ struct Resolver {
     class_names: HashSet<String>,
     /// Abstract classes and interfaces, which have no factory.
     abstract_names: HashSet<String>,
+    /// Generic classes: `new Box<Integer>()` stays a `New` for `generics` to expand.
+    generic_names: HashSet<String>,
 }
 
 /// Renames child-module items to their full paths and resolves every path.
@@ -275,6 +277,7 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         record_fields: HashMap::new(),
         class_names: HashSet::new(),
         abstract_names: HashSet::new(),
+        generic_names: HashSet::new(),
     };
     resolver.enum_names = program
         .enums
@@ -307,11 +310,33 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         .zip(&class_modules)
         .map(|(def, &module)| resolver.struct_name(module, &def.name))
         .collect();
+    let mut class_generics: HashMap<String, Vec<String>> = HashMap::new();
     for (def, &module) in program.classes.iter_mut().zip(&class_modules) {
+        let generics = def.type_params.clone();
         for field in &mut def.fields {
-            resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
+            resolver.resolve_type(
+                module,
+                &generics,
+                &mut field.ty,
+                &field.span,
+                &mut diagnostics,
+            );
         }
         let span = def.span.clone();
+        for (_, bound) in &mut def.bounds {
+            resolver.resolve_type(module, &generics, bound, &span, &mut diagnostics);
+        }
+        let super_args = std::mem::take(&mut def.super_args);
+        for (name, mut args) in super_args {
+            let mut ty = Type::Struct(name);
+            resolver.resolve_type(module, &[], &mut ty, &span, &mut diagnostics);
+            for arg in &mut args {
+                resolver.resolve_type(module, &generics, arg, &span, &mut diagnostics);
+            }
+            if let Type::Struct(name) = ty {
+                def.super_args.insert(name, args);
+            }
+        }
         let supertypes = def
             .parent
             .iter_mut()
@@ -327,6 +352,10 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         def.name = resolver.struct_name(module, &def.name);
         if def.is_abstract {
             resolver.abstract_names.insert(def.name.clone());
+        }
+        if !generics.is_empty() {
+            resolver.generic_names.insert(def.name.clone());
+            class_generics.insert(def.name.clone(), generics);
         }
     }
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
@@ -355,7 +384,17 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         resolver.resolve_type(module, &[], &mut state.ty, &state.span, &mut diagnostics);
     }
     for (function, &module) in program.functions.iter_mut().zip(&function_modules) {
-        let generics = &function.type_params;
+        // A generic class's methods also see the class's type parameters.
+        let mut generics = function.type_params.clone();
+        if let Some(owner) = &function.owner
+            && let Some(params) = class_generics.get(&resolver.struct_name(module, owner))
+        {
+            generics.extend(params.iter().cloned());
+        }
+        for (_, bound) in &mut function.bounds {
+            resolver.resolve_type(module, &generics, bound, &function.span, &mut diagnostics);
+        }
+        let generics = &generics;
         for param in &mut function.params {
             resolver.resolve_type(
                 module,
@@ -655,6 +694,16 @@ impl Resolver {
             Type::Array(inner) | Type::Dict(inner) | Type::Optional(inner) => {
                 self.resolve_type(module, generics, inner, span, diagnostics)
             }
+            Type::Generic(name, args) => {
+                match self.resolve_struct(module, name) {
+                    Ok(Some(resolved)) => *name = resolved,
+                    Ok(None) => {}
+                    Err(message) => diagnostics.push(Diagnostic::new(message, span.clone())),
+                }
+                for arg in args {
+                    self.resolve_type(module, generics, arg, span, diagnostics);
+                }
+            }
             _ => {}
         }
     }
@@ -884,7 +933,8 @@ impl Resolver {
         } = &mut expr.kind
             && let Some(owner) = self.static_owner(scope, receiver)
         {
-            let found = std::iter::once(method.as_str())
+            let method = method.trim_start_matches(WRITTEN_METHOD);
+            let found = std::iter::once(method)
                 .chain(crate::language_catalog::java_method_names(method))
                 .find_map(|name| self.resolve_method(scope.module, &owner, name).transpose());
             match found {
@@ -914,6 +964,7 @@ impl Resolver {
         {
             // The parser maps Java method names to internal ones (`add` to `insert`)
             // before it knows the receiver is a module, so undo that for modules.
+            let method = &method.trim_start_matches(WRITTEN_METHOD).to_string();
             let name = crate::language_catalog::java_method_names(method)
                 .into_iter()
                 .find(|java| {
@@ -965,10 +1016,17 @@ impl Resolver {
                     self.walk_expr(scope, value, diagnostics);
                 }
             }
-            ExprKind::New { name, args } => {
+            ExprKind::New {
+                name,
+                args,
+                type_args,
+            } => {
                 self.resolve_record_name(scope, name, &span, diagnostics);
                 for arg in args.iter_mut() {
                     self.walk_expr(scope, arg, diagnostics);
+                }
+                for ty in type_args.iter_mut().flatten() {
+                    self.resolve_type(scope.module, scope.generics, ty, &span, diagnostics);
                 }
                 if self.abstract_names.contains(name.as_str()) {
                     diagnostics.push(Diagnostic::new(
@@ -978,6 +1036,18 @@ impl Resolver {
                         ),
                         span.clone(),
                     ));
+                }
+                if self.generic_names.contains(name.as_str()) {
+                    if type_args.is_none() {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "'{0}' is generic; write 'new {0}<...>(...)' or 'new {0}<>(...)'",
+                                name.replace("::", ".")
+                            ),
+                            span.clone(),
+                        ));
+                    }
+                    return;
                 }
                 if self.class_names.contains(name.as_str()) {
                     let function = match self.resolve_method(scope.module, name, "new") {
@@ -1042,7 +1112,7 @@ impl Resolver {
             }
             ExprKind::Path(path) => self.walk_path(scope, path, diagnostics),
             ExprKind::InstanceOf { expr, ty, .. } | ExprKind::Cast { ty, expr } => {
-                self.resolve_type(scope.module, &[], ty, &span, diagnostics);
+                self.resolve_type(scope.module, scope.generics, ty, &span, diagnostics);
                 self.walk_expr(scope, expr, diagnostics);
             }
             ExprKind::Conditional {

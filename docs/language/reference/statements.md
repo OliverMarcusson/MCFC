@@ -46,7 +46,7 @@ void main() {
 }
 ```
 
-Every type parameter must appear in a parameter's type, because there's no `f<int>(...)` call syntax. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. There are no bounds. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
+Every type parameter must appear in a parameter's type, because there's no `f<int>(...)` call syntax. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
 
 #### Overloading
 
@@ -304,6 +304,51 @@ void main() {
 - A cast `(Dog) pet` isn't checked while the pack runs, so test with `instanceof` first.
 
 A call to a method that some subclass overrides costs one extra function call, plus one compare for each class whose version differs. Other calls cost the same as before.
+
+#### Generic classes
+
+```mcfc
+class Pair<A, B> {
+    A first;
+    B second;
+
+    Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
+
+    Pair<B, A> swap() {
+        return new Pair<>(second, first);
+    }
+}
+
+interface Shape {
+    int area();
+}
+
+class Holder<T extends Shape> {
+    List<T> shapes = List.of();
+
+    int total() {
+        int sum = 0;
+        for (T shape : shapes) {
+            sum += shape.area();
+        }
+        return sum;
+    }
+}
+
+void main() {
+    Pair<String, Integer> pair = new Pair<>("a", 1);
+    Pair<Integer, String> swapped = pair.swap();
+}
+```
+
+- Type parameters go after the class or interface name, and a bound after `extends`: `class Holder<T extends Shape>`. `Holder<Integer>` is then an error.
+- A generic class is always written with its type arguments, `Pair<String, Integer>`. `new Pair<>(...)` takes them from the declared type of a variable, a `return`, or the parameter it's passed to.
+- Classes can extend or implement generic types: `class Doubler implements Function<Integer, Integer>`, or `class Counted<T> extends Cell<T>`. A generic function takes them too, and infers `T` from a class that implements its parameter's type.
+- Like generic functions, each set of type arguments compiles its own copy of the class (`Pair__string__int`). The copies are unrelated classes: a `Pair<String, Integer>` isn't a `Pair<Integer, String>`, and there are no wildcards (`Pair<?, ?>`).
+- A generic class can't have `static` fields, since each copy would get its own. Static methods are fine.
 
 ### Modules and `public`
 

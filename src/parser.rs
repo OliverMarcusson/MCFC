@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::language_catalog::{
@@ -442,12 +444,43 @@ impl Parser {
         None
     }
 
-    /// `A, B` after `implements`, `extends` (interfaces) or `permits`.
-    fn parse_type_names(&mut self) -> Vec<String> {
+    /// `<T, U extends Bound>`, or nothing. Returns the names and their bounds.
+    fn parse_type_params(&mut self) -> (Vec<String>, Vec<(String, Type)>) {
+        let mut names = Vec::new();
+        let mut bounds = Vec::new();
+        if !self.eat(&TokenKind::Lt) {
+            return (names, bounds);
+        }
+        loop {
+            let name = self.expect_identifier("expected type parameter name");
+            if self.eat_word("extends") {
+                loop {
+                    bounds.push((name.clone(), self.parse_type()));
+                    if !self.eat(&TokenKind::Amp) {
+                        break;
+                    }
+                }
+            }
+            names.push(name);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::Gt, "expected '>' after type parameters");
+        (names, bounds)
+    }
+
+    /// `A, B<T>` after `implements`, `extends` (interfaces) or `permits`.
+    /// Type arguments go into `args` by name.
+    fn parse_type_names(&mut self, args: &mut BTreeMap<String, Vec<Type>>) -> Vec<String> {
         let mut names = Vec::new();
         loop {
             match self.parse_type() {
                 Type::Struct(name) => names.push(name),
+                Type::Generic(name, types) => {
+                    args.insert(name.clone(), types);
+                    names.push(name);
+                }
                 _ => self.error_here("expected a class or interface name"),
             }
             if !self.eat(&TokenKind::Comma) {
@@ -473,21 +506,30 @@ impl Parser {
         self.bump();
         let span = self.current_span();
         let name = self.expect_identifier("expected class name");
+        let (type_params, bounds) = self.parse_type_params();
         let mut parent = None;
         let mut interfaces = Vec::new();
+        let mut super_args = BTreeMap::new();
         if self.eat_word("extends") {
             if is_interface {
-                interfaces = self.parse_type_names();
-            } else if let Type::Struct(name) = self.parse_type() {
-                parent = Some(name);
+                interfaces = self.parse_type_names(&mut super_args);
             } else {
-                self.error_here("expected a class name after 'extends'");
+                match self.parse_type() {
+                    Type::Struct(name) => parent = Some(name),
+                    Type::Generic(name, types) => {
+                        super_args.insert(name.clone(), types);
+                        parent = Some(name);
+                    }
+                    _ => self.error_here("expected a class name after 'extends'"),
+                }
             }
         }
         if !is_interface && self.eat_word("implements") {
-            interfaces = self.parse_type_names();
+            interfaces = self.parse_type_names(&mut super_args);
         }
-        let permits = self.eat_word("permits").then(|| self.parse_type_names());
+        let permits = self
+            .eat_word("permits")
+            .then(|| self.parse_type_names(&mut BTreeMap::new()));
         if modifiers.is_sealed && permits.is_none() {
             self.error_at(
                 "a sealed type lists what may extend it: 'permits A, B'",
@@ -682,6 +724,9 @@ impl Parser {
             is_abstract: modifiers.is_abstract || is_interface,
             is_final: modifiers.is_final,
             permits,
+            type_params,
+            bounds,
+            super_args,
             span,
         }
     }
@@ -691,6 +736,7 @@ impl Parser {
             name: format!("{owner}__{method}"),
             is_pub: true,
             type_params: Vec::new(),
+            bounds: Vec::new(),
             params: Vec::new(),
             return_type: Type::Void,
             body: Vec::new(),
@@ -731,16 +777,7 @@ impl Parser {
                 self.parse_function_rest(owner.to_string(), span.clone(), Vec::new(), Type::Void);
             return TypeMember::Constructor(function, is_pub);
         }
-        let mut type_params = Vec::new();
-        if self.eat(&TokenKind::Lt) {
-            loop {
-                type_params.push(self.expect_identifier("expected type parameter name"));
-                if !self.eat(&TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::Gt, "expected '>' after type parameters");
-        }
+        let (type_params, bounds) = self.parse_type_params();
         if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
             self.error_here("expected a method");
             return TypeMember::Skipped;
@@ -764,6 +801,7 @@ impl Parser {
         }
         let mut function =
             self.parse_function_rest(format!("{owner}__{name}"), span.clone(), type_params, ty);
+        function.bounds = bounds;
         function.owner = Some(owner.to_string());
         if function.is_abstract && !(marked_abstract || in_interface && !is_default && !is_static) {
             self.error_at("a method needs a body unless it is abstract", span.clone());
@@ -822,16 +860,7 @@ impl Parser {
 
     /// A function (`<T> R name(...) { }`) or an annotated state field (`@PlayerState int coins;`).
     fn parse_member(&mut self, annotations: Vec<Annotation>, is_pub: bool, program: &mut Program) {
-        let mut type_params = Vec::new();
-        if self.eat(&TokenKind::Lt) {
-            loop {
-                type_params.push(self.expect_identifier("expected type parameter name"));
-                if !self.eat(&TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.expect(TokenKind::Gt, "expected '>' after type parameters");
-        }
+        let (type_params, bounds) = self.parse_type_params();
         if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
             self.error_here("expected a function, record, enum, or import declaration");
             return;
@@ -841,6 +870,7 @@ impl Parser {
         let mut path = vec![self.expect_identifier("expected a name after the type")];
         if self.at(&TokenKind::LeftParen) {
             let mut function = self.parse_function_rest(path.remove(0), span, type_params, ty);
+            function.bounds = bounds;
             if function.is_abstract {
                 self.error_at("a function needs a body", function.span.clone());
             }
@@ -950,6 +980,7 @@ impl Parser {
             name,
             is_pub: false,
             type_params,
+            bounds: Vec::new(),
             params,
             return_type,
             body,
@@ -1992,12 +2023,17 @@ impl Parser {
                     name.push_str("::");
                     name.push_str(&self.expect_identifier("expected name after '.'"));
                 }
+                let type_args = self.at(&TokenKind::Lt).then(|| self.parse_type_args());
                 self.expect(TokenKind::LeftParen, "expected '(' after the type in 'new'");
                 let args = self.parse_call_args();
                 match BUILTIN_CONSTRUCTORS.iter().find(|(ty, _)| *ty == name) {
                     Some((_, builtin)) => call(builtin, args, &span),
                     None => Expr {
-                        kind: ExprKind::New { name, args },
+                        kind: ExprKind::New {
+                            name,
+                            args,
+                            type_args,
+                        },
                         span,
                     },
                 }
@@ -2173,12 +2209,15 @@ impl Parser {
                     expr = self.static_call(class.clone(), &method, args, span);
                     continue;
                 }
-                if let Some(java) = java_name_for(&method, true) {
-                    self.error_at(&format!("use '.{java}(...)'"), span.clone());
-                }
                 let args = self.parse_call_args();
                 // Module calls such as `vec.add(a, b)` are mapped back in modules.rs.
-                let method = internal_method_name(&method, args.len()).to_string();
+                // A builtin's internal name written in source, like `push`, is
+                // marked: a class may have a method `push`, a List may not.
+                let method = if java_name_for(&method, true).is_some() {
+                    format!("{WRITTEN_METHOD}{method}")
+                } else {
+                    internal_method_name(&method, args.len()).to_string()
+                };
                 expr = Expr {
                     kind: ExprKind::MethodCall {
                         receiver: Box::new(receiver),
@@ -2435,9 +2474,27 @@ impl Parser {
                     path.push_str("::");
                     path.push_str(&self.expect_identifier("expected type name"));
                 }
-                Type::Struct(path)
+                if self.at(&TokenKind::Lt) {
+                    Type::Generic(path, self.parse_type_args())
+                } else {
+                    Type::Struct(path)
+                }
             }
         }
+    }
+
+    /// `<A, B>` after a class name; `<>` gives no types.
+    fn parse_type_args(&mut self) -> Vec<Type> {
+        self.expect(TokenKind::Lt, "expected '<'");
+        let mut args = Vec::new();
+        while !self.at(&TokenKind::Gt) && !self.at(&TokenKind::Eof) {
+            args.push(self.parse_type_arg());
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::Gt, "expected '>' after type arguments");
+        args
     }
 
     /// A type inside `<...>`: like Java, `List<Integer>`, not `List<int>`.

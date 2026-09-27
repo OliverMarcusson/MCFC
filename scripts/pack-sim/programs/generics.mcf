@@ -1,0 +1,144 @@
+// Generic classes: each use such as Box<Integer> compiles its own copy.
+// Covers fields and methods of type T, several type parameters, a class
+// using itself (Node<T>), bounds, generic methods, and generic functions
+// that make or take generic objects.
+class Box<T> {
+    T value;
+
+    Box(T value) {
+        this.value = value;
+    }
+
+    T get() {
+        return value;
+    }
+
+    void set(T value) {
+        this.value = value;
+    }
+
+    <R> Box<R> with(R other) {
+        return new Box<R>(other);
+    }
+}
+
+class Pair<A, B> {
+    A first;
+    B second;
+
+    Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
+
+    Pair<B, A> swap() {
+        return new Pair<>(second, first);
+    }
+
+    public String toString() {
+        return "(" + first + ", " + second + ")";
+    }
+}
+
+class Node<T> {
+    T value;
+    Node<T> next;
+
+    Node(T value, Node<T> next) {
+        this.value = value;
+        this.next = next;
+    }
+}
+
+class Stack<T> {
+    Node<T> top = null;
+    int size = 0;
+
+    void push(T value) {
+        top = new Node<T>(value, top);
+        size++;
+    }
+
+    T pop() {
+        T value = top.value;
+        top = top.next;
+        size--;
+        return value;
+    }
+
+    boolean isEmpty() {
+        return top == null;
+    }
+}
+
+interface Shape {
+    int area();
+}
+
+class Square implements Shape {
+    int side;
+
+    Square(int side) {
+        this.side = side;
+    }
+
+    public int area() {
+        return side * side;
+    }
+}
+
+class Holder<T extends Shape> {
+    List<T> shapes = List.of();
+
+    void add(T shape) {
+        shapes.add(shape);
+    }
+
+    int total() {
+        int sum = 0;
+        for (T shape : shapes) {
+            sum += shape.area();
+        }
+
+        return sum;
+    }
+}
+
+<T> Box<T> wrap(T value) {
+    return new Box<T>(value);
+}
+
+<T> T unwrap(Box<T> box) {
+    return box.get();
+}
+
+void main() {
+    Box<Integer> number = new Box<>(5);
+    number.set(number.get() + 1);
+    Box<String> word = new Box<String>("hi");
+    Box<Float> half = number.with(0.5);
+    String boxes = "boxes " + number.value + " " + word.get() + " " + half.get();
+    mcf("say $(boxes)");
+
+    Pair<String, Integer> pair = new Pair<>("a", 1);
+    Pair<Integer, String> swapped = pair.swap();
+    String pairs = "pairs " + pair + " " + swapped + " " + swapped.first;
+    mcf("say $(pairs)");
+
+    Stack<String> stack = new Stack<>();
+    stack.push("x");
+    stack.push("y");
+    stack.push("z");
+    String popped = "stack " + stack.size;
+    while (!stack.isEmpty()) {
+        popped = popped + " " + stack.pop();
+    }
+    mcf("say $(popped)");
+
+    Holder<Square> holder = new Holder<>();
+    holder.add(new Square(2));
+    holder.add(new Square(3));
+    Box<Box<Integer>> nested = wrap(wrap(7));
+    String rest = "rest " + holder.total() + " " + unwrap(unwrap(nested)) + " " + unwrap(word);
+    mcf("say $(rest)");
+}

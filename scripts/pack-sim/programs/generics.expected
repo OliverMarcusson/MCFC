@@ -1,0 +1,4 @@
+say boxes 6 hi 0.5f
+say pairs (a, 1) (1, a) 1
+say stack 3 z y x
+say rest 13 7 hi

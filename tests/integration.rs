@@ -4942,3 +4942,48 @@ final class Square implements Shape { public int area() { return 4; } }
     ))
     .expect("a switch covering every class needs no default");
 }
+
+#[test]
+fn generic_classes_are_checked() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let boxed = "class Box<T> { T value; Box(T value) { this.value = value; } T get() { return value; } }\n";
+    let rejected = [
+        ("void main() { Box b = null; }\n", "'Box' is generic"),
+        (
+            "void main() { Box<Integer, String> b = null; }\n",
+            "'Box' takes 1 type arguments, found 2",
+        ),
+        (
+            "void main() { int n = new Box<>(1).get(); }\n",
+            "write the type arguments here",
+        ),
+        (
+            "void main() { Box<Integer> b = new Box<String>(\"a\"); }\n",
+            "declared 'Box<Integer>' but its value is 'Box<String>'",
+        ),
+        (
+            "interface Shape {}\nclass Holder<T extends Shape> {}\nvoid main() { Holder<Integer> h = null; }\n",
+            "'T' must be a 'Shape', but it is 'Integer'",
+        ),
+        (
+            "class Counter<T> { static int made = 0; }\nvoid main() {}\n",
+            "a generic class can't have static fields",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(&format!("{boxed}{source}")).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    compile(&format!(
+        "{boxed}<T> Box<T> wrap(T value) {{ return new Box<T>(value); }}\nint take(Box<Integer> b) {{ return b.get(); }}\nvoid main() {{ Box<String> s = new Box<>(\"a\"); int n = take(new Box<>(1)) + take(wrap(2)); }}\n"
+    ))
+    .expect("diamonds and generic functions making copies compile");
+}

@@ -1,4 +1,16 @@
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+
 use crate::diagnostics::Span;
+
+thread_local! {
+    /// How a copy of a generic class is written: `util::Box__int` is `Box<Integer>`.
+    pub static CLASS_DISPLAY: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+}
+
+/// Marks a method name that is also a builtin's internal name, such as
+/// `push`, as written in source. Only user types' methods may use them.
+pub const WRITTEN_METHOD: &str = "@written:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -40,6 +52,12 @@ pub struct ClassDef {
     pub is_final: bool,
     /// `sealed ... permits A, B`: only these may extend or implement it.
     pub permits: Option<Vec<String>>,
+    /// `class Box<T extends Bound>`: each use such as `Box<Integer>` becomes
+    /// its own class (see `generics`).
+    pub type_params: Vec<String>,
+    pub bounds: Vec<(String, Type)>,
+    /// Type arguments given to a supertype: `implements Comparator<Player>`.
+    pub super_args: BTreeMap<String, Vec<Type>>,
     pub span: Span,
 }
 
@@ -109,6 +127,8 @@ pub struct Function {
     pub is_pub: bool,
     /// `<T, U> R name(...)`; each call compiles a copy with the types filled in.
     pub type_params: Vec<String>,
+    /// `<T extends Animal>`: what a type argument must be.
+    pub bounds: Vec<(String, Type)>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -146,6 +166,8 @@ pub enum Type {
     Enum(String),
     /// A class instance: the id of its heap slot, or 0 for `null`.
     Class(String),
+    /// `Box<T>` inside generic code; concrete uses become the class copy's `Struct`.
+    Generic(String, Vec<Type>),
     Bossbar,
     EntitySet,
     EntityRef,
@@ -170,9 +192,17 @@ impl Type {
             Type::Array(element) => format!("List<{}>", element.as_type_arg()),
             Type::Dict(value) => format!("Map<String, {}>", value.as_type_arg()),
             Type::Optional(value) => format!("Optional<{}>", value.as_type_arg()),
-            Type::Struct(name) => name.replace("::", "."),
+            Type::Struct(name) => CLASS_DISPLAY
+                .with(|map| map.borrow().get(name).cloned())
+                .unwrap_or_else(|| name.replace("::", ".")),
             Type::Class(name) if name.is_empty() => "null".to_string(),
-            Type::Enum(name) | Type::Class(name) => name.replace("::", "."),
+            Type::Enum(name) | Type::Class(name) => CLASS_DISPLAY
+                .with(|map| map.borrow().get(name).cloned())
+                .unwrap_or_else(|| name.replace("::", ".")),
+            Type::Generic(name, args) => {
+                let args: Vec<String> = args.iter().map(Type::as_type_arg).collect();
+                format!("{}<{}>", name.replace("::", "."), args.join(", "))
+            }
             Type::Bossbar => "BossBar".to_string(),
             Type::EntitySet => "Selector".to_string(),
             Type::EntityRef => "Entity".to_string(),
@@ -313,9 +343,11 @@ pub enum ExprKind {
         fields: Vec<(String, Expr)>,
     },
     /// `new Name(args)`: a record (positional fields) or a builtin builder type.
+    /// `type_args` is `Some` for `new Box<Integer>(...)`, empty for `new Box<>(...)`.
     New {
         name: String,
         args: Vec<Expr>,
+        type_args: Option<Vec<Type>>,
     },
     Variable(String),
     Unary {

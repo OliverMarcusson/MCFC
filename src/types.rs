@@ -785,6 +785,17 @@ fn simple_object(
     ref_env: &HashMap<String, RefKind>,
     span: &Span,
 ) -> Expr {
+    // A bare field in a method, `top.value`, is `this.top`, not a local.
+    if let ExprKind::Variable(name) = &object.kind
+        && !env.contains_key(name)
+        && let Some(kind) = this_member(env, struct_defs, name, span)
+    {
+        let member = Expr {
+            kind,
+            span: span.clone(),
+        };
+        return simple_object(member, struct_defs, signatures, env, ref_env, span);
+    }
     if is_simple_index(&object) {
         return object;
     }
@@ -1095,6 +1106,7 @@ fn gc_functions(
         name: name.to_string(),
         is_pub: true,
         type_params: Vec::new(),
+        bounds: Vec::new(),
         params: if with_id {
             vec![Param {
                 name: "id".to_string(),
@@ -1338,6 +1350,7 @@ fn find_method(
     owner: &str,
     method: &str,
 ) -> Option<(String, bool)> {
+    let method = method.trim_start_matches(WRITTEN_METHOD);
     let names: Vec<&str> = std::iter::once(method)
         .chain(crate::language_catalog::java_method_names(method))
         .collect();
@@ -1362,14 +1375,18 @@ fn overload_key(name: &str) -> String {
 /// that asked for it.
 pub type GenericCall = (Vec<Type>, Span);
 
-/// Replace type parameters with the types bound to them.
+/// Replace type parameters with the types bound to them. A generic class
+/// whose arguments become known turns into its copy.
 fn substitute(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
+    crate::generics::substitute(ty, bindings, &Span::new(0, 0))
+}
+
+/// Uses a generic class, like `Box<T>`.
+fn has_generic(ty: &Type) -> bool {
     match ty {
-        Type::Struct(name) => bindings.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        Type::Array(inner) => Type::Array(Box::new(substitute(inner, bindings))),
-        Type::Dict(inner) => Type::Dict(Box::new(substitute(inner, bindings))),
-        Type::Optional(inner) => Type::Optional(Box::new(substitute(inner, bindings))),
-        _ => ty.clone(),
+        Type::Generic(..) => true,
+        Type::Array(inner) | Type::Dict(inner) | Type::Optional(inner) => has_generic(inner),
+        _ => false,
     }
 }
 
@@ -1434,46 +1451,6 @@ fn qualify_world_state(
     }
 }
 
-/// Replace type parameters in the local declarations of one generic copy,
-/// so `List<T> out = List.of();` gets the copy's element type.
-fn substitute_body(body: &mut [Stmt], bindings: &BTreeMap<String, Type>) {
-    for stmt in body {
-        match &mut stmt.kind {
-            StmtKind::Let { ty: Some(ty), .. } => *ty = substitute(ty, bindings),
-            StmtKind::For { ty, body, .. } => {
-                if let Some(ty) = ty {
-                    *ty = substitute(ty, bindings);
-                }
-                substitute_body(body, bindings);
-            }
-            StmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                substitute_body(then_body, bindings);
-                substitute_body(else_body, bindings);
-            }
-            StmtKind::While { body, step, .. } => {
-                substitute_body(body, bindings);
-                substitute_body(step, bindings);
-            }
-            StmtKind::Switch {
-                arms, default_body, ..
-            } => {
-                for arm in arms {
-                    substitute_body(&mut arm.body, bindings);
-                }
-                substitute_body(default_body, bindings);
-            }
-            StmtKind::Block(body) | StmtKind::Context { body, .. } | StmtKind::Async { body } => {
-                substitute_body(body, bindings)
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Bind the type parameters in `param` by matching it against `arg`.
 /// Returns false on a mismatch with an earlier binding. A bare `T` mixing
 /// `int` and `float` becomes `float`, so `math.min(1.5, 2)` is `1.5`.
@@ -1501,24 +1478,29 @@ fn bind_type_params(
         | (Type::Optional(param), Type::Optional(arg)) => {
             bind_type_params(param, arg, type_params, bindings, false)
         }
+        // `Box<T>` against the copy `Box__int`, or a class that extends or
+        // implements it, binds `T` to `int`.
+        (Type::Generic(name, params), Type::Class(class)) => {
+            let found = supertypes(class)
+                .iter()
+                .filter_map(|supertype| crate::generics::instance_of(supertype))
+                .find(|(generic, args)| generic == name && args.len() == params.len());
+            match found {
+                Some((_, args)) => params
+                    .iter()
+                    .zip(&args)
+                    .all(|(param, arg)| bind_type_params(param, arg, type_params, bindings, false)),
+                None => true,
+            }
+        }
         _ => true,
     }
 }
 
 /// The name of one copy of a generic function, such as `max__int` or
-/// `first__array_float`. It must stay a valid function path.
+/// `first__list_float`. It must stay a valid function path.
 fn instance_name(function: &str, types: &[Type]) -> String {
-    let types: Vec<String> = types
-        .iter()
-        .map(|ty| {
-            ty.as_str()
-                .replace("::", "_")
-                .replace(['<', '>'], "_")
-                .trim_end_matches('_')
-                .to_lowercase()
-        })
-        .collect();
-    format!("{function}__{}", types.join("__"))
+    crate::generics::mangle(function, types)
 }
 
 /// The overload of `name` that `args` call, like Java: one taking the argument
@@ -1808,7 +1790,39 @@ pub enum CastKind {
     String,
 }
 
+/// More rounds than this means generic code keeps asking for new copies.
+const MAX_EXPANSIONS: usize = 16;
+
 pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram, Diagnostics> {
+    // Generic classes are copied per use first. A generic function can ask for
+    // a copy no code wrote out (`Box<T>` once `T` is known); then check again
+    // with that copy added.
+    let mut wanted = crate::generics::Wanted::new();
+    for _ in 0..MAX_EXPANSIONS {
+        let mut diagnostics = Diagnostics::new();
+        let expanded = crate::generics::expand(program, &mut wanted, &mut diagnostics);
+        if !diagnostics.0.is_empty() {
+            return Err(diagnostics);
+        }
+        let result = type_check_expanded(&expanded, host);
+        let late = crate::generics::take_late();
+        if late.keys().all(|instance| wanted.contains_key(instance)) {
+            return result;
+        }
+        wanted.extend(late);
+    }
+    let mut diagnostics = Diagnostics::new();
+    diagnostics.push(Diagnostic::new(
+        "generic code keeps asking for new copies of generic classes",
+        program
+            .functions
+            .first()
+            .map_or(Span::new(0, 0), |f| f.span.clone()),
+    ));
+    Err(diagnostics)
+}
+
+fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedProgram, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
     let mut struct_defs = BTreeMap::new();
     let mut signatures = BTreeMap::new();
@@ -2294,12 +2308,17 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
 
     for function in &program.functions {
         // Type parameters stand in for any type, so validate them as `int`.
+        // A generic class using them is checked in each copy instead.
         let placeholders: BTreeMap<String, Type> = function
             .type_params
             .iter()
             .map(|name| (name.clone(), Type::Int))
             .collect();
-        for param in &function.params {
+        for param in function
+            .params
+            .iter()
+            .filter(|param| !has_generic(&param.ty))
+        {
             validate_declared_type(
                 &substitute(&param.ty, &placeholders),
                 &struct_defs,
@@ -2307,12 +2326,14 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 &mut diagnostics,
             );
         }
-        validate_declared_type(
-            &substitute(&function.return_type, &placeholders),
-            &struct_defs,
-            function.span.clone(),
-            &mut diagnostics,
-        );
+        if !has_generic(&function.return_type) {
+            validate_declared_type(
+                &substitute(&function.return_type, &placeholders),
+                &struct_defs,
+                function.span.clone(),
+                &mut diagnostics,
+            );
+        }
         if signatures.contains_key(&function.name) {
             diagnostics.push(Diagnostic::new(
                 format!("duplicate function '{}'", display_function(&function.name)),
@@ -2408,7 +2429,24 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 param.ty = substitute(&param.ty, &bindings);
             }
             instance.return_type = substitute(&generic.return_type, &bindings);
-            substitute_body(&mut instance.body, &bindings);
+            crate::generics::substitute_body(&mut instance.body, &bindings, &instance.return_type);
+            for (param, bound) in &generic.bounds {
+                let bound = substitute(bound, &bindings);
+                let fits = match (&bindings[param], &bound) {
+                    (Type::Class(ty), Type::Class(bound)) => is_subclass(ty, bound),
+                    (ty, bound) => ty == bound,
+                };
+                if !fits {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "'{param}' must be a '{}', but it is '{}'",
+                            bound.as_str(),
+                            bindings[param].as_type_arg()
+                        ),
+                        call.clone(),
+                    ));
+                }
+            }
             signatures.insert(
                 name,
                 FunctionSignature {
@@ -2683,6 +2721,17 @@ fn check_declared_type(
     span: &Span,
     diagnostics: &mut Diagnostics,
 ) {
+    if let Some(Type::Struct(generic)) = declared
+        && crate::generics::is_generic(generic)
+    {
+        validate_declared_type(
+            &Type::Struct(generic.clone()),
+            &BTreeMap::new(),
+            span.clone(),
+            diagnostics,
+        );
+        return;
+    }
     // A declared local's type isn't resolved, so an enum still reads as a record name.
     let same_enum = matches!((declared, found), (Some(Type::Struct(a)), Type::Enum(b)) if a == b)
         || matches!((declared, found), (Some(Type::Struct(a) | Type::Class(a)), Type::Class(b)) if is_subclass(b, a));
@@ -3822,10 +3871,12 @@ fn type_check_block(
                             called_functions,
                             diagnostics,
                         );
+                        // A `void` value is what an already reported error left behind.
                         if !matches!(
                             expr.kind,
                             TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
-                        ) {
+                        ) && expr.ty != Type::Void
+                        {
                             diagnostics.push(Diagnostic::new(
                                 "only function calls may appear as bare expression statements",
                                 statement.span.clone(),
@@ -3843,10 +3894,12 @@ fn type_check_block(
                         called_functions,
                         diagnostics,
                     );
+                    // A `void` value is what an already reported error left behind.
                     if !matches!(
                         expr.kind,
                         TypedExprKind::Call { .. } | TypedExprKind::MethodCall { .. }
-                    ) {
+                    ) && expr.ty != Type::Void
+                    {
                         diagnostics.push(Diagnostic::new(
                             "only function calls may appear as bare expression statements",
                             statement.span.clone(),
@@ -3991,6 +4044,45 @@ fn type_check_expr(
                 ty: Type::Dict(Box::new(ty)),
                 ref_kind: RefKind::Unknown,
             }
+        }
+        ExprKind::New {
+            name,
+            args,
+            type_args: Some(types),
+        } if crate::generics::is_generic(name) && !types.is_empty() => {
+            let ty = crate::generics::substitute(
+                &Type::Generic(name.clone(), types.clone()),
+                &BTreeMap::new(),
+                &expr.span,
+            );
+            let Type::Class(copy) = ty else {
+                return void_expr();
+            };
+            type_check_expr(
+                &Expr {
+                    kind: ExprKind::Call {
+                        function: format!("{copy}__new"),
+                        args: args.clone(),
+                    },
+                    span: expr.span.clone(),
+                },
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            )
+        }
+        ExprKind::New { name, .. } if crate::generics::is_generic(name) => {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "write the type arguments here, like 'new {}<Integer>(...)'",
+                    name.replace("::", ".")
+                ),
+                expr.span.clone(),
+            ));
+            void_expr()
         }
         // Records are rewritten to struct literals during module resolution.
         ExprKind::New { name, .. } => {
@@ -4815,6 +4907,13 @@ fn type_check_expr(
             ) {
                 return builtin;
             }
+            // `take(new Box<>(1))`: a diamond takes the parameter's type arguments.
+            let mut args = args.clone();
+            if let Some(signature) = signatures.get(function) {
+                for (arg, param) in args.iter_mut().zip(&signature.params) {
+                    crate::generics::fill_diamond(arg, param);
+                }
+            }
             let args: Vec<_> = args
                 .iter()
                 .map(|arg| {
@@ -5555,6 +5654,15 @@ fn validate_declared_type(
                 .is_some_and(|def| def.enum_variants.is_some()) =>
         {
             diagnostics.push(Diagnostic::new(format!("unknown enum '{}'", name), span))
+        }
+        Type::Struct(name) if crate::generics::is_generic(name) => {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "'{0}' is generic; write its type arguments, like '{0}<Integer>'",
+                    name.replace("::", ".")
+                ),
+                span,
+            ))
         }
         Type::Struct(name)
             if !struct_defs
@@ -6735,6 +6843,14 @@ fn type_check_method_call(
             called_functions,
             diagnostics,
         ));
+    }
+    if let Some(written) = method.strip_prefix(WRITTEN_METHOD) {
+        let java = crate::language_catalog::java_name_for(written, true).unwrap_or(written);
+        diagnostics.push(Diagnostic::new(
+            format!("use '.{java}(...)'"),
+            expr.span.clone(),
+        ));
+        return Some(void_expr());
     }
     // `a.equals(b)` is `a == b`: MCFC compares values, never references.
     if let ("equals", [other]) = (method, args) {
@@ -11200,6 +11316,7 @@ fn class_functions(
             name: format!("{}{IS_SUFFIX}", class.name),
             is_pub: true,
             type_params: Vec::new(),
+            bounds: Vec::new(),
             params: vec![Param {
                 name: "classId".to_string(),
                 ty: Type::Int,

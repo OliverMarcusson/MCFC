@@ -339,6 +339,7 @@ pub(crate) fn normalize_special_functions(mut program: Program) -> Result<Progra
             name: "tick".to_string(),
             is_pub: false,
             type_params: Vec::new(),
+            bounds: Vec::new(),
             params: Vec::new(),
             return_type: Type::Void,
             body: Vec::new(),

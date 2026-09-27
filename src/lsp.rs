@@ -1266,8 +1266,22 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
     // The paren depth inside a top-level declaration's parameter list, and
     // whether that list is a record's components.
     let mut param_list: Option<(usize, bool)> = None;
+    // `class Box<T, U>`: where its `<` is, then the `<...>` depth inside it.
+    let mut class_params_at: Option<usize> = None;
+    let mut class_params: Option<usize> = None;
 
     for (index, token) in tokens.iter().enumerate() {
+        match (&token.kind, &mut class_params) {
+            (TokenKind::Lt, _) if class_params_at == Some(index) => class_params = Some(1),
+            (TokenKind::Lt, Some(depth)) => *depth += 1,
+            (TokenKind::Gt, Some(depth)) => {
+                *depth -= 1;
+                if *depth == 0 {
+                    class_params = None;
+                }
+            }
+            _ => {}
+        }
         match &token.kind {
             TokenKind::LeftBrace => brace_depth += 1,
             TokenKind::RightBrace => {
@@ -1306,6 +1320,13 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
         }
         if name == "enum" {
             in_enum_body = true;
+        }
+        if (name == "class" || name == "interface") && brace_depth == 0 {
+            class_params_at = Some(index + 2);
+        }
+        // A generic class's type parameters, in scope for its whole body.
+        if class_params == Some(1) && matches!(previous, Some(TokenKind::Lt | TokenKind::Comma)) {
+            type_params.insert(name.clone());
         }
         // `<T>` before a top-level function's return type.
         if brace_depth == 0
@@ -7016,6 +7037,9 @@ void start(Player player) {
 int LAYOUT() {
     return 9;
 }
+class Cell<Item> implements Comparable<Cell<Item>> {
+    Item held;
+}
 "#;
         let analysis = analyze_source(source);
         let legend = semantic_token_legend();
@@ -7053,10 +7077,12 @@ int LAYOUT() {
             "hovered=variable",
             "sendMessage=method",
             "CREATIVE=enumMember",
+            "Item=typeParameter",
         ] {
             assert!(found.contains(expected), "missing {expected} in {found}");
         }
         assert!(!found.contains("comment"), "{found}");
         assert!(!found.contains("int="), "{found}");
+        assert!(!found.contains("Comparable=typeParameter"), "{found}");
     }
 }

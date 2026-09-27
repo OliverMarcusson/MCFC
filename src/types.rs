@@ -958,10 +958,17 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
         if !matches!(
             state.ty,
-            Type::Int | Type::Bool | Type::String | Type::Float | Type::Struct(_) | Type::Dict(_)
+            Type::Int
+                | Type::Bool
+                | Type::String
+                | Type::Float
+                | Type::Struct(_)
+                | Type::Dict(_)
+                | Type::EntityRef
+                | Type::PlayerRef
         ) {
             diagnostics.push(Diagnostic::new(
-                "state declarations support 'int', 'boolean', 'String', 'float', records and maps",
+                "state declarations support 'int', 'boolean', 'String', 'float', 'Entity', 'Player', records and maps",
                 state.span.clone(),
             ));
         }
@@ -1614,7 +1621,11 @@ fn type_check_block(
                             ) && !(typed_state_write
                                 && matches!(
                                     value.ty,
-                                    Type::Float | Type::Struct(_) | Type::Dict(_)
+                                    Type::Float
+                                        | Type::Struct(_)
+                                        | Type::Dict(_)
+                                        | Type::EntityRef
+                                        | Type::PlayerRef
                                 ))
                                 && !(is_player_slot_write && value.ty == Type::ItemDef)
                                 && !(is_equipment_item_write && value.ty == Type::ItemDef)

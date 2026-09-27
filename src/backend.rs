@@ -495,17 +495,6 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
             if !used {
                 continue;
             }
-            if matches!(state.ty, Type::EntityRef | Type::PlayerRef) {
-                // Always the same handle: the entity holding the state's tag.
-                let selector = self.world_entity_selector(&state.path.join("."), &state.ty);
-                lines.push_str(&format!(
-                    "data modify storage {}:runtime {slot} set value {{prefix:\"\",selector:{}}}
-",
-                    self.namespace,
-                    quoted(&selector)
-                ));
-                continue;
-            }
             let default = match &state.ty {
                 Type::Int | Type::Bool | Type::Enum(_) => {
                     lines.push_str(&format!(
@@ -517,6 +506,7 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 Type::String => "\"\"",
                 Type::Float => "0.0f",
                 Type::Array(_) => "[]",
+                Type::EntityRef | Type::PlayerRef => Self::NO_ENTITY_HANDLE,
                 _ => "{}",
             };
             lines.push_str(&format!(
@@ -7481,6 +7471,9 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                     return false;
                 }
                 if self.is_storage_state_path(path) {
+                    if matches!(value.ty, Type::EntityRef | Type::PlayerRef) {
+                        self.stabilize_entity_ref(value_slot, lines);
+                    }
                     self.compile_storage_state_access(
                         function,
                         depth,
@@ -8910,19 +8903,46 @@ scoreboard objectives add smithed.actionbar.freeze dummy
         ));
     }
 
-    /// The tag that marks the entity an `Entity` or `Player` world state holds.
-    fn world_entity_tag(&self, world: &str) -> String {
-        format!("{}.{}", self.namespace, sanitize(world))
+    /// A handle that selects nobody: `mcfc_id` scores start at 1.
+    const NO_ENTITY_HANDLE: &'static str =
+        "{prefix:\"\",selector:\"@e[scores={mcfc_id=0},limit=1]\"}";
+
+    /// Rewrites an entity reference so it stays valid after this function:
+    /// the entity gets a unique `mcfc_id` score and `slot` selects by it. Stored
+    /// `Entity` state holds such a handle; a missing entity gets id 0, nobody.
+    fn stabilize_entity_ref(&mut self, slot: &SlotRef, lines: &mut Vec<String>) {
+        self.uses_ownership = true;
+        let ns = self.namespace.clone();
+        let path = slot.storage_path();
+        lines.push(self.query_command(
+            slot,
+            format!(
+                "execute as $(selector) unless score @s mcfc_id matches 1.. run function {ns}:generated/assign_id"
+            ),
+            true,
+        ));
+        lines.push(format!(
+            "data modify storage {ns}:runtime {path}.id set value 0"
+        ));
+        lines.push(self.query_command(
+            slot,
+            format!(
+                "execute store result storage {ns}:runtime {path}.id int 1 run scoreboard players get $(selector) mcfc_id"
+            ),
+            true,
+        ));
+        lines.push(format!(
+            "data modify storage {ns}:runtime {path}.prefix set value \"\""
+        ));
+        lines.push(self.inline_macro_command(
+            path,
+            format!(
+                "data modify storage {ns}:runtime {path}.selector set value \"@e[scores={{mcfc_id=$(id)}},limit=1]\""
+            ),
+        ));
     }
 
-    fn world_entity_selector(&self, world: &str, ty: &Type) -> String {
-        let kind = if *ty == Type::PlayerRef { "a" } else { "e" };
-        format!("@{kind}[tag={},limit=1]", self.world_entity_tag(world))
-    }
-
-    /// `token = entity;` for an `Entity` world state moves the state's tag onto
-    /// `entity`, so the pack keeps its handle across ticks and reloads. The new
-    /// holder is marked first, since `entity` may be selected by that same tag.
+    /// `token = entity;` for an `Entity` world state stores a handle to it.
     fn compile_world_entity_assign(
         &mut self,
         function: &IrFunction,
@@ -8931,14 +8951,16 @@ scoreboard objectives add smithed.actionbar.freeze dummy
         value: &IrExpr,
         lines: &mut Vec<String>,
     ) {
-        let world = name.trim_start_matches(crate::types::WORLD_STATE_PREFIX);
-        let tag = self.world_entity_tag(world);
         let value_slot = local_slot(depth, &function.name, &self.new_temp(), &value.ty);
         self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
-        lines.push(self.query_command(&value_slot, format!("tag $(selector) add {tag}.new"), true));
-        lines.push(format!("tag @e[tag={tag}] remove {tag}"));
-        lines.push(format!("tag @e[tag={tag}.new] add {tag}"));
-        lines.push(format!("tag @e[tag={tag}.new] remove {tag}.new"));
+        self.stabilize_entity_ref(&value_slot, lines);
+        lines.push(format!(
+            "data modify storage {}:runtime {} set from storage {}:runtime {}",
+            self.namespace,
+            string_slot(0, "", name),
+            self.namespace,
+            value_slot.storage_path()
+        ));
     }
 
     fn query_command(&mut self, slot: &SlotRef, command: String, wrap_macro: bool) -> String {

@@ -42,7 +42,6 @@ BUDGET = {
     "trig": 1426,
     "nested": 78,
     "worldindex": 65,
-    "entityhandle": 135,
 }
 
 

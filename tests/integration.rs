@@ -1968,6 +1968,8 @@ import std.gamemode.GameMode;
 int round;
 @WorldState
 Entity camera;
+@PlayerState
+Entity seatCamera;
 
 void main() {
     var player = (Player) Selector.of("@p").getFirst();
@@ -1994,6 +1996,8 @@ void main() {
     world.setSpawn(Block.of(0, 65, 0));
     Entity cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
     camera = cam;
+    player.state.seatCamera = cam;
+    player.state.seatCamera.teleport(Block.of(0, 71, 0));
     camera.teleport(Block.of(0, 70, 0));
     cam.teleport(new Vec3(1.5, 70.25, -2.0), 90.0, 45.0);
     player.spectate(cam);
@@ -2052,8 +2056,9 @@ void main() {
         "execute if loaded $(pos) run",
         "gamemode $(p1) @s",
         "playerGameType",
-        "tag @e[tag=sample.camera] remove sample.camera",
-        "{prefix:\"\",selector:\"@e[tag=sample.camera,limit=1]\"}",
+        "unless score @s mcfc_id matches 1.. run function sample:generated/assign_id",
+        "selector set value \"@e[scores={mcfc_id=$(id)},limit=1]\"",
+        "world.camera set value {prefix:\"\",selector:\"@e[scores={mcfc_id=0},limit=1]\"}",
         "world.stdTimers",
         "$world_round",
         "execute unless score $world_round mcfc matches -2147483648.. run scoreboard players set $world_round mcfc 0",

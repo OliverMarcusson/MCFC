@@ -94,3 +94,82 @@ public int isqrt(int n) {
     }
     return root;
 }
+
+// Trigonometry in radians. `sin`, `cos` and `tan` are `/compute` providers:
+// the compiler inlines calls to them so they fuse into the surrounding float
+// expression, and the bodies below keep std usable as a standalone pack.
+
+public float sin(float x) {
+    return Math.sin(x);
+}
+
+public float cos(float x) {
+    return Math.cos(x);
+}
+
+public float tan(float x) {
+    return Math.tan(x);
+}
+
+// `/compute` has no inverse trig, so these are MCFC code, accurate to about 1e-6.
+
+// Arctangent in (-pi/2, pi/2).
+public float atan(float x) {
+    var a = abs(x);
+    var inverted = a > 1.0;
+    if (inverted) {
+        a = 1.0 / a;
+    }
+    // Past tan(pi/8), atan(a) = pi/4 + atan((a - 1) / (a + 1)) keeps the series argument small.
+    var result = 0.0;
+    if (a > 0.41421356) {
+        result = 0.78539816 + atanSeries((a - 1.0) / (a + 1.0));
+    } else {
+        result = atanSeries(a);
+    }
+    if (inverted) {
+        result = 1.5707963 - result;
+    }
+    if (x < 0) {
+        return -result;
+    }
+    return result;
+}
+
+// Taylor series for |t| <= tan(pi/8), error below 1e-6.
+float atanSeries(float t) {
+    var z = t * t;
+    return t * (1.0 + z * (-0.33333333 + z * (0.2 + z * (-0.14285714 + z * (0.11111111 - z * 0.09090909)))));
+}
+
+// Angle of the point (x, y) in (-pi, pi]. `atan2(0, 0)` is 0.
+public float atan2(float y, float x) {
+    if (x > 0) {
+        return atan(y / x);
+    }
+    if (x < 0) {
+        if (y >= 0) {
+            return atan(y / x) + 3.14159265;
+        }
+        return atan(y / x) - 3.14159265;
+    }
+    if (y > 0) {
+        return 1.5707963;
+    }
+    if (y < 0) {
+        return -1.5707963;
+    }
+    return 0.0;
+}
+
+// Arcsine in [-pi/2, pi/2]. `x` is clamped to [-1, 1].
+public float asin(float x) {
+    var c = clamp(x, -1.0, 1.0);
+    return atan2(c, Math.sqrt(1.0 - c * c));
+}
+
+// Arccosine in [0, pi]. `x` is clamped to [-1, 1].
+public float acos(float x) {
+    var c = clamp(x, -1.0, 1.0);
+    return atan2(Math.sqrt(1.0 - c * c), c);
+}

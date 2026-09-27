@@ -63,7 +63,8 @@ Numeric functions are called through `Math`. `int` arguments widen to `float` wh
 | Call | Returns / notes |
 | --- | --- |
 | `Math.sqrt(x)`, `Math.pow(x, e)`, `Math.hypot(x, y)` | `float`; `pow` stops the command when both inputs are `0.0`. |
-| `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. |
+| `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. Same as [`std.math`](./std#std-math) `sin`/`cos`/`tan`. |
+| `Math.atan(x)`, `Math.atan2(y, x)`, `Math.asin(x)`, `Math.acos(x)` | `float` radians, accurate to about `1e-6`. They call [`std.math`](./std#std-math), since `/compute` has no inverse trig, so they cost a function call and don't fuse into the expression. |
 | `Math.floor(x)`, `Math.ceil(x)`, `Math.trunc(x)` | Rounded `float`. |
 | `Math.round(x)` | `int`. |
 | `x.toString()` | `"0.5"`, `"-0.25"`, or `"4"` for a whole number. Also available on `int`. |

@@ -3263,6 +3263,53 @@ void main() {
 }
 
 #[test]
+fn std_math_trig_inlines_into_one_compute_command() {
+    let source = r#"
+import std.math.sin;
+
+void main() {
+    var x = 3.0;
+    var y = sin(x * 2.0) + std.math.cos(x);
+    var a = Math.atan2(y, x);
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("std should compile");
+    let main = result
+        .artifacts
+        .files
+        .get("data/sample/function/generated/main__d0__entry.mcfunction")
+        .unwrap();
+    let x = r#"{type:"storage",storage:"sample:runtime",path:"frames.d0.main.x"}"#;
+    let expected = format!(
+        r#"frames.d0.main.y set compute default float {{type:"add",inputs:[{{type:"sin",input:{{type:"mul",inputs:[{x},2.0]}}}},{{type:"cos",input:{x}}}]}}"#
+    );
+    assert!(main.contains(&expected), "missing '{expected}' in:\n{main}");
+    let std_functions: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .filter(|name| name.starts_with("std::math::"))
+        .collect();
+    assert!(
+        std_functions.contains(&"std::math::atan2")
+            && !std_functions
+                .iter()
+                .any(|name| matches!(*name, "std::math::sin" | "std::math::cos")),
+        "sin/cos should be inlined, atan2 called: {std_functions:?}"
+    );
+}
+
+#[test]
 fn floats_widen_mixed_ints() {
     let source = r#"
 void main() {

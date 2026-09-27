@@ -1,0 +1,53 @@
+// std.math trig: rerouted sin/cos/tan and the MCFC arc functions.
+import std.math.*;
+
+boolean near(float got, float want) {
+    return abs(got - want) < 0.00001;
+}
+
+@Test
+void forwardTrig() {
+    assert near(sin(1.5707963), 1.0);
+    assert near(cos(3.14159265), -1.0);
+    assert near(tan(0.78539816), 1.0);
+    assert near(Math.sin(0.5), std.math.sin(0.5));
+}
+
+@Test
+void atanValues() {
+    assert near(atan(0.0), 0.0);
+    assert near(atan(1.0), 0.78539816);
+    assert near(atan(-1.0), -0.78539816);
+    assert near(atan(0.3), 0.29145679);
+    assert near(atan(0.6), 0.5404195);
+    assert near(atan(2.5), 1.19028995);
+    assert near(atan(-40.0), -1.54580153);
+    assert near(Math.atan(1000000.0), 1.5707953);
+}
+
+@Test
+void atan2Quadrants() {
+    assert near(atan2(1.0, 1.0), 0.78539816);
+    assert near(atan2(1.0, -1.0), 2.35619449);
+    assert near(atan2(-1.0, -1.0), -2.35619449);
+    assert near(atan2(-1.0, 1.0), -0.78539816);
+    assert near(atan2(0.0, -2.0), 3.14159265);
+    assert near(atan2(3.0, 0.0), 1.5707963);
+    assert near(atan2(-3.0, 0.0), -1.5707963);
+    assert near(Math.atan2(0.0, 0.0), 0.0);
+}
+
+@Test
+void asinAcos() {
+    assert near(asin(0.5), 0.52359878);
+    assert near(asin(-1.0), -1.5707963);
+    assert near(asin(2.0), 1.5707963);
+    assert near(acos(0.5), 1.04719755);
+    assert near(acos(-1.0), 3.14159265);
+    assert near(Math.acos(1.0), 0.0);
+    assert near(Math.asin(0.0), 0.0);
+}
+
+void main() {
+    mc("function trig:test");
+}

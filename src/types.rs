@@ -3066,6 +3066,14 @@ fn type_check_expr(
                 }
             }
 
+            // `std.math.sin/cos/tan` are `/compute` providers: inline them so they
+            // fuse into the surrounding float expression instead of costing a call.
+            if let Some(name) = function.strip_prefix("std::math::")
+                && matches!(name, "sin" | "cos" | "tan")
+                && let [arg] = args.as_slice()
+            {
+                return method_call_expr(arg.clone(), name, Vec::new(), Type::Float);
+            }
             called_functions.insert(function.clone());
             TypedExpr {
                 kind: TypedExprKind::Call { function, args },

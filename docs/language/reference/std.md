@@ -29,6 +29,12 @@ Only the `std` functions a pack calls are compiled into it. The name `std` is re
 | `int gcd(int a, int b)` | The greatest common divisor, never negative. `gcd(12, -18)` is `6`. |
 | `float lerp(float a, float b, float t)` | The point `t` of the way from `a` to `b`. `0.0` gives `a` and `1.0` gives `b`. |
 | `int isqrt(int n)` | The whole-number square root, rounded down. Negative `n` gives `0`. |
+| `float sin(float x)`, `cos`, `tan` | Trig in radians. The compiler inlines these as `/compute` providers, so `sin(x) * 2.0` is still one command. `Math.sin` is the same function. |
+| `float atan(float x)` | Arctangent in `(-pi/2, pi/2)`. |
+| `float atan2(float y, float x)` | The angle of the point `(x, y)` in `(-pi, pi]`. `atan2(0, 0)` is `0`. |
+| `float asin(float x)`, `float acos(float x)` | Arcsine in `[-pi/2, pi/2]` and arccosine in `[0, pi]`. `x` is clamped to `[-1, 1]`. |
+
+`/compute` has no inverse trig, so `atan`, `atan2`, `asin` and `acos` are MCFC code (range reduction and a series), accurate to about `1e-6` radians. Each call costs a few dozen commands.
 
 Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 

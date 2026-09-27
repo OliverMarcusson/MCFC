@@ -42,6 +42,9 @@ const MATH_METHODS: &[&str] = &[
     "pow", "sqrt", "hypot", "sin", "cos", "tan", "floor", "ceil", "round", "trunc",
 ];
 
+/// `Math` methods with no `/compute` provider. They call the `std.math` function.
+const MATH_STD_FUNCTIONS: &[&str] = &["atan", "atan2", "asin", "acos"];
+
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
 const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
@@ -1550,7 +1553,7 @@ impl Parser {
         span: Span,
     ) -> Expr {
         let known = match class.as_str() {
-            "Math" => MATH_METHODS.contains(&method),
+            "Math" => MATH_METHODS.contains(&method) || MATH_STD_FUNCTIONS.contains(&method),
             "Integer" => matches!(method, "parseInt" | "toString"),
             "Float" => method == "toString",
             "String" => matches!(method, "valueOf" | "join"),
@@ -1563,6 +1566,15 @@ impl Parser {
             return Expr {
                 kind: ExprKind::Call {
                     function: "std::str::join".to_string(),
+                    args,
+                },
+                span,
+            };
+        }
+        if class == "Math" && MATH_STD_FUNCTIONS.contains(&method) {
+            return Expr {
+                kind: ExprKind::Call {
+                    function: format!("std::math::{method}"),
                     args,
                 },
                 span,

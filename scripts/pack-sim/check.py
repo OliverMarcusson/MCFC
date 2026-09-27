@@ -38,6 +38,7 @@ BUDGET = {
     "strings": 119,
     "switchy": 68,
     "timed": 392,
+    "trig": 1426,
 }
 
 

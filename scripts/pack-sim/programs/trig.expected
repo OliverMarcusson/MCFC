@@ -1,0 +1,1 @@
+tellraw @a [trig TEST] 4 passed, 0 failed

@@ -80,9 +80,9 @@ public <T> void stopSpectating(T target) {
 // `teleport(pos, yaw, pitch)`: moves to an exact position, facing yaw and pitch
 // in degrees. Teleporting to a `Block` centres on it instead.
 public <T> void teleportFacing(T target, Vec3 pos, float yaw, float pitch) {
-    var x = pos.x();
-    var y = pos.y();
-    var z = pos.z();
+    float x = pos.x();
+    float y = pos.y();
+    float z = pos.z();
     as (target) {
         mcf("teleport @s $(x) $(y) $(z) $(yaw) $(pitch)");
     }

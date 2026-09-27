@@ -58,16 +58,14 @@ float distance(float x, float z) {
 
 Literals need a digit on both sides of the point: `1.0`, `0.5`, `-2.5`. A trailing `f` is accepted (`1.5f`, `2f`), and underscores can separate digits (`1_000`, `0xFF`). Floats are 32-bit, which gives about 7 significant digits.
 
-Numeric functions are called through `Math`. `int` arguments widen to `float` when the function needs a float.
+Numeric functions are called through `Math`. `int` arguments widen to `float` when the function needs a float. For `min`, `max`, `abs`, `clamp` and `sign`, use [`std.math`](./std#std-math).
 
 | Call | Returns / notes |
 | --- | --- |
 | `Math.sqrt(x)`, `Math.pow(x, e)`, `Math.hypot(x, y)` | `float`; `pow` stops the command when both inputs are `0.0`. |
 | `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. |
-| `Math.abs(x)`, `Math.min(x, y)`, `Math.max(x, y)`, `Math.clamp(x, low, high)` | `int` if all inputs are `int`; otherwise `float`. |
 | `Math.floor(x)`, `Math.ceil(x)`, `Math.trunc(x)` | Rounded `float`. |
 | `Math.round(x)` | `int`. |
-| `Math.signum(x)` | Sign as a number. |
 | `x.toString()` | `"0.5"`, `"-0.25"`, or `"4"` for a whole number. Also available on `int`. |
 
 Each float expression, however long, compiles to one `/compute` command. Comparisons cost two.
@@ -102,6 +100,8 @@ void main() {
 | `split(separator)` | `List<String>`. `separator` is plain text, not a regex. Like Java, trailing empty parts are dropped. |
 | `toUpperCase()`, `toLowerCase()` | Changes ASCII letters only. |
 | `toString()` | The same string |
+
+`String.join(separator, parts)` joins a `List<String>` with `separator` between each part, like Java: `String.join(", ", names)`.
 
 `Integer.parseInt(s)` returns a number or `0` for invalid text. `String.valueOf(x)`, `Integer.toString(x)` and `Float.toString(x)` convert values to text.
 

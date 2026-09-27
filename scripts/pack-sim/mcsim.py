@@ -5,7 +5,7 @@ floats. Anything else raises Unsupported, so a check can't silently pass.
 
 usage: mcsim.py <datapack_dir> [ticks]  -> prints trace, then 'commands=N'
 """
-import json, math, os, re, struct, sys
+import json, math, os, random, re, struct, sys
 
 
 PROFILE = {} if os.environ.get("PROFILE") else None
@@ -297,6 +297,7 @@ class Sim:
         self.trace = []
         self.commands = 0
         self.gametime = 0
+        self.rng = random.Random(1)  # seeded, so traces stay reproducible
         self.schedule = {}
         self.limit = 20_000_000
         # Markers only: {"tags": set, "pos": [x, y, z]}. Position context of
@@ -411,6 +412,9 @@ class Sim:
             return True, 1
         if head == "time" and t[1:] == ["query", "gametime"]:
             return True, self.gametime
+        if head == "random" and t[1] == "value":
+            low, high = (int(x) for x in t[2].split(".."))
+            return True, self.rng.randint(low, high)
         raise Unsupported(line)
 
     def selects(self, selector, marker):

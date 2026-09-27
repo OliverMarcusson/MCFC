@@ -167,7 +167,7 @@ void update(Player player) {
 }
 ```
 
-Allowed types are `int`, `boolean`, `String`, `float` and records. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
+Allowed types are `int`, `boolean`, `String`, `float`, records and maps. A map in state can only be indexed by a literal key; to use a variable key, copy it, change the copy, and assign it back: `var m = player.state.kills; m.put(name, 1); player.state.kills = m;`. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
 
 Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0` or an empty record.
 

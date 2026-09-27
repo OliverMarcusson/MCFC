@@ -15,17 +15,20 @@ Only the `std` functions a pack calls are compiled into it. The name `std` is re
 
 ## `std.math`
 
+`min`, `max`, `abs`, `sign` and `clamp` are [generic](./statements#generic-functions): they take `int` or `float`, and mixing the two gives `float`, so `math.min(1.5, 2)` is `1.5`. `Math` has no versions of these.
+
 | Function | Returns |
 | --- | --- |
-| `int min(int a, int b)` | The smaller of `a` and `b`. |
-| `int max(int a, int b)` | The larger of `a` and `b`. |
-| `int abs(int x)` | `x` without its sign. |
-| `int sign(int x)` | `1`, `0`, or `-1`. |
-| `int clamp(int x, int low, int high)` | `x` limited to `low` through `high`. |
+| `<T> T min(T a, T b)` | The smaller of `a` and `b`. |
+| `<T> T max(T a, T b)` | The larger of `a` and `b`. |
+| `<T> T abs(T x)` | `x` without its sign. |
+| `<T> T sign(T x)` | `1`, `0`, or `-1`. |
+| `<T> T clamp(T x, T low, T high)` | `x` limited to `low` through `high`. |
 | `int rem(int a, int b)` | The remainder of `a / b`, with the sign of `b`. For example, `rem(-7, 3)` is `2`. Same as `a % b`. |
 | `int pow(int base, int exponent)` | `base` multiplied by itself `exponent` times. Negative exponents return `0`. |
 | `int gcd(int a, int b)` | The greatest common divisor, never negative. `gcd(12, -18)` is `6`. |
 | `float lerp(float a, float b, float t)` | The point `t` of the way from `a` to `b`. `0.0` gives `a` and `1.0` gives `b`. |
+| `int isqrt(int n)` | The whole-number square root, rounded down. Negative `n` gives `0`. |
 
 Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 
@@ -39,7 +42,77 @@ These are [generic](./statements#generic-functions), so they work on `List<Integ
 | `<T> T min(List<T> xs)` | The smallest element, or `0` for an empty list. |
 | `<T> T max(List<T> xs)` | The largest element, or `0` for an empty list. |
 
-To sort, use the built-in [`xs.sort()`](./types#list) method.
+`sortBy` and `top` order a list of anything by a second list of `int` keys, where `keys[i]` belongs to `items[i]`, for example player names and their scores:
+
+```mcfc
+import std.list;
+
+void leaderboard(List<String> names, List<Integer> kills) {
+    var best = list.top(names, kills, 3);
+    Sidebar.setLine(0, "Top: " + String.join(", ", best));
+}
+```
+
+| Function | Returns |
+| --- | --- |
+| `<T> List<T> sortBy(List<T> items, List<Integer> keys)` | A copy of `items` ordered by `keys`, smallest first. Equal keys keep their order. |
+| `<T> List<T> top(List<T> items, List<Integer> keys, int n)` | The `n` items with the largest keys, largest first. Equal keys keep their order. |
+
+Both cost about `n²` commands for `n` items, fine for a server's players. To sort plain numbers, use the built-in [`xs.sort()`](./types#list) method.
+
+## `std.cooldown`
+
+Per-player cooldowns, each with a name, so one player can have several.
+
+```mcfc
+import std.cooldown;
+
+@Command("dash")
+void dash(Player player) {
+    if (!cooldown.ready(player, "dash")) {
+        player.sendMessage("Dash is ready in " + cooldown.remaining(player, "dash") / 20 + "s");
+        return;
+    }
+    cooldown.start(player, "dash", 60);
+    player.addVelocity(player.getLookX(), 0.3, player.getLookZ());
+}
+```
+
+| Function | Does |
+| --- | --- |
+| `void start(Player player, String name, int ticks)` | Starts or restarts `name`, lasting `ticks`. |
+| `boolean ready(Player player, String name)` | `true` once `name` has run out, or if it was never started. |
+| `int remaining(Player player, String name)` | Ticks left, or `0` when ready. |
+| `void clear(Player player, String name)` | Ends `name` early. |
+
+Each cooldown stores the [`gameTime()`](./builtins) it ends at, in the `std.cooldowns` [player state](./statements#playerstate), so cooldowns keep running while the player is offline and across restarts. Names follow the [map key rules](./types#map).
+
+## `std.random`
+
+Built on the [`random(min, max)`](./builtins#random) builtin.
+
+| Function | Returns |
+| --- | --- |
+| `boolean chance(float p)` | `true` with chance `p`: `0.25` is `true` about one time in four. |
+| `float nextFloat()` | A float from `0.0` up to, but not including, `1.0`. |
+| `<T> T pick(List<T> xs)` | A random element. An empty list gives the type's empty value, such as `0`. |
+| `<T> List<T> shuffle(List<T> xs)` | A shuffled copy of `xs`. Lists are passed by value, so `xs` itself is unchanged. |
+
+## `std.time`
+
+```mcfc
+import std.time;
+
+@Every(ticks = 20)
+void showUptime() {
+    Sidebar.setLine(0, "Uptime " + time.formatTicks(gameTime()));
+}
+```
+
+| Function | Returns |
+| --- | --- |
+| `String formatTicks(int ticks)` | `"m:ss"`, or `"h:mm:ss"` from one hour up, in whole seconds rounded down. `1300` is `"1:05"`. Negative ticks count as `0`. |
+| `String padLeft(int value, int width)` | `value` with zeros in front up to `width` characters: `padLeft(5, 2)` is `"05"`. |
 
 ## `std.noise`
 
@@ -92,6 +165,7 @@ Shapes replace what's there, like `fill`.
 | `boolean contains(String s, String needle)` | `true` when `needle` appears in `s`. |
 | `String replace(String s, String target, String replacement)` | `s` with every `target` replaced. |
 | `List<String> split(String s, String separator)` | The parts between each `separator`, without trailing empty parts. |
+| `String join(String separator, List<String> parts)` | `parts` with `separator` between each. `String.join` calls this. |
 | `String toUpperCase(String s)`, `String toLowerCase(String s)` | `s` with ASCII letters changed. |
 
 The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`, `split`, `toUpperCase` and `toLowerCase` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so they cost a few commands per character. `startsWith`, `endsWith`, `find` and `contains` never paste the text into a command, so `"` and `\` are safe. The others build new strings by joining, which has the [joining limits](./types#string).

@@ -1887,6 +1887,65 @@ void main() {
 }
 
 #[test]
+fn rejects_indexes_the_backend_cannot_lower() {
+    let source = r#"
+@PlayerState
+Map<String, Integer> kills;
+
+void main() {
+    var xs = List.of(1, 2);
+    var last = xs[xs.size() - 1];
+    var player = (Player) Selector.of("@p").getFirst();
+    var name = "zombie";
+    var n = player.state.kills[name];
+}
+"#;
+    let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
+    assert!(rendered.contains("this index is too complex; store it in a variable first"));
+    assert!(rendered.contains("state can only be indexed by a literal"));
+}
+
+#[test]
+fn std_cooldown_keeps_a_map_in_player_state() {
+    let source = r#"
+import std.cooldown;
+
+void main() {
+    var player = (Player) Selector.of("@p").getFirst();
+    cooldown.start(player, "dash", 40);
+    var left = cooldown.remaining(player, "dash");
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("cooldown should compile");
+    let files = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    assert!(files.contains("\".std.cooldowns set from storage"));
+    assert!(files.contains("time query gametime"));
+}
+
+#[test]
 fn for_condition_runs_every_iteration_and_continue_runs_the_update() {
     let source = r#"
 int finish() {
@@ -2800,7 +2859,10 @@ int unused(int x) {
         .map(|function| function.name.as_str())
         .collect();
     names.sort();
-    assert_eq!(names, ["main", "std::math::clamp", "std::math::max"]);
+    assert_eq!(
+        names,
+        ["main", "std::math::clamp__int", "std::math::max__int"]
+    );
 
     fs::write(src_dir.join("std.mcf"), "void f() {\n}\n").unwrap();
     let error = compile_project(
@@ -3306,7 +3368,7 @@ void main() {
         names,
         [
             "std::list::sum__int",
-            "std::math::abs",
+            "std::math::abs__int",
             "std::math::gcd",
             "std::math::lerp",
             "std::str::contains",
@@ -4216,7 +4278,7 @@ fn wildcard_imports_bring_in_public_names() {
         .map(|function| function.name.as_str())
         .collect();
     names.sort();
-    assert_eq!(names, ["main", "std::math::max", "util::twice"]);
+    assert_eq!(names, ["main", "std::math::max__int", "util::twice"]);
 
     fs::write(
         src_dir.join("main.mcf"),

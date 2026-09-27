@@ -1136,6 +1136,7 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
         "isValid" => Some("Entity.isValid() -> boolean".to_string()),
         "parseInt" => Some("Integer.parseInt(s: String) -> int".to_string()),
         "valueOf" => Some("String.valueOf(x) -> String".to_string()),
+        "join" => Some("String.join(separator: String, parts: List<String>) -> String".to_string()),
         "sqrt" => Some("Math.sqrt(x: float) -> float".to_string()),
         "pow" => Some("Math.pow(x: float, exponent: float) -> float".to_string()),
         "EntityData" => Some("new EntityData(id: String)".to_string()),
@@ -1546,6 +1547,9 @@ Shown to players tagged `mcfc.log`.",
         "isValid" => Some("```mcfc\nEntity.isValid() -> boolean\n```"),
         "parseInt" => Some("```mcfc\nInteger.parseInt(s: String) -> int\n```"),
         "valueOf" => Some("```mcfc\nString.valueOf(x) -> String\n```"),
+        "join" => {
+            Some("```mcfc\nString.join(separator: String, parts: List<String>) -> String\n```")
+        }
         "sqrt" => Some("```mcfc\nMath.sqrt(x: float) -> float\n```"),
         "set" => Some("```mcfc\nList<T>.set(index: int, value: T) -> void\n```"),
         "put" => Some("```mcfc\nMap<String, T>.put(key: String, value: T) -> void\n```"),
@@ -2576,14 +2580,6 @@ fn member_completion_items(
 fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
     let methods: &[(&str, &str, &str)] = match name {
         "Math" => &[
-            ("abs", "Math.abs(x) -> number", "abs(${1:x})"),
-            ("min", "Math.min(a, b) -> number", "min(${1:a}, ${2:b})"),
-            ("max", "Math.max(a, b) -> number", "max(${1:a}, ${2:b})"),
-            (
-                "clamp",
-                "Math.clamp(x, low, high) -> number",
-                "clamp(${1:x}, ${2:low}, ${3:high})",
-            ),
             ("sqrt", "Math.sqrt(x) -> float", "sqrt(${1:x})"),
             (
                 "pow",
@@ -2602,7 +2598,6 @@ fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
             ("ceil", "Math.ceil(x) -> float", "ceil(${1:x})"),
             ("round", "Math.round(x) -> int", "round(${1:x})"),
             ("trunc", "Math.trunc(x) -> float", "trunc(${1:x})"),
-            ("signum", "Math.signum(x) -> float", "signum(${1:x})"),
         ],
         "Integer" => &[
             (
@@ -2621,7 +2616,14 @@ fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
             "Float.toString(x: float) -> String",
             "toString(${1:x})",
         )],
-        "String" => &[("valueOf", "String.valueOf(x) -> String", "valueOf(${1:x})")],
+        "String" => &[
+            ("valueOf", "String.valueOf(x) -> String", "valueOf(${1:x})"),
+            (
+                "join",
+                "String.join(separator, parts) -> String",
+                "join(${1:separator}, ${2:parts})",
+            ),
+        ],
         _ => return None,
     };
     Some(

@@ -1,27 +1,30 @@
-// Integer helpers. Scoreboard math is 32-bit and `/` rounds toward negative infinity.
+// Number helpers. Integer math is 32-bit and `/` rounds toward negative infinity.
 
-public int min(int a, int b) {
+// `min`, `max`, `abs`, `sign` and `clamp` are generic: they work on `int` and
+// `float`, and mixing the two gives `float`, like Java.
+
+public <T> T min(T a, T b) {
     if (a < b) {
         return a;
     }
     return b;
 }
 
-public int max(int a, int b) {
+public <T> T max(T a, T b) {
     if (a > b) {
         return a;
     }
     return b;
 }
 
-public int abs(int x) {
+public <T> T abs(T x) {
     if (x < 0) {
         return -x;
     }
     return x;
 }
 
-public int sign(int x) {
+public <T> T sign(T x) {
     if (x > 0) {
         return 1;
     }
@@ -31,7 +34,7 @@ public int sign(int x) {
     return 0;
 }
 
-public int clamp(int x, int low, int high) {
+public <T> T clamp(T x, T low, T high) {
     if (x < low) {
         return low;
     }
@@ -75,4 +78,19 @@ public int gcd(int a, int b) {
 // Point `t` of the way from `a` to `b`: 0.0 gives `a`, 1.0 gives `b`.
 public float lerp(float a, float b, float t) {
     return a + (b - a) * t;
+}
+
+// Whole-number square root, rounded down. Negative `n` gives 0.
+public int isqrt(int n) {
+    if (n <= 0) {
+        return 0;
+    }
+    var root = (int) Math.sqrt(n);
+    while (root * root > n) {
+        root = root - 1;
+    }
+    while ((root + 1) * (root + 1) <= n) {
+        root = root + 1;
+    }
+    return root;
 }

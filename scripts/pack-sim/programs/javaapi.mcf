@@ -1,4 +1,6 @@
 // Java library names: String, Integer, Math, List, Map, Optional, enum and record methods.
+import std.math;
+
 enum Stage { NEW, MID, DONE }
 
 record Quest(String name, int reward) {}
@@ -26,8 +28,8 @@ void main() {
     var parsed = Integer.parseInt("42") + 1;
     var text = String.valueOf(parsed) + Integer.toString(7);
     mcf("say parse $(text)");
-    var m = Math.max(3, 9) * 100 + Math.min(3, 9) * 10 + Math.abs(-2);
-    mcf("say math $(m) $(Math.clamp(15, 0, 10))");
+    var m = math.max(3, 9) * 100 + math.min(3, 9) * 10 + math.abs(-2);
+    mcf("say math $(m) $(math.clamp(15, 0, 10))");
     List<Integer> xs = List.of(4, 5, 6);
     xs.set(1, 50);
     var empty = xs.isEmpty();

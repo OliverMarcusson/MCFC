@@ -39,8 +39,7 @@ const STATIC_CLASSES: &[&str] = &["Math", "Integer", "Float", "String"];
 
 /// `Math` methods. Each becomes a method on the first argument named `Math.<name>`.
 const MATH_METHODS: &[&str] = &[
-    "abs", "min", "max", "clamp", "pow", "sqrt", "hypot", "sin", "cos", "tan", "floor", "ceil",
-    "round", "trunc", "signum",
+    "pow", "sqrt", "hypot", "sin", "cos", "tan", "floor", "ceil", "round", "trunc",
 ];
 
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
@@ -1521,8 +1520,9 @@ impl Parser {
         expr
     }
 
-    /// `Math.max(a, b)` becomes the method `"Math.max"` on `a`, and `String.valueOf(x)`
-    /// becomes `"" + x`. The dotted names can't be written as methods in source.
+    /// `Math.pow(a, b)` becomes the method `"Math.pow"` on `a`, `String.valueOf(x)`
+    /// becomes `"" + x`, and `String.join(sep, parts)` calls `std.str.join`. The
+    /// dotted names can't be written as methods in source.
     fn static_call(
         &mut self,
         class: String,
@@ -1534,11 +1534,20 @@ impl Parser {
             "Math" => MATH_METHODS.contains(&method),
             "Integer" => matches!(method, "parseInt" | "toString"),
             "Float" => method == "toString",
-            "String" => method == "valueOf",
+            "String" => matches!(method, "valueOf" | "join"),
             _ => false,
         };
         if !known {
             self.error_at(&format!("unknown method '{class}.{method}'"), span.clone());
+        }
+        if class == "String" && method == "join" {
+            return Expr {
+                kind: ExprKind::Call {
+                    function: "std::str::join".to_string(),
+                    args,
+                },
+                span,
+            };
         }
         if args.is_empty() {
             self.error_at(

@@ -12,7 +12,6 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Runtime values
 
 - **`$(...)` in `mcf(...)` isn't escaped.** The value is pasted into the command as it is. Joining strings with `+` is safe. See [string limits](./reference/types#string).
-- **`Block.of(...)` needs a literal string.** Positions can't be computed at run time yet.
 - **`Selector.findFirst()`** needs a literal `Selector.of(...)`, not a variable.
 - **`hasData`** only works on storage values (lists, maps, records), not on entity NBT.
 - **`heal`** only works on references known to be non-players, for example `@e[type=minecraft:pig]`. For players, use `effect("minecraft:instant_health", 1, 0)`.

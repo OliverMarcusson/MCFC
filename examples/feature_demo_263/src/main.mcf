@@ -12,6 +12,8 @@ import std.str.find;
 import std.str.contains;
 import std.math.gcd;
 import std.math.lerp;
+import std.math;
+import std.cooldown;
 
 void tick() {
     if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
@@ -29,7 +31,7 @@ void check(String name, boolean ok, String got) {
 }
 
 boolean near(float a, float b) {
-    return Math.abs(a - b) < 0.001;
+    return math.abs(a - b) < 0.001;
 }
 
 // Returns its argument unchanged, so the compiler cannot fold it.
@@ -75,9 +77,9 @@ void floats() {
     check("float_ceil", near(Math.ceil(1.2), 2.0), Math.ceil(1.2).toString());
     check("float_round", near(Math.round(2.5), 3.0), Math.round(2.5).toString());
     check("float_trunc", near(Math.trunc(-1.7), -1.0), Math.trunc(-1.7).toString());
-    check("float_abs", near(Math.abs(-3.25), 3.25), Math.abs(-3.25).toString());
-    check("float_min_max", near(Math.min(1.0, 2.0) + Math.max(1.0, 2.0), 3.0), Math.max(1.0, 2.0).toString());
-    check("float_clamp", near(Math.clamp(9.0, 0.0, 5.0), 5.0), Math.clamp(9.0, 0.0, 5.0).toString());
+    check("float_abs", near(math.abs(-3.25), 3.25), math.abs(-3.25).toString());
+    check("float_min_max", near(math.min(1.0, 2.0) + math.max(1.0, 2.0), 3.0), math.max(1.0, 2.0).toString());
+    check("float_clamp", near(math.clamp(9.0, 0.0, 5.0), 5.0), math.clamp(9.0, 0.0, 5.0).toString());
     // One of these two passes: it tells us whether sin/cos take radians or degrees.
     check("float_sin_radians", near(Math.sin(1.5707964), 1.0), Math.sin(1.5707964).toString());
     check("float_sin_degrees", near(Math.sin(90.0), 1.0), Math.sin(90.0).toString());
@@ -222,6 +224,11 @@ void stdLibrary() {
 
 void reads() {
     var p = (Player) Selector.of("@a[limit=1]").getFirst();
+    cooldown.start(p, "demo", 100);
+    check("cooldown_active", !cooldown.ready(p, "demo") && cooldown.remaining(p, "demo") == 100, cooldown.remaining(p, "demo").toString());
+    check("cooldown_other_ready", cooldown.ready(p, "other"), "");
+    cooldown.clear(p, "demo");
+    check("cooldown_cleared", cooldown.ready(p, "demo"), cooldown.remaining(p, "demo").toString());
     var pos = p.getX().toString() + "," + p.getY().toString() + "," + p.getZ().toString();
     var rot = p.getYaw().toString() + "," + p.getPitch().toString();
     mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");

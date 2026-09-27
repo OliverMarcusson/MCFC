@@ -4077,11 +4077,49 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     },
                 }
             }
-            _ => IrExpr {
-                ty: ty.clone(),
-                ref_kind: RefKind::Unknown,
-                kind: IrExprKind::Int(0),
-            },
+            // `keys[order[i]]`: a list or map variable indexed further. The type
+            // checker only lets these and the forms above reach here.
+            crate::ast::ExprKind::Path(path) => {
+                let crate::ast::ExprKind::Variable(name) = &path.base.kind else {
+                    unreachable!("type checker allows only variable-based index paths")
+                };
+                let base_ty = function
+                    .locals
+                    .get(name)
+                    .or_else(|| {
+                        function
+                            .params
+                            .iter()
+                            .find(|param| &param.name == name)
+                            .map(|param| &param.ty)
+                    })
+                    .cloned()
+                    .unwrap_or(Type::Void);
+                let mut current = base_ty.clone();
+                let mut segment_types = Vec::new();
+                for _ in &path.segments {
+                    current = match current {
+                        Type::Array(inner) | Type::Dict(inner) => *inner,
+                        other => other,
+                    };
+                    segment_types.push(current.clone());
+                }
+                IrExpr {
+                    ty: current.clone(),
+                    ref_kind: RefKind::Unknown,
+                    kind: IrExprKind::Path(IrPathExpr {
+                        base: Box::new(IrExpr {
+                            ty: base_ty,
+                            ref_kind: RefKind::Unknown,
+                            kind: IrExprKind::Variable(name.clone()),
+                        }),
+                        segments: path.segments.clone(),
+                        segment_types,
+                        ty: current,
+                    }),
+                }
+            }
+            _ => unreachable!("type checker rejects index expressions it can't lower"),
         }
     }
 
@@ -8386,9 +8424,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                         single("cos", &value)
                     ),
                     "pow" => format!("{{type:\"pow\",base:{},exponent:{}}}", value, args[0]),
-                    "min" | "max" => many(method, &[&value, &args[0]]),
                     "hypot" => many("length", &[&value, &args[0]]),
-                    "clamp" => many("min", &[&many("max", &[&value, &args[0]]), &args[1]]),
                     _ => single(method, &value),
                 }
             }

@@ -1,0 +1,26 @@
+// Tick counts as clock text, for countdowns, bossbars and round timers.
+
+// `ticks` as "m:ss", or "h:mm:ss" from one hour up, in whole seconds rounded
+// down: 1300 ticks is "1:05". Negative ticks count as 0.
+public String formatTicks(int ticks) {
+    var seconds = 0;
+    if (ticks > 0) {
+        seconds = ticks / 20;
+    }
+    var minutes = seconds / 60;
+    var clock = padLeft(seconds % 60, 2);
+    if (minutes < 60) {
+        return minutes + ":" + clock;
+    }
+    return (minutes / 60) + ":" + padLeft(minutes % 60, 2) + ":" + clock;
+}
+
+// `value` with zeros in front up to `width` characters: padLeft(5, 2) is "05".
+// Wider values are left as they are.
+public String padLeft(int value, int width) {
+    var text = value.toString();
+    while (text.length() < width) {
+        text = "0" + text;
+    }
+    return text;
+}

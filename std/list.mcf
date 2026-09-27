@@ -32,3 +32,46 @@ public <T> T max(List<T> xs) {
     }
     return best;
 }
+
+// `sortBy` and `top` order any list by a parallel list of int keys, where
+// `keys[i]` belongs to `items[i]`, such as player names and their scores.
+// ponytail: insertion sort, O(n²) commands; fine for player-sized lists.
+
+// `items` ordered by `keys`, smallest first. Equal keys keep their order.
+public <T> List<T> sortBy(List<T> items, List<Integer> keys) {
+    List<Integer> order = List.of();
+    for (int i = 0; i < items.size(); i++) {
+        var j = order.size();
+        while (j > 0 && keys[order[j - 1]] > keys[i]) {
+            j = j - 1;
+        }
+        order.add(j, i);
+    }
+    return pick(items, order);
+}
+
+// The `n` items with the largest keys, largest first. Equal keys keep their order.
+public <T> List<T> top(List<T> items, List<Integer> keys, int n) {
+    List<Integer> order = List.of();
+    for (int i = 0; i < items.size(); i++) {
+        var j = order.size();
+        while (j > 0 && keys[order[j - 1]] < keys[i]) {
+            j = j - 1;
+        }
+        if (j < n) {
+            order.add(j, i);
+            if (order.size() > n) {
+                order.removeLast();
+            }
+        }
+    }
+    return pick(items, order);
+}
+
+<T> List<T> pick(List<T> items, List<Integer> indexes) {
+    List<T> out = List.of();
+    for (var i : indexes) {
+        out.add(items[i]);
+    }
+    return out;
+}

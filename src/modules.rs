@@ -40,12 +40,15 @@ const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
     ("attribute.mcf", include_str!("../std/attribute.mcf")),
     ("color.mcf", include_str!("../std/color.mcf")),
+    ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("noise.mcf", include_str!("../std/noise.mcf")),
+    ("random.mcf", include_str!("../std/random.mcf")),
     ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
+    ("time.mcf", include_str!("../std/time.mcf")),
     ("vec.mcf", include_str!("../std/vec.mcf")),
 ];
 

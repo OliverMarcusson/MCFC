@@ -1,0 +1,4 @@
+say math 1.5f 9 2.5f 10 -1 7
+say sort bob, dee, ann, eve, cy top cy,eve,ann
+say time 1:05 0:00 1:06:40 007
+say random 5 15 1 0 1 1

@@ -1,0 +1,29 @@
+// Random helpers on top of the `random(min, max)` builtin.
+
+// `true` with chance `p`: 0.25 is true about one time in four.
+public boolean chance(float p) {
+    return random(0, 999999) < (int) (p * 1000000.0);
+}
+
+// A float from 0.0 up to, but not including, 1.0.
+public float nextFloat() {
+    return (float) random(0, 16777215) / 16777216.0;
+}
+
+// A random element of `xs`. An empty list gives the type's empty value, such as 0.
+public <T> T pick(List<T> xs) {
+    var i = random(0, xs.size() - 1);
+    return xs[i];
+}
+
+// A shuffled copy of `xs`; every order is equally likely.
+public <T> List<T> shuffle(List<T> xs) {
+    var out = xs;
+    for (int i = out.size() - 1; i > 0; i--) {
+        var j = random(0, i);
+        var swap = out[i];
+        out.set(i, out[j]);
+        out.set(j, swap);
+    }
+    return out;
+}

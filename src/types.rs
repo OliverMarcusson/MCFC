@@ -450,22 +450,89 @@ fn substitute(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
     }
 }
 
+/// Index expressions the backend can paste into a storage path: literals,
+/// variables, arithmetic, calls, and variables indexed further (`keys[order[i]]`).
+/// Anything else, such as `xs[ys.size() - 1]`, needs a variable first.
+fn is_simple_index(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Int(_) | ExprKind::String(_) | ExprKind::Bool(_) | ExprKind::Variable(_) => true,
+        ExprKind::Unary { expr, .. } => is_simple_index(expr),
+        ExprKind::Binary { left, right, .. } => is_simple_index(left) && is_simple_index(right),
+        ExprKind::Call { args, .. } => args.iter().all(is_simple_index),
+        ExprKind::Path(path) => matches!(path.base.kind, ExprKind::Variable(_))
+            && path.segments.iter().all(
+                |segment| matches!(segment, PathSegment::Index(index) if is_simple_index(index)),
+            ),
+        _ => false,
+    }
+}
+
+/// Replace type parameters in the local declarations of one generic copy,
+/// so `List<T> out = List.of();` gets the copy's element type.
+fn substitute_body(body: &mut [Stmt], bindings: &BTreeMap<String, Type>) {
+    for stmt in body {
+        match &mut stmt.kind {
+            StmtKind::Let { ty: Some(ty), .. } => *ty = substitute(ty, bindings),
+            StmtKind::For { ty, body, .. } => {
+                if let Some(ty) = ty {
+                    *ty = substitute(ty, bindings);
+                }
+                substitute_body(body, bindings);
+            }
+            StmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                substitute_body(then_body, bindings);
+                substitute_body(else_body, bindings);
+            }
+            StmtKind::While { body, step, .. } => {
+                substitute_body(body, bindings);
+                substitute_body(step, bindings);
+            }
+            StmtKind::Switch {
+                arms, default_body, ..
+            } => {
+                for arm in arms {
+                    substitute_body(&mut arm.body, bindings);
+                }
+                substitute_body(default_body, bindings);
+            }
+            StmtKind::Block(body) | StmtKind::Context { body, .. } | StmtKind::Async { body } => {
+                substitute_body(body, bindings)
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Bind the type parameters in `param` by matching it against `arg`.
-/// Returns false on a mismatch with an earlier binding.
+/// Returns false on a mismatch with an earlier binding. A bare `T` mixing
+/// `int` and `float` becomes `float`, so `math.min(1.5, 2)` is `1.5`.
 fn bind_type_params(
     param: &Type,
     arg: &Type,
     type_params: &[String],
     bindings: &mut BTreeMap<String, Type>,
+    widen: bool,
 ) -> bool {
     match (param, arg) {
         (Type::Struct(name), _) if type_params.contains(name) => {
-            bindings.entry(name.clone()).or_insert_with(|| arg.clone()) == arg
+            let bound = bindings.entry(name.clone()).or_insert_with(|| arg.clone());
+            match (&*bound, arg) {
+                (Type::Int, Type::Float) if widen => {
+                    *bound = Type::Float;
+                    true
+                }
+                (Type::Float, Type::Int) => widen,
+                _ => bound == arg,
+            }
         }
         (Type::Array(param), Type::Array(arg))
         | (Type::Dict(param), Type::Dict(arg))
         | (Type::Optional(param), Type::Optional(arg)) => {
-            bind_type_params(param, arg, type_params, bindings)
+            bind_type_params(param, arg, type_params, bindings, false)
         }
         _ => true,
     }
@@ -846,10 +913,10 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
         if !matches!(
             state.ty,
-            Type::Int | Type::Bool | Type::String | Type::Float | Type::Struct(_)
+            Type::Int | Type::Bool | Type::String | Type::Float | Type::Struct(_) | Type::Dict(_)
         ) {
             diagnostics.push(Diagnostic::new(
-                "state declarations support 'int', 'boolean', 'String', 'float', and records",
+                "state declarations support 'int', 'boolean', 'String', 'float', records and maps",
                 state.span.clone(),
             ));
         }
@@ -999,6 +1066,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 param.ty = substitute(&param.ty, &bindings);
             }
             instance.return_type = substitute(&generic.return_type, &bindings);
+            substitute_body(&mut instance.body, &bindings);
             signatures.insert(
                 name,
                 FunctionSignature {
@@ -1445,7 +1513,10 @@ fn type_check_block(
                                 value.ty,
                                 Type::Int | Type::Bool | Type::String | Type::Nbt | Type::TextDef
                             ) && !(typed_state_write
-                                && matches!(value.ty, Type::Float | Type::Struct(_)))
+                                && matches!(
+                                    value.ty,
+                                    Type::Float | Type::Struct(_) | Type::Dict(_)
+                                ))
                                 && !(is_player_slot_write && value.ty == Type::ItemDef)
                                 && !(is_equipment_item_write && value.ty == Type::ItemDef)
                             {
@@ -2858,7 +2929,13 @@ fn type_check_expr(
             } else {
                 let mut bindings = BTreeMap::new();
                 for (param, arg) in signature.params.iter().zip(&args) {
-                    if !bind_type_params(param, &arg.ty, &signature.type_params, &mut bindings) {
+                    if !bind_type_params(
+                        param,
+                        &arg.ty,
+                        &signature.type_params,
+                        &mut bindings,
+                        true,
+                    ) {
                         diagnostics.push(Diagnostic::new(
                             format!(
                                 "arguments for '{function}' give its type parameters different types"
@@ -2961,10 +3038,27 @@ fn type_check_path(
     let mut player_slot_namespace: Option<String> = None;
     for (index, segment) in segments.iter().enumerate() {
         let next_segment = segments.get(index + 1);
+        if let PathSegment::Index(index) = segment
+            && !is_simple_index(index)
+        {
+            diagnostics.push(Diagnostic::new(
+                "this index is too complex; store it in a variable first: 'var i = ...;'",
+                index.span.clone(),
+            ));
+        }
         if index > 0
             && is_entity_ref_type(&base.ty)
             && matches!(segments.first(), Some(PathSegment::Field(name)) if name == "state")
         {
+            // State paths are rendered once per owner, so only literal indexes fit.
+            if let PathSegment::Index(key) = segment
+                && !matches!(key.kind, ExprKind::Int(_) | ExprKind::String(_))
+            {
+                diagnostics.push(Diagnostic::new(
+                    "state can only be indexed by a literal; copy it to a variable, change that, and assign it back",
+                    key.span.clone(),
+                ));
+            }
             let declared_path = segments[1..=index]
                 .iter()
                 .map(|segment| match segment {
@@ -4897,13 +4991,10 @@ fn type_check_method_call(
                 receiver,
                 args,
                 expr,
-                signatures,
-                called_functions,
                 diagnostics,
             ));
         }
-        "sqrt" | "sin" | "cos" | "tan" | "abs" | "floor" | "ceil" | "round" | "trunc" | "pow"
-        | "min" | "max" | "hypot" | "clamp"
+        "sqrt" | "sin" | "cos" | "tan" | "floor" | "ceil" | "round" | "trunc" | "pow" | "hypot"
             if matches!(receiver.ty, Type::Float | Type::Int) =>
         {
             diagnostics.push(Diagnostic::new(
@@ -6992,20 +7083,17 @@ fn record_component(receiver: TypedExpr, field: &str, ty: Type) -> TypedExpr {
     }
 }
 
-/// `Math.f(x, ...)` with `x` as the receiver. Like Java, any `float` argument
-/// makes the call `float`; `abs`, `min`, `max` and `clamp` also work on `int`.
+/// `Math.f(x, ...)` with `x` as the receiver. Every `Math` function is `float`;
+/// `abs`, `min`, `max`, `clamp` and `sign` live in `std.math`.
 fn type_check_math_call(
     name: &str,
     receiver: TypedExpr,
     args: Vec<TypedExpr>,
     expr: &Expr,
-    signatures: &BTreeMap<String, FunctionSignature>,
-    called_functions: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) -> TypedExpr {
     let arity = match name {
-        "pow" | "min" | "max" | "hypot" => 1,
-        "clamp" => 2,
+        "pow" | "hypot" => 1,
         _ => 0,
     };
     if args.len() != arity {
@@ -7028,24 +7116,6 @@ fn type_check_math_call(
             expr.span.clone(),
         ));
     }
-    let all_int = values.iter().all(|value| value.ty == Type::Int);
-    if all_int && matches!(name, "abs" | "min" | "max" | "clamp" | "signum") {
-        let std_name = if name == "signum" { "sign" } else { name };
-        let function = format!("std::math::{std_name}");
-        if signatures.contains_key(&function) {
-            called_functions.insert(function.clone());
-        }
-        let mut call_args = vec![receiver];
-        call_args.extend(args);
-        return TypedExpr {
-            kind: TypedExprKind::Call {
-                function,
-                args: call_args,
-            },
-            ty: Type::Int,
-            ref_kind: RefKind::Unknown,
-        };
-    }
     let receiver = coerce_expr_to_expected_type(receiver, &Type::Float);
     let args: Vec<_> = args
         .into_iter()
@@ -7061,32 +7131,6 @@ fn type_check_math_call(
             ty: Type::Int,
             ref_kind: RefKind::Unknown,
         },
-        "signum" => {
-            let zero = || TypedExpr {
-                kind: TypedExprKind::Float("0.0".to_string()),
-                ty: Type::Float,
-                ref_kind: RefKind::Unknown,
-            };
-            let float = |text: &str| TypedExpr {
-                kind: TypedExprKind::Float(text.to_string()),
-                ty: Type::Float,
-                ref_kind: RefKind::Unknown,
-            };
-            let compare = |op: BinaryOp| TypedExpr {
-                kind: TypedExprKind::Binary {
-                    op,
-                    left: Box::new(receiver.clone()),
-                    right: Box::new(zero()),
-                },
-                ty: Type::Bool,
-                ref_kind: RefKind::Unknown,
-            };
-            conditional_expr(
-                compare(BinaryOp::Gt),
-                float("1.0"),
-                conditional_expr(compare(BinaryOp::Lt), float("-1.0"), zero()),
-            )
-        }
         _ => method_call_expr(receiver, name, args, Type::Float),
     }
 }

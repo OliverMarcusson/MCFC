@@ -1,0 +1,60 @@
+// Functional interfaces, as in java.util.function. A lambda or method
+// reference becomes any of these: `Predicate<Integer> even = n -> n % 2 == 0;`.
+
+public interface Function<T, R> {
+    R apply(T value);
+}
+
+public interface BiFunction<T, U, R> {
+    R apply(T first, U second);
+}
+
+public interface UnaryOperator<T> {
+    T apply(T value);
+}
+
+public interface BinaryOperator<T> {
+    T apply(T first, T second);
+}
+
+public interface Predicate<T> {
+    boolean test(T value);
+
+    default Predicate<T> negate() {
+        return value -> !test(value);
+    }
+}
+
+public interface Consumer<T> {
+    void accept(T value);
+}
+
+public interface Supplier<T> {
+    T get();
+}
+
+// Negative when `first` goes before `second`, positive when after, 0 when equal.
+public interface Comparator<T> {
+    int compare(T first, T second);
+
+    // Orders by an int key, smallest first.
+    static <T> Comparator<T> comparing(Function<T, Integer> key) {
+        return (first, second) -> key.apply(first) - key.apply(second);
+    }
+
+    default Comparator<T> reversed() {
+        return (first, second) -> compare(second, first);
+    }
+
+    // Uses `next` where this one finds two values equal.
+    default Comparator<T> thenComparing(Comparator<T> next) {
+        return (first, second) -> {
+            int order = compare(first, second);
+            if (order != 0) {
+                return order;
+            }
+
+            return next.compare(first, second);
+        };
+    }
+}

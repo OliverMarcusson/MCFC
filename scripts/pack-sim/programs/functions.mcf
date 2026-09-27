@@ -1,0 +1,36 @@
+// std.function interfaces, Comparator combinators and the List methods
+// that take them: forEach, removeIf, replaceAll and sort.
+import std.function.*;
+
+record Fighter(String name, int kills, int deaths) {}
+
+void main() {
+    Predicate<Integer> even = number -> number % 2 == 0;
+    Predicate<Integer> odd = even.negate();
+    Function<Integer, String> label = number -> "#" + number;
+    Supplier<Integer> seven = () -> 7;
+    BinaryOperator<Integer> add = (first, second) -> first + second;
+    String basics = "basics " + even.test(4) + " " + odd.test(4) + " " + label.apply(3) + " " + seven.get() + " " + add.apply(2, 3);
+    mcf("say $(basics)");
+
+    Comparator<Fighter> byKills = Comparator.comparing(Fighter::kills);
+    Comparator<Fighter> order = byKills.reversed().thenComparing(Comparator.comparing(Fighter::deaths));
+    Fighter alex = new Fighter("alex", 3, 1);
+    Fighter sam = new Fighter("sam", 5, 2);
+    Fighter kim = new Fighter("kim", 3, 0);
+    String compared = "compared " + order.compare(alex, sam) + " " + order.compare(alex, kim);
+    mcf("say $(compared)");
+
+    List<Integer> numbers = List.of(5, 2, 8, 1, 4);
+    numbers.removeIf(number -> number > 6);
+    numbers.replaceAll(number -> number * 10);
+    numbers.sort((first, second) -> second - first);
+    numbers.forEach(number -> mcf("say each $(number)"));
+    List<Fighter> fighters = List.of(alex, sam, kim);
+    fighters.sort(order);
+    String names = "";
+    for (Fighter fighter : fighters) {
+        names = names + fighter.name() + " ";
+    }
+    mcf("say sorted $(numbers) $(names)");
+}

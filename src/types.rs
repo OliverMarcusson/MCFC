@@ -3853,6 +3853,74 @@ fn type_check_block(
                 typed.extend(lowered);
                 continue;
             }
+            // `xs.removeIf(p);` is `xs = std::list::removeIf(xs, p);`, since lists
+            // are values; `xs.forEach(f);` is `std::list::forEach(xs, f);`.
+            StmtKind::Expr(Expr {
+                kind:
+                    ExprKind::MethodCall {
+                        receiver,
+                        method,
+                        args,
+                    },
+                ..
+            }) if matches!(
+                method.as_str(),
+                "forEach" | "removeIf" | "replaceAll" | "sort"
+            ) && args.len() == 1
+                && matches!(receiver.kind, ExprKind::Variable(_) | ExprKind::Path(_))
+                && matches!(
+                    type_check_expr(
+                        receiver,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        &mut BTreeSet::new(),
+                        &mut Diagnostics::new(),
+                    )
+                    .ty,
+                    Type::Array(_)
+                ) =>
+            {
+                let helper = if method == "sort" { "sortWith" } else { method };
+                let call = Expr {
+                    kind: ExprKind::Call {
+                        function: format!("std::list::{helper}"),
+                        args: vec![(**receiver).clone(), args[0].clone()],
+                    },
+                    span: statement.span.clone(),
+                };
+                let kind = match (&receiver.kind, method.as_str()) {
+                    (_, "forEach") => StmtKind::Expr(call),
+                    (ExprKind::Variable(name), _) => StmtKind::Assign {
+                        target: AssignTarget::Variable(name.clone()),
+                        value: call,
+                    },
+                    (ExprKind::Path(path), _) => StmtKind::Assign {
+                        target: AssignTarget::Path(path.clone()),
+                        value: call,
+                    },
+                    _ => unreachable!("the receiver is a variable or path"),
+                };
+                typed.extend(type_check_block(
+                    &[Stmt {
+                        kind,
+                        span: statement.span.clone(),
+                    }],
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    in_async,
+                    host,
+                    diagnostics,
+                ));
+                continue;
+            }
             // `xs.set(i, v);` and `m.put(k, v);` are `xs[i] = v;` and `m[k] = v;`.
             StmtKind::Expr(Expr {
                 kind:
@@ -5142,7 +5210,8 @@ fn type_check_expr(
                                 ),
                                 expr.span.clone(),
                             ));
-                            types.push(Type::Void);
+                            // A copy for the unknown type would only add errors.
+                            return void_expr();
                         }
                     }
                 }

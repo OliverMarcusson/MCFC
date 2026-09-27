@@ -2,6 +2,8 @@
 // supports the operators the helper uses: `+` for `sum`, `<` and `>` for
 // `min` and `max`. That means `int` and `float`.
 
+import std.function.*;
+
 // Sum of all elements. An empty array gives 0.
 public <T> T sum(List<T> xs) {
     var total = xs[0];
@@ -74,4 +76,49 @@ public <T> List<T> top(List<T> items, List<Integer> keys, int n) {
         out.add(items[i]);
     }
     return out;
+}
+
+// What `xs.forEach(f)`, `xs.removeIf(p)`, `xs.replaceAll(f)` and
+// `xs.sort(order)` call. Lists are values, so the ones that change the list
+// return the new list, and the compiler assigns it back.
+
+<T> void forEach(List<T> values, Consumer<T> action) {
+    for (T value : values) {
+        action.accept(value);
+    }
+}
+
+<T> List<T> removeIf(List<T> values, Predicate<T> filter) {
+    List<T> kept = List.of();
+    for (T value : values) {
+        if (!filter.test(value)) {
+            kept.add(value);
+        }
+    }
+
+    return kept;
+}
+
+<T> List<T> replaceAll(List<T> values, UnaryOperator<T> operator) {
+    List<T> replaced = List.of();
+    for (T value : values) {
+        replaced.add(operator.apply(value));
+    }
+
+    return replaced;
+}
+
+// ponytail: insertion sort, O(n²) compare calls; fine for player-sized lists.
+// Equal values keep their order.
+<T> List<T> sortWith(List<T> values, Comparator<T> order) {
+    List<T> sorted = List.of();
+    for (T value : values) {
+        int index = sorted.size();
+        while (index > 0 && order.compare(sorted[index - 1], value) > 0) {
+            index = index - 1;
+        }
+        sorted.add(index, value);
+    }
+
+    return sorted;
 }

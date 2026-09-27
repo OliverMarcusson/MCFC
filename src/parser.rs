@@ -2246,6 +2246,25 @@ impl Parser {
         let saved = std::mem::replace(&mut self.in_case_label, false);
         let (body, expression) = if self.at(&TokenKind::LeftBrace) {
             (self.parse_block("lambda body"), false)
+        } else if let TokenKind::Identifier(word) = self.peek().kind.clone()
+            && (word == "mc" || word == "mcf")
+            && matches!(self.peek_at(1), TokenKind::LeftParen)
+        {
+            // `x -> mcf("say $(x)")` runs the command.
+            let start = self.current_span();
+            self.bump();
+            self.bump();
+            let command = self.expect_string(&format!("{word}(...) takes a string literal"));
+            self.expect(
+                TokenKind::RightParen,
+                &format!("expected ')' after {word}(...)"),
+            );
+            let kind = if word == "mc" {
+                StmtKind::RawCommand(command)
+            } else {
+                StmtKind::MacroCommand(command)
+            };
+            (vec![Stmt { kind, span: start }], false)
         } else {
             // An expression, or an assignment such as `() -> count += 1`.
             let start = self.current_span();

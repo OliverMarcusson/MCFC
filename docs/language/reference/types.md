@@ -132,8 +132,12 @@ void main() {
 | `contains(v)`, `indexOf(v)` | `boolean`, and the index of `v` or `-1` |
 | `add(v)`, `add(i, v)`, `removeLast()`, `remove(i)`, `clear()` | Change the list. `removeLast` and `remove` return the removed element. |
 | `reverse()`, `sort()` | In place. `sort` works on `List<Integer>` and `List<Float>`, smallest first. |
+| `forEach(f)` | Calls `f` with each element. |
+| `removeIf(p)`, `replaceAll(f)`, `sort(order)` | Change the list with a [lambda](./statements#lambdas-and-method-references): drop the elements `p` accepts, replace each with `f(v)`, or sort with a [`Comparator`](./std#std-function). |
 
 `List.of()` with no elements needs a declared type: `List<Integer> xs = List.of();`. Methods that change the list need a variable or element (`teams["red"]`), not a function result.
+
+`sort(order)` is an insertion sort, about `n²` calls of `order` for `n` elements, fine for a server's players. `removeIf` returns nothing, unlike Java.
 
 `contains`, `indexOf` and `reverse` loop over every element. `sort` is a merge sort that does at most 1,000 steps per tick. Small lists finish immediately. Larger ones [pause](./statements#functions-that-pause) the function: 5,000 elements take about 3 seconds.
 

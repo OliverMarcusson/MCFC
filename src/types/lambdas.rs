@@ -72,6 +72,25 @@ pub(super) fn infer_type_params(
         return;
     };
     let own: BTreeMap<String, Type> = own.into_iter().zip(args.iter().cloned()).collect();
+    // `comparing(Player::kills)`: the object the method is called on is a `Player`.
+    if let ExprKind::MethodRef { target, method } = &expr.kind
+        && method != "new"
+        && !env.contains_key(target.as_str())
+        && struct_defs.contains_key(target.as_str())
+        && signatures
+            .get(&format!("{target}__{method}"))
+            .is_none_or(|signature| signature.instance)
+        && let Some(first) = method_params.first()
+    {
+        let mut receiver = Type::Struct(target.clone());
+        resolve_enum_type(&mut receiver, struct_defs);
+        let first = crate::generics::substitute_plain(first, &own);
+        bind_type_params(&first, &receiver, type_params, bindings, false);
+    }
+    let own: BTreeMap<String, Type> = own
+        .into_iter()
+        .map(|(name, ty)| (name, crate::generics::substitute_plain(&ty, bindings)))
+        .collect();
     let Some(lambda_params) = method_params
         .iter()
         .map(|ty| {

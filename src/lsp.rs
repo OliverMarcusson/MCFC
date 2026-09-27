@@ -3280,6 +3280,26 @@ fn array_method_items() -> Vec<CompletionItem> {
         ),
         ("reverse", "List<T>.reverse() -> void", "reverse()"),
         ("sort", "List<Integer>.sort() -> void", "sort()"),
+        (
+            "sort",
+            "List<T>.sort(order: Comparator<T>) -> void",
+            "sort(${1:order})",
+        ),
+        (
+            "forEach",
+            "List<T>.forEach(action: Consumer<T>) -> void",
+            "forEach(${1:value} -> ${2})",
+        ),
+        (
+            "removeIf",
+            "List<T>.removeIf(filter: Predicate<T>) -> void",
+            "removeIf(${1:value} -> ${2})",
+        ),
+        (
+            "replaceAll",
+            "List<T>.replaceAll(operator: UnaryOperator<T>) -> void",
+            "replaceAll(${1:value} -> ${2})",
+        ),
     ]
     .into_iter()
     .map(|(label, detail, insert_text)| {

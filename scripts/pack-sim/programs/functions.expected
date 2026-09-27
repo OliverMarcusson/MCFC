@@ -1,0 +1,7 @@
+say basics true false #3 7 5
+say compared 2 1
+say each 50
+say each 40
+say each 20
+say each 10
+say sorted [50,40,20,10] sam kim alex

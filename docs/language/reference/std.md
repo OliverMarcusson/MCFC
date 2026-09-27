@@ -66,6 +66,40 @@ void leaderboard(List<String> names, List<Integer> kills) {
 
 Both cost about `n²` commands for `n` items, fine for a server's players. To sort plain numbers, use the built-in [`xs.sort()`](./types#list) method.
 
+## `std.function`
+
+The functional interfaces of `java.util.function`, for [lambdas](./statements#lambdas-and-method-references):
+
+```mcfc
+import std.function.*;
+
+record Fighter(String name, int kills, int deaths) {}
+
+void main() {
+    Predicate<Integer> even = number -> number % 2 == 0;
+    Comparator<Fighter> ranking = Comparator.comparing(Fighter::kills).reversed()
+        .thenComparing(Comparator.comparing(Fighter::deaths));
+    List<Fighter> fighters = List.of(new Fighter("alex", 3, 1), new Fighter("sam", 5, 2));
+    fighters.sort(ranking);
+    fighters.removeIf(fighter -> even.test(fighter.kills()));
+}
+```
+
+| Interface | Method |
+| --- | --- |
+| `Function<T, R>` | `R apply(T value)` |
+| `BiFunction<T, U, R>` | `R apply(T first, U second)` |
+| `UnaryOperator<T>` | `T apply(T value)` |
+| `BinaryOperator<T>` | `T apply(T first, T second)` |
+| `Predicate<T>` | `boolean test(T value)`, and `negate()` |
+| `Consumer<T>` | `void accept(T value)` |
+| `Supplier<T>` | `T get()` |
+| `Comparator<T>` | `int compare(T first, T second)`: negative when `first` goes first |
+
+`Comparator.comparing(key)` orders by an `int` key, smallest first. `order.reversed()` flips an order, and `order.thenComparing(next)` uses `next` where `order` finds two values equal.
+
+Unlike Java, `UnaryOperator` isn't a `Function`, so one can't be passed where the other is wanted.
+
 ## `std.cooldown`
 
 Per-player cooldowns, each with a name, so one player can have several.

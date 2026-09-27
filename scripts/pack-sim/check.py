@@ -43,6 +43,7 @@ BUDGET = {
     "nested": 79,
     "objects": 339,
     "classes": 899,
+    "inherit": 1179,
     "gc": 12272,
     "vectors": 380,
     "worldindex": 66,

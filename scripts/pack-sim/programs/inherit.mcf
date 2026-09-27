@@ -1,0 +1,141 @@
+// Inheritance: extends, super, abstract methods, interfaces with default
+// methods, virtual calls, instanceof, casts and switches on types.
+interface Named {
+    String name();
+
+    default String greet() {
+        return "hi " + name();
+    }
+}
+
+sealed abstract class Animal implements Named permits Dog, Cat, Puppy {
+    int legs;
+    int sound = 1;
+
+    Animal(int legs) {
+        this.legs = legs;
+    }
+
+    abstract int speed();
+
+    int weight() {
+        return legs * 10;
+    }
+
+    public String toString() {
+        return name() + "/" + legs;
+    }
+}
+
+class Dog extends Animal {
+    int tricks;
+
+    Dog(int tricks) {
+        super(4);
+        this.tricks = tricks;
+    }
+
+    int speed() {
+        return 30 + tricks;
+    }
+
+    public String name() {
+        return "dog";
+    }
+}
+
+final class Puppy extends Dog {
+    Puppy() {
+        super(1);
+        sound = 2;
+    }
+
+    @Override
+    int speed() {
+        return super.speed() / 2;
+    }
+
+    @Override
+    public String name() {
+        return "puppy";
+    }
+
+    @Override
+    public String greet() {
+        return "yip";
+    }
+}
+
+final class Cat extends Animal {
+    Cat() {
+        super(4);
+    }
+
+    int speed() {
+        return 48;
+    }
+
+    @Override
+    int weight() {
+        return 5;
+    }
+
+    public String name() {
+        return "cat";
+    }
+}
+
+int total(List<Animal> animals) {
+    int sum = 0;
+    for (Animal animal : animals) {
+        sum += animal.speed();
+    }
+
+    return sum;
+}
+
+String describe(Animal animal) {
+    return switch (animal) {
+        case Puppy puppy -> "small " + puppy.tricks;
+        case Dog dog -> "dog " + dog.tricks;
+        case Cat cat -> "cat " + cat.weight();
+    };
+}
+
+void main() {
+    Dog dog = new Dog(2);
+    Animal cat = new Cat();
+    Animal puppy = new Puppy();
+    List<Animal> animals = List.of();
+    animals.add(dog);
+    animals.add(cat);
+    animals.add(puppy);
+
+    String speeds = "speeds " + dog.speed() + " " + cat.speed() + " " + puppy.speed() + " total " + total(animals);
+    mcf("say $(speeds)");
+
+    String weights = "weights " + dog.weight() + " " + cat.weight() + " " + puppy.weight() + " sound " + puppy.sound;
+    mcf("say $(weights)");
+
+    Named named = cat;
+    String greetings = named.greet() + " " + puppy.greet() + " " + dog.greet() + " " + puppy;
+    mcf("say $(greetings)");
+
+    boolean dogIsAnimal = dog instanceof Animal;
+    boolean catIsDog = cat instanceof Dog;
+    boolean puppyIsDog = puppy instanceof Dog;
+    Animal nothing = null;
+    String checks = "checks " + dogIsAnimal + " " + catIsDog + " " + puppyIsDog + " " + (nothing instanceof Animal);
+    mcf("say $(checks)");
+
+    int found = 0;
+    for (Animal animal : animals) {
+        if (animal instanceof Dog someDog && someDog.tricks > 0) {
+            found += someDog.tricks;
+        }
+    }
+
+    Dog back = (Dog) puppy;
+    String patterns = "patterns " + found + " " + back.tricks + " " + describe(puppy) + ", " + describe(dog) + ", " + describe(cat);
+    mcf("say $(patterns)");
+}

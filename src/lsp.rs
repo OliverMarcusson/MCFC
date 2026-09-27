@@ -1210,6 +1210,13 @@ const KEYWORD_IDENTIFIERS: &[&str] = &[
     "this",
     "null",
     "instanceof",
+    "interface",
+    "abstract",
+    "extends",
+    "implements",
+    "sealed",
+    "permits",
+    "super",
 ];
 
 /// Classifies every identifier in the open file the way the Java language
@@ -4909,11 +4916,28 @@ fn method_items(analysis: &AnalysisResult, owner: &str) -> Vec<CompletionItem> {
                 .collect()
         })
         .unwrap_or_default();
-    let prefix = format!("{owner}__");
-    for (function, signature) in &program.function_signatures {
-        let Some(rest) = function.strip_prefix(&prefix) else {
-            continue;
-        };
+    // Inherited methods too, nearest class first.
+    let owners: Vec<String> = std::iter::once(owner.to_string())
+        .chain(
+            program
+                .struct_defs
+                .get(owner)
+                .and_then(|def| def.class.as_ref())
+                .map(|info| info.supertypes.clone())
+                .unwrap_or_default(),
+        )
+        .collect();
+    let members = owners.iter().flat_map(|owner| {
+        let prefix = format!("{owner}__");
+        program
+            .function_signatures
+            .iter()
+            .filter_map(move |(function, signature)| {
+                Some((function.strip_prefix(&prefix)?.to_string(), signature))
+            })
+    });
+    for (rest, signature) in members {
+        let rest = rest.as_str();
         // Field getters and setters the compiler writes for classes.
         if !signature.instance || rest.starts_with("mcfc") {
             continue;
@@ -5732,8 +5756,14 @@ class Counter {
     }
 }
 
+class Tally extends Counter {
+    void reset() {
+        count = 0;
+    }
+}
+
 void main() {
-    Counter counter = new Counter();
+    Tally counter = new Tally();
     counter.add(1);
 }
 "#;
@@ -5751,6 +5781,7 @@ void main() {
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert!(labels.contains(&"count"), "{labels:?}");
         assert!(labels.contains(&"add"), "{labels:?}");
+        assert!(labels.contains(&"reset"), "{labels:?}");
         assert!(
             !labels.iter().any(|label| label.starts_with("mcfc")),
             "{labels:?}"

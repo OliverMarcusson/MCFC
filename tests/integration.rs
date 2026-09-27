@@ -4882,3 +4882,63 @@ fn same_named_classes_in_two_modules_keep_separate_statics() {
     assert!(text.contains("red_Team__score"), "red static missing");
     assert!(text.contains("blue_Team__score"), "blue static missing");
 }
+
+#[test]
+fn class_hierarchies_are_checked() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let shapes = "sealed interface Shape permits Circle, Square { int area(); }
+final class Circle implements Shape { public int area() { return 3; } }
+final class Square implements Shape { public int area() { return 4; } }
+";
+    let rejected = [
+        (
+            "abstract class A {}\nvoid main() { A a = new A(); }\n",
+            "'A' is abstract",
+        ),
+        (
+            "interface I { int f(); }\nclass C implements I {}\nvoid main() {}\n",
+            "'C' must implement 'f' from 'I'",
+        ),
+        (
+            "class C { @Override int f() { return 1; } }\nvoid main() {}\n",
+            "'f' doesn't override",
+        ),
+        (
+            "final class A {}\nclass B extends A {}\nvoid main() {}\n",
+            "'A' is final",
+        ),
+        (
+            "sealed class A permits B {}\nclass B extends A {}\nclass C extends A {}\nvoid main() {}\n",
+            "'A' is sealed and doesn't permit 'C'",
+        ),
+        (
+            "interface I { int f() { return 1; } }\nvoid main() {}\n",
+            "must be 'default', 'static' or 'private'",
+        ),
+        (
+            "class A { int f() { return 1; } }\nclass B extends A { boolean f() { return true; } }\nvoid main() {}\n",
+            "'f' returns 'boolean'",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(source).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    let missing = compile(&format!(
+        "{shapes}int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> 1; }}; }}\nvoid main() {{}}\n"
+    ))
+    .expect_err("a switch missing a class should be rejected");
+    assert!(missing.contains("doesn't cover 'Square'"), "{missing}");
+    compile(&format!(
+        "{shapes}int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> circle.area(); case Square square -> 2; }}; }}\nvoid main() {{ int n = size(new Circle()); }}\n"
+    ))
+    .expect("a switch covering every class needs no default");
+}

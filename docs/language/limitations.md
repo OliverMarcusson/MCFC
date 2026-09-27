@@ -6,7 +6,8 @@ What MCFC doesn't do yet, with workarounds where there are any.
 
 - **Recursive functions can't pause.** A function that calls itself, directly or indirectly, can't `sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
 - **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans, enums and records to text. Other conversions need a cast or `toString()`.
-- **Classes without inheritance.** Classes have fields, constructors, methods and static fields, but there is no `extends`, interface or abstract class yet.
+- **Unchecked casts.** `(Dog) animal` doesn't check the object's class while the pack runs, and there is no `ClassCastException`. Test with `instanceof` first.
+- **Records don't implement interfaces**, and generic methods aren't virtual.
 - **Lists and maps are values.** Assigning or passing a `List` or `Map` copies it, unlike Java, where both names would see the same list. This is on purpose: a copy is one storage command, while a shared list would make every element read and write a macro call through the object heap. Class objects are shared, so wrap a list in a class when several places must see one list.
 - **No generic records.** Generic type parameters work on functions and methods, but record declarations are not generic.
 - **Enum constructors** can only assign parameters to fields (`this.mass = mass;`), and fields are `final`.

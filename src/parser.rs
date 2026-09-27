@@ -97,6 +97,14 @@ struct Annotation {
     span: Span,
 }
 
+/// Modifiers written before `class` or `interface`.
+#[derive(Default)]
+struct ClassModifiers {
+    is_abstract: bool,
+    is_final: bool,
+    is_sealed: bool,
+}
+
 enum TypeMember {
     Method(Function),
     Field(ClassField),
@@ -111,6 +119,8 @@ struct Parser {
     diagnostics: Diagnostics,
     /// `final` locals and parameters, one list per open block.
     final_scopes: Vec<Vec<String>>,
+    /// Set while parsing a class (`Some(false)`) or interface (`Some(true)`) body.
+    class_body: Option<bool>,
 }
 
 impl Parser {
@@ -120,6 +130,7 @@ impl Parser {
             index: 0,
             diagnostics: Diagnostics::new(),
             final_scopes: Vec::new(),
+            class_body: None,
         }
     }
 
@@ -149,9 +160,9 @@ impl Parser {
                 program
                     .structs
                     .push(self.parse_record(is_pub, &mut program.functions));
-            } else if self.at_word("class") {
+            } else if let Some(modifiers) = self.class_modifiers() {
                 self.reject_annotations(&annotations, "a class");
-                let class = self.parse_class(is_pub, &mut program);
+                let class = self.parse_class(is_pub, modifiers, &mut program);
                 program.classes.push(class);
             } else if self.at_word("enum") {
                 self.reject_annotations(&annotations, "an enum");
@@ -400,24 +411,110 @@ impl Parser {
         (function.params, assigned)
     }
 
-    /// `class Name { fields, constructors, methods }`. Each constructor becomes a
-    /// static factory `Name__new` that allocates the object, runs the field
-    /// initializers and then the constructor body. Each instance field gets a
-    /// getter for accesses on something other than a variable.
-    fn parse_class(&mut self, is_pub: bool, program: &mut Program) -> ClassDef {
-        let functions = &mut program.functions;
+    /// `abstract`, `final`, `sealed` and `non-sealed` before `class` or
+    /// `interface`; `None`, with nothing consumed, when no class starts here.
+    fn class_modifiers(&mut self) -> Option<ClassModifiers> {
+        let start = self.index;
+        let mut modifiers = ClassModifiers::default();
+        loop {
+            if self.eat_word("abstract") {
+                modifiers.is_abstract = true;
+            } else if self.eat_word("final") {
+                modifiers.is_final = true;
+            } else if self.eat_word("sealed") {
+                modifiers.is_sealed = true;
+            } else if self.at_word("non")
+                && matches!(self.peek_at(1), TokenKind::Minus)
+                && matches!(self.peek_at(2), TokenKind::Identifier(word) if word == "sealed")
+            {
+                // `non-sealed` only reopens a sealed parent, which is the default.
+                self.bump();
+                self.bump();
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        if self.at_word("class") || self.at_word("interface") {
+            return Some(modifiers);
+        }
+        self.index = start;
+        None
+    }
+
+    /// `A, B` after `implements`, `extends` (interfaces) or `permits`.
+    fn parse_type_names(&mut self) -> Vec<String> {
+        let mut names = Vec::new();
+        loop {
+            match self.parse_type() {
+                Type::Struct(name) => names.push(name),
+                _ => self.error_here("expected a class or interface name"),
+            }
+            if !self.eat(&TokenKind::Comma) {
+                return names;
+            }
+        }
+    }
+
+    /// `class Name extends Parent implements A { members }`, or an interface.
+    ///
+    /// Each constructor becomes `Name__mcfcInit(this, ...)`, which runs the
+    /// parent's constructor (`super(...)`), the field initializers and then
+    /// the body, and a factory `Name__new(...)` that allocates the object and
+    /// calls it. Abstract classes and interfaces get no factory. Each instance
+    /// field gets a getter for accesses on something other than a variable.
+    fn parse_class(
+        &mut self,
+        is_pub: bool,
+        modifiers: ClassModifiers,
+        program: &mut Program,
+    ) -> ClassDef {
+        let is_interface = self.at_word("interface");
         self.bump();
         let span = self.current_span();
         let name = self.expect_identifier("expected class name");
+        let mut parent = None;
+        let mut interfaces = Vec::new();
+        if self.eat_word("extends") {
+            if is_interface {
+                interfaces = self.parse_type_names();
+            } else if let Type::Struct(name) = self.parse_type() {
+                parent = Some(name);
+            } else {
+                self.error_here("expected a class name after 'extends'");
+            }
+        }
+        if !is_interface && self.eat_word("implements") {
+            interfaces = self.parse_type_names();
+        }
+        let permits = self.eat_word("permits").then(|| self.parse_type_names());
+        if modifiers.is_sealed && permits.is_none() {
+            self.error_at(
+                "a sealed type lists what may extend it: 'permits A, B'",
+                span.clone(),
+            );
+        }
         self.expect(TokenKind::LeftBrace, "expected '{' after class name");
+        let saved_body = self.class_body.replace(is_interface);
         let mut fields: Vec<ClassField> = Vec::new();
         let mut constructors = Vec::new();
         while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
             let start = self.index;
             match self.parse_type_member(&name, is_pub) {
-                TypeMember::Method(function) => functions.push(function),
-                TypeMember::Field(field) => fields.push(field),
+                TypeMember::Method(function) => program.functions.push(function),
+                TypeMember::Field(mut field) => {
+                    // Interface fields are constants, like Java's.
+                    if is_interface {
+                        field.is_static = true;
+                        field.is_final = true;
+                        field.is_pub = true;
+                    }
+                    fields.push(field);
+                }
                 TypeMember::Constructor(function, ctor_pub) => {
+                    if is_interface {
+                        self.error_at("an interface has no constructor", function.span.clone());
+                    }
                     constructors.push((function, ctor_pub))
                 }
                 TypeMember::Skipped => {}
@@ -426,10 +523,8 @@ impl Parser {
                 self.recover_statement();
             }
         }
+        self.class_body = saved_body;
         self.expect(TokenKind::RightBrace, "expected '}' after class body");
-        if constructors.is_empty() {
-            constructors.push((self.synthetic_function(&name, "new", &span), true));
-        }
         let at = |kind: ExprKind| Expr {
             kind,
             span: span.clone(),
@@ -444,15 +539,32 @@ impl Parser {
                 segments: vec![PathSegment::Field(field.to_string())],
             })
         };
+        let this_param = |span: &Span| Param {
+            name: "this".to_string(),
+            ty: Type::Struct(name.clone()),
+            span: span.clone(),
+        };
+        if constructors.is_empty() && !is_interface {
+            constructors.push((self.synthetic_function(&name, "new", &span), true));
+        }
         for (ctor, ctor_pub) in constructors {
-            let mut body = vec![stmt(StmtKind::Let {
-                name: "this".to_string(),
-                ty: Some(Type::Struct(name.clone())),
-                value: at(ExprKind::Call {
-                    function: "__mcfc_alloc".to_string(),
+            let mut rest = ctor.body;
+            let starts_with_super = matches!(
+                rest.first().map(|stmt| &stmt.kind),
+                Some(StmtKind::Expr(Expr {
+                    kind: ExprKind::Call { function, .. },
+                    ..
+                })) if function == "super"
+            );
+            let mut body = Vec::new();
+            if starts_with_super {
+                body.push(rest.remove(0));
+            } else if parent.is_some() {
+                body.push(stmt(StmtKind::Expr(at(ExprKind::Call {
+                    function: "super".to_string(),
                     args: Vec::new(),
-                }),
-            })];
+                }))));
+            }
             for field in fields.iter().filter(|field| !field.is_static) {
                 body.push(stmt(StmtKind::Assign {
                     target: this_field(&field.name),
@@ -463,40 +575,65 @@ impl Parser {
                         .unwrap_or_else(|| at(ExprKind::Variable("__mcfc_default".to_string()))),
                 }));
             }
-            body.extend(ctor.body);
-            body.push(stmt(StmtKind::Return(Some(at(ExprKind::Variable(
-                "this".to_string(),
-            ))))));
-            functions.push(Function {
-                name: format!("{name}__new"),
-                is_pub: ctor_pub && is_pub,
-                type_params: Vec::new(),
-                params: ctor.params,
-                return_type: Type::Struct(name.clone()),
-                body,
-                span: ctor.span,
-                end: ctor.end,
-                owner: Some(name.clone()),
-                module: String::new(),
-            });
+            body.extend(rest);
+            let mut init = self.synthetic_function(&name, "mcfcInit", &ctor.span);
+            init.params = std::iter::once(this_param(&ctor.span))
+                .chain(ctor.params.iter().cloned())
+                .collect();
+            init.body = body;
+            init.is_pub = ctor_pub && is_pub;
+            init.end = ctor.end;
+            if !modifiers.is_abstract {
+                let mut args = vec![at(ExprKind::Variable("this".to_string()))];
+                args.extend(
+                    ctor.params
+                        .iter()
+                        .map(|param| at(ExprKind::Variable(param.name.clone()))),
+                );
+                let mut factory = self.synthetic_function(&name, "new", &ctor.span);
+                factory.params = ctor.params;
+                factory.return_type = Type::Struct(name.clone());
+                factory.is_pub = ctor_pub && is_pub;
+                factory.end = ctor.end;
+                factory.body = vec![stmt(StmtKind::Let {
+                    name: "this".to_string(),
+                    ty: Some(Type::Struct(name.clone())),
+                    value: at(ExprKind::Call {
+                        function: "__mcfc_alloc".to_string(),
+                        args: Vec::new(),
+                    }),
+                })];
+                // The init body is copied in, saving a call per `new`, unless
+                // a `return` in it would end the factory early.
+                if has_return(&init.body) {
+                    factory.body.push(stmt(StmtKind::Expr(at(ExprKind::Call {
+                        function: format!("{name}__mcfcInit"),
+                        args,
+                    }))));
+                } else {
+                    factory.body.extend(init.body.iter().cloned());
+                }
+                factory
+                    .body
+                    .push(stmt(StmtKind::Return(Some(at(ExprKind::Variable(
+                        "this".to_string(),
+                    ))))));
+                program.functions.push(factory);
+            }
+            program.functions.push(init);
         }
         for field in fields.iter().filter(|field| !field.is_static) {
-            let this = Param {
-                name: "this".to_string(),
-                ty: Type::Struct(name.clone()),
-                span: field.span.clone(),
-            };
             let read = at(ExprKind::Path(PathExpr {
                 base: Box::new(at(ExprKind::Variable("this".to_string()))),
                 segments: vec![PathSegment::Field(field.name.clone())],
             }));
             let mut getter =
                 self.synthetic_function(&name, &format!("mcfcGet_{}", field.name), &field.span);
-            getter.params = vec![this];
+            getter.params = vec![this_param(&field.span)];
             getter.return_type = field.ty.clone();
             getter.body = vec![stmt(StmtKind::Return(Some(read)))];
             getter.is_pub = field.is_pub && is_pub;
-            functions.push(getter);
+            program.functions.push(getter);
         }
         // Static fields are world state (see the type checker). `Name__clinit`,
         // run from the load tag, sets their initial values once per world.
@@ -539,6 +676,12 @@ impl Parser {
             name,
             is_pub,
             fields,
+            parent,
+            interfaces,
+            is_interface,
+            is_abstract: modifiers.is_abstract || is_interface,
+            is_final: modifiers.is_final,
+            permits,
             span,
         }
     }
@@ -555,6 +698,8 @@ impl Parser {
             end: 0,
             owner: Some(owner.to_string()),
             module: String::new(),
+            is_abstract: false,
+            is_override: false,
         }
     }
 
@@ -562,12 +707,21 @@ impl Parser {
     /// the constructor. Methods become top-level functions named `Type__method`.
     fn parse_type_member(&mut self, owner: &str, owner_is_pub: bool) -> TypeMember {
         let annotations = self.parse_annotations();
-        let is_pub = self.eat_word("public");
-        if !is_pub && !self.eat_word("private") {
+        let in_interface = self.class_body == Some(true);
+        let mut is_pub = self.eat_word("public");
+        let is_private = !is_pub && self.eat_word("private");
+        if !is_pub && !is_private {
             self.eat_word("protected");
         }
+        // Interface members are public unless marked private.
+        is_pub |= in_interface && !is_private;
+        let marked_abstract = self.eat_word("abstract");
+        let is_default = self.eat_word("default");
         let is_static = self.eat_word("static");
         let is_final = self.eat_word("final");
+        if is_default && !in_interface {
+            self.error_here("only interface methods can be 'default'");
+        }
         let span = self.current_span();
         // A constructor: `Planet(float mass) { this.mass = mass; }`.
         if self.at_word(owner) && matches!(self.peek_at(1), TokenKind::LeftParen) {
@@ -611,6 +765,20 @@ impl Parser {
         let mut function =
             self.parse_function_rest(format!("{owner}__{name}"), span.clone(), type_params, ty);
         function.owner = Some(owner.to_string());
+        if function.is_abstract && !(marked_abstract || in_interface && !is_default && !is_static) {
+            self.error_at("a method needs a body unless it is abstract", span.clone());
+        } else if !function.is_abstract && marked_abstract {
+            self.error_at(
+                "an abstract method has no body; end it with ';'",
+                span.clone(),
+            );
+        } else if in_interface && !function.is_abstract && !is_default && !is_static && !is_private
+        {
+            self.error_at(
+                "an interface method with a body must be 'default', 'static' or 'private'",
+                span.clone(),
+            );
+        }
         // Methods of a private type are only reachable where the type is.
         function.is_pub = is_pub && owner_is_pub;
         if !is_static {
@@ -633,6 +801,15 @@ impl Parser {
                     &format!("@{} can't be used on a method", annotation.name),
                     annotation.span.clone(),
                 );
+            } else if self.class_body.is_some() {
+                // The type checker checks that a class method overrides something.
+                function.is_override = true;
+                if is_static {
+                    self.error_at(
+                        "a static method doesn't override anything",
+                        annotation.span.clone(),
+                    );
+                }
             } else if is_static || !overridable {
                 self.error_at(
                     "method doesn't override anything; only 'toString()' and 'equals(other)' can be overridden",
@@ -664,6 +841,9 @@ impl Parser {
         let mut path = vec![self.expect_identifier("expected a name after the type")];
         if self.at(&TokenKind::LeftParen) {
             let mut function = self.parse_function_rest(path.remove(0), span, type_params, ty);
+            if function.is_abstract {
+                self.error_at("a function needs a body", function.span.clone());
+            }
             function.is_pub = is_pub;
             self.apply_function_annotations(&annotations, &mut function);
             program.functions.push(function);
@@ -758,8 +938,13 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RightParen, "expected ')' after parameters");
+        let is_abstract = self.eat(&TokenKind::Semicolon);
         self.final_scopes.push(finals);
-        let body = self.parse_block("function body");
+        let body = if is_abstract {
+            Vec::new()
+        } else {
+            self.parse_block("function body")
+        };
         self.final_scopes.pop();
         Function {
             name,
@@ -772,6 +957,8 @@ impl Parser {
             end: self.previous_end(),
             owner: None,
             module: String::new(),
+            is_abstract,
+            is_override: false,
         }
     }
 
@@ -1450,9 +1637,9 @@ impl Parser {
         while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
             let start = self.index;
             if self.eat_word("case") {
-                let mut patterns = vec![self.parse_expr()];
+                let mut patterns = vec![self.parse_case_pattern()];
                 while self.eat(&TokenKind::Comma) {
-                    patterns.push(self.parse_expr());
+                    patterns.push(self.parse_case_pattern());
                 }
                 self.expect_case_arrow();
                 let body = self.parse_body("case body");
@@ -1484,6 +1671,30 @@ impl Parser {
             arms,
             default_body: default_body.unwrap_or_default(),
         }
+    }
+
+    /// A `case` label: a constant, or a type pattern like `Circle c`, which is
+    /// an `instanceof` of an empty variable.
+    fn parse_case_pattern(&mut self) -> Expr {
+        if let (TokenKind::Identifier(_), TokenKind::Identifier(binding)) =
+            (self.peek().kind.clone(), self.peek_at(1).clone())
+        {
+            let span = self.current_span();
+            let ty = self.parse_type();
+            self.bump();
+            return Expr {
+                kind: ExprKind::InstanceOf {
+                    expr: Box::new(Expr {
+                        kind: ExprKind::Variable(String::new()),
+                        span: span.clone(),
+                    }),
+                    ty,
+                    binding: Some(binding),
+                },
+                span,
+            };
+        }
+        self.parse_expr()
     }
 
     fn expect_case_arrow(&mut self) {
@@ -1537,9 +1748,9 @@ impl Parser {
         while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
             let start = self.index;
             let patterns = if self.eat_word("case") {
-                let mut patterns = vec![self.parse_expr()];
+                let mut patterns = vec![self.parse_case_pattern()];
                 while self.eat(&TokenKind::Comma) {
-                    patterns.push(self.parse_expr());
+                    patterns.push(self.parse_case_pattern());
                 }
                 Some(patterns)
             } else if self.eat_word("default") {
@@ -1610,7 +1821,31 @@ impl Parser {
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
         let mut left = self.parse_prefix();
-        while let Some((op, left_bp, right_bp)) = self.infix_operator() {
+        loop {
+            // `x instanceof Circle c` binds like `<`.
+            if self.at_word("instanceof") && INSTANCEOF_BP >= min_bp {
+                let span = self.bump().span;
+                let ty = self.parse_type();
+                let binding = match self.peek().kind.clone() {
+                    TokenKind::Identifier(name) if name != "instanceof" => {
+                        self.bump();
+                        Some(name)
+                    }
+                    _ => None,
+                };
+                left = Expr {
+                    kind: ExprKind::InstanceOf {
+                        expr: Box::new(left),
+                        ty,
+                        binding,
+                    },
+                    span,
+                };
+                continue;
+            }
+            let Some((op, left_bp, right_bp)) = self.infix_operator() else {
+                break;
+            };
             if left_bp < min_bp {
                 break;
             }
@@ -1673,7 +1908,38 @@ impl Parser {
             let expr = self.parse_expr_bp(PREFIX_BP);
             return call(builtin, vec![expr], &span);
         }
+        if self.class_cast_at_cursor() {
+            let span = self.bump().span;
+            let ty = self.parse_type();
+            self.bump();
+            let expr = self.parse_expr_bp(PREFIX_BP);
+            return Expr {
+                kind: ExprKind::Cast {
+                    ty,
+                    expr: Box::new(expr),
+                },
+                span,
+            };
+        }
         self.parse_primary()
+    }
+
+    /// `(Circle) shape`: a capitalized type name in parentheses before an operand
+    /// that can't follow a parenthesized value, so `(X) - 1` stays arithmetic.
+    fn class_cast_at_cursor(&self) -> bool {
+        let TokenKind::LeftParen = self.peek().kind else {
+            return false;
+        };
+        let TokenKind::Identifier(name) = self.peek_at(1) else {
+            return false;
+        };
+        name.starts_with(|c: char| c.is_ascii_uppercase())
+            && !CASTS.iter().any(|(ty, _)| ty == name)
+            && matches!(self.peek_at(2), TokenKind::RightParen)
+            && matches!(
+                self.peek_at(3),
+                TokenKind::Identifier(_) | TokenKind::LeftParen | TokenKind::New
+            )
     }
 
     /// `(int)` followed by the start of an operand.
@@ -2369,6 +2635,7 @@ impl Parser {
 }
 
 const PREFIX_BP: u8 = 21;
+const INSTANCEOF_BP: u8 = 13;
 
 /// Java precedence; shifts (15, 16) are matched in `infix_operator`.
 fn infix_binding_power(kind: &TokenKind) -> Option<(BinaryOp, u8, u8)> {
@@ -2454,6 +2721,26 @@ fn string_expr(value: &str, span: &Span) -> Expr {
         kind: ExprKind::String(value.to_string()),
         span: span.clone(),
     }
+}
+
+fn has_return(body: &[Stmt]) -> bool {
+    body.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Return(_) => true,
+        StmtKind::If {
+            then_body,
+            else_body,
+            ..
+        } => has_return(then_body) || has_return(else_body),
+        StmtKind::While { body, step, .. } => has_return(body) || has_return(step),
+        StmtKind::Switch {
+            arms, default_body, ..
+        } => arms.iter().any(|arm| has_return(&arm.body)) || has_return(default_body),
+        StmtKind::For { body, .. }
+        | StmtKind::Block(body)
+        | StmtKind::Context { body, .. }
+        | StmtKind::Async { body } => has_return(body),
+        _ => false,
+    })
 }
 
 #[cfg(test)]

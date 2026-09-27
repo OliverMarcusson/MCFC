@@ -208,6 +208,8 @@ struct Resolver {
     record_fields: HashMap<String, Vec<String>>,
     /// Full class names; `new C(...)` calls the factory `C__new`.
     class_names: HashSet<String>,
+    /// Abstract classes and interfaces, which have no factory.
+    abstract_names: HashSet<String>,
 }
 
 /// Renames child-module items to their full paths and resolves every path.
@@ -272,6 +274,7 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         enum_names: HashSet::new(),
         record_fields: HashMap::new(),
         class_names: HashSet::new(),
+        abstract_names: HashSet::new(),
     };
     resolver.enum_names = program
         .enums
@@ -308,7 +311,23 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         for field in &mut def.fields {
             resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
         }
+        let span = def.span.clone();
+        let supertypes = def
+            .parent
+            .iter_mut()
+            .chain(&mut def.interfaces)
+            .chain(def.permits.iter_mut().flatten());
+        for name in supertypes {
+            let mut ty = Type::Struct(std::mem::take(name));
+            resolver.resolve_type(module, &[], &mut ty, &span, &mut diagnostics);
+            if let Type::Struct(resolved) = ty {
+                *name = resolved;
+            }
+        }
         def.name = resolver.struct_name(module, &def.name);
+        if def.is_abstract {
+            resolver.abstract_names.insert(def.name.clone());
+        }
     }
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
         for param in &mut def.constructor {
@@ -951,6 +970,15 @@ impl Resolver {
                 for arg in args.iter_mut() {
                     self.walk_expr(scope, arg, diagnostics);
                 }
+                if self.abstract_names.contains(name.as_str()) {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "'{}' is abstract, so it can't be created with 'new'",
+                            name.replace("::", ".")
+                        ),
+                        span.clone(),
+                    ));
+                }
                 if self.class_names.contains(name.as_str()) {
                     let function = match self.resolve_method(scope.module, name, "new") {
                         Ok(Some(function)) => function,
@@ -1013,6 +1041,10 @@ impl Resolver {
                 }
             }
             ExprKind::Path(path) => self.walk_path(scope, path, diagnostics),
+            ExprKind::InstanceOf { expr, ty, .. } | ExprKind::Cast { ty, expr } => {
+                self.resolve_type(scope.module, &[], ty, &span, diagnostics);
+                self.walk_expr(scope, expr, diagnostics);
+            }
             ExprKind::Conditional {
                 condition,
                 then_expr,

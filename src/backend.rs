@@ -11530,6 +11530,8 @@ fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) 
         | crate::ast::ExprKind::StructLiteral { .. }
         | crate::ast::ExprKind::New { .. }
         | crate::ast::ExprKind::Conditional { .. }
+        | crate::ast::ExprKind::InstanceOf { .. }
+        | crate::ast::ExprKind::Cast { .. }
         | crate::ast::ExprKind::Switch { .. } => None,
     }
 }

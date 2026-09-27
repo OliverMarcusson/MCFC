@@ -13,6 +13,43 @@ thread_local! {
     /// Set while a `setX(...)` call is checked as the assignment it lowers to,
     /// so the assignment isn't reported as property syntax.
     static LOWERING_SETTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Each class's supertypes, nearest first: its parent chain, then its
+    /// interfaces. Set by `type_check` for coercions, which see no definitions.
+    static SUPERTYPES: std::cell::RefCell<HashMap<String, Vec<String>>> =
+        std::cell::RefCell::new(HashMap::new());
+    /// Methods some subclass overrides; calls go through `F__mcfcVirtual`.
+    static VIRTUAL: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+}
+
+/// A call to `@direct:F` calls `F` itself, never a subclass's override: a
+/// dispatcher's branches and `super.m()`.
+const DIRECT: &str = "@direct:";
+const VIRTUAL_SUFFIX: &str = "__mcfcVirtual";
+
+/// `name` and its supertypes, nearest first.
+fn supertypes(name: &str) -> Vec<String> {
+    std::iter::once(name.to_string())
+        .chain(SUPERTYPES.with(|map| map.borrow().get(name).cloned().unwrap_or_default()))
+        .collect()
+}
+
+fn is_subclass(sub: &str, sup: &str) -> bool {
+    sub == sup
+        || SUPERTYPES.with(|map| {
+            map.borrow()
+                .get(sub)
+                .is_some_and(|all| all.iter().any(|s| s == sup))
+        })
+}
+
+/// The function a call to method `function` runs: its dispatcher when a
+/// subclass overrides it.
+fn dispatched(function: String) -> String {
+    if VIRTUAL.with(|set| set.borrow().contains(&function)) {
+        format!("{function}{VIRTUAL_SUFFIX}")
+    } else {
+        function
+    }
 }
 
 /// `bb.max` written in source: properties are read and written through get/set methods.
@@ -629,6 +666,26 @@ fn class_field_access(
     None
 }
 
+/// The class that declares instance field `field` of `owner`.
+fn field_declarer(
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    owner: &str,
+    field: &str,
+) -> String {
+    struct_defs
+        .get(owner)
+        .and_then(|def| def.class.as_ref()?.declared_in.get(field).cloned())
+        .unwrap_or_else(|| owner.to_string())
+}
+
+/// `Node__mcfcGet_value`, generated in the class that declares the field.
+fn field_getter(struct_defs: &BTreeMap<String, StructTypeDef>, owner: &str, field: &str) -> String {
+    format!(
+        "{}__mcfcGet_{field}",
+        field_declarer(struct_defs, owner, field)
+    )
+}
+
 fn check_field_visible(
     access: &FieldAccess,
     struct_defs: &BTreeMap<String, StructTypeDef>,
@@ -640,7 +697,8 @@ fn check_field_visible(
         .get(&access.owner)
         .and_then(|def| def.class.as_ref())
         .is_some_and(|info| info.private_fields.contains(&access.field));
-    if !module_visible(env, &access.owner, !private) {
+    let declarer = field_declarer(struct_defs, &access.owner, &access.field);
+    if !module_visible(env, &declarer, !private) {
         diagnostics.push(Diagnostic::new(
             format!(
                 "field '{}' of '{}' is private",
@@ -699,7 +757,7 @@ fn complex_field_read(
     check_field_visible(&access, struct_defs, env, span, diagnostics);
     let getter = Expr {
         kind: ExprKind::Call {
-            function: format!("{}__mcfcGet_{}", access.owner, access.field),
+            function: field_getter(struct_defs, &access.owner, &access.field),
             args: vec![access.object],
         },
         span: span.clone(),
@@ -787,7 +845,7 @@ fn simple_object(
             let inner = simple_object(inner, struct_defs, signatures, env, ref_env, span);
             return Expr {
                 kind: ExprKind::Call {
-                    function: format!("{owner}__mcfcGet_{field}"),
+                    function: field_getter(struct_defs, &owner, field),
                     args: vec![inner],
                 },
                 span: span.clone(),
@@ -1052,6 +1110,8 @@ fn gc_functions(
         end: 0,
         owner: None,
         module: String::new(),
+        is_abstract: false,
+        is_override: false,
     };
     let mut names = 0;
     let mut out = Vec::new();
@@ -1066,7 +1126,7 @@ fn gc_functions(
         let Some(def) = struct_defs.get(&class.name) else {
             continue;
         };
-        let Some(info) = def.class.clone() else {
+        let Some(info) = def.class.clone().filter(|info| !info.is_abstract) else {
             continue;
         };
         let mut body = Vec::new();
@@ -1224,8 +1284,12 @@ fn final_field_target(
         AssignTarget::Path(path) => {
             let access = class_field_access(path, struct_defs, signatures, env, ref_env, span)?;
             let info = struct_defs.get(&access.owner)?.class.as_ref()?;
-            (access.rest.is_empty() && info.final_fields.contains(&access.field))
-                .then_some((access.owner, access.field))
+            (access.rest.is_empty() && info.final_fields.contains(&access.field)).then(|| {
+                (
+                    field_declarer(struct_defs, &access.owner, &access.field),
+                    access.field,
+                )
+            })
         }
     }
 }
@@ -1274,10 +1338,13 @@ fn find_method(
     owner: &str,
     method: &str,
 ) -> Option<(String, bool)> {
-    std::iter::once(method)
+    let names: Vec<&str> = std::iter::once(method)
         .chain(crate::language_catalog::java_method_names(method))
-        .find_map(|name| {
-            let function = format!("{owner}__{name}");
+        .collect();
+    supertypes(owner)
+        .into_iter()
+        .flat_map(|owner| names.iter().map(move |name| format!("{owner}__{name}")))
+        .find_map(|function| {
             let instance = match signatures.get(&overload_key(&function)) {
                 Some(entry) => signatures.get(entry.overloads.first()?)?.instance,
                 None => signatures.get(&function)?.instance,
@@ -1546,6 +1613,14 @@ pub struct ClassInfo {
     pub private_fields: BTreeSet<String>,
     /// Instance and static fields only a constructor or initializer can set.
     pub final_fields: BTreeSet<String>,
+    /// The class each instance field is declared in, which may be a parent.
+    pub declared_in: BTreeMap<String, String>,
+    pub parent: Option<String>,
+    /// Abstract classes and interfaces, which have no objects of their own.
+    pub is_abstract: bool,
+    pub is_interface: bool,
+    /// Parent classes, nearest first, then interfaces.
+    pub supertypes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1908,6 +1983,16 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                         .filter(|field| field.is_final)
                         .map(|field| field.name.clone())
                         .collect(),
+                    declared_in: class_def
+                        .fields
+                        .iter()
+                        .filter(|field| !field.is_static)
+                        .map(|field| (field.name.clone(), class_def.name.clone()))
+                        .collect(),
+                    parent: class_def.parent.clone(),
+                    is_abstract: class_def.is_abstract,
+                    is_interface: class_def.is_interface,
+                    supertypes: Vec::new(),
                 }),
                 ..slot
             },
@@ -1924,6 +2009,13 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             struct_defs.get_mut(&key).unwrap().fields = fields;
         }
     }
+    let supertype_map = class_hierarchy(program, &mut struct_defs, &mut diagnostics);
+    for (name, supertypes) in &supertype_map {
+        if let Some(info) = struct_defs.get_mut(name).and_then(|def| def.class.as_mut()) {
+            info.supertypes = supertypes.clone();
+        }
+    }
+    SUPERTYPES.with(|map| *map.borrow_mut() = supertype_map);
     let mut normalized = program.clone();
     for class_def in &program.classes {
         for field in class_def.fields.iter().filter(|field| field.is_static) {
@@ -1957,6 +2049,11 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
     }
     // Overloads compile under `name__<parameter types>` (a zero-parameter one
     // keeps the bare name), and a call picks one by its argument types.
+    let unmangled: Vec<String> = normalized
+        .functions
+        .iter()
+        .map(|f| f.name.clone())
+        .collect();
     let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, function) in normalized.functions.iter().enumerate() {
         by_name
@@ -1982,6 +2079,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
         overloads.insert(name, mangled);
     }
+    let class_functions = class_functions(&normalized, &unmangled, &struct_defs, &mut diagnostics);
+    normalized.functions.extend(class_functions);
     for def in &normalized.structs {
         if let Some(registered) = struct_defs.get_mut(&def.name) {
             registered.order = def.fields.iter().map(|field| field.name.clone()).collect();
@@ -2260,7 +2359,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
 
     let mut functions = Vec::new();
     for function in &program.functions {
-        if function.type_params.is_empty() {
+        if function.type_params.is_empty() && !function.is_abstract {
             functions.push(type_check_function(
                 function,
                 &struct_defs,
@@ -2445,9 +2544,12 @@ fn type_check_function(
         }
         if let Some(owner) = &function.owner {
             env.insert(format!("{OWNER_TAG}{owner}"), Type::Void);
-            let constructor = format!("{owner}__new");
-            if function.name == constructor
-                || function.name.starts_with(&format!("{constructor}__"))
+            let is_named = |method: &str| {
+                let method = format!("{owner}__{method}");
+                function.name == method || function.name.starts_with(&format!("{method}__"))
+            };
+            if is_named("new")
+                || is_named("mcfcInit")
                 || function.name == format!("{owner}__clinit")
             {
                 env.insert(format!("{INIT_TAG}{owner}"), Type::Void);
@@ -2582,7 +2684,8 @@ fn check_declared_type(
     diagnostics: &mut Diagnostics,
 ) {
     // A declared local's type isn't resolved, so an enum still reads as a record name.
-    let same_enum = matches!((declared, found), (Some(Type::Struct(a)), Type::Enum(b)) if a == b);
+    let same_enum = matches!((declared, found), (Some(Type::Struct(a)), Type::Enum(b)) if a == b)
+        || matches!((declared, found), (Some(Type::Struct(a) | Type::Class(a)), Type::Class(b)) if is_subclass(b, a));
     if let Some(declared) = declared
         && declared != found
         && !same_enum
@@ -2616,6 +2719,39 @@ fn type_check_block(
     let mut typed = Vec::new();
 
     for statement in statements {
+        // `if (x instanceof Circle c)`, `switch (shape) { case Circle c -> ... }`
+        // and `R r = switch (shape) { ... };` become plain statements first.
+        if let Some(lowered) = lower_patterns(
+            statement,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            diagnostics,
+        ) {
+            let (block, scoped) = lowered;
+            let (mut inner_env, mut inner_refs) = (env.clone(), ref_env.clone());
+            let (env, ref_env) = if scoped {
+                (&mut inner_env, &mut inner_refs)
+            } else {
+                (&mut *env, &mut *ref_env)
+            };
+            typed.extend(type_check_block(
+                &block,
+                return_type,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                locals,
+                called_functions,
+                loop_depth,
+                in_async,
+                host,
+                diagnostics,
+            ));
+            continue;
+        }
         let kind = match &statement.kind {
             // A write through an object that can't be a macro index, like
             // `a.items()[0].x = 1;`, goes through a local holding the object.
@@ -2741,6 +2877,9 @@ fn type_check_block(
                             if entries.is_empty() =>
                         {
                             Some(TypedExprKind::DictLiteral(Vec::new()))
+                        }
+                        (Some(ty), ExprKind::Variable(name)) if name == "__mcfc_default" => {
+                            Some(default_value(ty))
                         }
                         _ => None,
                     };
@@ -3187,13 +3326,19 @@ fn type_check_block(
                         item_ty = Type::PlayerRef;
                         item_ref_kind = RefKind::Player;
                     }
-                    _ => check_declared_type(
-                        name,
-                        ty.as_ref(),
-                        &item_ty,
-                        &statement.span,
-                        diagnostics,
-                    ),
+                    _ => {
+                        check_declared_type(
+                            name,
+                            ty.as_ref(),
+                            &item_ty,
+                            &statement.span,
+                            diagnostics,
+                        );
+                        // `for (Animal a : dogs)` sees each dog as an animal.
+                        if let (Some(Type::Struct(declared)), Type::Class(_)) = (ty, &item_ty) {
+                            item_ty = Type::Class(declared.clone());
+                        }
+                    }
                 }
                 loop_env.insert(name.clone(), item_ty.clone());
                 loop_ref_env.insert(name.clone(), item_ref_kind);
@@ -3453,6 +3598,13 @@ fn type_check_block(
                     ));
                 }
                 let value = value.as_ref().map(|expr| {
+                    if matches!(&expr.kind, ExprKind::Variable(name) if name == "__mcfc_default") {
+                        return TypedExpr {
+                            kind: default_value(return_type),
+                            ty: return_type.clone(),
+                            ref_kind: RefKind::Unknown,
+                        };
+                    }
                     let value = type_check_expr(
                         expr,
                         struct_defs,
@@ -4289,6 +4441,140 @@ fn type_check_expr(
                 ref_kind: RefKind::Unknown,
             }
         }
+        // `super.m()` runs the parent's `m`, not this class's override.
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } if matches!(&receiver.kind, ExprKind::Variable(name) if name == "super")
+            && !env.contains_key("super") =>
+        {
+            let found = env_tag(env, OWNER_TAG)
+                .and_then(|owner| struct_defs.get(owner)?.class.as_ref()?.parent.clone())
+                .and_then(|parent| find_method(signatures, &parent, method));
+            let Some((function, true)) = found else {
+                diagnostics.push(Diagnostic::new(
+                    format!("the parent class has no method '{method}'"),
+                    expr.span.clone(),
+                ));
+                return void_expr();
+            };
+            let this = Expr {
+                kind: ExprKind::Variable("this".to_string()),
+                span: expr.span.clone(),
+            };
+            type_check_expr(
+                &Expr {
+                    kind: ExprKind::Call {
+                        function: format!("{DIRECT}{function}"),
+                        args: std::iter::once(this).chain(args.iter().cloned()).collect(),
+                    },
+                    span: expr.span.clone(),
+                },
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            )
+        }
+        ExprKind::InstanceOf {
+            expr: object,
+            ty,
+            binding,
+        } => {
+            if binding.is_some() {
+                diagnostics.push(Diagnostic::new(
+                    "a pattern variable works in an 'if' condition or a 'case'",
+                    expr.span.clone(),
+                ));
+            }
+            let mut ty = ty.clone();
+            resolve_enum_type(&mut ty, struct_defs);
+            let typed = type_check_expr(
+                object,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            let (Type::Class(target), Type::Class(_)) = (&ty, &typed.ty) else {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "'instanceof' compares an object with a class, not '{}' with '{}'",
+                        typed.ty.as_str(),
+                        ty.as_str()
+                    ),
+                    expr.span.clone(),
+                ));
+                return TypedExpr {
+                    kind: TypedExprKind::Bool(false),
+                    ty: Type::Bool,
+                    ref_kind: RefKind::Unknown,
+                };
+            };
+            let call = |function: &str, args: Vec<Expr>| Expr {
+                kind: ExprKind::Call {
+                    function: function.to_string(),
+                    args,
+                },
+                span: expr.span.clone(),
+            };
+            let class_id = call(
+                "std::heap::classOf",
+                vec![call("__mcfc_id", vec![(**object).clone()])],
+            );
+            type_check_expr(
+                &call(&format!("{target}{IS_SUFFIX}"), vec![class_id]),
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            )
+        }
+        // `(Circle) shape` trusts the programmer: the object keeps its id.
+        ExprKind::Cast { ty, expr: object } => {
+            let mut ty = ty.clone();
+            resolve_enum_type(&mut ty, struct_defs);
+            let typed = type_check_expr(
+                object,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            let is_interface = |name: &str| {
+                struct_defs
+                    .get(name)
+                    .and_then(|def| def.class.as_ref())
+                    .is_some_and(|info| info.is_interface)
+            };
+            match (&typed.ty, &ty) {
+                (Type::Class(from), Type::Class(to))
+                    if from.is_empty()
+                        || is_subclass(from, to)
+                        || is_subclass(to, from)
+                        || is_interface(from)
+                        || is_interface(to) =>
+                {
+                    TypedExpr { ty, ..typed }
+                }
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        format!("cannot cast '{}' to '{}'", typed.ty.as_str(), ty.as_str()),
+                        expr.span.clone(),
+                    ));
+                    typed
+                }
+            }
+        }
         ExprKind::MethodCall {
             receiver,
             method,
@@ -4384,6 +4670,13 @@ fn type_check_expr(
                 unify_branches(then_expr, else_expr, expr.span.clone(), diagnostics);
             conditional_expr(condition, then_expr, else_expr)
         }
+        ExprKind::Switch { .. } if type_switch_expr(expr).is_some() => {
+            diagnostics.push(Diagnostic::new(
+                "a switch on types works as a statement, a variable's value, an assignment or a 'return'",
+                expr.span.clone(),
+            ));
+            void_expr()
+        }
         ExprKind::Switch {
             value,
             arms,
@@ -4416,6 +4709,37 @@ fn type_check_expr(
                 ..object
             }
         }
+        // `super(args)` runs the parent's constructor on this object.
+        ExprKind::Call { function, args } if function == "super" => {
+            let parent = env_tag(env, OWNER_TAG)
+                .and_then(|owner| struct_defs.get(owner)?.class.as_ref()?.parent.clone());
+            let Some(parent) = parent else {
+                diagnostics.push(Diagnostic::new(
+                    "'super(...)' needs a parent class",
+                    expr.span.clone(),
+                ));
+                return void_expr();
+            };
+            let this = Expr {
+                kind: ExprKind::Variable("this".to_string()),
+                span: expr.span.clone(),
+            };
+            type_check_expr(
+                &Expr {
+                    kind: ExprKind::Call {
+                        function: format!("{parent}__mcfcInit"),
+                        args: std::iter::once(this).chain(args.iter().cloned()).collect(),
+                    },
+                    span: expr.span.clone(),
+                },
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            )
+        }
         ExprKind::Call { function, args } if function == "__mcfc_alloc" => {
             // A constructor's first step: take a heap slot tagged with the class.
             let owner = env_tag(env, OWNER_TAG).unwrap_or_default().to_string();
@@ -4439,6 +4763,8 @@ fn type_check_expr(
             }
         }
         ExprKind::Call { function, args } => {
+            let direct = function.starts_with(DIRECT);
+            let function = &function.trim_start_matches(DIRECT).to_string();
             // In a method, a bare `m(...)` calls another method of the same type.
             if !function.contains("::")
                 && let Some(owner) = env_tag(env, OWNER_TAG)
@@ -4641,6 +4967,11 @@ fn type_check_expr(
             {
                 return method_call_expr(arg.clone(), name, Vec::new(), Type::Float);
             }
+            let function = if direct {
+                function
+            } else {
+                dispatched(function)
+            };
             called_functions.insert(function.clone());
             TypedExpr {
                 kind: TypedExprKind::Call { function, args },
@@ -6924,10 +7255,8 @@ fn type_check_method_call(
                     None
                 }
             };
-            if let (Some(expected), Some(arg)) = (expected, args.first_mut())
-                && *expected == Type::Nbt
-            {
-                *arg = coerce_expr_to_nbt(arg.clone());
+            if let (Some(expected), Some(arg)) = (expected, args.first_mut()) {
+                *arg = coerce_expr_to_expected_type(arg.clone(), expected);
             }
             if let (Some(expected), Some(arg)) = (expected, args.first())
                 && &arg.ty != expected
@@ -6991,9 +7320,7 @@ fn type_check_method_call(
                 ));
             }
             if let Some(arg) = value_arg.and_then(|index| args.get_mut(index)) {
-                if element == Type::Nbt {
-                    *arg = coerce_expr_to_nbt(arg.clone());
-                }
+                *arg = coerce_expr_to_expected_type(arg.clone(), &element);
                 if arg.ty != element {
                     diagnostics.push(Diagnostic::new(
                         format!(
@@ -9014,6 +9341,7 @@ fn string_operand(
             .get(&function)
             .is_some_and(|s| s.return_type == Type::String)
     {
+        let function = dispatched(function);
         called_functions.insert(function.clone());
         return TypedExpr {
             kind: TypedExprKind::Call {
@@ -9328,7 +9656,10 @@ fn method_call_expr(
 }
 
 fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
-    if expr.ty == Type::Class(String::new()) && matches!(expected, Type::Class(_)) {
+    // `null`, or a subclass where its parent or interface is expected.
+    if let (Type::Class(from), Type::Class(to)) = (&expr.ty, expected)
+        && (from.is_empty() || is_subclass(from, to))
+    {
         return TypedExpr {
             ty: expected.clone(),
             ..expr
@@ -10469,4 +10800,755 @@ fn scan_macro_placeholders(
         index += 1;
     }
     placeholders
+}
+
+/// `C__mcfcIs(classId)`: whether an object of class `classId` is a `C`.
+const IS_SUFFIX: &str = "__mcfcIs";
+
+fn void_expr() -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::Int(0),
+        ty: Type::Void,
+        ref_kind: RefKind::Unknown,
+    }
+}
+
+/// Checks each class's `extends` and `implements`, gives each class its
+/// parent's fields, and returns every class's supertypes, nearest first.
+fn class_hierarchy(
+    program: &Program,
+    struct_defs: &mut BTreeMap<String, StructTypeDef>,
+    diagnostics: &mut Diagnostics,
+) -> HashMap<String, Vec<String>> {
+    let classes: HashMap<&str, &ClassDef> = program
+        .classes
+        .iter()
+        .map(|class| (class.name.as_str(), class))
+        .collect();
+    let display = |name: &str| name.replace("::", ".");
+    for class in &program.classes {
+        let parent = class.parent.iter().map(|name| (name, false));
+        let interfaces = class.interfaces.iter().map(|name| (name, true));
+        for (name, want_interface) in parent.chain(interfaces) {
+            let Some(supertype) = classes.get(name.as_str()) else {
+                diagnostics.push(Diagnostic::new(
+                    format!("unknown class or interface '{}'", display(name)),
+                    class.span.clone(),
+                ));
+                continue;
+            };
+            let message = if want_interface && !supertype.is_interface {
+                if class.is_interface {
+                    format!(
+                        "an interface extends only interfaces, and '{}' is a class",
+                        display(name)
+                    )
+                } else {
+                    format!("'{}' is a class; extend it with 'extends'", display(name))
+                }
+            } else if !want_interface && supertype.is_interface {
+                format!("'{}' is an interface; use 'implements'", display(name))
+            } else if supertype.is_final {
+                format!("'{}' is final, so nothing can extend it", display(name))
+            } else if let Some(permits) = &supertype.permits
+                && !permits.contains(&class.name)
+            {
+                format!(
+                    "'{}' is sealed and doesn't permit '{}'",
+                    display(name),
+                    display(&class.name)
+                )
+            } else {
+                continue;
+            };
+            diagnostics.push(Diagnostic::new(message, class.span.clone()));
+        }
+    }
+
+    let mut supertypes = HashMap::new();
+    for class in &program.classes {
+        let cycle = || {
+            Diagnostic::new(
+                format!("'{}' extends itself", display(&class.name)),
+                class.span.clone(),
+            )
+        };
+        let mut found: Vec<String> = Vec::new();
+        let mut current = class.parent.clone();
+        while let Some(name) = current {
+            if name == class.name || found.contains(&name) {
+                diagnostics.push(cycle());
+                break;
+            }
+            current = classes.get(name.as_str()).and_then(|c| c.parent.clone());
+            found.push(name);
+        }
+        // Then the interfaces of the class and its parents, and theirs.
+        let mut pending: Vec<String> = std::iter::once(&class.name)
+            .chain(&found)
+            .filter_map(|name| classes.get(name.as_str()))
+            .flat_map(|c| c.interfaces.clone())
+            .collect();
+        let mut index = 0;
+        while let Some(name) = pending.get(index).cloned() {
+            index += 1;
+            if name == class.name {
+                diagnostics.push(cycle());
+                continue;
+            }
+            if found.contains(&name) {
+                continue;
+            }
+            if let Some(interface) = classes.get(name.as_str()) {
+                pending.extend(interface.interfaces.clone());
+            }
+            found.push(name);
+        }
+        supertypes.insert(class.name.clone(), found);
+    }
+
+    // A subclass's objects hold its parent's fields too, so parents go first.
+    let depth = |name: &str| {
+        supertypes.get(name).map_or(0, |all: &Vec<String>| {
+            all.iter()
+                .filter(|s| classes.get(s.as_str()).is_some_and(|c| !c.is_interface))
+                .count()
+        })
+    };
+    let mut ordered: Vec<&ClassDef> = program.classes.iter().collect();
+    ordered.sort_by_key(|class| depth(&class.name));
+    for class in ordered {
+        let Some(parent) = &class.parent else {
+            continue;
+        };
+        let Some(parent_def) = struct_defs.get(parent).cloned() else {
+            continue;
+        };
+        let Some(parent_info) = parent_def.class.clone() else {
+            continue;
+        };
+        for key in [class.name.clone(), format!("{HEAP_SLOT}{}", class.name)] {
+            let Some(def) = struct_defs.get_mut(&key) else {
+                continue;
+            };
+            for (field, ty) in &parent_def.fields {
+                if def.fields.contains_key(field) {
+                    if key == class.name {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "field '{field}' is already declared in '{}'",
+                                display(&parent_info.declared_in[field])
+                            ),
+                            class.span.clone(),
+                        ));
+                    }
+                    continue;
+                }
+                def.fields.insert(field.clone(), ty.clone());
+            }
+            let Some(info) = &mut def.class else {
+                continue;
+            };
+            let inherited = |fields: &BTreeSet<String>| {
+                fields
+                    .iter()
+                    .filter(|field| parent_info.declared_in.contains_key(*field))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            info.private_fields
+                .extend(inherited(&parent_info.private_fields));
+            info.final_fields
+                .extend(inherited(&parent_info.final_fields));
+            for (field, declarer) in &parent_info.declared_in {
+                info.declared_in
+                    .entry(field.clone())
+                    .or_insert_with(|| declarer.clone());
+            }
+        }
+    }
+    supertypes
+}
+
+/// A method as overriding sees it: its name and parameter types after `this`.
+type MethodKey = (String, Vec<Type>);
+
+/// Checks overrides and generates what virtual calls need: a dispatcher
+/// `F__mcfcVirtual` for each method `F` that a subclass overrides or that is
+/// abstract, and `C__mcfcIs(classId)` for `instanceof C`. `unmangled` holds
+/// each function's name before overloads were renamed.
+fn class_functions(
+    program: &Program,
+    unmangled: &[String],
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    diagnostics: &mut Diagnostics,
+) -> Vec<Function> {
+    let info = |name: &str| struct_defs.get(name).and_then(|def| def.class.as_ref());
+    let display = |name: &str| name.replace("::", ".");
+    let mut methods: BTreeMap<(String, MethodKey), usize> = BTreeMap::new();
+    for (index, function) in program.functions.iter().enumerate() {
+        let Some(owner) = &function.owner else {
+            continue;
+        };
+        if info(owner).is_none() || function.params.first().is_none_or(|p| p.name != "this") {
+            continue;
+        }
+        let Some(bare) = unmangled[index].strip_prefix(&format!("{owner}__")) else {
+            continue;
+        };
+        if bare.starts_with("mcfc") {
+            continue;
+        }
+        let types = function.params[1..].iter().map(|p| p.ty.clone()).collect();
+        methods.insert((owner.clone(), (bare.to_string(), types)), index);
+    }
+    // What an object of `class` runs for `key`: the nearest body, else the
+    // nearest abstract declaration.
+    let resolve = |class: &str, key: &MethodKey| {
+        let found: Vec<usize> = supertypes(class)
+            .into_iter()
+            .filter_map(|owner| methods.get(&(owner, key.clone())).copied())
+            .collect();
+        found
+            .iter()
+            .copied()
+            .find(|&index| !program.functions[index].is_abstract)
+            .or(found.first().copied())
+    };
+    let concrete: Vec<(&ClassDef, usize)> = program
+        .classes
+        .iter()
+        .filter(|class| !class.is_abstract)
+        .filter_map(|class| Some((class, info(&class.name)?.id)))
+        .collect();
+    let objects_of = |name: &str| {
+        concrete
+            .iter()
+            .filter(|(class, _)| is_subclass(&class.name, name))
+            .copied()
+            .collect::<Vec<_>>()
+    };
+
+    for &(class, _) in &concrete {
+        let keys: BTreeSet<&MethodKey> = methods
+            .keys()
+            .filter(|(owner, _)| is_subclass(&class.name, owner))
+            .map(|(_, key)| key)
+            .collect();
+        for key in keys {
+            if let Some(index) = resolve(&class.name, key)
+                && program.functions[index].is_abstract
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "'{}' must implement '{}' from '{}'",
+                        display(&class.name),
+                        key.0,
+                        display(
+                            program.functions[index]
+                                .owner
+                                .as_deref()
+                                .unwrap_or_default()
+                        )
+                    ),
+                    class.span.clone(),
+                ));
+            }
+        }
+    }
+    for ((owner, key), &index) in &methods {
+        let function = &program.functions[index];
+        let overridden = supertypes(owner)
+            .into_iter()
+            .skip(1)
+            .find_map(|supertype| methods.get(&(supertype, key.clone())));
+        match overridden {
+            Some(&other) if program.functions[other].return_type != function.return_type => {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "'{}' returns '{}', but the method it overrides returns '{}'",
+                        key.0,
+                        function.return_type.as_str(),
+                        program.functions[other].return_type.as_str()
+                    ),
+                    function.span.clone(),
+                ))
+            }
+            None if function.is_override && !matches!(key.0.as_str(), "toString" | "equals") => {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "'{}' doesn't override a method of a parent class or interface",
+                        key.0
+                    ),
+                    function.span.clone(),
+                ))
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut virtual_methods = HashSet::new();
+    for ((owner, key), &index) in &methods {
+        let function = &program.functions[index];
+        // Each body an object of this type can run, with the classes that run it.
+        let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (class, id) in objects_of(owner) {
+            let Some(found) = resolve(&class.name, key) else {
+                continue;
+            };
+            if program.functions[found].is_abstract {
+                continue;
+            }
+            match groups.iter_mut().find(|(body, _)| *body == found) {
+                Some((_, ids)) => ids.push(id),
+                None => groups.push((found, vec![id])),
+            }
+        }
+        if !function.is_abstract && groups.iter().all(|(body, _)| *body == index) {
+            continue;
+        }
+        virtual_methods.insert(function.name.clone());
+        let span = function.span.clone();
+        let at = |kind: ExprKind| Expr {
+            kind,
+            span: span.clone(),
+        };
+        let stmt = |kind: StmtKind| Stmt {
+            kind,
+            span: span.clone(),
+        };
+        let this = || at(ExprKind::Variable("this".to_string()));
+        let class_id = || at(ExprKind::Variable("mcfcClassId".to_string()));
+        let mut body = Vec::new();
+        if groups.len() > 1 {
+            body.push(stmt(StmtKind::Let {
+                name: "mcfcClassId".to_string(),
+                ty: Some(Type::Int),
+                value: at(ExprKind::Call {
+                    function: "std::heap::classOf".to_string(),
+                    args: vec![at(ExprKind::Call {
+                        function: "__mcfc_id".to_string(),
+                        args: vec![this()],
+                    })],
+                }),
+            }));
+        }
+        for (position, (target, ids)) in groups.iter().enumerate() {
+            let target = &program.functions[*target];
+            let receiver = at(ExprKind::Cast {
+                ty: Type::Class(target.owner.clone().unwrap_or_default()),
+                expr: Box::new(this()),
+            });
+            let args = std::iter::once(receiver)
+                .chain(
+                    function.params[1..]
+                        .iter()
+                        .map(|param| at(ExprKind::Variable(param.name.clone()))),
+                )
+                .collect();
+            let call = at(ExprKind::Call {
+                function: format!("{DIRECT}{}", target.name),
+                args,
+            });
+            let branch = if function.return_type == Type::Void {
+                vec![stmt(StmtKind::Expr(call)), stmt(StmtKind::Return(None))]
+            } else {
+                vec![stmt(StmtKind::Return(Some(call)))]
+            };
+            if position + 1 == groups.len() {
+                body.extend(branch);
+            } else {
+                body.push(stmt(StmtKind::If {
+                    condition: class_test(ids, class_id, &at),
+                    then_body: branch,
+                    else_body: Vec::new(),
+                }));
+            }
+        }
+        if groups.is_empty() && function.return_type != Type::Void {
+            body.push(stmt(StmtKind::Return(Some(at(ExprKind::Variable(
+                "__mcfc_default".to_string(),
+            ))))));
+        }
+        out.push(Function {
+            name: format!("{}{VIRTUAL_SUFFIX}", function.name),
+            body,
+            is_abstract: false,
+            is_override: false,
+            ..function.clone()
+        });
+    }
+    VIRTUAL.with(|set| *set.borrow_mut() = virtual_methods);
+
+    for class in &program.classes {
+        let span = class.span.clone();
+        let at = |kind: ExprKind| Expr {
+            kind,
+            span: span.clone(),
+        };
+        let ids: Vec<usize> = objects_of(&class.name)
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        let test = if ids.is_empty() {
+            at(ExprKind::Bool(false))
+        } else {
+            class_test(&ids, || at(ExprKind::Variable("classId".to_string())), &at)
+        };
+        out.push(Function {
+            name: format!("{}{IS_SUFFIX}", class.name),
+            is_pub: true,
+            type_params: Vec::new(),
+            params: vec![Param {
+                name: "classId".to_string(),
+                ty: Type::Int,
+                span: span.clone(),
+            }],
+            return_type: Type::Bool,
+            body: vec![Stmt {
+                kind: StmtKind::Return(Some(test)),
+                span: span.clone(),
+            }],
+            span: span.clone(),
+            end: 0,
+            owner: None,
+            module: class
+                .name
+                .rsplit_once("::")
+                .map_or(String::new(), |(module, _)| module.to_string()),
+            is_abstract: false,
+            is_override: false,
+        });
+    }
+    out
+}
+
+/// `classId == 3 || classId == 5`.
+fn class_test(ids: &[usize], class_id: impl Fn() -> Expr, at: &impl Fn(ExprKind) -> Expr) -> Expr {
+    ids.iter()
+        .map(|id| {
+            at(ExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(class_id()),
+                right: Box::new(at(ExprKind::Int(*id as i64))),
+            })
+        })
+        .reduce(|left, right| {
+            at(ExprKind::Binary {
+                op: BinaryOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            })
+        })
+        .expect("at least one class id")
+}
+
+/// A local or a field path, which reads the same every time.
+fn is_plain_place(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Variable(_) => true,
+        ExprKind::Path(path) => {
+            matches!(path.base.kind, ExprKind::Variable(_))
+                && path
+                    .segments
+                    .iter()
+                    .all(|segment| matches!(segment, PathSegment::Field(_)))
+        }
+        _ => false,
+    }
+}
+
+fn has_binding(condition: &Expr) -> bool {
+    match &condition.kind {
+        ExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } => has_binding(left) || has_binding(right),
+        ExprKind::InstanceOf { binding, .. } => binding.is_some(),
+        _ => false,
+    }
+}
+
+/// Moves each `x instanceof C c` binding in an `&&` chain into `C c = (C) x;`.
+fn take_bindings(condition: &mut Expr, block: &mut Vec<Stmt>, diagnostics: &mut Diagnostics) {
+    match &mut condition.kind {
+        ExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } => {
+            take_bindings(left, block, diagnostics);
+            take_bindings(right, block, diagnostics);
+        }
+        ExprKind::InstanceOf { expr, ty, binding } => {
+            let Some(name) = binding.take() else {
+                return;
+            };
+            if !is_plain_place(expr) {
+                diagnostics.push(Diagnostic::new(
+                    "a pattern variable matches a variable or field; put the value in a local first",
+                    condition.span.clone(),
+                ));
+            }
+            block.push(Stmt {
+                kind: StmtKind::Let {
+                    name,
+                    ty: Some(ty.clone()),
+                    value: Expr {
+                        kind: ExprKind::Cast {
+                            ty: ty.clone(),
+                            expr: expr.clone(),
+                        },
+                        span: condition.span.clone(),
+                    },
+                },
+                span: condition.span.clone(),
+            });
+        }
+        _ => {}
+    }
+}
+
+/// `switch (shape) { case Circle c -> ...; }` as a value, when its cases are types.
+#[allow(clippy::type_complexity)]
+fn type_switch_expr(value: &Expr) -> Option<(&Expr, &[(Expr, Expr)], Option<&Expr>)> {
+    match &value.kind {
+        ExprKind::Switch {
+            value,
+            arms,
+            default,
+        } if arms
+            .iter()
+            .any(|(pattern, _)| matches!(pattern.kind, ExprKind::InstanceOf { .. })) =>
+        {
+            Some((value, arms, default.as_deref()))
+        }
+        _ => None,
+    }
+}
+
+/// Plain statements for a statement with type patterns, and whether they
+/// form their own scope. `None` for any other statement.
+fn lower_patterns(
+    statement: &Stmt,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    diagnostics: &mut Diagnostics,
+) -> Option<(Vec<Stmt>, bool)> {
+    let span = statement.span.clone();
+    let stmt = |kind: StmtKind| Stmt {
+        kind,
+        span: span.clone(),
+    };
+    // `x = switch (...) { case C c -> e; }` sets `x` in each case instead.
+    let set_in_cases = |value: &Expr, each: &dyn Fn(&Expr) -> Vec<Stmt>| {
+        let (subject, arms, default) = type_switch_expr(value)?;
+        Some(stmt(StmtKind::Switch {
+            value: subject.clone(),
+            arms: arms
+                .iter()
+                .map(|(pattern, result)| SwitchArm {
+                    pattern: pattern.clone(),
+                    body: each(result),
+                })
+                .collect(),
+            default_body: default.map(each).unwrap_or_default(),
+        }))
+    };
+    match &statement.kind {
+        StmtKind::If {
+            condition,
+            then_body,
+            else_body,
+        } if has_binding(condition) => {
+            let mut condition = condition.clone();
+            let mut block = Vec::new();
+            take_bindings(&mut condition, &mut block, diagnostics);
+            block.push(stmt(StmtKind::If {
+                condition,
+                then_body: then_body.clone(),
+                else_body: else_body.clone(),
+            }));
+            Some((block, true))
+        }
+        StmtKind::Switch {
+            value,
+            arms,
+            default_body,
+        } if arms
+            .iter()
+            .any(|arm| matches!(arm.pattern.kind, ExprKind::InstanceOf { .. })) =>
+        {
+            let block = type_switch(
+                value,
+                arms,
+                default_body,
+                &span,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                diagnostics,
+            );
+            Some((block, true))
+        }
+        StmtKind::Let {
+            name,
+            ty: Some(ty),
+            value,
+        } => {
+            let switch = set_in_cases(value, &|result| {
+                vec![stmt(StmtKind::Assign {
+                    target: AssignTarget::Variable(name.clone()),
+                    value: result.clone(),
+                })]
+            })?;
+            let declare = stmt(StmtKind::Let {
+                name: name.clone(),
+                ty: Some(ty.clone()),
+                value: Expr {
+                    kind: ExprKind::Variable("__mcfc_default".to_string()),
+                    span: span.clone(),
+                },
+            });
+            Some((vec![declare, switch], false))
+        }
+        StmtKind::Assign { target, value } => {
+            let switch = set_in_cases(value, &|result| {
+                vec![stmt(StmtKind::Assign {
+                    target: target.clone(),
+                    value: result.clone(),
+                })]
+            })?;
+            Some((vec![switch], false))
+        }
+        StmtKind::Return(Some(value)) => {
+            let switch = set_in_cases(value, &|result| {
+                vec![stmt(StmtKind::Return(Some(result.clone())))]
+            })?;
+            Some((vec![switch], false))
+        }
+        _ => None,
+    }
+}
+
+/// `switch (shape) { case Circle c -> body; ... default -> body; }` as
+/// `if (shape instanceof Circle) { Circle c = (Circle) shape; body } else ...`.
+/// Without a `default`, the cases must cover every class the value can be.
+#[allow(clippy::too_many_arguments)]
+fn type_switch(
+    value: &Expr,
+    arms: &[SwitchArm],
+    default_body: &[Stmt],
+    span: &Span,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    diagnostics: &mut Diagnostics,
+) -> Vec<Stmt> {
+    let stmt = |kind: StmtKind| Stmt {
+        kind,
+        span: span.clone(),
+    };
+    let at = |kind: ExprKind| Expr {
+        kind,
+        span: span.clone(),
+    };
+    let value_ty = type_check_expr(
+        value,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        &mut BTreeSet::new(),
+        &mut Diagnostics::new(),
+    )
+    .ty;
+    let Type::Class(owner) = &value_ty else {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "a 'case' with a type needs an object to switch on, not '{}'",
+                value_ty.as_str()
+            ),
+            span.clone(),
+        ));
+        return Vec::new();
+    };
+    let mut block = Vec::new();
+    let subject = if is_plain_place(value) {
+        value.clone()
+    } else {
+        let name = format!("mcfcSwitch{}", span.range.start);
+        block.push(stmt(StmtKind::Let {
+            name: name.clone(),
+            ty: Some(value_ty.clone()),
+            value: value.clone(),
+        }));
+        at(ExprKind::Variable(name))
+    };
+    let mut covered = Vec::new();
+    let mut chain = default_body.to_vec();
+    for arm in arms.iter().rev() {
+        let ExprKind::InstanceOf {
+            ty,
+            binding: Some(binding),
+            ..
+        } = &arm.pattern.kind
+        else {
+            diagnostics.push(Diagnostic::new(
+                "a switch can't mix type patterns with constants",
+                arm.pattern.span.clone(),
+            ));
+            continue;
+        };
+        let mut resolved = ty.clone();
+        resolve_enum_type(&mut resolved, struct_defs);
+        if let Type::Class(name) = resolved {
+            covered.push(name);
+        }
+        let mut then_body = vec![stmt(StmtKind::Let {
+            name: binding.clone(),
+            ty: Some(ty.clone()),
+            value: at(ExprKind::Cast {
+                ty: ty.clone(),
+                expr: Box::new(subject.clone()),
+            }),
+        })];
+        then_body.extend(arm.body.iter().cloned());
+        chain = vec![stmt(StmtKind::If {
+            condition: at(ExprKind::InstanceOf {
+                expr: Box::new(subject.clone()),
+                ty: ty.clone(),
+                binding: None,
+            }),
+            then_body,
+            else_body: chain,
+        })];
+    }
+    if default_body.is_empty() {
+        for (name, def) in struct_defs {
+            let Some(info) = &def.class else {
+                continue;
+            };
+            if !info.is_abstract
+                && is_subclass(name, owner)
+                && !covered.iter().any(|case| is_subclass(name, case))
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "the switch doesn't cover '{}'; add a 'case' for it or a 'default'",
+                        name.replace("::", ".")
+                    ),
+                    span.clone(),
+                ));
+            }
+        }
+    }
+    block.extend(chain);
+    block
 }

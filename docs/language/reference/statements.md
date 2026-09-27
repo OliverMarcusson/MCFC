@@ -242,6 +242,69 @@ Unlike records, class objects are shared: assigning or passing one copies a refe
 
 Objects live in one storage list, and a reference is the object's index there. Each field read or write is a macro call, so keep an object's values in locals inside hot loops. Objects nothing refers to anymore are freed at the end of a tick, once more objects were made since the last collection than survived it. A collection walks every live object and all player and entity state holding objects, so its cost grows with how much of both is kept.
 
+#### Inheritance and interfaces
+
+```mcfc
+interface Named {
+    String name();
+
+    default String greet() {
+        return "hi " + name();
+    }
+}
+
+abstract class Animal implements Named {
+    int legs;
+
+    Animal(int legs) {
+        this.legs = legs;
+    }
+
+    abstract int speed();
+}
+
+class Dog extends Animal {
+    Dog() {
+        super(4);
+    }
+
+    int speed() {
+        return 30;
+    }
+
+    public String name() {
+        return "dog";
+    }
+}
+
+class Puppy extends Dog {
+    @Override
+    int speed() {
+        return super.speed() / 2;
+    }
+}
+
+void main() {
+    Animal pet = new Puppy();
+    debug("$(pet.speed()) $(pet.greet())");
+    if (pet instanceof Dog dog && dog.legs == 4) {
+        Dog same = (Dog) pet;
+    }
+}
+```
+
+- A class `extends` one parent and `implements` any number of interfaces. It has its parent's fields and methods, and a `Dog` fits wherever an `Animal` or a `Named` is expected.
+- A constructor calls `super(...)` first to run the parent's constructor. Without one, the parent's constructor without arguments runs.
+- Calls are virtual, like Java's: `pet.speed()` runs `Puppy`'s `speed`. `super.speed()` runs the parent's.
+- An `abstract` class can't be created with `new`, and its `abstract` methods have no body. Every class that isn't abstract must implement them.
+- Interface methods are abstract and `public` unless they are `default`, `static` or `private`. Interface fields are constants.
+- `@Override` checks that a method overrides one from a parent class or interface. An override returns the same type as the method it overrides.
+- A `final` class can't be extended. A `sealed` class or interface lists what may extend it: `sealed interface Shape permits Circle, Square`.
+- `x instanceof Dog` is `false` for `null`. `x instanceof Dog dog` also declares `dog`, in an `if` condition or in an `&&` chain inside one; it matches a variable or a field.
+- A cast `(Dog) pet` isn't checked while the pack runs, so test with `instanceof` first.
+
+A call to a method that some subclass overrides costs one extra function call, plus one compare for each class whose version differs. Other calls cost the same as before.
+
 ### Modules and `public`
 
 In a project, every `.mcf` file under the source directory is a module named by its path: `src/util.mcf` is `util`, and `src/game/score.mcf` is `game.score`. The root file (`src/main.mcf`) is the root module. There is no module declaration.
@@ -523,6 +586,29 @@ String label(Rank rank) {
     };
 }
 ```
+
+#### Switching on types
+
+```mcfc
+sealed interface Shape permits Circle, Square {}
+
+final class Circle implements Shape {
+    int radius = 2;
+}
+
+final class Square implements Shape {
+    int side = 3;
+}
+
+int area(Shape shape) {
+    return switch (shape) {
+        case Circle circle -> 3 * circle.radius * circle.radius;
+        case Square square -> square.side * square.side;
+    };
+}
+```
+
+A case can be a class with a variable name, and the first case whose class the object has runs. Without a `default`, the cases must cover every class the value can be. A switch on types works as a statement, a variable's value, an assignment or a `return`, but not inside a bigger expression.
 
 ### `while`
 

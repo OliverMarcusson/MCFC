@@ -1,0 +1,5 @@
+say speeds 32 48 15 total 95
+say weights 40 5 40 sound 2
+say hi cat yip hi dog puppy/4
+say checks true false true false
+say patterns 3 1 small 1, dog 2, cat 5

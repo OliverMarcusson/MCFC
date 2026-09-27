@@ -31,6 +31,15 @@ pub struct ClassDef {
     pub name: String,
     pub is_pub: bool,
     pub fields: Vec<ClassField>,
+    /// `extends Parent`; an interface's parents are in `interfaces`.
+    pub parent: Option<String>,
+    /// `implements A, B`, or an interface's `extends A, B`.
+    pub interfaces: Vec<String>,
+    pub is_interface: bool,
+    pub is_abstract: bool,
+    pub is_final: bool,
+    /// `sealed ... permits A, B`: only these may extend or implement it.
+    pub permits: Option<Vec<String>>,
     pub span: Span,
 }
 
@@ -111,6 +120,10 @@ pub struct Function {
     pub owner: Option<String>,
     /// The module's path joined with `::`, filled in by the module resolver.
     pub module: String,
+    /// An abstract or interface method: a signature without a body.
+    pub is_abstract: bool,
+    /// Marked `@Override`; the type checker checks that it overrides something.
+    pub is_override: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,6 +342,18 @@ pub enum ExprKind {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
         else_expr: Box<Expr>,
+    },
+    /// `value instanceof Type`, or `value instanceof Type name`, which declares
+    /// `name`. As a `case` pattern, `value` is an empty variable.
+    InstanceOf {
+        expr: Box<Expr>,
+        ty: Type,
+        binding: Option<String>,
+    },
+    /// `(Circle) shape`: a class cast. Primitive casts are builtin calls.
+    Cast {
+        ty: Type,
+        expr: Box<Expr>,
     },
     /// `switch (value) { case p -> result; ... default -> result; }`, one entry per pattern.
     Switch {

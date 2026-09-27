@@ -1,2 +1,2 @@
-dialog show @s {type:"minecraft:notice",title:'Hi "there"',body:{type:"minecraft:plain_message",contents:"line one\nline two"}}
-dialog show @s {type:"minecraft:multi_action",title:"Shop",body:{type:"minecraft:plain_message",contents:"Pick one"},actions:[{label:"Buy sword",action:{type:"run_command",command:"/trigger buy"}}]}
+dialog show @s {type:"minecraft:notice",title:'Hi "there"',body:{type:"minecraft:plain_message",contents:{text:"line one\nline two"}}}
+dialog show @s {type:"minecraft:multi_action",title:"Shop",body:{type:"minecraft:plain_message",contents:{text:"Pick one"}},actions:[{label:"Buy sword",action:{type:"run_command",command:"/trigger buy"}}]}

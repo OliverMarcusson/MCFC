@@ -2,23 +2,24 @@
 // A button runs `/trigger <command>`, which reaches the `@Command` handler of
 // that name, so players without operator permissions can click it.
 // The records mirror the dialog format, so the game writes the SNBT.
+// The body is a Component, so it can hold colors, click events and sprites.
 
 public record Button(String label, String command) {}
 
-record Message(String type, String contents) {}
+record Message(String type, Component contents) {}
 record RunCommand(String type, String command) {}
 record Action(String label, RunCommand action) {}
 record Notice(String type, String title, Message body) {}
 record Menu(String type, String title, Message body, List<Action> actions) {}
 
-public void notice(Player player, String title, String body) {
+public void notice(Player player, String title, Component body) {
     var dialog = new Notice("minecraft:notice", title, message(body));
     as (player) {
         mcf("dialog show @s $(dialog)");
     }
 }
 
-public void menu(Player player, String title, String body, List<Button> buttons) {
+public void menu(Player player, String title, Component body, List<Button> buttons) {
     List<Action> actions = List.of();
     for (Button button : buttons) {
         actions.add(new Action(button.label(), new RunCommand("run_command", "/trigger " + button.command())));
@@ -29,6 +30,6 @@ public void menu(Player player, String title, String body, List<Button> buttons)
     }
 }
 
-Message message(String contents) {
+Message message(Component contents) {
     return new Message("minecraft:plain_message", contents);
 }

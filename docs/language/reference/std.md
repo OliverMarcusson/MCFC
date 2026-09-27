@@ -382,14 +382,14 @@ void buy(Player player) {
 }
 
 void openShop(Player player) {
-    dialog.menu(player, "Shop", "Pick something", List.of(new dialog.Button("Buy sword", "buy")));
+    dialog.menu(player, "Shop", Component.text("Pick something"), List.of(new dialog.Button("Buy sword", "buy")));
 }
 ```
 
 | Function | Shows |
 | --- | --- |
-| `void notice(Player player, String title, String body)` | A message with an OK button. |
-| `void menu(Player player, String title, String body, List<Button> buttons)` | A message with one button per `Button(label, command)`. Needs at least one button. |
+| `void notice(Player player, String title, Component body)` | A message with an OK button. |
+| `void menu(Player player, String title, Component body, List<Button> buttons)` | A message with one button per `Button(label, command)`. Needs at least one button. |
 
 Dialogs are sent inline with `/dialog show`, so they need no registry entries and work after a `/reload`.
 

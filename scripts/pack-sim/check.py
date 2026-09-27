@@ -21,7 +21,7 @@ BUDGET = {
     "strescape": 340,
     "placeholders": 34,
     "actionbar": 322,
-    "dialogs": 79,
+    "dialogs": 85,
     "blocktype": 255,
     "shapes": 9641,
     "noise": 3641,

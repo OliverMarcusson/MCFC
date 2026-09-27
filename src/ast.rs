@@ -16,6 +16,19 @@ pub struct EnumDef {
     pub name: String,
     pub is_pub: bool,
     pub variants: Vec<String>,
+    /// What each constant passes to the constructor, in `variants` order.
+    pub args: Vec<Vec<Expr>>,
+    pub constructor: Vec<Param>,
+    pub fields: Vec<EnumField>,
+    pub span: Span,
+}
+
+/// `private final float mass;`, set by the constructor from parameter `param`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumField {
+    pub name: String,
+    pub ty: Type,
+    pub param: Option<usize>,
     pub span: Span,
 }
 
@@ -70,6 +83,11 @@ pub struct Function {
     pub span: Span,
     /// Byte offset just past the closing `}`.
     pub end: usize,
+    /// The record or enum a method is declared in. The function is named
+    /// `Type__method`, and an instance method's first parameter is `this`.
+    pub owner: Option<String>,
+    /// The module's path joined with `::`, filled in by the module resolver.
+    pub module: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

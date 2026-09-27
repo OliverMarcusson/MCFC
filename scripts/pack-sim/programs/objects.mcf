@@ -1,0 +1,95 @@
+// Record and enum methods, overloading, record equality and toString.
+record Point(int x, int y) {
+    static Point origin() {
+        return new Point(0, 0);
+    }
+
+    Point add(Point other) {
+        return new Point(x + other.x(), this.y + other.y());
+    }
+
+    Point add(int dx, int dy) {
+        return add(new Point(dx, dy));
+    }
+
+    int manhattan() {
+        return abs(x) + abs(y);
+    }
+
+    private int abs(int value) {
+        return value < 0 ? -value : value;
+    }
+}
+
+record Tagged(String label) {
+    @Override
+    public String toString() {
+        return "<" + label + ">";
+    }
+}
+
+record Line(Point from, Point to) {}
+
+enum Planet {
+    MERCURY(3, 2),
+    EARTH(6, 5);
+
+    private final int mass;
+    private final int radius;
+
+    Planet(int mass, int radius) {
+        this.mass = mass;
+        this.radius = radius;
+    }
+
+    int density() {
+        return mass * 10 / radius;
+    }
+
+    boolean isHome() {
+        return this == EARTH;
+    }
+}
+
+int area(int side) {
+    return side * side;
+}
+
+float area(float width, float height) {
+    return width * height;
+}
+
+String area(String label) {
+    return "area " + label;
+}
+
+void main() {
+    Point start = Point.origin();
+    Point moved = start.add(3, -4).add(new Point(1, 1));
+    int distance = moved.manhattan();
+    boolean same = moved == new Point(4, -3);
+    boolean different = moved != new Point(4, 3);
+    boolean equal = moved.equals(new Point(4, -3));
+    String summary = "$(moved) $(distance) $(same) $(different) $(equal)";
+    mcf("say $(summary)");
+
+    Line line = new Line(start, moved);
+    String text = "line " + line;
+    mcf("say $(text)");
+
+    String tag = "tag " + new Tagged("x");
+    mcf("say $(tag)");
+
+    for (Planet planet : Planet.values()) {
+        int density = planet.density();
+        int mass = planet.mass;
+        boolean home = planet.isHome();
+        String row = "$(planet) $(density) $(mass) $(home) " + planet.name();
+        mcf("say $(row)");
+    }
+
+    int square = area(3);
+    float rect = area(2, 1.5);
+    String named = area("x");
+    mcf("say $(square) $(rect) $(named)");
+}

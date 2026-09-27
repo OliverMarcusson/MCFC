@@ -434,6 +434,170 @@ pub struct FunctionSignature {
     /// Copies of a generic function that calls asked for: name to type
     /// arguments and the first call's span.
     pub instances: Arc<Mutex<BTreeMap<String, GenericCall>>>,
+    /// On an `@overload:name` entry, the mangled name of each overload.
+    pub overloads: Vec<String>,
+    pub is_pub: bool,
+    /// A record or enum method whose first parameter is `this`.
+    pub instance: bool,
+    /// Declared in a record or enum.
+    pub method: bool,
+}
+
+fn display_function(name: &str) -> String {
+    name.replace("::", ".")
+}
+
+/// What a bare `name` in a method means: `this.name()` for a record
+/// component, `this.name` for an enum field.
+fn this_member(
+    env: &HashMap<String, Type>,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    name: &str,
+    span: &Span,
+) -> Option<ExprKind> {
+    // Enum constants are in scope in every method of their enum.
+    if let Some(owner) = env_tag(env, OWNER_TAG)
+        && struct_defs
+            .get(owner)?
+            .enum_variants
+            .as_ref()
+            .is_some_and(|variants| variants.iter().any(|v| v == name))
+    {
+        return Some(ExprKind::Path(PathExpr {
+            base: Box::new(Expr {
+                kind: ExprKind::Variable(owner.to_string()),
+                span: span.clone(),
+            }),
+            segments: vec![PathSegment::Field(name.to_string())],
+        }));
+    }
+    let (Type::Struct(owner) | Type::Enum(owner)) = env.get("this")? else {
+        return None;
+    };
+    let def = struct_defs.get(owner)?;
+    let this = Box::new(Expr {
+        kind: ExprKind::Variable("this".to_string()),
+        span: span.clone(),
+    });
+    if def.fields.contains_key(name) {
+        Some(ExprKind::MethodCall {
+            receiver: this,
+            method: name.to_string(),
+            args: Vec::new(),
+        })
+    } else if def.enum_fields.contains_key(name) {
+        Some(ExprKind::Path(PathExpr {
+            base: this,
+            segments: vec![PathSegment::Field(name.to_string())],
+        }))
+    } else {
+        None
+    }
+}
+
+/// `planet.mass` as `switch (planet) { case MERCURY -> 3.3; ... }`.
+fn enum_field_switch(
+    path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+) -> Option<(ExprKind, Type)> {
+    let [PathSegment::Field(field)] = path.segments.as_slice() else {
+        return None;
+    };
+    if !struct_defs
+        .values()
+        .any(|def| def.enum_fields.contains_key(field))
+    {
+        return None;
+    }
+    let base = type_check_expr(
+        &path.base,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        &mut BTreeSet::new(),
+        &mut Diagnostics::new(),
+    );
+    let Type::Enum(owner) = &base.ty else {
+        return None;
+    };
+    let def = struct_defs.get(owner)?;
+    let (ty, values) = def.enum_fields.get(field)?;
+    let arms = def
+        .enum_variants
+        .as_ref()?
+        .iter()
+        .zip(values)
+        .map(|(variant, value)| {
+            (
+                Expr {
+                    kind: ExprKind::Variable(variant.clone()),
+                    span: value.span.clone(),
+                },
+                value.clone(),
+            )
+        })
+        .collect();
+    Some((
+        ExprKind::Switch {
+            value: path.base.clone(),
+            arms,
+            default: None,
+        },
+        ty.clone(),
+    ))
+}
+
+const MODULE_TAG: &str = "@module:";
+const OWNER_TAG: &str = "@owner:";
+
+fn env_tag<'a>(env: &'a HashMap<String, Type>, tag: &str) -> Option<&'a str> {
+    env.keys().find_map(|key| key.strip_prefix(tag))
+}
+
+/// Whether the method `function` (`a::b::Type__m`) may be called here: it is
+/// public, or the caller is in its module or one below it, like any private item.
+fn method_visible(
+    env: &HashMap<String, Type>,
+    function: &str,
+    signature: &FunctionSignature,
+) -> bool {
+    let Some(caller) = env_tag(env, MODULE_TAG) else {
+        return true;
+    };
+    let owner = function.rsplit_once("::").map_or("", |(module, _)| module);
+    signature.is_pub
+        || owner.is_empty()
+        || caller == owner
+        || caller.starts_with(&format!("{owner}::"))
+}
+
+/// The function behind method `method` of type `owner`, trying the Java
+/// names the parser mapped away (`add` became `push`). An overloaded method
+/// returns its bare name, which the call resolves.
+fn find_method(
+    signatures: &BTreeMap<String, FunctionSignature>,
+    owner: &str,
+    method: &str,
+) -> Option<(String, bool)> {
+    std::iter::once(method)
+        .chain(crate::language_catalog::java_method_names(method))
+        .find_map(|name| {
+            let function = format!("{owner}__{name}");
+            let instance = match signatures.get(&overload_key(&function)) {
+                Some(entry) => signatures.get(entry.overloads.first()?)?.instance,
+                None => signatures.get(&function)?.instance,
+            };
+            Some((function, instance))
+        })
+}
+
+/// The signature entry listing the overloads of `name`.
+fn overload_key(name: &str) -> String {
+    format!("@overload:{name}")
 }
 
 /// The type arguments of one copy of a generic function, and the first call
@@ -599,10 +763,87 @@ fn instance_name(function: &str, types: &[Type]) -> String {
     format!("{function}__{}", types.join("__"))
 }
 
+/// The overload of `name` that `args` call, like Java: one taking the argument
+/// types as they are wins over one they convert to (`int` to `float`), which
+/// wins over a generic one. Returns `name` itself after reporting an error.
+fn pick_overload(
+    name: &str,
+    overloads: &[String],
+    args: &[TypedExpr],
+    signatures: &BTreeMap<String, FunctionSignature>,
+    span: &Span,
+    diagnostics: &mut Diagnostics,
+) -> String {
+    let fits = |candidate: &String, convert: bool| {
+        let signature = &signatures[candidate];
+        let mut bindings = BTreeMap::new();
+        signature.params.len() == args.len()
+            && signature.params.iter().zip(args).all(|(param, arg)| {
+                if !signature.type_params.is_empty() {
+                    bind_type_params(param, &arg.ty, &signature.type_params, &mut bindings, false)
+                } else if convert {
+                    coerce_expr_to_expected_type(arg.clone(), param).ty == *param
+                } else {
+                    *param == arg.ty
+                }
+            })
+    };
+    let exact: Vec<&String> = overloads
+        .iter()
+        .filter(|c| signatures[*c].type_params.is_empty() && fits(c, false))
+        .collect();
+    let converted: Vec<&String> = overloads
+        .iter()
+        .filter(|c| signatures[*c].type_params.is_empty() && fits(c, true))
+        .collect();
+    let generic: Vec<&String> = overloads
+        .iter()
+        .filter(|c| !signatures[*c].type_params.is_empty() && fits(c, false))
+        .collect();
+    let describe = |candidate: &String| {
+        let params: Vec<String> = signatures[candidate]
+            .params
+            .iter()
+            .map(Type::as_str)
+            .collect();
+        format!("{}({})", display_function(name), params.join(", "))
+    };
+    for found in [exact, converted, generic] {
+        match found.as_slice() {
+            [] => continue,
+            [one] => return (*one).clone(),
+            many => {
+                let matches: Vec<String> = many.iter().map(|c| describe(c)).collect();
+                diagnostics.push(Diagnostic::new(
+                    format!("ambiguous call; it matches {}", matches.join(" and ")),
+                    span.clone(),
+                ));
+                return (*many[0]).clone();
+            }
+        }
+    }
+    let types: Vec<String> = args.iter().map(|arg| arg.ty.as_str()).collect();
+    let options: Vec<String> = overloads.iter().map(describe).collect();
+    diagnostics.push(Diagnostic::new(
+        format!(
+            "no overload of '{}' takes ({}); there is {}",
+            display_function(name),
+            types.join(", "),
+            options.join(", ")
+        ),
+        span.clone(),
+    ));
+    name.to_string()
+}
+
 #[derive(Debug, Clone)]
 pub struct StructTypeDef {
     pub fields: BTreeMap<String, Type>,
     pub enum_variants: Option<Vec<String>>,
+    /// An enum field's type and its value for each constant, in variant order.
+    pub enum_fields: BTreeMap<String, (Type, Vec<Expr>)>,
+    /// Record components in declaration order, for `toString()`.
+    pub order: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -808,6 +1049,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 StructTypeDef {
                     fields: field_map,
                     enum_variants: None,
+                    enum_fields: BTreeMap::new(),
+                    order: Vec::new(),
                 },
             );
         }
@@ -824,6 +1067,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 StructTypeDef {
                     fields: fields.map(|(f, ty)| (f.to_string(), ty)).into(),
                     enum_variants: None,
+                    enum_fields: BTreeMap::new(),
+                    order: Vec::new(),
                 },
             );
         }
@@ -845,6 +1090,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             StructTypeDef {
                 fields,
                 enum_variants: None,
+                enum_fields: BTreeMap::new(),
+                order: Vec::new(),
             },
         );
     }
@@ -874,6 +1121,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             StructTypeDef {
                 fields,
                 enum_variants: None,
+                enum_fields: BTreeMap::new(),
+                order: Vec::new(),
             },
         );
     }
@@ -900,6 +1149,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             StructTypeDef {
                 fields: BTreeMap::new(),
                 enum_variants: Some(enum_def.variants.clone()),
+                enum_fields: BTreeMap::new(),
+                order: Vec::new(),
             },
         );
     }
@@ -922,13 +1173,90 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
         resolve_enum_type(&mut function.return_type, &struct_defs);
     }
+    // Overloads compile under `name__<parameter types>` (a zero-parameter one
+    // keeps the bare name), and a call picks one by its argument types.
+    let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, function) in normalized.functions.iter().enumerate() {
+        by_name
+            .entry(function.name.clone())
+            .or_default()
+            .push(index);
+    }
+    let mut overloads = BTreeMap::new();
+    for (name, indexes) in by_name.into_iter().filter(|(_, found)| found.len() > 1) {
+        let mut mangled = Vec::new();
+        for index in indexes {
+            let function = &mut normalized.functions[index];
+            let types: Vec<Type> = function
+                .params
+                .iter()
+                .filter(|param| param.name != "this")
+                .map(|param| param.ty.clone())
+                .collect();
+            if !types.is_empty() {
+                function.name = instance_name(&name, &types);
+            }
+            mangled.push(function.name.clone());
+        }
+        overloads.insert(name, mangled);
+    }
     for def in &normalized.structs {
         if let Some(registered) = struct_defs.get_mut(&def.name) {
+            registered.order = def.fields.iter().map(|field| field.name.clone()).collect();
             registered.fields = def
                 .fields
                 .iter()
                 .map(|field| (field.name.clone(), field.ty.clone()))
                 .collect();
+        }
+    }
+    // Enum fields read as a switch over the constant; each constant's value is
+    // the argument it passes for the field's constructor parameter.
+    for def in &mut normalized.enums {
+        for param in &mut def.constructor {
+            resolve_enum_type(&mut param.ty, &struct_defs);
+        }
+        for (variant, args) in def.variants.iter().zip(&def.args) {
+            if args.len() != def.constructor.len() {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "enum constant '{variant}' passes {} arguments, but the constructor takes {}",
+                        args.len(),
+                        def.constructor.len()
+                    ),
+                    def.span.clone(),
+                ));
+            }
+        }
+        let mut fields = BTreeMap::new();
+        for field in &mut def.fields {
+            resolve_enum_type(&mut field.ty, &struct_defs);
+            let Some(param) = field.param else { continue };
+            if def.constructor[param].ty != field.ty {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "field '{}' is '{}', but it is set from a '{}' parameter",
+                        field.name,
+                        field.ty.as_str(),
+                        def.constructor[param].ty.as_str()
+                    ),
+                    field.span.clone(),
+                ));
+            }
+            let values = def
+                .args
+                .iter()
+                .map(|args| {
+                    args.get(param).cloned().unwrap_or(Expr {
+                        kind: ExprKind::Int(0),
+                        span: def.span.clone(),
+                    })
+                })
+                .collect();
+            fields.insert(field.name.clone(), (field.ty.clone(), values));
+        }
+        if let Some(registered) = struct_defs.get_mut(&def.name) {
+            registered.enum_fields = fields;
         }
     }
     let program = &normalized;
@@ -1055,6 +1383,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         StructTypeDef {
             fields: world_state_types,
             enum_variants: None,
+            enum_fields: BTreeMap::new(),
+            order: Vec::new(),
         },
     );
     struct_defs.insert(
@@ -1062,6 +1392,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         StructTypeDef {
             fields: player_state_types,
             enum_variants: None,
+            enum_fields: BTreeMap::new(),
+            order: Vec::new(),
         },
     );
     struct_defs.insert(
@@ -1069,6 +1401,8 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         StructTypeDef {
             fields: entity_state_types,
             enum_variants: None,
+            enum_fields: BTreeMap::new(),
+            order: Vec::new(),
         },
     );
 
@@ -1095,7 +1429,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         );
         if signatures.contains_key(&function.name) {
             diagnostics.push(Diagnostic::new(
-                format!("duplicate function '{}'", function.name),
+                format!("duplicate function '{}'", display_function(&function.name)),
                 function.span.clone(),
             ));
             continue;
@@ -1111,6 +1445,28 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 return_type: function.return_type.clone(),
                 type_params: function.type_params.clone(),
                 instances: Arc::default(),
+                overloads: Vec::new(),
+                is_pub: function.is_pub,
+                instance: function
+                    .params
+                    .first()
+                    .is_some_and(|param| param.name == "this"),
+                method: function.owner.is_some(),
+            },
+        );
+    }
+    for (name, overloads) in overloads {
+        signatures.insert(
+            overload_key(&name),
+            FunctionSignature {
+                params: Vec::new(),
+                return_type: Type::Void,
+                type_params: Vec::new(),
+                instances: Arc::default(),
+                overloads,
+                is_pub: true,
+                instance: false,
+                method: false,
             },
         );
     }
@@ -1178,6 +1534,13 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                     return_type: instance.return_type.clone(),
                     type_params: Vec::new(),
                     instances: Arc::default(),
+                    overloads: Vec::new(),
+                    is_pub: generic.is_pub,
+                    instance: generic
+                        .params
+                        .first()
+                        .is_some_and(|param| param.name == "this"),
+                    method: generic.owner.is_some(),
                 },
             );
             functions.push(type_check_function(
@@ -1250,6 +1613,14 @@ fn type_check_function(
             });
         }
 
+        // Hidden entries naming the caller's module and a method's type; `Void`
+        // keeps them out of `async` captures. The merged `tick` spans modules.
+        if function.name != "tick" {
+            env.insert(format!("{MODULE_TAG}{}", function.module), Type::Void);
+        }
+        if let Some(owner) = &function.owner {
+            env.insert(format!("{OWNER_TAG}{owner}"), Type::Void);
+        }
         let mut called_functions = BTreeSet::new();
         let body = type_check_block(
             &function.body,
@@ -1432,6 +1803,11 @@ fn type_check_block(
                 continue;
             }
             StmtKind::Let { name, ty, value } => {
+                // A written enum type parses as a record name until resolved here.
+                let ty = &ty.clone().map(|mut ty| {
+                    resolve_enum_type(&mut ty, struct_defs);
+                    ty
+                });
                 if env.contains_key(name) {
                     diagnostics.push(Diagnostic::new(
                         format!("variable '{}' is already defined", name),
@@ -2420,10 +2796,14 @@ fn type_check_expr(
                     )
                     .into_iter()
                     .map(|mut placeholder| {
-                        if matches!(placeholder.ty, Type::Bool | Type::Enum(_)) {
+                        if matches!(placeholder.ty, Type::Bool | Type::Enum(_))
+                            || matches!(&placeholder.ty, Type::Struct(name) if !name.starts_with('@'))
+                        {
                             placeholder.expr = string_operand(
                                 placeholder.expr,
                                 struct_defs,
+                                signatures,
+                                called_functions,
                                 expr.span.clone(),
                                 diagnostics,
                             );
@@ -2589,6 +2969,22 @@ fn type_check_expr(
             }
         }
         ExprKind::Path(path) => {
+            if let Some((kind, ty)) = enum_field_switch(path, struct_defs, signatures, env, ref_env)
+            {
+                let value = type_check_expr(
+                    &Expr {
+                        kind,
+                        span: expr.span.clone(),
+                    },
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+                return coerce_expr_to_expected_type(value, &ty);
+            }
             if let (ExprKind::Variable(enum_name), [PathSegment::Field(variant)]) =
                 (&path.base.kind, path.segments.as_slice())
                 && let Some(variants) = struct_defs
@@ -2650,6 +3046,19 @@ fn type_check_expr(
                 ty: ty.clone(),
                 ref_kind: ref_env.get(name).copied().unwrap_or(RefKind::Unknown),
             },
+            // In a method, a bare component or field name reads it from `this`.
+            None if this_member(env, struct_defs, name, &expr.span).is_some() => type_check_expr(
+                &Expr {
+                    kind: this_member(env, struct_defs, name, &expr.span).unwrap(),
+                    span: expr.span.clone(),
+                },
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            ),
             None if world_state_type(struct_defs, name).is_some() => TypedExpr {
                 kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}{name}")),
                 ty: world_state_type(struct_defs, name).unwrap(),
@@ -2749,8 +3158,22 @@ fn type_check_expr(
             );
             if *op == BinaryOp::Add && (left.ty == Type::String || right.ty == Type::String) {
                 // Like Java, `"n=" + n` converts the other side to text.
-                let left = string_operand(left, struct_defs, expr.span.clone(), diagnostics);
-                let right = string_operand(right, struct_defs, expr.span.clone(), diagnostics);
+                let left = string_operand(
+                    left,
+                    struct_defs,
+                    signatures,
+                    called_functions,
+                    expr.span.clone(),
+                    diagnostics,
+                );
+                let right = string_operand(
+                    right,
+                    struct_defs,
+                    signatures,
+                    called_functions,
+                    expr.span.clone(),
+                    diagnostics,
+                );
                 return concat_strings(vec![left, right]);
             }
             let ty = match op {
@@ -2823,9 +3246,10 @@ fn type_check_expr(
                             if !matches!(
                                 left.ty,
                                 Type::Int | Type::Float | Type::Bool | Type::String | Type::Enum(_)
-                            ) {
+                            ) && !matches!(&left.ty, Type::Struct(name) if !name.starts_with('@'))
+                            {
                                 diagnostics.push(Diagnostic::new(
-                                    "equality operators currently support only 'int', 'float', 'boolean', and 'String'",
+                                    "equality operators support 'int', 'float', 'boolean', 'String', enums and records",
                                     expr.span.clone(),
                                 ));
                             }
@@ -2970,6 +3394,43 @@ fn type_check_expr(
             diagnostics,
         ),
         ExprKind::Call { function, args } => {
+            // In a method, a bare `m(...)` calls another method of the same type.
+            if !function.contains("::")
+                && let Some(owner) = env_tag(env, OWNER_TAG)
+                && let Some((method, instance)) = find_method(signatures, owner, function)
+            {
+                let mut call_args = Vec::new();
+                if instance {
+                    if !env.contains_key("this") {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "'{function}' needs an instance; a static method has no 'this'"
+                            ),
+                            expr.span.clone(),
+                        ));
+                    }
+                    call_args.push(Expr {
+                        kind: ExprKind::Variable("this".to_string()),
+                        span: expr.span.clone(),
+                    });
+                }
+                call_args.extend(args.iter().cloned());
+                return type_check_expr(
+                    &Expr {
+                        kind: ExprKind::Call {
+                            function: method,
+                            args: call_args,
+                        },
+                        span: expr.span.clone(),
+                    },
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+            }
             if let Some(builtin) = type_check_builtin_call(
                 function,
                 args,
@@ -2983,49 +3444,6 @@ fn type_check_expr(
             ) {
                 return builtin;
             }
-            let signature = match signatures.get(function) {
-                Some(signature) => signature,
-                None => {
-                    diagnostics.push(Diagnostic::new(
-                        format!("unknown function '{}'", function),
-                        expr.span.clone(),
-                    ));
-                    return TypedExpr {
-                        kind: TypedExprKind::Call {
-                            function: function.clone(),
-                            args: args
-                                .iter()
-                                .map(|arg| {
-                                    type_check_expr(
-                                        arg,
-                                        struct_defs,
-                                        signatures,
-                                        env,
-                                        ref_env,
-                                        called_functions,
-                                        diagnostics,
-                                    )
-                                })
-                                .collect(),
-                        },
-                        ty: Type::Void,
-                        ref_kind: RefKind::Unknown,
-                    };
-                }
-            };
-
-            if signature.params.len() != args.len() {
-                diagnostics.push(Diagnostic::new(
-                    format!(
-                        "wrong arity for '{}': expected {}, found {}",
-                        display_call(function),
-                        signature.params.len(),
-                        args.len()
-                    ),
-                    expr.span.clone(),
-                ));
-            }
-
             let args: Vec<_> = args
                 .iter()
                 .map(|arg| {
@@ -3040,6 +3458,55 @@ fn type_check_expr(
                     )
                 })
                 .collect();
+            let function = &match signatures.get(&overload_key(function)) {
+                Some(entry) => pick_overload(
+                    function,
+                    &entry.overloads,
+                    &args,
+                    signatures,
+                    &expr.span,
+                    diagnostics,
+                ),
+                None => function.clone(),
+            };
+            let signature = match signatures.get(function) {
+                Some(signature) => signature,
+                None => {
+                    diagnostics.push(Diagnostic::new(
+                        format!("unknown function '{}'", function),
+                        expr.span.clone(),
+                    ));
+                    return TypedExpr {
+                        kind: TypedExprKind::Call {
+                            function: function.clone(),
+                            args,
+                        },
+                        ty: Type::Void,
+                        ref_kind: RefKind::Unknown,
+                    };
+                }
+            };
+
+            if signature.method && !method_visible(env, function, signature) {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "method '{}' is private; mark it 'public'",
+                        display_function(function).replacen("__", ".", 1)
+                    ),
+                    expr.span.clone(),
+                ));
+            }
+            if signature.params.len() != args.len() {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "wrong arity for '{}': expected {}, found {}",
+                        display_call(function),
+                        signature.params.len(),
+                        args.len()
+                    ),
+                    expr.span.clone(),
+                ));
+            }
             let (function, params, return_type) = if signature.type_params.is_empty() {
                 (
                     function.clone(),
@@ -3475,7 +3942,10 @@ fn type_check_path(
                 current_ty = *value.clone();
             }
             (Type::Struct(name), PathSegment::Field(field)) => {
-                if !name.starts_with('@') {
+                // Inside a record method, `this.x` reads a component like Java.
+                let this_component = index == 0
+                    && matches!(&path.base.kind, ExprKind::Variable(base) if base == "this");
+                if !name.starts_with('@') && !this_component {
                     diagnostics.push(Diagnostic::new(
                         format!(
                             "read a record component with '.{field}()'; records can't be changed, so build a new one with 'new {}(...)'",
@@ -4786,18 +5256,6 @@ fn type_check_method_call(
         )
     };
     match (method, args) {
-        // `a.equals(b)` is `a == b`: MCFC compares values, never references.
-        ("equals", [other]) => {
-            return Some(recheck(
-                ExprKind::Binary {
-                    op: BinaryOp::Eq,
-                    left: Box::new(receiver.clone()),
-                    right: Box::new(other.clone()),
-                },
-                called_functions,
-                diagnostics,
-            ));
-        }
         ("getOrDefault", [key, fallback]) => {
             let get = Expr {
                 kind: ExprKind::MethodCall {
@@ -4856,6 +5314,52 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    // A record or enum method: `v.add(w)` calls `Vec3__add(v, w)`.
+    if let Type::Struct(owner) | Type::Enum(owner) = &receiver.ty
+        && let Some((function, instance)) = find_method(signatures, owner, method)
+    {
+        let mut call_args = Vec::new();
+        if instance {
+            call_args.push(receiver_expr.clone());
+        }
+        call_args.extend(args.iter().cloned());
+        return Some(recheck(
+            ExprKind::Call {
+                function,
+                args: call_args,
+            },
+            called_functions,
+            diagnostics,
+        ));
+    }
+    // `a.equals(b)` is `a == b`: MCFC compares values, never references.
+    if let ("equals", [other]) = (method, args) {
+        return Some(recheck(
+            ExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(receiver_expr.clone()),
+                right: Box::new(other.clone()),
+            },
+            called_functions,
+            diagnostics,
+        ));
+    }
+    if let Type::Struct(owner) = &receiver.ty
+        && method == "to_string"
+        && args.is_empty()
+        && let Some(def) = struct_defs.get(owner).filter(|_| !owner.starts_with('@'))
+    {
+        return Some(record_to_string(
+            receiver.clone(),
+            owner,
+            def,
+            struct_defs,
+            signatures,
+            called_functions,
+            expr.span.clone(),
+            diagnostics,
+        ));
+    }
     // Entity actions written in `std/player.mcf`; they take an entity or a `Selector`.
     let std_method = match (method, args.len()) {
         (
@@ -7420,6 +7924,8 @@ fn unify_branches(
 fn string_operand(
     operand: TypedExpr,
     struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    called_functions: &mut BTreeSet<String>,
     span: Span,
     diagnostics: &mut Diagnostics,
 ) -> TypedExpr {
@@ -7428,6 +7934,37 @@ fn string_operand(
         ty: Type::String,
         ref_kind: RefKind::Unknown,
     };
+    // A declared `toString()` wins, like Java.
+    if let Type::Struct(owner) | Type::Enum(owner) = &operand.ty
+        && let Some((function, true)) = find_method(signatures, owner, "toString")
+        && signatures
+            .get(&function)
+            .is_some_and(|s| s.return_type == Type::String)
+    {
+        called_functions.insert(function.clone());
+        return TypedExpr {
+            kind: TypedExprKind::Call {
+                function,
+                args: vec![operand],
+            },
+            ty: Type::String,
+            ref_kind: RefKind::Unknown,
+        };
+    }
+    if let Type::Struct(owner) = &operand.ty
+        && let Some(def) = struct_defs.get(owner).filter(|_| !owner.starts_with('@'))
+    {
+        return record_to_string(
+            operand.clone(),
+            owner,
+            def,
+            struct_defs,
+            signatures,
+            called_functions,
+            span,
+            diagnostics,
+        );
+    }
     match &operand.ty {
         Type::String | Type::Int | Type::Float => operand,
         Type::Bool => conditional_expr(operand, text("true"), text("false")),
@@ -7446,6 +7983,42 @@ fn string_operand(
             operand
         }
     }
+}
+
+/// Java's record text: `Quest[name=Mine, reward=5]`.
+#[allow(clippy::too_many_arguments)]
+fn record_to_string(
+    record: TypedExpr,
+    owner: &str,
+    def: &StructTypeDef,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    called_functions: &mut BTreeSet<String>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let text = |value: String| TypedExpr {
+        kind: TypedExprKind::String(value),
+        ty: Type::String,
+        ref_kind: RefKind::Unknown,
+    };
+    let short = owner.rsplit("::").next().unwrap_or(owner);
+    let mut parts = vec![text(format!("{short}["))];
+    for (index, field) in def.order.iter().enumerate() {
+        let separator = if index == 0 { "" } else { ", " };
+        parts.push(text(format!("{separator}{field}=")));
+        let value = record_component(record.clone(), field, def.fields[field].clone());
+        parts.push(string_operand(
+            value,
+            struct_defs,
+            signatures,
+            called_functions,
+            span.clone(),
+            diagnostics,
+        ));
+    }
+    parts.push(text("]".to_string()));
+    concat_strings(parts)
 }
 
 /// `e.name()`: a chain of `e == 0 ? "A" : e == 1 ? "B" : ...` over the constants.

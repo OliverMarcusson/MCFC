@@ -344,6 +344,8 @@ pub(crate) fn normalize_special_functions(mut program: Program) -> Result<Progra
             body: Vec::new(),
             span: program.functions[first_index].span.clone(),
             end: program.functions[first_index].end,
+            owner: None,
+            module: String::new(),
         };
         for index in &tick_void_indices {
             merged.body.extend(program.functions[*index].body.clone());

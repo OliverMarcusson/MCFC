@@ -9520,8 +9520,10 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                     ),
                 ]);
             }
+            // Records compare as whole compounds, the same way.
             BinaryOp::Eq | BinaryOp::NotEq
-                if matches!(left.ty, Type::String) && matches!(right.ty, Type::String) =>
+                if matches!(left.ty, Type::String | Type::Struct(_))
+                    && matches!(right.ty, Type::String | Type::Struct(_)) =>
             {
                 self.compile_string_equality(op, &left_slot, &right_slot, target, lines);
             }

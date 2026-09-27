@@ -76,19 +76,37 @@ There's also `switch`, `break`, `continue` and `return`. Conditional expressions
 ## Records and enums
 
 ```mcfc
-record Quest(String name, int reward) {}
+record Quest(String name, int reward) {
+    Quest doubled() {
+        return new Quest(name, reward * 2);
+    }
+}
 
-enum Stage { NEW, DONE }
+enum Stage {
+    NEW("New"),
+    DONE("Done");
+
+    private final String label;
+
+    Stage(String label) {
+        this.label = label;
+    }
+
+    String label() {
+        return label;
+    }
+}
 
 void finish(Quest quest, Stage stage) {
+    Quest bonus = quest.doubled();
     switch (stage) {
-        case NEW -> debug("started $(quest.name())");
-        case DONE -> debug("reward $(quest.reward())");
+        case NEW -> debug("started $(bonus.name())");
+        case DONE -> debug("$(stage.label()): reward $(bonus.reward())");
     }
 }
 ```
 
-Create a record with `new Quest("Mine", 5)`. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum)
+Create a record with `new Quest("Mine", 5)`. Records and enums can have methods, including `static` ones, and records get `==`, `equals` and `toString()` from their components. Functions and methods can be overloaded. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum), [overloading](./reference/statements#overloading)
 
 ## Missing values
 

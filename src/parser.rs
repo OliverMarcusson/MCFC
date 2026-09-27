@@ -97,6 +97,14 @@ struct Annotation {
     span: Span,
 }
 
+enum TypeMember {
+    Method(Function),
+    Field(EnumField),
+    /// The parameters, and each `this.field = param;` as `(field, param)`.
+    Constructor((Vec<Param>, Vec<(String, String)>), Span),
+    Skipped,
+}
+
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
@@ -137,10 +145,14 @@ impl Parser {
             self.eat_word("static");
             if self.at_word("record") {
                 self.reject_annotations(&annotations, "a record");
-                program.structs.push(self.parse_record(is_pub));
+                program
+                    .structs
+                    .push(self.parse_record(is_pub, &mut program.functions));
             } else if self.at_word("enum") {
                 self.reject_annotations(&annotations, "an enum");
-                program.enums.push(self.parse_enum(is_pub));
+                program
+                    .enums
+                    .push(self.parse_enum(is_pub, &mut program.functions));
             } else {
                 self.parse_member(annotations, is_pub, &mut program);
             }
@@ -210,7 +222,7 @@ impl Parser {
         }
     }
 
-    fn parse_record(&mut self, is_pub: bool) -> StructDef {
+    fn parse_record(&mut self, is_pub: bool, functions: &mut Vec<Function>) -> StructDef {
         self.bump();
         let span = self.current_span();
         let name = self.expect_identifier("expected record name");
@@ -226,10 +238,37 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RightParen, "expected ')' after record fields");
-        self.expect(TokenKind::LeftBrace, "expected '{}' after record header");
-        if !self.at(&TokenKind::RightBrace) {
-            self.error_here("record bodies must be empty");
-            self.skip_balanced_until_close();
+        self.expect(TokenKind::LeftBrace, "expected '{' after record header");
+        let component_names: Vec<String> = fields.iter().map(|field| field.name.clone()).collect();
+        while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
+            let start = self.index;
+            let member = self.parse_type_member(&name, is_pub);
+            match member {
+                TypeMember::Method(function) => {
+                    if let Some(method) = function.name.strip_prefix(&format!("{name}__"))
+                        && component_names.iter().any(|field| field == method)
+                        && function.params.len() == 1
+                    {
+                        self.diagnostics.push(Diagnostic::new(
+                            format!("'{method}()' is already the accessor of component '{method}'"),
+                            function.span.clone(),
+                        ));
+                    }
+                    functions.push(function);
+                }
+                TypeMember::Field(field) => self.diagnostics.push(Diagnostic::new(
+                    "records can't declare fields; add a component to the record header",
+                    field.span,
+                )),
+                TypeMember::Constructor(_, span) => self.diagnostics.push(Diagnostic::new(
+                    "records can't declare constructors; 'new' takes one argument per component",
+                    span,
+                )),
+                TypeMember::Skipped => {}
+            }
+            if self.index == start {
+                self.recover_statement();
+            }
         }
         self.expect(TokenKind::RightBrace, "expected '}' after record body");
         StructDef {
@@ -240,32 +279,184 @@ impl Parser {
         }
     }
 
-    fn parse_enum(&mut self, is_pub: bool) -> EnumDef {
+    fn parse_enum(&mut self, is_pub: bool, functions: &mut Vec<Function>) -> EnumDef {
         self.bump();
         let span = self.current_span();
         let name = self.expect_identifier("expected enum name");
         self.expect(TokenKind::LeftBrace, "expected '{' after enum name");
         let mut variants = Vec::new();
-        while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
+        let mut args = Vec::new();
+        while matches!(self.peek().kind, TokenKind::Identifier(_)) {
             variants.push(self.expect_identifier("expected enum constant"));
+            args.push(if self.eat(&TokenKind::LeftParen) {
+                self.parse_call_args()
+            } else {
+                Vec::new()
+            });
             if !self.eat(&TokenKind::Comma) {
                 break;
             }
         }
-        self.eat(&TokenKind::Semicolon);
-        self.expect(TokenKind::RightBrace, "expected '}' after enum constants");
         if variants.is_empty() {
             self.diagnostics.push(Diagnostic::new(
                 "enum requires at least one constant",
                 span.clone(),
             ));
         }
+        let mut constructor = None;
+        let mut fields: Vec<EnumField> = Vec::new();
+        if self.eat(&TokenKind::Semicolon) {
+            while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
+                let start = self.index;
+                match self.parse_type_member(&name, is_pub) {
+                    TypeMember::Method(function) => functions.push(function),
+                    TypeMember::Field(field) => fields.push(field),
+                    TypeMember::Constructor(ctor, span) => {
+                        if constructor.replace(ctor).is_some() {
+                            self.error_at("an enum can have only one constructor", span);
+                        }
+                    }
+                    TypeMember::Skipped => {}
+                }
+                if self.index == start {
+                    self.recover_statement();
+                }
+            }
+        }
+        self.expect(TokenKind::RightBrace, "expected '}' after enum body");
+        let (params, assigned) = constructor.unwrap_or_default();
+        for (field, param) in assigned {
+            match fields.iter_mut().find(|f| f.name == field) {
+                Some(found) => found.param = params.iter().position(|p| p.name == param),
+                None => self.error_at(
+                    &format!("enum '{name}' has no field '{field}'"),
+                    span.clone(),
+                ),
+            }
+        }
+        for field in &fields {
+            if field.param.is_none() {
+                self.error_at(
+                    &format!("the constructor must set field '{}'", field.name),
+                    field.span.clone(),
+                );
+            }
+        }
         EnumDef {
             name,
             is_pub,
             variants,
+            args,
+            constructor: params,
+            fields,
             span,
         }
+    }
+
+    /// One member of a record or enum body: a method, and for enums a field or
+    /// the constructor. Methods become top-level functions named `Type__method`.
+    fn parse_type_member(&mut self, owner: &str, owner_is_pub: bool) -> TypeMember {
+        let annotations = self.parse_annotations();
+        let is_pub = self.eat_word("public");
+        if !is_pub && !self.eat_word("private") {
+            self.eat_word("protected");
+        }
+        let is_static = self.eat_word("static");
+        let is_final = self.eat_word("final");
+        let span = self.current_span();
+        // The constructor: `Planet(float mass) { this.mass = mass; }`.
+        if self.at_word(owner) && matches!(self.peek_at(1), TokenKind::LeftParen) {
+            self.reject_annotations(&annotations, "a constructor");
+            self.bump();
+            let function =
+                self.parse_function_rest(owner.to_string(), span.clone(), Vec::new(), Type::Void);
+            let mut assigned = Vec::new();
+            for stmt in &function.body {
+                if let StmtKind::Assign {
+                    target: AssignTarget::Path(path),
+                    value:
+                        Expr {
+                            kind: ExprKind::Variable(param),
+                            ..
+                        },
+                } = &stmt.kind
+                    && matches!(&path.base.kind, ExprKind::Variable(base) if base == "this")
+                    && let [PathSegment::Field(field)] = path.segments.as_slice()
+                    && function.params.iter().any(|p| &p.name == param)
+                {
+                    assigned.push((field.clone(), param.clone()));
+                } else {
+                    self.error_at(
+                        "an enum constructor can only set fields from its parameters, like 'this.mass = mass;'",
+                        stmt.span.clone(),
+                    );
+                }
+            }
+            return TypeMember::Constructor((function.params, assigned), span);
+        }
+        let mut type_params = Vec::new();
+        if self.eat(&TokenKind::Lt) {
+            loop {
+                type_params.push(self.expect_identifier("expected type parameter name"));
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt, "expected '>' after type parameters");
+        }
+        if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
+            self.error_here("expected a method");
+            return TypeMember::Skipped;
+        }
+        let ty = self.parse_type();
+        let span = self.current_span();
+        let name = self.expect_identifier("expected a name after the type");
+        if !self.at(&TokenKind::LeftParen) {
+            self.reject_annotations(&annotations, "a field");
+            self.expect_semicolon("field declaration");
+            if is_static || !is_final {
+                self.error_at("enum fields must be 'final' and not 'static'", span.clone());
+            }
+            return TypeMember::Field(EnumField {
+                name,
+                ty,
+                param: None,
+                span,
+            });
+        }
+        let mut function =
+            self.parse_function_rest(format!("{owner}__{name}"), span.clone(), type_params, ty);
+        function.owner = Some(owner.to_string());
+        // Methods of a private type are only reachable where the type is.
+        function.is_pub = is_pub && owner_is_pub;
+        if !is_static {
+            function.params.insert(
+                0,
+                Param {
+                    name: "this".to_string(),
+                    ty: Type::Struct(owner.to_string()),
+                    span: span.clone(),
+                },
+            );
+        }
+        for annotation in &annotations {
+            let overridable = matches!(
+                (name.as_str(), function.params.len()),
+                ("toString", 1) | ("equals", 2)
+            );
+            if annotation.name != "Override" {
+                self.error_at(
+                    &format!("@{} can't be used on a method", annotation.name),
+                    annotation.span.clone(),
+                );
+            } else if is_static || !overridable {
+                self.error_at(
+                    "method doesn't override anything; only 'toString()' and 'equals(other)' can be overridden",
+                    annotation.span.clone(),
+                );
+            }
+        }
+        TypeMember::Method(function)
     }
 
     /// A function (`<T> R name(...) { }`) or an annotated state field (`@PlayerState int coins;`).
@@ -395,6 +586,8 @@ impl Parser {
             body,
             span,
             end: self.previous_end(),
+            owner: None,
+            module: String::new(),
         }
     }
 

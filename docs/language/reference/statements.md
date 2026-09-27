@@ -2,7 +2,7 @@
 
 MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` and `/* ... */` are comments. Indentation has no meaning.
 
-**Top level:** [functions](#functions) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
+**Top level:** [functions](#functions) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
 
 **In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
@@ -48,6 +48,27 @@ void main() {
 
 Every type parameter must appear in a parameter's type, because there's no `f<int>(...)` call syntax. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. There are no bounds. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
 
+#### Overloading
+
+Functions and methods can share a name when their parameter types differ:
+
+```mcfc
+int area(int side) {
+    return side * side;
+}
+
+float area(float width, float height) {
+    return width * height;
+}
+
+void main() {
+    int square = area(3);
+    float rect = area(2, 1.5);
+}
+```
+
+A call picks the overload whose parameters match the argument types exactly, then one the arguments convert to (`int` to `float`), then a generic one. Two matches at the same step are an ambiguous call. Each overload compiles to its own function, `area__int` and `area__float__float`. Only a zero-parameter overload keeps the plain name, so it's the one `/function` exports.
+
 #### Functions that pause
 
 A function that calls `sleep`, `sleepTicks`, `sort()` or a host call pauses, and so does any function that calls it. The caller continues once the callee is done. Because of that, a call to a pausing function has to be a statement of its own: `f();`, `var x = f();`, `x = f();` or `return f();`. Using it inside a condition or a larger expression is an error.
@@ -70,13 +91,48 @@ void main() {
 record Quest(String name, int reward) {}
 
 void main() {
-    var quest = new Quest("Mine", 5);
+    Quest quest = new Quest("Mine", 5);
     quest = new Quest(quest.name(), quest.reward() + 1);
     debug(quest.name());
 }
 ```
 
-`new Quest(...)` takes one argument per component, in declaration order. Records are top-level, and their body is always `{}`. Read components with accessor calls such as `quest.reward()`. To change a value, construct a new record. Record values live in command storage.
+`new Quest(...)` takes one argument per component, in declaration order. Records are top-level. Read components with accessor calls such as `quest.reward()`. To change a value, construct a new record. Record values live in command storage and are copied when assigned or passed.
+
+A record body can declare methods:
+
+```mcfc
+record Point(int x, int y) {
+    static Point origin() {
+        return new Point(0, 0);
+    }
+
+    Point add(Point other) {
+        return new Point(x + other.x(), y + other.y());
+    }
+
+    int manhattan() {
+        return abs(x) + abs(this.y);
+    }
+
+    private int abs(int value) {
+        return value < 0 ? -value : value;
+    }
+}
+
+void main() {
+    Point moved = Point.origin().add(new Point(3, -4));
+    debug("$(moved) is $(moved.manhattan()) away");
+}
+```
+
+- Inside a method, `this` is the record. A component reads as `x`, `this.x` or `x()`, and other methods can be called without `this.`.
+- A `static` method has no `this` and is called on the type: `Point.origin()`.
+- Methods follow the same visibility rule as functions: without `public`, only the record's module and the modules below it can call them. A method of a private record is private.
+- Methods can be generic and overloaded, and a method can't be named like a component, since that name is the accessor.
+- Records can't declare fields or constructors.
+
+`==`, `!=` and `equals(other)` compare every component. `toString()`, `+` and `$(...)` give Java's record text, `Point[x=3, y=-4]`. Declare `toString()` or `equals(Point other)` in the body to replace them; `@Override` is accepted on these two.
 
 ### `enum`
 
@@ -91,7 +147,40 @@ void describe(Mode mode) {
 }
 ```
 
-An enum needs at least one constant. Outside a `case` you refer to a constant as `Mode.SURVIVAL`. Constants are stored as integers starting at 0, in declaration order, so reordering them changes stored values.
+An enum needs at least one constant. Outside a `case` and outside the enum's own methods, you refer to a constant as `Mode.SURVIVAL`. Constants are stored as integers starting at 0, in declaration order, so reordering them changes stored values. `mode.name()` is the constant's name, `mode.ordinal()` its index, and `Mode.values()` lists every constant.
+
+After the constants and a `;`, an enum can declare `final` fields, one constructor and methods:
+
+```mcfc
+enum Planet {
+    MERCURY(3, 2),
+    EARTH(6, 5);
+
+    private final int mass;
+    private final int radius;
+
+    Planet(int mass, int radius) {
+        this.mass = mass;
+        this.radius = radius;
+    }
+
+    int density() {
+        return mass * 10 / radius;
+    }
+
+    boolean isHome() {
+        return this == EARTH;
+    }
+}
+
+void main() {
+    for (Planet planet : Planet.values()) {
+        debug("$(planet) $(planet.density()) $(planet.mass)");
+    }
+}
+```
+
+Each constant passes one argument per constructor parameter. The constructor can only assign parameters to fields (`this.mass = mass;`), and every field must be assigned. Nothing is stored for a field: reading `planet.mass` compiles to a switch over the constants, so the arguments are best kept to literals.
 
 ### Modules and `public`
 

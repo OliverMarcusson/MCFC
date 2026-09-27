@@ -5,8 +5,11 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Language
 
 - **Recursive functions can't pause.** A function that calls itself, directly or indirectly, can't `sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
-- **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans and enums to text. Other conversions need a cast or `toString()`.
-- **No generic records.** Generic type parameters work on functions, but record declarations are not generic.
+- **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans, enums and records to text. Other conversions need a cast or `toString()`.
+- **No classes yet.** Records and enums have methods, but there are no classes, interfaces or inheritance, and values are copied when passed.
+- **No generic records.** Generic type parameters work on functions and methods, but record declarations are not generic.
+- **Enum constructors** can only assign parameters to fields (`this.mass = mass;`), and fields are `final`.
+- **Only `toString()` and `equals(other)`** can be marked `@Override`.
 - **Imports:** no re-exports and no renaming.
 
 ## Runtime values

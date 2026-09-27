@@ -2937,7 +2937,11 @@ fn calling_a_module_tick_is_rejected() {
     let src_dir = project.join("src");
     fs::create_dir_all(&src_dir).unwrap();
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
-    fs::write(src_dir.join("main.mcf"), "\nvoid tick() {\n    game.tick();\n}\n").unwrap();
+    fs::write(
+        src_dir.join("main.mcf"),
+        "\nvoid tick() {\n    game.tick();\n}\n",
+    )
+    .unwrap();
     fs::write(src_dir.join("game.mcf"), "\npublic void tick() {\n}\n").unwrap();
 
     let error = compile_project(
@@ -4002,7 +4006,10 @@ void main() {
     let files = &result.artifacts.files;
     let enchantment = files.get("data/mcfc/enchantment/impulse.json").unwrap();
     assert_eq!(enchantment.matches("minecraft:apply_impulse").count(), 96);
-    assert!(!enchantment.contains("\"condition\""), "26.3 loot conditions use `type`");
+    assert!(
+        !enchantment.contains("\"condition\""),
+        "26.3 loot conditions use `type`"
+    );
     assert!(enchantment.contains("\"name\":\"#impulse_0_31\""));
     assert!(enchantment.contains("\"magnitude\":-214748.3648"));
     let body = files
@@ -4113,17 +4120,16 @@ void main() {
 }
 
 #[test]
-fn std_vec_functions_resolve_despite_java_method_aliases() {
-    // `add` and `length` are also list/string method aliases (`insert`, `len`).
+fn std_vec_methods_resolve_despite_java_method_aliases() {
+    // `add` and `length` are also list/string method aliases (`push`, `len`).
     let source = r#"
-import std.vec;
 import std.vec.Vec3;
 
 void main() {
-    var a = new Vec3(1.0, 2.0, 2.0);
-    var sum = vec.add(a, vec.scale(a, 2.0));
-    var size = vec.length(vec.normalize(vec.cross(sum, a)));
-    var d = vec.dot(a, vec.sub(sum, a));
+    Vec3 a = new Vec3(1.0, 2.0, 2.0);
+    Vec3 sum = a.add(a.scale(2.0));
+    float size = sum.cross(a).normalize().length();
+    float d = a.dot(sum.sub(a));
 }
 "#;
     let project = temp_path();
@@ -4145,7 +4151,7 @@ void main() {
     let names = result.artifacts.files.keys().cloned().collect::<String>();
     for function in ["add", "sub", "scale", "dot", "cross", "length", "normalize"] {
         assert!(
-            names.contains(&format!("std__vec__{function}__")),
+            names.contains(&format!("vec3__{function}")),
             "missing std.vec.{function}"
         );
     }
@@ -4553,4 +4559,148 @@ fn wildcard_imports_bring_in_public_names() {
     )
     .unwrap();
     compile().expect("state types resolve through imports");
+}
+
+#[test]
+fn record_and_enum_methods_compile_to_functions() {
+    let source = r#"
+record Point(int x, int y) {
+    static Point origin() {
+        return new Point(0, 0);
+    }
+
+    Point add(Point other) {
+        return new Point(x + other.x(), this.y + other.y());
+    }
+
+    Point add(int dx, int dy) {
+        return add(new Point(dx, dy));
+    }
+}
+
+enum Planet {
+    MERCURY(3),
+    EARTH(6);
+
+    private final int mass;
+
+    Planet(int mass) {
+        this.mass = mass;
+    }
+
+    boolean heavy() {
+        return mass > 4 && this != MERCURY;
+    }
+}
+
+void main() {
+    Point moved = Point.origin().add(1, 2);
+    Planet home = Planet.EARTH;
+    boolean heavy = home.heavy();
+    int mass = home.mass;
+    boolean same = moved == new Point(1, 2);
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("methods should compile");
+    let names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    for name in [
+        "Point__origin",
+        "Point__add__point",
+        "Point__add__int__int",
+        "Planet__heavy",
+    ] {
+        assert!(names.contains(&name), "{name} missing from {names:?}");
+    }
+}
+
+#[test]
+fn method_and_overload_mistakes_are_reported() {
+    let cases = [
+        (
+            "record P(int x) { static int f() { return twice(); } int twice() { return x * 2; } }\nvoid main() {}",
+            "'twice' needs an instance; a static method has no 'this'",
+        ),
+        (
+            "record P(int x) { @Override int size() { return 1; } }\nvoid main() {}",
+            "method doesn't override anything",
+        ),
+        (
+            "record P(int x) { int x() { return 1; } }\nvoid main() {}",
+            "'x()' is already the accessor of component 'x'",
+        ),
+        (
+            "record P(int x) { int y; }\nvoid main() {}",
+            "records can't declare fields",
+        ),
+        (
+            "enum E { A(1); private final int n; E(int n) { this.n = n + 1; } }\nvoid main() {}",
+            "an enum constructor can only set fields from its parameters",
+        ),
+        (
+            "enum E { A(1, 2); private final int n; E(int n) { this.n = n; } }\nvoid main() {}",
+            "enum constant 'A' passes 2 arguments, but the constructor takes 1",
+        ),
+        (
+            "void f(float a, int b) {}\nvoid f(int a, float b) {}\nvoid main() { f(1, 2); }",
+            "ambiguous call; it matches f(float, int) and f(int, float)",
+        ),
+        (
+            "void f(int a) {}\nvoid f(float a, float b) {}\nvoid main() { f(\"x\"); }",
+            "no overload of 'f' takes (String)",
+        ),
+    ];
+    for (source, expected) in cases {
+        let error = compile_source(source, &lowering()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected}\n{error}");
+    }
+}
+
+#[test]
+fn private_methods_stay_in_their_module() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("game.mcf"),
+        r#"public record Quest(int reward) {
+    public int doubled() {
+        return secret() * 2;
+    }
+
+    int secret() {
+        return reward;
+    }
+
+    static Quest hidden() {
+        return new Quest(0);
+    }
+}
+"#,
+    )
+    .unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    compile("import game.Quest;\nvoid main() { int n = new Quest(2).doubled(); }\n")
+        .expect("public method should be callable");
+    let error = compile("import game.Quest;\nvoid main() { int n = new Quest(2).secret(); }\n")
+        .expect_err("private instance method should be rejected");
+    assert!(
+        error.contains("method 'game.Quest.secret' is private"),
+        "{error}"
+    );
+    let error = compile("import game.Quest;\nvoid main() { Quest q = Quest.hidden(); }\n")
+        .expect_err("private static method should be rejected");
+    assert!(
+        error.contains("method 'Quest.hidden' is private to module 'game'"),
+        "{error}"
+    );
 }

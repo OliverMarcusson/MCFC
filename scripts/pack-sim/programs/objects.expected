@@ -1,0 +1,6 @@
+say Point[x=4, y=-3] 7 true true true
+say line Line[from=Point[x=0, y=0], to=Point[x=4, y=-3]]
+say tag <x>
+say MERCURY 15 3 false MERCURY
+say EARTH 12 6 true EARTH
+say 9 3.0f area x

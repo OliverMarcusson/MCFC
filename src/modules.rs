@@ -246,6 +246,8 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         .collect();
     let struct_modules: Vec<usize> = program.structs.iter().map(|s| module_of(&s.span)).collect();
     let enum_modules: Vec<usize> = program.enums.iter().map(|s| module_of(&s.span)).collect();
+    // ponytail: overloads share one entry, so the last one's `public` decides
+    // for all of them here; track visibility per overload if that matters.
     for (function, &module) in program.functions.iter().zip(&function_modules) {
         modules[module]
             .functions
@@ -287,7 +289,22 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         let fields = def.fields.iter().map(|field| field.name.clone()).collect();
         resolver.record_fields.insert(def.name.clone(), fields);
     }
+    let no_locals = HashSet::new();
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
+        for param in &mut def.constructor {
+            resolver.resolve_type(module, &[], &mut param.ty, &param.span, &mut diagnostics);
+        }
+        for field in &mut def.fields {
+            resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
+        }
+        let scope = Scope {
+            module,
+            generics: &[],
+            locals: &no_locals,
+        };
+        for arg in def.args.iter_mut().flatten() {
+            resolver.walk_expr(&scope, arg, &mut diagnostics);
+        }
         def.name = resolver.struct_name(module, &def.name);
     }
     for state in program
@@ -330,6 +347,10 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         };
         resolver.walk_stmts(&scope, &mut function.body, &mut diagnostics);
         function.name = resolver.function_name(module, &function.name);
+        function.module = resolver.modules[module].path.join("::");
+        if let Some(owner) = &mut function.owner {
+            *owner = resolver.struct_name(module, owner);
+        }
     }
 
     diagnostics.into_result(program)
@@ -711,6 +732,65 @@ impl Resolver {
         (names_module(scope.module) || names_module(0)).then_some(segments)
     }
 
+    /// The record or enum `expr` names, when it is a type rather than a value.
+    fn static_owner(&self, scope: &Scope, expr: &Expr) -> Option<String> {
+        let mut segments = Vec::new();
+        let mut current = expr;
+        loop {
+            match &current.kind {
+                ExprKind::Variable(name) => {
+                    segments.push(name.clone());
+                    break;
+                }
+                ExprKind::Path(path) => {
+                    for segment in path.segments.iter().rev() {
+                        let PathSegment::Field(name) = segment else {
+                            return None;
+                        };
+                        segments.push(name.clone());
+                    }
+                    current = &path.base;
+                }
+                _ => return None,
+            }
+        }
+        segments.reverse();
+        if scope.locals.contains(&segments[0]) {
+            return None;
+        }
+        self.resolve_struct(scope.module, &segments.join("::"))
+            .ok()
+            .flatten()
+    }
+
+    /// The function behind method `method` of the resolved type `owner`, if it has one.
+    fn resolve_method(
+        &self,
+        from: usize,
+        owner: &str,
+        method: &str,
+    ) -> Result<Option<String>, String> {
+        let (module_path, short) = owner.rsplit_once("::").unwrap_or(("", owner));
+        let Some(module) = self
+            .modules
+            .iter()
+            .position(|module| module.path.join("::") == module_path)
+        else {
+            return Ok(None);
+        };
+        let name = format!("{short}__{method}");
+        let Some(&is_pub) = self.modules[module].functions.get(&name) else {
+            return Ok(None);
+        };
+        if !self.visible(from, module, is_pub) {
+            return Err(format!(
+                "method '{short}.{method}' is private to {}; mark it 'public'",
+                self.display_path(module)
+            ));
+        }
+        Ok(Some(self.function_name(module, &name)))
+    }
+
     fn walk_path(&self, scope: &Scope, path: &mut PathExpr, diagnostics: &mut Diagnostics) {
         // `Mode.SURVIVAL`, or `game.Mode.SURVIVAL` through a module.
         let fields: Vec<String> = path
@@ -748,6 +828,34 @@ impl Resolver {
 
     fn walk_expr(&self, scope: &Scope, expr: &mut Expr, diagnostics: &mut Diagnostics) {
         let span = expr.span.clone();
+        // `Vec3.zero()` calls the static method `zero` of record `Vec3`.
+        if let ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } = &mut expr.kind
+            && let Some(owner) = self.static_owner(scope, receiver)
+        {
+            let found = std::iter::once(method.as_str())
+                .chain(crate::language_catalog::java_method_names(method))
+                .find_map(|name| self.resolve_method(scope.module, &owner, name).transpose());
+            match found {
+                Some(Ok(function)) => {
+                    expr.kind = ExprKind::Call {
+                        function,
+                        args: std::mem::take(args),
+                    };
+                    if let ExprKind::Call { args, .. } = &mut expr.kind {
+                        for arg in args {
+                            self.walk_expr(scope, arg, diagnostics);
+                        }
+                    }
+                    return;
+                }
+                Some(Err(message)) => diagnostics.push(Diagnostic::new(message, span.clone())),
+                None => {}
+            }
+        }
         // `util.double(x)` calls a function in module `util`.
         if let ExprKind::MethodCall {
             receiver,

@@ -333,28 +333,27 @@ The functions behind the [Adventure API](./builders#adventure-api) (`Component.t
 
 ## `std.vec`
 
-`Vec3` is a record of three floats, for velocities, directions and positions. Import the record and the module:
+`Vec3` is a record of three floats, for velocities, directions and positions. Its operations are methods, and each returns a new vector:
 
 ```mcfc
-import std.vec;
 import std.vec.Vec3;
 
 void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var look = new Vec3(player.getLookX(), player.getLookY(), player.getLookZ());
-    var push = vec.scale(vec.normalize(vec.add(look, new Vec3(0.0, 1.0, 0.0))), 0.8);
+    Player player = (Player) Selector.of("@p").getFirst();
+    Vec3 look = new Vec3(player.getLookX(), player.getLookY(), player.getLookZ());
+    Vec3 push = look.add(new Vec3(0.0, 1.0, 0.0)).normalize().scale(0.8);
     player.addVelocity(push.x(), push.y(), push.z());
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
-| `Vec3 add(Vec3 a, Vec3 b)`, `Vec3 sub(Vec3 a, Vec3 b)` | The component-wise sum or difference. |
-| `Vec3 scale(Vec3 v, float factor)` | `v` with every component multiplied by `factor`. |
-| `float dot(Vec3 a, Vec3 b)` | The dot product. |
-| `Vec3 cross(Vec3 a, Vec3 b)` | The cross product, perpendicular to both. |
-| `float length(Vec3 v)` | The length of `v`. |
-| `Vec3 normalize(Vec3 v)` | `v` scaled to length 1. The zero vector stays zero. |
+| `add(Vec3 other)`, `sub(Vec3 other)` | The component-wise sum or difference. |
+| `scale(float factor)` | This vector with every component multiplied by `factor`. |
+| `dot(Vec3 other)` | The dot product, a `float`. |
+| `cross(Vec3 other)` | The cross product, perpendicular to both. |
+| `length()` | The length, a `float`. |
+| `normalize()` | This vector scaled to length 1. The zero vector stays zero. |
 
 ## `std.player`
 

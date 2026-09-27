@@ -2972,20 +2972,24 @@ fn completion_items_for_receiver(
         Some(CompletionReceiver::ItemSlot) => item_slot_items(),
         Some(CompletionReceiver::Bossbar) => bossbar_root_items(),
         Some(CompletionReceiver::EquipmentSlot) => equipment_slot_items(),
-        Some(CompletionReceiver::Enum(_)) => vec![
-            snippet_item(
-                "name",
-                CompletionItemKind::METHOD,
-                "enum.name() -> String",
-                "name()",
-            ),
-            snippet_item(
-                "ordinal",
-                CompletionItemKind::METHOD,
-                "enum.ordinal() -> int",
-                "ordinal()",
-            ),
-        ],
+        Some(CompletionReceiver::Enum(name)) => {
+            let mut items = vec![
+                snippet_item(
+                    "name",
+                    CompletionItemKind::METHOD,
+                    "enum.name() -> String",
+                    "name()",
+                ),
+                snippet_item(
+                    "ordinal",
+                    CompletionItemKind::METHOD,
+                    "enum.ordinal() -> int",
+                    "ordinal()",
+                ),
+            ];
+            items.extend(method_items(analysis, &name));
+            items
+        }
         Some(CompletionReceiver::Struct(name)) => {
             if analysis
                 .typed_program
@@ -3009,7 +3013,9 @@ fn completion_items_for_receiver(
                     ),
                 ]
             } else {
-                struct_field_items(analysis, &name)
+                let mut items = struct_field_items(analysis, &name);
+                items.extend(method_items(analysis, &name));
+                items
             }
         }
         Some(
@@ -4860,6 +4866,58 @@ fn struct_field_items(analysis: &AnalysisResult, name: &str) -> Vec<CompletionIt
         .collect()
 }
 
+/// Instance methods and enum fields of the record or enum `owner`.
+fn method_items(analysis: &AnalysisResult, owner: &str) -> Vec<CompletionItem> {
+    let Some(program) = analysis.typed_program.as_ref() else {
+        return Vec::new();
+    };
+    let mut items: Vec<CompletionItem> = program
+        .struct_defs
+        .get(owner)
+        .map(|def| {
+            def.enum_fields
+                .iter()
+                .map(|(field, (ty, _))| CompletionItem {
+                    label: field.clone(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(format!("{} {}", ty.as_str(), field)),
+                    ..CompletionItem::default()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let prefix = format!("{owner}__");
+    for (function, signature) in &program.function_signatures {
+        let Some(rest) = function.strip_prefix(&prefix) else {
+            continue;
+        };
+        if !signature.instance {
+            continue;
+        }
+        let method = rest.split("__").next().unwrap_or(rest);
+        let params: Vec<String> = signature.params[1..].iter().map(Type::as_str).collect();
+        let detail = format!(
+            "{method}({}) -> {}",
+            params.join(", "),
+            signature.return_type.as_str()
+        );
+        if items
+            .iter()
+            .any(|item| item.detail.as_deref() == Some(detail.as_str()))
+        {
+            continue;
+        }
+        items.push(CompletionItem {
+            label: method.to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(detail),
+            insert_text: Some(format!("{method}()")),
+            ..CompletionItem::default()
+        });
+    }
+    items
+}
+
 fn struct_signature(name: &str, def: &StructTypeDef) -> String {
     let fields = def
         .fields
@@ -5637,6 +5695,64 @@ void main(Action action) {
         );
         assert!(next_items.iter().any(|item| item.label == "duration"));
         assert!(next_items.iter().any(|item| item.label == "label"));
+    }
+
+    #[test]
+    fn completes_record_and_enum_methods() {
+        let source = r#"
+record Point(int x, int y) {
+    int sum() {
+        return x + y;
+    }
+
+    static Point origin() {
+        return new Point(0, 0);
+    }
+}
+
+enum Planet {
+    EARTH(6);
+
+    private final int mass;
+
+    Planet(int mass) {
+        this.mass = mass;
+    }
+
+    int doubled() {
+        return mass * 2;
+    }
+}
+
+void main() {
+    Point point = new Point(1, 2);
+    int total = point.sum();
+    Planet home = Planet.EARTH;
+    int twice = home.doubled();
+}
+"#;
+        let analysis = analyze_source(source);
+        assert!(
+            analysis.typed_program.is_some(),
+            "{:?}",
+            analysis.diagnostics
+        );
+        let point_items = completion_items(
+            source,
+            &analysis,
+            source.find("point.sum").unwrap() + "point.".len(),
+        );
+        assert!(point_items.iter().any(|item| item.label == "sum"));
+        assert!(point_items.iter().any(|item| item.label == "x"));
+        assert!(!point_items.iter().any(|item| item.label == "origin"));
+        let home_items = completion_items(
+            source,
+            &analysis,
+            source.find("home.doubled").unwrap() + "home.".len(),
+        );
+        assert!(home_items.iter().any(|item| item.label == "doubled"));
+        assert!(home_items.iter().any(|item| item.label == "mass"));
+        assert!(home_items.iter().any(|item| item.label == "ordinal"));
     }
 
     #[test]

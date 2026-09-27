@@ -2,7 +2,7 @@
 
 MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` and `/* ... */` are comments. Indentation has no meaning.
 
-**Top level:** [functions](#functions) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
+**Top level:** [functions](#functions) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [`class`](#class) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
 
 **In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
@@ -182,6 +182,66 @@ void main() {
 
 Each constant passes one argument per constructor parameter. The constructor can only assign parameters to fields (`this.mass = mass;`), and every field must be assigned. Nothing is stored for a field: reading `planet.mass` compiles to a switch over the constants, so the arguments are best kept to literals.
 
+### `class`
+
+```mcfc
+class Counter {
+    static int created;
+    private int count;
+    String label = "hits";
+
+    Counter(int start) {
+        count = start;
+        created += 1;
+    }
+
+    Counter add(int amount) {
+        count += amount;
+        return this;
+    }
+
+    int get() {
+        return count;
+    }
+}
+
+class Node {
+    int value;
+    Node next;
+
+    Node(int value) {
+        this.value = value;
+    }
+}
+
+void main() {
+    Counter hits = new Counter(5);
+    Counter same = hits;
+    same.add(1).add(2);
+    debug("$(hits.get()) $(Counter.created)");
+
+    Node head = new Node(1);
+    head.next = new Node(2);
+    head.next.value = 20;
+    if (head.next.next == null) {
+        debug("two nodes");
+    }
+}
+```
+
+Unlike records, class objects are shared: assigning or passing one copies a reference, so `same.add(1)` above changes `hits` too. `==` and `!=` compare references.
+
+- Fields can have an initializer. A field without one starts as `0`, `false`, `""`, `0.0`, `null`, or an empty list or map. Initializers run before the constructor body.
+- A class without a constructor gets one that takes no arguments. Constructors can be overloaded like methods.
+- Inside a class, `this` is the object. A field reads and writes as `count` or `this.count`, and methods can be called without `this.`.
+- `static` fields belong to the class: `Counter.created`, or `created` inside it. They are world state, so they keep their value across reloads. Their initializers run once per world.
+- A `final` field can only be set by its initializer or a constructor, and a `static final` field only by its initializer.
+- Fields, constructors and methods follow the same visibility rule as functions: without `public`, only the class's module and the modules below it can use them.
+- `null` is a reference to no object, and fits any class type. The default `toString()` gives `Counter@3`, or `null`. Declare `toString()` or `equals(...)` to replace them.
+- Objects can be kept in locals, parameters, lists, maps, records, and all three kinds of state.
+
+Objects live in one storage list, and a reference is the object's index there. Each field read or write is a macro call, so keep an object's values in locals inside hot loops. Objects nothing refers to anymore are freed at the end of a tick, once more objects were made since the last collection than survived it. A collection walks every live object and all player and entity state holding objects, so its cost grows with how much of both is kept.
+
 ### Modules and `public`
 
 In a project, every `.mcf` file under the source directory is a module named by its path: `src/util.mcf` is `util`, and `src/game/score.mcf` is `game.score`. The root file (`src/main.mcf`) is the root module. There is no module declaration.
@@ -228,9 +288,9 @@ void main() {
 
 | Form | Imports |
 | --- | --- |
-| `import a.b.name;` | the function, record or enum `name` |
+| `import a.b.name;` | the function, record, enum or class `name` |
 | `import a.b;` | the module `b`, so `b.name(...)` works |
-| `import a.b.*;` | every public function, record and enum of `a.b` |
+| `import a.b.*;` | every public function, record, enum and class of `a.b` |
 
 - Imports are private to their module. There's no renaming.
 - As in Java, a name defined in the module or imported by name wins over a `*` import.
@@ -256,7 +316,7 @@ void update(Player player) {
 }
 ```
 
-Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records and maps. An `Entity` is a handle, as with [`@WorldState`](#worldstate), so each player can own a camera: `player.state.camera = Block.of(0, 70, 0).summon("minecraft:item_display");`. A map in state can only be indexed by a literal key; to use a variable key, copy it, change the copy, and assign it back: `var m = player.state.kills; m.put(name, 1); player.state.kills = m;`. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
+Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records, maps and class objects. An `Entity` is a handle, as with [`@WorldState`](#worldstate), so each player can own a camera: `player.state.camera = Block.of(0, 70, 0).summon("minecraft:item_display");`. A map in state can only be indexed by a literal key; to use a variable key, copy it, change the copy, and assign it back: `var m = player.state.kills; m.put(name, 1); player.state.kills = m;`. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
 
 Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0` or an empty record.
 
@@ -299,7 +359,7 @@ void endRound(int best) {
 }
 ```
 
-Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
+Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, enums, records, class objects, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
 
 `int` and `boolean` values are the scores `$world_<name>` in the `mcfc` objective; other types are in `<namespace>:runtime` storage at `world.<name>`.
 

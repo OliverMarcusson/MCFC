@@ -1194,6 +1194,7 @@ const KEYWORD_IDENTIFIERS: &[&str] = &[
     "var",
     "record",
     "enum",
+    "class",
     "public",
     "private",
     "static",
@@ -1227,6 +1228,7 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
     let mut world_states = HashSet::new();
     if let Some(program) = &analysis.program {
         records.extend(program.structs.iter().map(|def| short(&def.name)));
+        records.extend(program.classes.iter().map(|def| short(&def.name)));
         enums.extend(program.enums.iter().map(|def| short(&def.name)));
         world_states.extend(
             program
@@ -2990,6 +2992,25 @@ fn completion_items_for_receiver(
             items.extend(method_items(analysis, &name));
             items
         }
+        Some(CompletionReceiver::Class(name)) => {
+            let fields = analysis
+                .typed_program
+                .as_ref()
+                .and_then(|program| program.struct_defs.get(&name))
+                .map(|def| def.fields.clone())
+                .unwrap_or_default();
+            let mut items: Vec<CompletionItem> = fields
+                .into_iter()
+                .map(|(field, ty)| CompletionItem {
+                    detail: Some(format!("{} {}", ty.as_str(), field)),
+                    label: field,
+                    kind: Some(CompletionItemKind::FIELD),
+                    ..CompletionItem::default()
+                })
+                .collect();
+            items.extend(method_items(analysis, &name));
+            items
+        }
         Some(CompletionReceiver::Struct(name)) => {
             if analysis
                 .typed_program
@@ -4565,6 +4586,7 @@ enum CompletionReceiver {
     Selector,
     Struct(String),
     Enum(String),
+    Class(String),
     GenericEntityRef,
     PlayerEntityRef,
     PlayerInput,
@@ -4796,6 +4818,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
         Type::EntitySet => Some(CompletionReceiver::Selector),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
         Type::Enum(name) => Some(CompletionReceiver::Enum(name.clone())),
+        Type::Class(name) => Some(CompletionReceiver::Class(name.clone())),
         Type::EntityRef => Some(if ref_kind == RefKind::Player {
             CompletionReceiver::PlayerEntityRef
         } else {
@@ -4866,7 +4889,7 @@ fn struct_field_items(analysis: &AnalysisResult, name: &str) -> Vec<CompletionIt
         .collect()
 }
 
-/// Instance methods and enum fields of the record or enum `owner`.
+/// Instance methods and enum fields of the record, enum or class `owner`.
 fn method_items(analysis: &AnalysisResult, owner: &str) -> Vec<CompletionItem> {
     let Some(program) = analysis.typed_program.as_ref() else {
         return Vec::new();
@@ -4891,7 +4914,8 @@ fn method_items(analysis: &AnalysisResult, owner: &str) -> Vec<CompletionItem> {
         let Some(rest) = function.strip_prefix(&prefix) else {
             continue;
         };
-        if !signature.instance {
+        // Field getters and setters the compiler writes for classes.
+        if !signature.instance || rest.starts_with("mcfc") {
             continue;
         }
         let method = rest.split("__").next().unwrap_or(rest);
@@ -5695,6 +5719,42 @@ void main(Action action) {
         );
         assert!(next_items.iter().any(|item| item.label == "duration"));
         assert!(next_items.iter().any(|item| item.label == "label"));
+    }
+
+    #[test]
+    fn completes_class_fields_and_methods() {
+        let source = r#"
+class Counter {
+    int count;
+
+    void add(int amount) {
+        count += amount;
+    }
+}
+
+void main() {
+    Counter counter = new Counter();
+    counter.add(1);
+}
+"#;
+        let analysis = analyze_source(source);
+        assert!(
+            analysis.typed_program.is_some(),
+            "{:?}",
+            analysis.diagnostics
+        );
+        let items = completion_items(
+            source,
+            &analysis,
+            source.find("counter.add").unwrap() + "counter.".len(),
+        );
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+        assert!(labels.contains(&"count"), "{labels:?}");
+        assert!(labels.contains(&"add"), "{labels:?}");
+        assert!(
+            !labels.iter().any(|label| label.starts_with("mcfc")),
+            "{labels:?}"
+        );
     }
 
     #[test]

@@ -1,0 +1,6 @@
+say hits=18 18 hits=0
+say sum 24 third 3
+say last 7 true false
+say null true null Node@7
+say created 20 3x limit 3 serial 1
+say bag 80 80

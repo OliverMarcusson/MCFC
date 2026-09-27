@@ -1,0 +1,107 @@
+// Classes: heap objects shared by reference, fields, constructors, null.
+class Counter {
+    static final int LIMIT = 3;
+    static int created;
+    final int serial;
+    private static String unit = "x";
+    private int count;
+    String label = "hits";
+
+    Counter(int start) {
+        count = start;
+        created += 1;
+        serial = created;
+    }
+
+    static String units(int amount) {
+        return amount + unit;
+    }
+
+    Counter add(int amount) {
+        count += amount;
+        return this;
+    }
+
+    int get() {
+        return count;
+    }
+
+    static Counter zero() {
+        return new Counter(0);
+    }
+
+    @Override
+    public String toString() {
+        return label + "=" + count;
+    }
+}
+
+class Node {
+    int value;
+    Node next;
+
+    Node(int value) {
+        this.value = value;
+    }
+}
+
+class Bag {
+    List<Node> items = List.of();
+
+    List<Node> items() {
+        return items;
+    }
+}
+
+void bump(Counter counter) {
+    counter.add(10);
+}
+
+int total(Node head) {
+    int sum = 0;
+    Node current = head;
+    while (current != null) {
+        sum += current.value;
+        current = current.next;
+    }
+
+    return sum;
+}
+
+void main() {
+    Counter hits = new Counter(5);
+    hits.add(1).add(2);
+    Counter same = hits;
+    bump(same);
+    String counted = "$(hits) " + hits.get() + " " + Counter.zero();
+    mcf("say $(counted)");
+
+    Node head = new Node(1);
+    head.next = new Node(2);
+    head.next.next = new Node(3);
+    head.next.value = 20;
+    String list = "sum " + total(head) + " third " + head.next.next.value;
+    mcf("say $(list)");
+
+    List<Node> nodes = List.of();
+    nodes.add(head);
+    nodes.add(new Node(7));
+    Node last = nodes[1];
+    boolean identity = nodes[0] == head;
+    String stored = "last " + last.value + " " + identity + " " + (last == head);
+    mcf("say $(stored)");
+
+    Node missing = null;
+    String empty = "null " + (missing == null) + " " + missing + " " + new Node(0);
+    mcf("say $(empty)");
+
+    Counter.created = Counter.created * 10;
+    String statics = "created " + Counter.created + " " + Counter.units(3) + " limit " + Counter.LIMIT + " serial " + hits.serial;
+    mcf("say $(statics)");
+
+    Bag bag = new Bag();
+    bag.items.add(new Node(8));
+    bag.items()[0].value = 80;
+    String bagText = "bag " + bag.items()[0].value + " " + bag.items[0].value;
+    mcf("say $(bagText)");
+}

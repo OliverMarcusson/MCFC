@@ -43,6 +43,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
     ("gamemode.mcf", include_str!("../std/gamemode.mcf")),
+    ("heap.mcf", include_str!("../std/heap.mcf")),
     ("inventory.mcf", include_str!("../std/inventory.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
@@ -205,6 +206,8 @@ struct Resolver {
     enum_names: HashSet<String>,
     /// Record name -> field names in declaration order, for `new R(...)`.
     record_fields: HashMap<String, Vec<String>>,
+    /// Full class names; `new C(...)` calls the factory `C__new`.
+    class_names: HashSet<String>,
 }
 
 /// Renames child-module items to their full paths and resolves every path.
@@ -246,6 +249,7 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         .collect();
     let struct_modules: Vec<usize> = program.structs.iter().map(|s| module_of(&s.span)).collect();
     let enum_modules: Vec<usize> = program.enums.iter().map(|s| module_of(&s.span)).collect();
+    let class_modules: Vec<usize> = program.classes.iter().map(|c| module_of(&c.span)).collect();
     // ponytail: overloads share one entry, so the last one's `public` decides
     // for all of them here; track visibility per overload if that matters.
     for (function, &module) in program.functions.iter().zip(&function_modules) {
@@ -259,11 +263,15 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
     for (def, &module) in program.enums.iter().zip(&enum_modules) {
         modules[module].structs.insert(def.name.clone(), def.is_pub);
     }
+    for (def, &module) in program.classes.iter().zip(&class_modules) {
+        modules[module].structs.insert(def.name.clone(), def.is_pub);
+    }
 
     let mut resolver = Resolver {
         modules,
         enum_names: HashSet::new(),
         record_fields: HashMap::new(),
+        class_names: HashSet::new(),
     };
     resolver.enum_names = program
         .enums
@@ -290,6 +298,18 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         resolver.record_fields.insert(def.name.clone(), fields);
     }
     let no_locals = HashSet::new();
+    resolver.class_names = program
+        .classes
+        .iter()
+        .zip(&class_modules)
+        .map(|(def, &module)| resolver.struct_name(module, &def.name))
+        .collect();
+    for (def, &module) in program.classes.iter_mut().zip(&class_modules) {
+        for field in &mut def.fields {
+            resolver.resolve_type(module, &[], &mut field.ty, &field.span, &mut diagnostics);
+        }
+        def.name = resolver.struct_name(module, &def.name);
+    }
     for (def, &module) in program.enums.iter_mut().zip(&enum_modules) {
         for param in &mut def.constructor {
             resolver.resolve_type(module, &[], &mut param.ty, &param.span, &mut diagnostics);
@@ -809,16 +829,25 @@ impl Resolver {
                     .chain(fields[..taken].iter().cloned())
                     .collect::<Vec<_>>()
                     .join("::");
-                if let Ok(Some(resolved)) = self.resolve_struct(scope.module, &name)
-                    && self.enum_names.contains(&resolved)
-                {
+                let Ok(Some(resolved)) = self.resolve_struct(scope.module, &name) else {
+                    continue;
+                };
+                if self.enum_names.contains(&resolved) {
                     path.base.kind = ExprKind::Variable(resolved);
                     path.segments.drain(..taken);
                     return;
                 }
+                // `Counter.total[i]`: a static field, whose indexes still need walking.
+                if self.class_names.contains(&resolved) {
+                    path.base.kind = ExprKind::Variable(resolved);
+                    path.segments.drain(..taken);
+                    break;
+                }
             }
         }
-        self.walk_expr(scope, &mut path.base, diagnostics);
+        if !matches!(&path.base.kind, ExprKind::Variable(base) if self.class_names.contains(base)) {
+            self.walk_expr(scope, &mut path.base, diagnostics);
+        }
         for segment in &mut path.segments {
             if let PathSegment::Index(index) = segment {
                 self.walk_expr(scope, index, diagnostics);
@@ -921,6 +950,27 @@ impl Resolver {
                 self.resolve_record_name(scope, name, &span, diagnostics);
                 for arg in args.iter_mut() {
                     self.walk_expr(scope, arg, diagnostics);
+                }
+                if self.class_names.contains(name.as_str()) {
+                    let function = match self.resolve_method(scope.module, name, "new") {
+                        Ok(Some(function)) => function,
+                        Ok(None) => format!("{name}__new"),
+                        Err(_) => {
+                            diagnostics.push(Diagnostic::new(
+                                format!(
+                                    "the constructor of '{}' is private",
+                                    name.replace("::", ".")
+                                ),
+                                span.clone(),
+                            ));
+                            format!("{name}__new")
+                        }
+                    };
+                    expr.kind = ExprKind::Call {
+                        function,
+                        args: std::mem::take(args),
+                    };
+                    return;
                 }
                 // `new R(a, b)` is the record literal with fields in declaration order.
                 if let Some(fields) = self.record_fields.get(name) {

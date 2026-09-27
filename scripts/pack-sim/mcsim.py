@@ -818,6 +818,8 @@ def tokens(line):
 
 
 if __name__ == "__main__":
+    # mcfunction loops recurse, and the heap collector loops over every object.
+    sys.setrecursionlimit(20000)
     sim = Sim(sys.argv[1])
     try:
         sim.load(int(sys.argv[2]) if len(sys.argv) > 2 else 40)

@@ -42,6 +42,8 @@ BUDGET = {
     "trig": 1427,
     "nested": 79,
     "objects": 339,
+    "classes": 899,
+    "gc": 12272,
     "vectors": 380,
     "worldindex": 66,
 }

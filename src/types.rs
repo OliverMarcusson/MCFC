@@ -471,7 +471,13 @@ fn this_member(
             segments: vec![PathSegment::Field(name.to_string())],
         }));
     }
-    let (Type::Struct(owner) | Type::Enum(owner)) = env.get("this")? else {
+    // A static field, also in static methods.
+    if let Some(owner) = env_tag(env, OWNER_TAG)
+        && let Some(state) = static_field_state(struct_defs, owner, name)
+    {
+        return Some(ExprKind::Variable(state));
+    }
+    let (Type::Struct(owner) | Type::Enum(owner) | Type::Class(owner)) = env.get("this")? else {
         return None;
     };
     let def = struct_defs.get(owner)?;
@@ -479,7 +485,12 @@ fn this_member(
         kind: ExprKind::Variable("this".to_string()),
         span: span.clone(),
     });
-    if def.fields.contains_key(name) {
+    if def.class.is_some() && def.fields.contains_key(name) {
+        Some(ExprKind::Path(PathExpr {
+            base: this,
+            segments: vec![PathSegment::Field(name.to_string())],
+        }))
+    } else if def.fields.contains_key(name) {
         Some(ExprKind::MethodCall {
             receiver: this,
             method: name.to_string(),
@@ -553,6 +564,683 @@ fn enum_field_switch(
 
 const MODULE_TAG: &str = "@module:";
 const OWNER_TAG: &str = "@owner:";
+/// Set in a class's constructors and static initializer, which may set `final` fields.
+const INIT_TAG: &str = "@init:";
+/// `@heap:C` is the variable for the heap seen as a list of `@class:C` slots.
+const HEAP: &str = "@heap:";
+const HEAP_SLOT: &str = "@class:";
+
+/// A path through an object's field: `object.field.rest...`, where `field` is
+/// the last object field in the path.
+struct FieldAccess {
+    owner: String,
+    field: String,
+    /// Made simple where it can be; see `simple_object`.
+    object: Expr,
+    rest: Vec<PathSegment>,
+}
+
+fn class_field_access(
+    path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    span: &Span,
+) -> Option<FieldAccess> {
+    if !struct_defs.values().any(|def| def.class.is_some()) {
+        return None;
+    }
+    for (index, segment) in path.segments.iter().enumerate().rev() {
+        let PathSegment::Field(field) = segment else {
+            continue;
+        };
+        let object = if index == 0 {
+            (*path.base).clone()
+        } else {
+            Expr {
+                kind: ExprKind::Path(PathExpr {
+                    base: path.base.clone(),
+                    segments: path.segments[..index].to_vec(),
+                }),
+                span: span.clone(),
+            }
+        };
+        let object_ty = type_check_expr(
+            &object,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            &mut BTreeSet::new(),
+            &mut Diagnostics::new(),
+        )
+        .ty;
+        let Type::Class(owner) = object_ty else {
+            continue;
+        };
+        return Some(FieldAccess {
+            object: simple_object(object, struct_defs, signatures, env, ref_env, span),
+            owner,
+            field: field.clone(),
+            rest: path.segments[index + 1..].to_vec(),
+        });
+    }
+    None
+}
+
+fn check_field_visible(
+    access: &FieldAccess,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    env: &HashMap<String, Type>,
+    span: &Span,
+    diagnostics: &mut Diagnostics,
+) {
+    let private = struct_defs
+        .get(&access.owner)
+        .and_then(|def| def.class.as_ref())
+        .is_some_and(|info| info.private_fields.contains(&access.field));
+    if !module_visible(env, &access.owner, !private) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "field '{}' of '{}' is private",
+                access.field,
+                access.owner.replace("::", ".")
+            ),
+            span.clone(),
+        ));
+    }
+}
+
+/// `a.b.c` where `a.b` is an object reads `@heap:B[a.b].c`: the path restarts
+/// at the heap after its last object. The object id goes in a macro index, so
+/// an object read from another object goes through its class's getter.
+#[allow(clippy::too_many_arguments)]
+fn class_heap_path(
+    path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    span: &Span,
+    diagnostics: &mut Diagnostics,
+) -> Option<PathExpr> {
+    let access = class_field_access(path, struct_defs, signatures, env, ref_env, span)?;
+    check_field_visible(&access, struct_defs, env, span, diagnostics);
+    let mut segments = vec![
+        PathSegment::Index(Box::new(access.object)),
+        PathSegment::Field(access.field),
+    ];
+    segments.extend(access.rest);
+    Some(PathExpr {
+        base: Box::new(Expr {
+            kind: ExprKind::Variable(format!("{HEAP}{}", access.owner)),
+            span: span.clone(),
+        }),
+        segments,
+    })
+}
+
+/// A read through an object that can't be a macro index, like
+/// `a.items()[0].x`, calls the field's getter: `Node__mcfcGet_x(a.items()[0])`.
+fn complex_field_read(
+    path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    span: &Span,
+    diagnostics: &mut Diagnostics,
+) -> Option<Expr> {
+    let access = class_field_access(path, struct_defs, signatures, env, ref_env, span)?;
+    if is_simple_index(&access.object) {
+        return None;
+    }
+    check_field_visible(&access, struct_defs, env, span, diagnostics);
+    let getter = Expr {
+        kind: ExprKind::Call {
+            function: format!("{}__mcfcGet_{}", access.owner, access.field),
+            args: vec![access.object],
+        },
+        span: span.clone(),
+    };
+    Some(if access.rest.is_empty() {
+        getter
+    } else {
+        Expr {
+            kind: ExprKind::Path(PathExpr {
+                base: Box::new(getter),
+                segments: access.rest,
+            }),
+            span: span.clone(),
+        }
+    })
+}
+
+/// An object expression the backend can paste into a macro index: `a.b.c`
+/// becomes `B__mcfcGet_c(A__mcfcGet_b(a))`.
+fn simple_object(
+    object: Expr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    span: &Span,
+) -> Expr {
+    if is_simple_index(&object) {
+        return object;
+    }
+    let type_of = |expr: &Expr| {
+        type_check_expr(
+            expr,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            &mut BTreeSet::new(),
+            &mut Diagnostics::new(),
+        )
+        .ty
+    };
+    // `a.next().value`: the method as a call, `Node__next(a)`.
+    if let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+    } = &object.kind
+        && let Type::Class(owner) = type_of(receiver)
+        && let Some((function, true)) = find_method(signatures, &owner, method)
+    {
+        let receiver = simple_object(
+            (**receiver).clone(),
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            span,
+        );
+        return Expr {
+            kind: ExprKind::Call {
+                function,
+                args: std::iter::once(receiver)
+                    .chain(args.iter().cloned())
+                    .collect(),
+            },
+            span: span.clone(),
+        };
+    }
+    if let ExprKind::Path(path) = &object.kind
+        && let Some((PathSegment::Field(field), rest)) = path.segments.split_last()
+    {
+        let inner = if rest.is_empty() {
+            (*path.base).clone()
+        } else {
+            Expr {
+                kind: ExprKind::Path(PathExpr {
+                    base: path.base.clone(),
+                    segments: rest.to_vec(),
+                }),
+                span: span.clone(),
+            }
+        };
+        if let Type::Class(owner) = type_of(&inner) {
+            let inner = simple_object(inner, struct_defs, signatures, env, ref_env, span);
+            return Expr {
+                kind: ExprKind::Call {
+                    function: format!("{owner}__mcfcGet_{field}"),
+                    args: vec![inner],
+                },
+                span: span.clone(),
+            };
+        }
+    }
+    // Anything else stays as it is, and `type_check_path` reports it as too complex.
+    object
+}
+
+/// The world state holding static field `field` of class `owner`, if it has one.
+fn static_field_state(
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    owner: &str,
+    field: &str,
+) -> Option<String> {
+    struct_defs.get(owner)?.class.as_ref()?;
+    let state = static_state_name(owner, field);
+    world_state_type(struct_defs, &state).map(|_| state)
+}
+
+/// Static field `field` of class `a::b::C` is the world state `a_b_C__field`.
+fn static_state_name(owner: &str, field: &str) -> String {
+    format!("{}__{field}", owner.replace("::", "_"))
+}
+
+/// `Counter.total` (and `Counter.total[0]`) as the static field's world state.
+fn static_field_path(
+    path: &PathExpr,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    env: &HashMap<String, Type>,
+    diagnostics: &mut Diagnostics,
+) -> Option<Expr> {
+    let ExprKind::Variable(owner) = &path.base.kind else {
+        return None;
+    };
+    let Some(PathSegment::Field(field)) = path.segments.first() else {
+        return None;
+    };
+    if env.contains_key(owner) {
+        return None;
+    }
+    let state = static_field_state(struct_defs, owner, field)?;
+    let private = struct_defs[owner]
+        .class
+        .as_ref()
+        .is_some_and(|info| info.private_fields.contains(field));
+    if !module_visible(env, owner, !private) {
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "field '{field}' of '{}' is private",
+                owner.replace("::", ".")
+            ),
+            path.base.span.clone(),
+        ));
+    }
+    let base = Expr {
+        kind: ExprKind::Variable(state),
+        span: path.base.span.clone(),
+    };
+    Some(if path.segments.len() == 1 {
+        base
+    } else {
+        Expr {
+            kind: ExprKind::Path(PathExpr {
+                base: Box::new(base.clone()),
+                segments: path.segments[1..].to_vec(),
+            }),
+            span: base.span,
+        }
+    })
+}
+
+/// Where the collector copies a storage local of type `ty` holding objects,
+/// and the function that marks what it holds. The backend derives the same names.
+pub fn gc_scan_names(ty: &Type) -> (String, String) {
+    let key: String = ty
+        .as_str()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    (
+        format!("mcfcScratch_{key}"),
+        format!("__mcfc_gc_scan_{key}"),
+    )
+}
+
+/// Written by the backend: marks what every function's locals point to.
+pub const GC_LOCALS: &str = "__mcfc_gc_locals";
+
+/// Whether a value of type `ty` can hold an object reference.
+fn holds_objects(ty: &Type, struct_defs: &BTreeMap<String, StructTypeDef>, depth: usize) -> bool {
+    match ty {
+        Type::Class(_) => true,
+        Type::Array(inner) | Type::Dict(inner) => holds_objects(inner, struct_defs, depth),
+        Type::Struct(name) if depth < 8 && !name.starts_with('@') => {
+            struct_defs.get(name).is_some_and(|def| {
+                def.class.is_none()
+                    && def
+                        .fields
+                        .values()
+                        .any(|field| holds_objects(field, struct_defs, depth + 1))
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Statements marking every object `value` (of type `ty`) points to.
+fn gc_mark_stmts(
+    value: Expr,
+    ty: &Type,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    names: &mut usize,
+) -> Vec<Stmt> {
+    if !holds_objects(ty, struct_defs, 0) {
+        return Vec::new();
+    }
+    let span = value.span.clone();
+    let at = |kind: ExprKind| Expr {
+        kind,
+        span: span.clone(),
+    };
+    let stmt = |kind: StmtKind| Stmt {
+        kind,
+        span: span.clone(),
+    };
+    *names += 1;
+    let name = format!("mcfcItem{names}");
+    match ty {
+        Type::Class(_) => vec![stmt(StmtKind::Expr(at(ExprKind::Call {
+            function: "std::heap::mark".to_string(),
+            args: vec![at(ExprKind::Call {
+                function: "__mcfc_id".to_string(),
+                args: vec![value],
+            })],
+        })))],
+        Type::Array(inner) => {
+            let item = at(ExprKind::Variable(name.clone()));
+            let body = gc_mark_stmts(item, inner, struct_defs, names);
+            vec![stmt(StmtKind::For {
+                name,
+                ty: Some((**inner).clone()),
+                iterable: value,
+                body,
+            })]
+        }
+        Type::Dict(inner) => {
+            let key = PathSegment::Index(Box::new(at(ExprKind::Variable(name.clone()))));
+            let entry = match value.kind.clone() {
+                ExprKind::Path(mut path) => {
+                    path.segments.push(key);
+                    path
+                }
+                _ => PathExpr {
+                    base: Box::new(value.clone()),
+                    segments: vec![key],
+                },
+            };
+            let body = gc_mark_stmts(at(ExprKind::Path(entry)), inner, struct_defs, names);
+            vec![stmt(StmtKind::For {
+                name,
+                ty: Some(Type::String),
+                iterable: at(ExprKind::MethodCall {
+                    receiver: Box::new(value),
+                    method: "keys".to_string(),
+                    args: Vec::new(),
+                }),
+                body,
+            })]
+        }
+        Type::Struct(record) => {
+            let def = &struct_defs[record];
+            def.order
+                .iter()
+                .flat_map(|field| {
+                    let component = at(ExprKind::MethodCall {
+                        receiver: Box::new(value.clone()),
+                        method: field.clone(),
+                        args: Vec::new(),
+                    });
+                    gc_mark_stmts(component, &def.fields[field], struct_defs, names)
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Adds state `path` (`stats.best`) of type `ty` to the record `name`, with a
+/// nested record for each dotted segment, like the state's storage compound.
+fn add_state_field(
+    struct_defs: &mut BTreeMap<String, StructTypeDef>,
+    name: &str,
+    path: &[String],
+    ty: &Type,
+) {
+    let field = &path[0];
+    let field_ty = if path.len() == 1 {
+        ty.clone()
+    } else {
+        let child = format!("{name}_{field}");
+        add_state_field(struct_defs, &child, &path[1..], ty);
+        Type::Struct(child)
+    };
+    let def = struct_defs
+        .entry(name.to_string())
+        .or_insert_with(|| StructTypeDef {
+            fields: BTreeMap::new(),
+            enum_variants: None,
+            enum_fields: BTreeMap::new(),
+            order: Vec::new(),
+            class: None,
+        });
+    if def.fields.insert(field.clone(), field_ty).is_none() {
+        def.order.push(field.clone());
+    }
+}
+
+/// The collector's program-specific half, as functions to type-check like any
+/// other: `C__trace` marks what an object's fields point to, `__mcfc_gc_scan_*`
+/// marks a local the backend copied into world state, and `__mcfc_gc` runs a
+/// collection.
+fn gc_functions(
+    program: &Program,
+    struct_defs: &mut BTreeMap<String, StructTypeDef>,
+    world_states: &mut Vec<PlayerStateDef>,
+    functions: &[TypedFunction],
+) -> Vec<Function> {
+    let span = program.classes[0].span.clone();
+    let at = |kind: ExprKind| Expr {
+        kind,
+        span: span.clone(),
+    };
+    let stmt = |kind: StmtKind| Stmt {
+        kind,
+        span: span.clone(),
+    };
+    let call = |function: &str, args: Vec<Expr>| {
+        at(ExprKind::Call {
+            function: function.to_string(),
+            args,
+        })
+    };
+    let id = || at(ExprKind::Variable("id".to_string()));
+    let function = |name: &str, with_id: bool, body: Vec<Stmt>| Function {
+        name: name.to_string(),
+        is_pub: true,
+        type_params: Vec::new(),
+        params: if with_id {
+            vec![Param {
+                name: "id".to_string(),
+                ty: Type::Int,
+                span: span.clone(),
+            }]
+        } else {
+            Vec::new()
+        },
+        return_type: Type::Void,
+        body,
+        span: span.clone(),
+        end: 0,
+        owner: None,
+        module: String::new(),
+    };
+    let mut names = 0;
+    let mut out = Vec::new();
+
+    // Each class's fields, read from its heap slot, picked by the slot's class id.
+    let mut dispatch = vec![stmt(StmtKind::Let {
+        name: "classId".to_string(),
+        ty: Some(Type::Int),
+        value: call("std::heap::classOf", vec![id()]),
+    })];
+    for class in &program.classes {
+        let Some(def) = struct_defs.get(&class.name) else {
+            continue;
+        };
+        let Some(info) = def.class.clone() else {
+            continue;
+        };
+        let mut body = Vec::new();
+        for (field, ty) in def.fields.clone() {
+            let value = at(ExprKind::Path(PathExpr {
+                base: Box::new(at(ExprKind::Variable(format!("{HEAP}{}", class.name)))),
+                segments: vec![
+                    PathSegment::Index(Box::new(id())),
+                    PathSegment::Field(field),
+                ],
+            }));
+            body.extend(gc_mark_stmts(value, &ty, struct_defs, &mut names));
+        }
+        if body.is_empty() {
+            continue;
+        }
+        let trace = format!("{}__trace", class.name);
+        dispatch.push(stmt(StmtKind::If {
+            condition: at(ExprKind::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(at(ExprKind::Variable("classId".to_string()))),
+                right: Box::new(at(ExprKind::Int(info.id as i64))),
+            }),
+            then_body: vec![stmt(StmtKind::Expr(call(&trace, vec![id()])))],
+            else_body: Vec::new(),
+        }));
+        out.push(function(&trace, true, body));
+    }
+    out.push(function("__mcfc_gc_trace", true, dispatch));
+
+    // Storage locals holding objects are copied into world state to be marked.
+    let mut scanned = BTreeSet::new();
+    for local in functions
+        .iter()
+        .flat_map(|function| function.locals.values())
+    {
+        if matches!(local, Type::Class(_))
+            || !holds_objects(local, struct_defs, 0)
+            || !scanned.insert(local.clone())
+        {
+            continue;
+        }
+        let (scratch, scan) = gc_scan_names(local);
+        struct_defs
+            .get_mut(WORLD_STATE)
+            .unwrap()
+            .fields
+            .insert(scratch.clone(), local.clone());
+        world_states.push(PlayerStateDef {
+            owner: StateOwner::World,
+            path: vec![scratch.clone()],
+            ty: local.clone(),
+            display_name: scratch.clone(),
+            span: span.clone(),
+        });
+        let value = at(ExprKind::Variable(scratch));
+        let body = gc_mark_stmts(value, local, struct_defs, &mut names);
+        out.push(function(&scan, false, body));
+    }
+    // Player and entity state: the backend copies each owner's whole state
+    // compound, keyed by UUID, into world state shaped as a record per owner.
+    for (owner, key) in [
+        (StateOwner::Player, "players"),
+        (StateOwner::Entity, "entities"),
+    ] {
+        let root = format!("mcfcState_{key}");
+        let mut found = false;
+        for state in &program.player_states {
+            if state.owner == owner && holds_objects(&state.ty, struct_defs, 0) {
+                add_state_field(struct_defs, &root, &state.path, &state.ty);
+                found = true;
+            }
+        }
+        if !found {
+            continue;
+        }
+        let scratch = format!("mcfcScratch_state_{key}");
+        let ty = Type::Dict(Box::new(Type::Struct(root)));
+        struct_defs
+            .get_mut(WORLD_STATE)
+            .unwrap()
+            .fields
+            .insert(scratch.clone(), ty.clone());
+        world_states.push(PlayerStateDef {
+            owner: StateOwner::World,
+            path: vec![scratch.clone()],
+            ty: ty.clone(),
+            display_name: scratch.clone(),
+            span: span.clone(),
+        });
+        let value = at(ExprKind::Variable(scratch));
+        let body = gc_mark_stmts(value, &ty, struct_defs, &mut names);
+        out.push(function(
+            &format!("__mcfc_gc_scan_state_{key}"),
+            false,
+            body,
+        ));
+    }
+    out.push(function(GC_LOCALS, false, Vec::new()));
+
+    let mut collect = vec![
+        stmt(StmtKind::If {
+            condition: at(ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(call("std::heap::due", Vec::new())),
+            }),
+            then_body: vec![stmt(StmtKind::Return(None))],
+            else_body: Vec::new(),
+        }),
+        stmt(StmtKind::Expr(call("std::heap::begin", Vec::new()))),
+    ];
+    // World state (static fields included) roots everything it points to.
+    for state in world_states.iter() {
+        let name = &state.path[0];
+        if !name.starts_with("mcfc") {
+            let value = at(ExprKind::Variable(name.clone()));
+            collect.extend(gc_mark_stmts(value, &state.ty, struct_defs, &mut names));
+        }
+    }
+    collect.push(stmt(StmtKind::Expr(call(GC_LOCALS, Vec::new()))));
+    collect.push(stmt(StmtKind::While {
+        condition: call("std::heap::hasGray", Vec::new()),
+        body: vec![stmt(StmtKind::Expr(call(
+            "__mcfc_gc_trace",
+            vec![call("std::heap::nextGray", Vec::new())],
+        )))],
+        step: Vec::new(),
+    }));
+    collect.push(stmt(StmtKind::Expr(call("std::heap::sweep", Vec::new()))));
+    out.push(function("__mcfc_gc", false, collect));
+    out
+}
+
+/// The class and field an assignment sets, when that field is `final`.
+fn final_field_target(
+    target: &AssignTarget,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    span: &Span,
+) -> Option<(String, String)> {
+    let classes = || {
+        struct_defs
+            .iter()
+            .filter_map(|(name, def)| Some((name, def.class.as_ref()?)))
+    };
+    match target {
+        AssignTarget::Variable(state) => classes().find_map(|(owner, info)| {
+            info.final_fields
+                .iter()
+                .find(|field| static_state_name(owner, field) == *state)
+                .map(|field| (owner.clone(), field.clone()))
+        }),
+        AssignTarget::Path(path) => {
+            let access = class_field_access(path, struct_defs, signatures, env, ref_env, span)?;
+            let info = struct_defs.get(&access.owner)?.class.as_ref()?;
+            (access.rest.is_empty() && info.final_fields.contains(&access.field))
+                .then_some((access.owner, access.field))
+        }
+    }
+}
+
+/// The value a field has before its constructor sets it, like Java's defaults.
+fn default_value(ty: &Type) -> TypedExprKind {
+    match ty {
+        Type::Float => TypedExprKind::Float("0.0".to_string()),
+        Type::Bool => TypedExprKind::Bool(false),
+        Type::String => TypedExprKind::String(String::new()),
+        Type::Array(_) => TypedExprKind::ArrayLiteral(Vec::new()),
+        Type::Dict(_) => TypedExprKind::DictLiteral(Vec::new()),
+        _ => TypedExprKind::Int(0),
+    }
+}
 
 fn env_tag<'a>(env: &'a HashMap<String, Type>, tag: &str) -> Option<&'a str> {
     env.keys().find_map(|key| key.strip_prefix(tag))
@@ -565,14 +1253,17 @@ fn method_visible(
     function: &str,
     signature: &FunctionSignature,
 ) -> bool {
+    module_visible(env, function, signature.is_pub)
+}
+
+/// Whether item `a::b::Name` may be used here: it is public, or the caller is
+/// in its module or one below it.
+fn module_visible(env: &HashMap<String, Type>, item: &str, is_pub: bool) -> bool {
     let Some(caller) = env_tag(env, MODULE_TAG) else {
         return true;
     };
-    let owner = function.rsplit_once("::").map_or("", |(module, _)| module);
-    signature.is_pub
-        || owner.is_empty()
-        || caller == owner
-        || caller.starts_with(&format!("{owner}::"))
+    let owner = item.rsplit_once("::").map_or("", |(module, _)| module);
+    is_pub || owner.is_empty() || caller == owner || caller.starts_with(&format!("{owner}::"))
 }
 
 /// The function behind method `method` of type `owner`, trying the Java
@@ -844,6 +1535,17 @@ pub struct StructTypeDef {
     pub enum_fields: BTreeMap<String, (Type, Vec<Expr>)>,
     /// Record components in declaration order, for `toString()`.
     pub order: Vec<String>,
+    /// Set for a class, whose `fields` are its instance fields.
+    pub class: Option<ClassInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassInfo {
+    /// Stored in the object's heap slot as `mcfcClass`; 0 marks a free slot.
+    pub id: usize,
+    pub private_fields: BTreeSet<String>,
+    /// Instance and static fields only a constructor or initializer can set.
+    pub final_fields: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1051,6 +1753,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                     enum_variants: None,
                     enum_fields: BTreeMap::new(),
                     order: Vec::new(),
+                    class: None,
                 },
             );
         }
@@ -1069,6 +1772,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                     enum_variants: None,
                     enum_fields: BTreeMap::new(),
                     order: Vec::new(),
+                    class: None,
                 },
             );
         }
@@ -1092,6 +1796,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 enum_variants: None,
                 enum_fields: BTreeMap::new(),
                 order: Vec::new(),
+                class: None,
             },
         );
     }
@@ -1123,6 +1828,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 enum_variants: None,
                 enum_fields: BTreeMap::new(),
                 order: Vec::new(),
+                class: None,
             },
         );
     }
@@ -1151,10 +1857,86 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 enum_variants: Some(enum_def.variants.clone()),
                 enum_fields: BTreeMap::new(),
                 order: Vec::new(),
+                class: None,
             },
         );
     }
+    // A class is registered twice: `C` for its references, and `@class:C` for
+    // its heap slot, whose fields are read like a record's.
+    for (index, class_def) in program.classes.iter().enumerate() {
+        if struct_defs.contains_key(&class_def.name) {
+            diagnostics.push(Diagnostic::new(
+                format!("duplicate type '{}'", class_def.name),
+                class_def.span.clone(),
+            ));
+            continue;
+        }
+        let mut fields = BTreeMap::new();
+        for field in class_def.fields.iter().filter(|field| !field.is_static) {
+            if fields
+                .insert(field.name.clone(), field.ty.clone())
+                .is_some()
+            {
+                diagnostics.push(Diagnostic::new(
+                    format!("duplicate field '{}.{}'", class_def.name, field.name),
+                    field.span.clone(),
+                ));
+            }
+        }
+        let slot = StructTypeDef {
+            fields,
+            enum_variants: None,
+            enum_fields: BTreeMap::new(),
+            order: Vec::new(),
+            class: None,
+        };
+        struct_defs.insert(format!("{HEAP_SLOT}{}", class_def.name), slot.clone());
+        struct_defs.insert(
+            class_def.name.clone(),
+            StructTypeDef {
+                class: Some(ClassInfo {
+                    id: index + 1,
+                    private_fields: class_def
+                        .fields
+                        .iter()
+                        .filter(|field| !field.is_pub)
+                        .map(|field| field.name.clone())
+                        .collect(),
+                    final_fields: class_def
+                        .fields
+                        .iter()
+                        .filter(|field| field.is_final)
+                        .map(|field| field.name.clone())
+                        .collect(),
+                }),
+                ..slot
+            },
+        );
+    }
+    // Field types can name classes, so resolve them once all are registered.
+    let class_names: Vec<String> = program.classes.iter().map(|c| c.name.clone()).collect();
+    for name in class_names {
+        for key in [name.clone(), format!("{HEAP_SLOT}{name}")] {
+            let mut fields = struct_defs[&key].fields.clone();
+            for ty in fields.values_mut() {
+                resolve_enum_type(ty, &struct_defs);
+            }
+            struct_defs.get_mut(&key).unwrap().fields = fields;
+        }
+    }
     let mut normalized = program.clone();
+    for class_def in &program.classes {
+        for field in class_def.fields.iter().filter(|field| field.is_static) {
+            let name = static_state_name(&class_def.name, &field.name);
+            normalized.world_states.push(PlayerStateDef {
+                owner: StateOwner::World,
+                display_name: name.clone(),
+                path: vec![name],
+                ty: field.ty.clone(),
+                span: field.span.clone(),
+            });
+        }
+    }
     for state in normalized
         .player_states
         .iter_mut()
@@ -1296,6 +2078,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 | Type::Float
                 | Type::Struct(_)
                 | Type::Dict(_)
+                | Type::Class(_)
                 | Type::EntityRef
                 | Type::PlayerRef
         ) {
@@ -1353,6 +2136,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 | Type::Dict(_)
                 | Type::Array(_)
                 | Type::Enum(_)
+                | Type::Class(_)
                 | Type::EntityRef
                 | Type::PlayerRef
         ) {
@@ -1385,6 +2169,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             enum_variants: None,
             enum_fields: BTreeMap::new(),
             order: Vec::new(),
+            class: None,
         },
     );
     struct_defs.insert(
@@ -1394,6 +2179,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             enum_variants: None,
             enum_fields: BTreeMap::new(),
             order: Vec::new(),
+            class: None,
         },
     );
     struct_defs.insert(
@@ -1403,6 +2189,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
             enum_variants: None,
             enum_fields: BTreeMap::new(),
             order: Vec::new(),
+            class: None,
         },
     );
 
@@ -1563,6 +2350,44 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
     }
 
+    let mut world_states = program.world_states.clone();
+    if !program.classes.is_empty() && signatures.contains_key("std::heap::mark") {
+        let gc = gc_functions(program, &mut struct_defs, &mut world_states, &functions);
+        for function in &gc {
+            signatures.insert(
+                function.name.clone(),
+                FunctionSignature {
+                    params: function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    return_type: Type::Void,
+                    type_params: Vec::new(),
+                    instances: Arc::default(),
+                    overloads: Vec::new(),
+                    is_pub: true,
+                    instance: false,
+                    method: false,
+                },
+            );
+        }
+        for function in &gc {
+            let mut typed =
+                type_check_function(function, &struct_defs, &signatures, host, &mut diagnostics);
+            // The backend's marking code calls these; say so for pruning and depths.
+            if typed.name == GC_LOCALS {
+                typed.called_functions.insert("std::heap::mark".to_string());
+                typed.called_functions.extend(
+                    gc.iter()
+                        .filter(|scan| scan.name.starts_with("__mcfc_gc_scan_"))
+                        .map(|scan| scan.name.clone()),
+                );
+            }
+            functions.push(typed);
+        }
+    }
+
     let (call_depths, recursion_groups) = analyze_calls(&functions);
 
     diagnostics.into_result(TypedProgram {
@@ -1570,7 +2395,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         functions,
         function_signatures: signatures,
         player_states: program.player_states.clone(),
-        world_states: program.world_states.clone(),
+        world_states,
         call_depths,
         recursion_groups,
     })
@@ -1620,6 +2445,13 @@ fn type_check_function(
         }
         if let Some(owner) = &function.owner {
             env.insert(format!("{OWNER_TAG}{owner}"), Type::Void);
+            let constructor = format!("{owner}__new");
+            if function.name == constructor
+                || function.name.starts_with(&format!("{constructor}__"))
+                || function.name == format!("{owner}__clinit")
+            {
+                env.insert(format!("{INIT_TAG}{owner}"), Type::Void);
+            }
         }
         let mut called_functions = BTreeSet::new();
         let body = type_check_block(
@@ -1785,6 +2617,63 @@ fn type_check_block(
 
     for statement in statements {
         let kind = match &statement.kind {
+            // A write through an object that can't be a macro index, like
+            // `a.items()[0].x = 1;`, goes through a local holding the object.
+            StmtKind::Assign {
+                target: AssignTarget::Path(path),
+                value,
+            } if let Some(access) = class_field_access(
+                path,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                &statement.span,
+            ) && !is_simple_index(&access.object) =>
+            {
+                let span = statement.span.clone();
+                let local = format!("mcfcObject{}", span.range.start);
+                let mut segments = vec![PathSegment::Field(access.field)];
+                segments.extend(access.rest);
+                let writes = [
+                    Stmt {
+                        kind: StmtKind::Let {
+                            name: local.clone(),
+                            ty: Some(Type::Class(access.owner)),
+                            value: access.object,
+                        },
+                        span: span.clone(),
+                    },
+                    Stmt {
+                        kind: StmtKind::Assign {
+                            target: AssignTarget::Path(PathExpr {
+                                base: Box::new(Expr {
+                                    kind: ExprKind::Variable(local),
+                                    span: span.clone(),
+                                }),
+                                segments,
+                            }),
+                            value: value.clone(),
+                        },
+                        span: span.clone(),
+                    },
+                ];
+                typed.extend(type_check_block(
+                    &writes,
+                    return_type,
+                    struct_defs,
+                    signatures,
+                    &mut env.clone(),
+                    &mut ref_env.clone(),
+                    locals,
+                    called_functions,
+                    loop_depth,
+                    in_async,
+                    host,
+                    diagnostics,
+                ));
+                continue;
+            }
             StmtKind::Block(body) => {
                 typed.extend(type_check_block(
                     body,
@@ -1893,16 +2782,65 @@ fn type_check_block(
                 }
             }
             StmtKind::Assign { target, value } => {
-                let mut value = type_check_expr(
-                    value,
+                // A constructor sets each field without an initializer to its default.
+                // An empty `List.of()` or `Map.of()` takes its type from the target too.
+                let is_default = match &value.kind {
+                    ExprKind::Variable(name) => name == "__mcfc_default",
+                    ExprKind::ArrayLiteral(items) => items.is_empty(),
+                    ExprKind::DictLiteral(entries) => entries.is_empty(),
+                    _ => false,
+                };
+                let mut value = if is_default {
+                    TypedExpr {
+                        kind: TypedExprKind::Int(0),
+                        ty: Type::Int,
+                        ref_kind: RefKind::Unknown,
+                    }
+                } else {
+                    type_check_expr(
+                        value,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    )
+                };
+                // In a method, `count = 1;` sets `this.count`, or a static field.
+                let as_target = |kind: ExprKind| match kind {
+                    ExprKind::Path(path) => Some(AssignTarget::Path(path)),
+                    ExprKind::Variable(name) => Some(AssignTarget::Variable(name)),
+                    _ => None,
+                };
+                let field_target = match target {
+                    AssignTarget::Variable(name) if !env.contains_key(name) => {
+                        this_member(env, struct_defs, name, &statement.span).and_then(as_target)
+                    }
+                    AssignTarget::Path(path) => {
+                        static_field_path(path, struct_defs, env, diagnostics)
+                            .and_then(|state| as_target(state.kind))
+                    }
+                    _ => None,
+                };
+                if let Some((owner, field)) = final_field_target(
+                    field_target.as_ref().unwrap_or(target),
                     struct_defs,
                     signatures,
                     env,
                     ref_env,
-                    called_functions,
-                    diagnostics,
-                );
-                let target = match target {
+                    &statement.span,
+                ) && env_tag(env, INIT_TAG) != Some(owner.as_str())
+                {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "field '{field}' of '{}' is final; only a constructor or its initializer can set it",
+                            owner.replace("::", ".")
+                        ),
+                        statement.span.clone(),
+                    ));
+                }
+                let target = match field_target.as_ref().unwrap_or(target) {
                     AssignTarget::Variable(name) => {
                         let (slot_name, existing) = match env.get(name) {
                             Some(ty) => (name.clone(), Some(ty.clone())),
@@ -1918,6 +2856,13 @@ fn type_check_block(
                             ));
                             continue;
                         };
+                        if is_default {
+                            value = TypedExpr {
+                                kind: default_value(&existing),
+                                ty: existing.clone(),
+                                ref_kind: RefKind::Unknown,
+                            };
+                        }
                         value = coerce_expr_to_expected_type(value, &existing);
                         if existing != value.ty {
                             diagnostics.push(Diagnostic::new(
@@ -1962,6 +2907,13 @@ fn type_check_block(
                                         "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet"
                                     ) && field == "item"
                             );
+                        if is_default {
+                            value = TypedExpr {
+                                kind: default_value(&typed_path.ty),
+                                ty: typed_path.ty.clone(),
+                                ref_kind: RefKind::Unknown,
+                            };
+                        }
                         if !is_equipment_item_def_write {
                             value = coerce_expr_to_expected_type(value, &typed_path.ty);
                         }
@@ -1998,7 +2950,12 @@ fn type_check_block(
                                 .any(|ty| *ty != Type::Nbt);
                             if !matches!(
                                 value.ty,
-                                Type::Int | Type::Bool | Type::String | Type::Nbt | Type::TextDef
+                                Type::Int
+                                    | Type::Bool
+                                    | Type::String
+                                    | Type::Nbt
+                                    | Type::TextDef
+                                    | Type::Class(_)
                             ) && !(typed_state_write
                                 && matches!(
                                     value.ty,
@@ -2796,7 +3753,7 @@ fn type_check_expr(
                     )
                     .into_iter()
                     .map(|mut placeholder| {
-                        if matches!(placeholder.ty, Type::Bool | Type::Enum(_))
+                        if matches!(placeholder.ty, Type::Bool | Type::Enum(_) | Type::Class(_))
                             || matches!(&placeholder.ty, Type::Struct(name) if !name.starts_with('@'))
                         {
                             placeholder.expr = string_operand(
@@ -2969,6 +3926,36 @@ fn type_check_expr(
             }
         }
         ExprKind::Path(path) => {
+            if let Some(read) = complex_field_read(
+                path,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                &expr.span,
+                diagnostics,
+            ) {
+                return type_check_expr(
+                    &read,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+            }
+            if let Some(state) = static_field_path(path, struct_defs, env, diagnostics) {
+                return type_check_expr(
+                    &state,
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+            }
             if let Some((kind, ty)) = enum_field_switch(path, struct_defs, signatures, env, ref_env)
             {
                 let value = type_check_expr(
@@ -3045,6 +4032,21 @@ fn type_check_expr(
                 kind: TypedExprKind::Variable(name.clone()),
                 ty: ty.clone(),
                 ref_kind: ref_env.get(name).copied().unwrap_or(RefKind::Unknown),
+            },
+            // `null` is object id 0, and fits any class.
+            None if name == "null" => TypedExpr {
+                kind: TypedExprKind::Int(0),
+                ty: Type::Class(String::new()),
+                ref_kind: RefKind::Unknown,
+            },
+            // The heap, seen as a list of `class`'s slots; see `class_heap_path`.
+            None if name.starts_with(HEAP) => TypedExpr {
+                kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}mcfcHeap")),
+                ty: Type::Array(Box::new(Type::Struct(format!(
+                    "{HEAP_SLOT}{}",
+                    &name[HEAP.len()..]
+                )))),
+                ref_kind: RefKind::Unknown,
             },
             // In a method, a bare component or field name reads it from `this`.
             None if this_member(env, struct_defs, name, &expr.span).is_some() => type_check_expr(
@@ -3245,7 +4247,12 @@ fn type_check_expr(
                         BinaryOp::Eq | BinaryOp::NotEq => {
                             if !matches!(
                                 left.ty,
-                                Type::Int | Type::Float | Type::Bool | Type::String | Type::Enum(_)
+                                Type::Int
+                                    | Type::Float
+                                    | Type::Bool
+                                    | Type::String
+                                    | Type::Enum(_)
+                                    | Type::Class(_)
                             ) && !matches!(&left.ty, Type::Struct(name) if !name.starts_with('@'))
                             {
                                 diagnostics.push(Diagnostic::new(
@@ -3393,6 +4400,44 @@ fn type_check_expr(
             called_functions,
             diagnostics,
         ),
+        // The collector's view of an object: its id as a plain `int`.
+        ExprKind::Call { function, args } if function == "__mcfc_id" && args.len() == 1 => {
+            let object = type_check_expr(
+                &args[0],
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            TypedExpr {
+                ty: Type::Int,
+                ..object
+            }
+        }
+        ExprKind::Call { function, args } if function == "__mcfc_alloc" => {
+            // A constructor's first step: take a heap slot tagged with the class.
+            let owner = env_tag(env, OWNER_TAG).unwrap_or_default().to_string();
+            let id = struct_defs
+                .get(&owner)
+                .and_then(|def| def.class.as_ref())
+                .map_or(0, |info| info.id);
+            let _ = args;
+            called_functions.insert("std::heap::alloc".to_string());
+            TypedExpr {
+                kind: TypedExprKind::Call {
+                    function: "std::heap::alloc".to_string(),
+                    args: vec![TypedExpr {
+                        kind: TypedExprKind::Int(id as i64),
+                        ty: Type::Int,
+                        ref_kind: RefKind::Unknown,
+                    }],
+                },
+                ty: Type::Class(owner),
+                ref_kind: RefKind::Unknown,
+            }
+        }
         ExprKind::Call { function, args } => {
             // In a method, a bare `m(...)` calls another method of the same type.
             if !function.contains("::")
@@ -3616,6 +4661,26 @@ fn type_check_path(
     diagnostics: &mut Diagnostics,
     span: Span,
 ) -> TypedPathExpr {
+    if let Some(heap_path) = class_heap_path(
+        path,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        &span,
+        diagnostics,
+    ) {
+        return type_check_path(
+            &heap_path,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+            span,
+        );
+    }
     let base = type_check_expr(
         &path.base,
         struct_defs,
@@ -3910,7 +4975,7 @@ fn type_check_path(
                         called_functions,
                         diagnostics,
                     );
-                    if index.ty != Type::Int {
+                    if !matches!(index.ty, Type::Int | Type::Class(_)) {
                         diagnostics.push(Diagnostic::new(
                             "list index must have type 'int'",
                             span.clone(),
@@ -4167,10 +5232,14 @@ fn validate_declared_type(
         {
             diagnostics.push(Diagnostic::new(format!("unknown record '{}'", name), span))
         }
+        Type::Class(name) if !struct_defs.get(name).is_some_and(|def| def.class.is_some()) => {
+            diagnostics.push(Diagnostic::new(format!("unknown class '{}'", name), span))
+        }
         _ => {}
     }
 }
 
+/// A written type name parses as a record; make it an enum or class type.
 fn resolve_enum_type(ty: &mut Type, defs: &BTreeMap<String, StructTypeDef>) {
     match ty {
         Type::Struct(name)
@@ -4179,6 +5248,9 @@ fn resolve_enum_type(ty: &mut Type, defs: &BTreeMap<String, StructTypeDef>) {
                 .is_some_and(|def| def.enum_variants.is_some()) =>
         {
             *ty = Type::Enum(name.clone());
+        }
+        Type::Struct(name) if defs.get(name).is_some_and(|def| def.class.is_some()) => {
+            *ty = Type::Class(name.clone());
         }
         Type::Array(inner) | Type::Dict(inner) | Type::Optional(inner) => {
             resolve_enum_type(inner, defs)
@@ -4200,6 +5272,7 @@ fn validate_collection_value_type(ty: &Type, span: Span, diagnostics: &mut Diagn
             | Type::Optional(_)
             | Type::Struct(_)
             | Type::Enum(_)
+            | Type::Class(_)
             | Type::EntityDef
             | Type::BlockDef
             | Type::ItemDef
@@ -5315,7 +6388,7 @@ fn type_check_method_call(
         diagnostics,
     );
     // A record or enum method: `v.add(w)` calls `Vec3__add(v, w)`.
-    if let Type::Struct(owner) | Type::Enum(owner) = &receiver.ty
+    if let Type::Struct(owner) | Type::Enum(owner) | Type::Class(owner) = &receiver.ty
         && let Some((function, instance)) = find_method(signatures, owner, method)
     {
         let mut call_args = Vec::new();
@@ -7935,7 +9008,7 @@ fn string_operand(
         ref_kind: RefKind::Unknown,
     };
     // A declared `toString()` wins, like Java.
-    if let Type::Struct(owner) | Type::Enum(owner) = &operand.ty
+    if let Type::Struct(owner) | Type::Enum(owner) | Type::Class(owner) = &operand.ty
         && let Some((function, true)) = find_method(signatures, owner, "toString")
         && signatures
             .get(&function)
@@ -7968,6 +9041,23 @@ fn string_operand(
     match &operand.ty {
         Type::String | Type::Int | Type::Float => operand,
         Type::Bool => conditional_expr(operand, text("true"), text("false")),
+        // Java prints `Counter@1b6d3586`; the id is what tells objects apart here.
+        Type::Class(name) => {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            let id = TypedExpr {
+                ty: Type::Int,
+                ..operand
+            };
+            called_functions.insert("std::heap::describe".to_string());
+            TypedExpr {
+                kind: TypedExprKind::Call {
+                    function: "std::heap::describe".to_string(),
+                    args: vec![text(short), id],
+                },
+                ty: Type::String,
+                ref_kind: RefKind::Unknown,
+            }
+        }
         Type::Enum(name) => match struct_defs
             .get(name)
             .and_then(|def| def.enum_variants.as_ref())
@@ -8238,6 +9328,12 @@ fn method_call_expr(
 }
 
 fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
+    if expr.ty == Type::Class(String::new()) && matches!(expected, Type::Class(_)) {
+        return TypedExpr {
+            ty: expected.clone(),
+            ..expr
+        };
+    }
     if matches!(expected, Type::Int | Type::Bool)
         && expr.ty == Type::Nbt
         && is_entity_state_path_expr(&expr)
@@ -9286,6 +10382,7 @@ fn collect_macro_placeholders(
                 | Type::Float
                 | Type::Bool
                 | Type::Enum(_)
+                | Type::Class(_)
                 | Type::String
                 | Type::EntitySet
                 | Type::EntityRef

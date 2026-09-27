@@ -4704,3 +4704,181 @@ fn private_methods_stay_in_their_module() {
         "{error}"
     );
 }
+
+#[test]
+fn class_members_stay_in_their_module() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    fs::write(
+        src_dir.join("game.mcf"),
+        r#"public class Wallet {
+    public static int made;
+    private static int hidden;
+    public int coins;
+    int secret;
+
+    public Wallet(int coins) {
+        this.coins = coins;
+        secret = coins * 2;
+    }
+
+    public int doubled() {
+        return secret;
+    }
+}
+
+public class Vault {
+    Vault() {}
+}
+"#,
+    )
+    .unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    compile(
+        "import game.Wallet;
+void main() { Wallet w = new Wallet(3); w.coins += 1; int n = w.doubled() + Wallet.made; }
+",
+    )
+    .expect("public members should be usable");
+    let error = compile(
+        "import game.Wallet;
+void main() { int n = new Wallet(3).secret; }
+",
+    )
+    .expect_err("a package-private field should be rejected");
+    assert!(
+        error.contains("field 'secret' of 'game.Wallet' is private"),
+        "{error}"
+    );
+    let error = compile(
+        "import game.Wallet;
+void main() { Wallet.hidden = 1; }
+",
+    )
+    .expect_err("a private static field should be rejected");
+    assert!(
+        error.contains("field 'hidden' of 'game.Wallet' is private"),
+        "{error}"
+    );
+    let error = compile(
+        "import game.Vault;
+void main() { Vault v = new Vault(); }
+",
+    )
+    .expect_err("a package-private constructor should be rejected");
+    assert!(
+        error.contains("the constructor of 'game.Vault' is private"),
+        "{error}"
+    );
+}
+
+#[test]
+fn final_fields_are_set_only_by_constructors() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let class = "class Ticket {
+    static final int LIMIT = 3;
+    final int serial;
+    Ticket(int serial) { this.serial = serial; }
+    void reset() { serial = 0; }
+}
+";
+    let error = compile(&format!(
+        "{class}void main() {{ Ticket t = new Ticket(1); }}
+"
+    ))
+    .expect_err("a method setting a final field should be rejected");
+    assert!(
+        error.contains("field 'serial' of 'Ticket' is final"),
+        "{error}"
+    );
+    let class = class.replace(
+        "    void reset() { serial = 0; }
+",
+        "",
+    );
+    compile(&format!(
+        "{class}void main() {{ Ticket t = new Ticket(1); int n = t.serial + Ticket.LIMIT; }}
+"
+    ))
+    .expect("constructors and initializers may set final fields");
+    let error = compile(&format!(
+        "{class}void main() {{ Ticket.LIMIT = 4; }}
+"
+    ))
+    .expect_err("setting a static final field should be rejected");
+    assert!(
+        error.contains("field 'LIMIT' of 'Ticket' is final"),
+        "{error}"
+    );
+    let error = compile(&format!(
+        "{class}void main() {{ Ticket t = new Ticket(1); t.serial += 1; }}
+"
+    ))
+    .expect_err("changing a final field should be rejected");
+    assert!(
+        error.contains("field 'serial' of 'Ticket' is final"),
+        "{error}"
+    );
+}
+
+#[test]
+fn same_named_classes_in_two_modules_keep_separate_statics() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        project.join("mcfc.toml"),
+        "namespace = \"sample\"
+",
+    )
+    .unwrap();
+    for module in ["red", "blue"] {
+        fs::write(
+            src_dir.join(format!("{module}.mcf")),
+            "public class Team {
+    public static int score = 1;
+}
+",
+        )
+        .unwrap();
+    }
+    fs::write(
+        src_dir.join("main.mcf"),
+        "void main() { red.Team.score = 5; blue.Team.score = 7; }
+",
+    )
+    .unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("project should compile");
+    let text: String = result.artifacts.files.values().cloned().collect();
+    assert!(text.contains("red_Team__score"), "red static missing");
+    assert!(text.contains("blue_Team__score"), "blue static missing");
+}

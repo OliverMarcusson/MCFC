@@ -276,7 +276,7 @@ impl Backend {
     fn generate(&mut self, program: &IrProgram, options: &BackendOptions) {
         self.helper = options.helper.clone();
         self.emit_pack_mcmeta();
-        self.emit_load_tag(options.load_tag_values.as_deref());
+        self.emit_load_tag(program, options.load_tag_values.as_deref());
         self.emit_setup();
         self.emit_main_entry();
         self.emit_tick_entry();
@@ -380,9 +380,16 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
     /// Lantern Load: `#minecraft:load` runs `#load:_private/load`, which resets
     /// `load.status` and then runs `#load:load` in the same order every reload,
     /// so this pack coexists with other packs using the convention.
-    fn emit_load_tag(&mut self, override_values: Option<&[String]>) {
+    fn emit_load_tag(&mut self, program: &IrProgram, override_values: Option<&[String]>) {
         let ns = &self.namespace;
         let mut values = vec![format!("{ns}:generated/load_status")];
+        // Static field initializers run before the pack's own load functions.
+        for function in &program.functions {
+            if function.name.ends_with("__clinit") {
+                let path = crate::parser::resource_name(&function.name).replace("::", "/");
+                values.push(format!("{ns}:{path}"));
+            }
+        }
         values.extend(
             override_values
                 .map(|items| items.to_vec())
@@ -462,6 +469,35 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 }
             }
         }
+        // Garbage collection runs last, when only paused functions are mid-call.
+        // An idle tick costs the one compare.
+        if program
+            .functions
+            .iter()
+            .any(|function| function.name == "__mcfc_gc")
+        {
+            let ns = self.namespace.clone();
+            self.files.insert(
+                format!("data/{ns}/function/generated/gc.mcfunction"),
+                format!(
+                    "execute if score {} mcfc > {} mcfc run function {ns}:generated/gc_run
+",
+                    numeric_slot(0, "", "@world.mcfcAllocated"),
+                    numeric_slot(0, "", "@world.mcfcThreshold"),
+                ),
+            );
+            self.files.insert(
+                format!("data/{ns}/function/generated/gc_run.mcfunction"),
+                format!(
+                    "scoreboard players set {} mcfc 0
+function {ns}:{}
+",
+                    control_slot(0, "__mcfc_gc"),
+                    self.function_entry_name("__mcfc_gc", 0)
+                ),
+            );
+            values.push(format!("{ns}:generated/gc"));
+        }
         if !values.is_empty() {
             self.files.insert(
                 "data/minecraft/tags/function/tick.json".to_string(),
@@ -481,7 +517,10 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 crate::types::WORLD_STATE_PREFIX,
                 state.path.join(".")
             );
-            let slot = if matches!(state.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+            let slot = if matches!(
+                state.ty,
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+            ) {
                 numeric_slot(0, "", &name)
             } else {
                 string_slot(0, "", &name)
@@ -496,7 +535,7 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 continue;
             }
             let default = match &state.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => {
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => {
                     lines.push_str(&format!(
                         "execute unless score {slot} mcfc matches -2147483648.. run scoreboard players set {slot} mcfc 0
 "
@@ -557,14 +596,17 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                     control_slot(depth, function)
                 ));
                 for (name, ty) in &info.locals {
-                    if matches!(ty, Type::Int | Type::Bool | Type::Enum(_)) {
+                    if matches!(ty, Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)) {
                         lines.push(format!(
                             "scoreboard players set {} mcfc 0",
                             numeric_slot(depth, function, name)
                         ));
                     }
                 }
-                if matches!(info.return_type, Type::Int | Type::Bool | Type::Enum(_)) {
+                if matches!(
+                    info.return_type,
+                    Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+                ) {
                     lines.push(format!(
                         "scoreboard players set {} mcfc 0",
                         numeric_return_slot(depth, function)
@@ -1514,6 +1556,9 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
     fn emit_function_variant(&mut self, function: &IrFunction, depth: usize) {
         let path = self.function_entry_path(&function.name, depth);
         let mut lines = Vec::new();
+        if function.name == crate::types::GC_LOCALS {
+            lines = self.gc_local_marks(depth);
+        }
         let guard = Guard::for_function(depth, &function.name);
         self.emit_stmt_list(
             function,
@@ -1533,6 +1578,77 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 lines.join("\n") + "\n"
             },
         );
+    }
+
+    /// The garbage collector's roots in locals: every object-typed local of
+    /// every function, at every depth. Finished calls leave stale values, which
+    /// only keep an object alive longer; paused ones need them. A local holding
+    /// objects in storage is copied to world state for its scan function.
+    fn gc_local_marks(&self, depth: usize) -> Vec<String> {
+        let callee_depth = depth + 1;
+        if callee_depth > self.max_depth {
+            return Vec::new();
+        }
+        let ns = &self.namespace;
+        let call = |callee: &str| {
+            [
+                format!(
+                    "scoreboard players set {} mcfc 0",
+                    control_slot(callee_depth, callee)
+                ),
+                format!(
+                    "function {ns}:{}",
+                    self.function_entry_name(callee, callee_depth)
+                ),
+            ]
+        };
+        let mut lines = Vec::new();
+        for (name, info) in &self.functions {
+            if name.starts_with("std::heap::") || name.starts_with("__mcfc_gc") {
+                continue;
+            }
+            for (local, ty) in &info.locals {
+                let (scratch, scan) = crate::types::gc_scan_names(ty);
+                let is_object = matches!(ty, Type::Class(_));
+                if !is_object && !self.functions.contains_key(&scan) {
+                    continue;
+                }
+                for local_depth in 0..=self.max_depth {
+                    let slot = local_slot(local_depth, name, local, ty);
+                    if is_object {
+                        lines.push(format!(
+                            "scoreboard players operation {} mcfc = {} mcfc",
+                            numeric_slot(callee_depth, "std::heap::mark", "id"),
+                            slot.numeric_name()
+                        ));
+                        lines.extend(call("std::heap::mark"));
+                    } else {
+                        let world = format!("{}{scratch}", crate::types::WORLD_STATE_PREFIX);
+                        lines.push(format!(
+                            "data modify storage {ns}:runtime {} set from storage {ns}:runtime {}",
+                            string_slot(0, "", &world),
+                            slot.storage_path()
+                        ));
+                        lines.extend(call(&scan));
+                    }
+                }
+            }
+        }
+        for owner in ["players", "entities"] {
+            let scan = format!("__mcfc_gc_scan_state_{owner}");
+            if self.functions.contains_key(&scan) {
+                let world = format!(
+                    "{}mcfcScratch_state_{owner}",
+                    crate::types::WORLD_STATE_PREFIX
+                );
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:state {owner}",
+                    string_slot(0, "", &world)
+                ));
+                lines.extend(call(&scan));
+            }
+        }
+        lines
     }
 
     fn emit_stmt_list(
@@ -2187,7 +2303,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                             ));
                         let loop_slot = local_slot(depth, &function.name, name, element.as_ref());
                         let command = match element.as_ref() {
-                            Type::Int | Type::Bool | Type::Enum(_) => format!(
+                            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => format!(
                                 "execute store result score {} mcfc run data get storage {}:runtime {}[$(index)] 1",
                                 loop_slot.numeric_name(),
                                 self.namespace,
@@ -2358,7 +2474,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         for arg in args {
             let arg_slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
             self.compile_expr_into_slot(function, depth, arg, &arg_slot, lines);
-            if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+            if matches!(
+                arg.ty,
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+            ) {
                 lines.push(format!(
                     "data modify storage mcfc:rpc sites.{}.req.args append value 0",
                     site
@@ -2763,7 +2882,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             let source = local_slot(parent_depth, &parent.name, &capture.name, &capture.ty);
             let target = local_slot(0, &async_function.name, &capture.name, &capture.ty);
             match capture.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
                     target.numeric_name(),
                     source.numeric_name()
@@ -2882,7 +3001,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             IrExprKind::Selector(value) => self.write_query_slot(target, "", value, lines),
             IrExprKind::Block(value) => self.write_block_slot(target, "", value, lines),
             IrExprKind::Variable(name) => match expr.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => lines.push(format!(
                     "scoreboard players operation {} mcfc = {} mcfc",
                     target.numeric_name(),
                     numeric_slot(depth, &function.name, name)
@@ -4078,7 +4197,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         let temp_slot = local_slot(depth, &function.name, &temp, ty);
         self.compile_expr_into_slot(function, depth, &typed_expr, &temp_slot, lines);
         match ty {
-            Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
+            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => lines.push(format!(
                 "execute store result storage {}:runtime {}.{} int 1 run scoreboard players get {} mcfc",
                 self.namespace,
                 macro_storage,
@@ -4235,7 +4354,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             ));
         }
         let command = match ty {
-            Type::Int | Type::Bool | Type::Enum(_) => format!(
+            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => format!(
                 "execute store result score {} mcfc run data get storage {}:runtime {} 1",
                 target.numeric_name(),
                 self.namespace,
@@ -4369,7 +4488,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             let slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
             self.compile_expr_into_slot(function, depth, arg, &slot, lines);
             let field = format!("arg{index}");
-            if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+            if matches!(
+                arg.ty,
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+            ) {
                 if index == 0
                     && matches!(method, "getAttribute" | "setAttribute")
                     && matches!(&arg.ty, Type::Enum(name) if name == "std::attribute::Attribute")
@@ -4735,7 +4857,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 "{{\"storage\":\"{ns}:runtime\",\"nbt\":{},\"color\":\"white\"}}",
                 quoted(slot.storage_path())
             )
-        } else if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+        } else if matches!(
+            arg.ty,
+            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+        ) {
             format!(
                 "{{\"score\":{{\"name\":{},\"objective\":\"mcfc\"}},\"color\":\"white\"}}",
                 quoted(slot.numeric_name())
@@ -4971,7 +5096,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     unreachable!()
                 };
                 // An empty Optional gives the type's empty value, like `getFirst()` on an empty list.
-                if matches!(value_ty.as_ref(), Type::Int | Type::Bool | Type::Enum(_)) {
+                if matches!(
+                    value_ty.as_ref(),
+                    Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+                ) {
                     lines.push(format!(
                         "execute store result score {} mcfc run data get storage {}:runtime {}.value 1",
                         target.numeric_name(),
@@ -5006,8 +5134,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 let Type::Optional(value_ty) = &receiver.ty else {
                     unreachable!()
                 };
-                let command = if matches!(value_ty.as_ref(), Type::Int | Type::Bool | Type::Enum(_))
-                {
+                let command = if matches!(
+                    value_ty.as_ref(),
+                    Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_)
+                ) {
                     format!(
                         "execute store result score {} mcfc run data get storage {}:runtime {}.value 1",
                         target.numeric_name(),
@@ -7427,7 +7557,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
             )
         } else if let Some(target) = target {
             match path.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => {
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => {
                     lines.push(format!(
                         "scoreboard players set {} mcfc 0",
                         target.numeric_name()
@@ -8760,7 +8890,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                     ),
                 ));
             }
-            Type::Int | Type::Bool | Type::Enum(_) => {
+            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => {
                 let temp = self.new_temp();
                 let temp_slot = local_slot(depth, &function.name, &temp, &expr.ty);
                 self.compile_expr_into_slot(function, depth, expr, &temp_slot, lines);
@@ -9725,7 +9855,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
             self.compile_expr_into_slot(function, depth, &placeholder.expr, &source_slot, lines);
             let target_path = format!("{}.{}", storage_base, placeholder.key);
             match placeholder.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => lines.push(format!(
                     "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
                     self.namespace,
                     target_path,
@@ -10418,7 +10548,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
         let result = return_slot(callee_depth, callee, &call.ty);
         let bind = |target: SlotRef| match call.ty {
             Type::Void => None,
-            Type::Int | Type::Bool | Type::Enum(_) => Some(format!(
+            Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => Some(format!(
                 "scoreboard players operation {} mcfc = {} mcfc",
                 target.numeric_name(),
                 result.numeric_name()
@@ -10610,7 +10740,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
             self.compile_expr_into_slot(function, depth, &placeholder.expr, &source_slot, lines);
             let target_path = format!("{}.{}", storage_base, placeholder.key);
             match placeholder.ty {
-                Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
+                Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => lines.push(format!(
                     "execute store result storage {}:runtime {} int 1 run scoreboard players get {} mcfc",
                     self.namespace,
                     target_path,
@@ -10688,7 +10818,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
 }
 
 fn is_score_type(ty: &Type) -> bool {
-    matches!(ty, Type::Int | Type::Bool | Type::Enum(_))
+    matches!(ty, Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_))
 }
 
 /// A comparison that `execute if score` can test directly.
@@ -10775,7 +10905,7 @@ impl SlotRef {
 
 fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
     match ty {
-        Type::Int | Type::Bool | Type::Enum(_) => SlotRef {
+        Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => SlotRef {
             name: numeric_slot(depth, function, name),
         },
         Type::String
@@ -10805,7 +10935,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
 
 fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
     match ty {
-        Type::Int | Type::Bool | Type::Enum(_) => SlotRef {
+        Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) => SlotRef {
             name: numeric_return_slot(depth, function),
         },
         Type::String

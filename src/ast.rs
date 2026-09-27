@@ -3,6 +3,7 @@ use crate::diagnostics::Span;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub structs: Vec<StructDef>,
+    pub classes: Vec<ClassDef>,
     pub enums: Vec<EnumDef>,
     pub player_states: Vec<PlayerStateDef>,
     /// `@WorldState` fields: one value for the whole world, read by name.
@@ -20,6 +21,28 @@ pub struct EnumDef {
     pub args: Vec<Vec<Expr>>,
     pub constructor: Vec<Param>,
     pub fields: Vec<EnumField>,
+    pub span: Span,
+}
+
+/// `class Counter { ... }`. Constructors and methods are in `Program::functions`
+/// with this class as their owner; `new Counter(...)` calls `Counter__new`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassDef {
+    pub name: String,
+    pub is_pub: bool,
+    pub fields: Vec<ClassField>,
+    pub span: Span,
+}
+
+/// A field in a class, enum or record body, such as `private int count = 0;`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassField {
+    pub name: String,
+    pub ty: Type,
+    pub is_pub: bool,
+    pub is_static: bool,
+    pub is_final: bool,
+    pub init: Option<Expr>,
     pub span: Span,
 }
 
@@ -108,6 +131,8 @@ pub enum Type {
     Optional(Box<Type>),
     Struct(String),
     Enum(String),
+    /// A class instance: the id of its heap slot, or 0 for `null`.
+    Class(String),
     Bossbar,
     EntitySet,
     EntityRef,
@@ -133,7 +158,8 @@ impl Type {
             Type::Dict(value) => format!("Map<String, {}>", value.as_type_arg()),
             Type::Optional(value) => format!("Optional<{}>", value.as_type_arg()),
             Type::Struct(name) => name.replace("::", "."),
-            Type::Enum(name) => name.replace("::", "."),
+            Type::Class(name) if name.is_empty() => "null".to_string(),
+            Type::Enum(name) | Type::Class(name) => name.replace("::", "."),
             Type::Bossbar => "BossBar".to_string(),
             Type::EntitySet => "Selector".to_string(),
             Type::EntityRef => "Entity".to_string(),

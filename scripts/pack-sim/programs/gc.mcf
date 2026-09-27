@@ -1,0 +1,56 @@
+// Garbage collection: unreachable objects are freed at tick end, and
+// everything reachable from world state, paused locals and fields survives.
+class Node {
+    int value;
+    Node next;
+    List<Node> children = List.of();
+
+    Node(int value) {
+        this.value = value;
+    }
+}
+
+@WorldState
+Node kept;
+
+// Objects in player state, even inside a map, stay alive.
+@PlayerState
+Map<String, Node> pets;
+
+void churn() {
+    for (int i = 0; i < 80; i++) {
+        Node garbage = new Node(100 + i);
+        garbage.next = new Node(i);
+    }
+}
+
+void main() {
+    kept = new Node(1);
+    kept.next = new Node(2);
+    kept.children.add(new Node(3));
+    Node paused = new Node(4);
+    List<Node> held = List.of();
+    held.add(new Node(5));
+    Node dog = new Node(6);
+    int dogId = __mcfc_id(dog);
+    mcf("data modify storage gc:state players.\"1_2_3_4\".pets.dog set value $(dogId)");
+    dog = null;
+    // Replaces the constructor's leftover `this`, so only the state holds the dog.
+    Node spare = new Node(0);
+    churn();
+    int before = mcfcHeap.size();
+    sleepTicks(2);
+
+    Node child = kept.children[0];
+    Node inList = held[0];
+    String values = "values " + kept.value + " " + kept.next.value + " " + child.value + " " + paused.value + " " + inList.value;
+    mcf("say $(values)");
+
+    String pet = "pet alive " + (mcfcHeap[dogId].mcfcClass() != 0);
+    mcf("say $(pet)");
+
+    Node fresh = new Node(9);
+    boolean reused = fresh.value == 9 && mcfcHeap.size() == before;
+    String heap = "heap " + before + " live " + mcfcLive + " free " + mcfcFree.size() + " reused " + reused;
+    mcf("say $(heap)");
+}

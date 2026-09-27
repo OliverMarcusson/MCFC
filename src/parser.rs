@@ -99,9 +99,9 @@ struct Annotation {
 
 enum TypeMember {
     Method(Function),
-    Field(EnumField),
-    /// The parameters, and each `this.field = param;` as `(field, param)`.
-    Constructor((Vec<Param>, Vec<(String, String)>), Span),
+    Field(ClassField),
+    /// A constructor, named after its type, and whether it is `public`.
+    Constructor(Function, bool),
     Skipped,
 }
 
@@ -126,6 +126,7 @@ impl Parser {
     fn parse_program(mut self) -> Result<Program, Diagnostics> {
         let mut program = Program {
             structs: Vec::new(),
+            classes: Vec::new(),
             enums: Vec::new(),
             player_states: Vec::new(),
             world_states: Vec::new(),
@@ -148,6 +149,10 @@ impl Parser {
                 program
                     .structs
                     .push(self.parse_record(is_pub, &mut program.functions));
+            } else if self.at_word("class") {
+                self.reject_annotations(&annotations, "a class");
+                let class = self.parse_class(is_pub, &mut program);
+                program.classes.push(class);
             } else if self.at_word("enum") {
                 self.reject_annotations(&annotations, "an enum");
                 program
@@ -260,9 +265,9 @@ impl Parser {
                     "records can't declare fields; add a component to the record header",
                     field.span,
                 )),
-                TypeMember::Constructor(_, span) => self.diagnostics.push(Diagnostic::new(
+                TypeMember::Constructor(ctor, _) => self.diagnostics.push(Diagnostic::new(
                     "records can't declare constructors; 'new' takes one argument per component",
-                    span,
+                    ctor.span,
                 )),
                 TypeMember::Skipped => {}
             }
@@ -310,8 +315,23 @@ impl Parser {
                 let start = self.index;
                 match self.parse_type_member(&name, is_pub) {
                     TypeMember::Method(function) => functions.push(function),
-                    TypeMember::Field(field) => fields.push(field),
-                    TypeMember::Constructor(ctor, span) => {
+                    TypeMember::Field(field) => {
+                        if field.is_static || !field.is_final || field.init.is_some() {
+                            self.error_at(
+                                "enum fields must be 'final', not 'static', and set by the constructor",
+                                field.span.clone(),
+                            );
+                        }
+                        fields.push(EnumField {
+                            name: field.name,
+                            ty: field.ty,
+                            param: None,
+                            span: field.span,
+                        });
+                    }
+                    TypeMember::Constructor(ctor, _) => {
+                        let span = ctor.span.clone();
+                        let ctor = self.enum_constructor(ctor);
                         if constructor.replace(ctor).is_some() {
                             self.error_at("an enum can have only one constructor", span);
                         }
@@ -353,6 +373,191 @@ impl Parser {
         }
     }
 
+    /// An enum constructor's parameters, and each `this.field = param;` in it.
+    fn enum_constructor(&mut self, function: Function) -> (Vec<Param>, Vec<(String, String)>) {
+        let mut assigned = Vec::new();
+        for stmt in &function.body {
+            if let StmtKind::Assign {
+                target: AssignTarget::Path(path),
+                value:
+                    Expr {
+                        kind: ExprKind::Variable(param),
+                        ..
+                    },
+            } = &stmt.kind
+                && matches!(&path.base.kind, ExprKind::Variable(base) if base == "this")
+                && let [PathSegment::Field(field)] = path.segments.as_slice()
+                && function.params.iter().any(|p| &p.name == param)
+            {
+                assigned.push((field.clone(), param.clone()));
+            } else {
+                self.error_at(
+                    "an enum constructor can only set fields from its parameters, like 'this.mass = mass;'",
+                    stmt.span.clone(),
+                );
+            }
+        }
+        (function.params, assigned)
+    }
+
+    /// `class Name { fields, constructors, methods }`. Each constructor becomes a
+    /// static factory `Name__new` that allocates the object, runs the field
+    /// initializers and then the constructor body. Each instance field gets a
+    /// getter for accesses on something other than a variable.
+    fn parse_class(&mut self, is_pub: bool, program: &mut Program) -> ClassDef {
+        let functions = &mut program.functions;
+        self.bump();
+        let span = self.current_span();
+        let name = self.expect_identifier("expected class name");
+        self.expect(TokenKind::LeftBrace, "expected '{' after class name");
+        let mut fields: Vec<ClassField> = Vec::new();
+        let mut constructors = Vec::new();
+        while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
+            let start = self.index;
+            match self.parse_type_member(&name, is_pub) {
+                TypeMember::Method(function) => functions.push(function),
+                TypeMember::Field(field) => fields.push(field),
+                TypeMember::Constructor(function, ctor_pub) => {
+                    constructors.push((function, ctor_pub))
+                }
+                TypeMember::Skipped => {}
+            }
+            if self.index == start {
+                self.recover_statement();
+            }
+        }
+        self.expect(TokenKind::RightBrace, "expected '}' after class body");
+        if constructors.is_empty() {
+            constructors.push((self.synthetic_function(&name, "new", &span), true));
+        }
+        let at = |kind: ExprKind| Expr {
+            kind,
+            span: span.clone(),
+        };
+        let stmt = |kind: StmtKind| Stmt {
+            kind,
+            span: span.clone(),
+        };
+        let this_field = |field: &str| {
+            AssignTarget::Path(PathExpr {
+                base: Box::new(at(ExprKind::Variable("this".to_string()))),
+                segments: vec![PathSegment::Field(field.to_string())],
+            })
+        };
+        for (ctor, ctor_pub) in constructors {
+            let mut body = vec![stmt(StmtKind::Let {
+                name: "this".to_string(),
+                ty: Some(Type::Struct(name.clone())),
+                value: at(ExprKind::Call {
+                    function: "__mcfc_alloc".to_string(),
+                    args: Vec::new(),
+                }),
+            })];
+            for field in fields.iter().filter(|field| !field.is_static) {
+                body.push(stmt(StmtKind::Assign {
+                    target: this_field(&field.name),
+                    // The type checker fills in the type's empty value.
+                    value: field
+                        .init
+                        .clone()
+                        .unwrap_or_else(|| at(ExprKind::Variable("__mcfc_default".to_string()))),
+                }));
+            }
+            body.extend(ctor.body);
+            body.push(stmt(StmtKind::Return(Some(at(ExprKind::Variable(
+                "this".to_string(),
+            ))))));
+            functions.push(Function {
+                name: format!("{name}__new"),
+                is_pub: ctor_pub && is_pub,
+                type_params: Vec::new(),
+                params: ctor.params,
+                return_type: Type::Struct(name.clone()),
+                body,
+                span: ctor.span,
+                end: ctor.end,
+                owner: Some(name.clone()),
+                module: String::new(),
+            });
+        }
+        for field in fields.iter().filter(|field| !field.is_static) {
+            let this = Param {
+                name: "this".to_string(),
+                ty: Type::Struct(name.clone()),
+                span: field.span.clone(),
+            };
+            let read = at(ExprKind::Path(PathExpr {
+                base: Box::new(at(ExprKind::Variable("this".to_string()))),
+                segments: vec![PathSegment::Field(field.name.clone())],
+            }));
+            let mut getter =
+                self.synthetic_function(&name, &format!("mcfcGet_{}", field.name), &field.span);
+            getter.params = vec![this];
+            getter.return_type = field.ty.clone();
+            getter.body = vec![stmt(StmtKind::Return(Some(read)))];
+            getter.is_pub = field.is_pub && is_pub;
+            functions.push(getter);
+        }
+        // Static fields are world state (see the type checker). `Name__clinit`,
+        // run from the load tag, sets their initial values once per world.
+        if fields.iter().any(|field| field.is_static) {
+            let ready = "mcfcClinitDone".to_string();
+            let mut body = vec![stmt(StmtKind::Assign {
+                target: AssignTarget::Variable(ready.clone()),
+                value: at(ExprKind::Bool(true)),
+            })];
+            for field in fields.iter().filter(|field| field.is_static) {
+                body.push(stmt(StmtKind::Assign {
+                    target: AssignTarget::Variable(field.name.clone()),
+                    value: field
+                        .init
+                        .clone()
+                        .unwrap_or_else(|| at(ExprKind::Variable("__mcfc_default".to_string()))),
+                }));
+            }
+            fields.push(ClassField {
+                name: ready.clone(),
+                ty: Type::Bool,
+                is_pub: false,
+                is_static: true,
+                is_final: false,
+                init: None,
+                span: span.clone(),
+            });
+            let mut clinit = self.synthetic_function(&name, "clinit", &span);
+            clinit.body = vec![stmt(StmtKind::If {
+                condition: at(ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    expr: Box::new(at(ExprKind::Variable(ready))),
+                }),
+                then_body: body,
+                else_body: Vec::new(),
+            })];
+            program.functions.push(clinit);
+        }
+        ClassDef {
+            name,
+            is_pub,
+            fields,
+            span,
+        }
+    }
+
+    fn synthetic_function(&self, owner: &str, method: &str, span: &Span) -> Function {
+        Function {
+            name: format!("{owner}__{method}"),
+            is_pub: true,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            return_type: Type::Void,
+            body: Vec::new(),
+            span: span.clone(),
+            end: 0,
+            owner: Some(owner.to_string()),
+            module: String::new(),
+        }
+    }
+
     /// One member of a record or enum body: a method, and for enums a field or
     /// the constructor. Methods become top-level functions named `Type__method`.
     fn parse_type_member(&mut self, owner: &str, owner_is_pub: bool) -> TypeMember {
@@ -364,35 +569,13 @@ impl Parser {
         let is_static = self.eat_word("static");
         let is_final = self.eat_word("final");
         let span = self.current_span();
-        // The constructor: `Planet(float mass) { this.mass = mass; }`.
+        // A constructor: `Planet(float mass) { this.mass = mass; }`.
         if self.at_word(owner) && matches!(self.peek_at(1), TokenKind::LeftParen) {
             self.reject_annotations(&annotations, "a constructor");
             self.bump();
             let function =
                 self.parse_function_rest(owner.to_string(), span.clone(), Vec::new(), Type::Void);
-            let mut assigned = Vec::new();
-            for stmt in &function.body {
-                if let StmtKind::Assign {
-                    target: AssignTarget::Path(path),
-                    value:
-                        Expr {
-                            kind: ExprKind::Variable(param),
-                            ..
-                        },
-                } = &stmt.kind
-                    && matches!(&path.base.kind, ExprKind::Variable(base) if base == "this")
-                    && let [PathSegment::Field(field)] = path.segments.as_slice()
-                    && function.params.iter().any(|p| &p.name == param)
-                {
-                    assigned.push((field.clone(), param.clone()));
-                } else {
-                    self.error_at(
-                        "an enum constructor can only set fields from its parameters, like 'this.mass = mass;'",
-                        stmt.span.clone(),
-                    );
-                }
-            }
-            return TypeMember::Constructor((function.params, assigned), span);
+            return TypeMember::Constructor(function, is_pub);
         }
         let mut type_params = Vec::new();
         if self.eat(&TokenKind::Lt) {
@@ -413,14 +596,15 @@ impl Parser {
         let name = self.expect_identifier("expected a name after the type");
         if !self.at(&TokenKind::LeftParen) {
             self.reject_annotations(&annotations, "a field");
+            let init = self.eat(&TokenKind::Assign).then(|| self.parse_expr());
             self.expect_semicolon("field declaration");
-            if is_static || !is_final {
-                self.error_at("enum fields must be 'final' and not 'static'", span.clone());
-            }
-            return TypeMember::Field(EnumField {
+            return TypeMember::Field(ClassField {
                 name,
                 ty,
-                param: None,
+                is_pub,
+                is_static,
+                is_final,
+                init,
                 span,
             });
         }

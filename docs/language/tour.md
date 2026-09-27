@@ -106,7 +106,7 @@ void finish(Quest quest, Stage stage) {
 }
 ```
 
-Create a record with `new Quest("Mine", 5)`. Records and enums can have methods, including `static` ones, and records get `==`, `equals` and `toString()` from their components. Functions and methods can be overloaded. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum), [overloading](./reference/statements#overloading)
+Create a record with `new Quest("Mine", 5)`. Records and enums can have methods, including `static` ones, and records get `==`, `equals` and `toString()` from their components. Functions and methods can be overloaded. A `class` has fields that can change, and its objects are shared by reference like Java's. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum), [`class`](./reference/statements#class), [overloading](./reference/statements#overloading)
 
 ## Missing values
 

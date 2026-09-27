@@ -5968,6 +5968,9 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             format!("tag $(selector) remove {}", capture_tag),
             true,
         ));
+        // Summoned entities are selected by id, so the result can be stored.
+        self.stabilize_entity_ref(&summon_target, lines);
+        lines.push(format!("tag @e[tag={ref_tag}] remove {ref_tag}"));
     }
 
     fn compile_builtin_call(
@@ -6440,6 +6443,8 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     format!("tag $(selector) remove {}", capture_tag),
                     true,
                 ));
+                self.stabilize_entity_ref(&summon_target, lines);
+                lines.push(format!("tag @e[tag={ref_tag}] remove {ref_tag}"));
                 true
             }
             "teleport" => {

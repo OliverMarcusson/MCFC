@@ -46,12 +46,29 @@ const MATH_METHODS: &[&str] = &[
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
 const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
-/// The shared sidebar: `Sidebar.setLine(1, "Kills")` lowers to these builtins.
-pub(crate) const SIDEBAR_METHODS: &[(&str, &str)] = &[
-    ("setTitle", "sidebar_title"),
-    ("setLine", "sidebar_line"),
-    ("removeLine", "sidebar_remove_line"),
-    ("clear", "sidebar_clear"),
+/// Static classes whose methods are builtins: `Sidebar.setLine(1, "Kills")`
+/// is the `sidebar_line` builtin.
+pub(crate) const STATIC_METHODS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Sidebar",
+        &[
+            ("setTitle", "sidebar_title"),
+            ("setLine", "sidebar_line"),
+            ("removeLine", "sidebar_remove_line"),
+            ("clear", "sidebar_clear"),
+        ],
+    ),
+    (
+        "Log",
+        &[
+            ("debug", "log_debug"),
+            ("info", "log_info"),
+            ("warn", "log_warn"),
+            ("error", "log_error"),
+            ("setLevel", "log_level"),
+            ("dump", "log_dump"),
+        ],
+    ),
 ];
 
 struct Annotation {
@@ -117,17 +134,18 @@ impl Parser {
     fn parse_import(&mut self, uses: &mut Vec<UseDecl>) {
         let span = self.bump().span;
         let mut path = vec![self.expect_identifier("expected module path after 'import'")];
+        let mut alias = None;
         while self.eat(&TokenKind::Dot) {
-            if self.at(&TokenKind::Star) {
-                self.error_here("wildcard imports aren't supported; import each name");
-                self.bump();
+            // `import a.b.*;` imports every public name of module `a.b`.
+            if self.eat(&TokenKind::Star) {
+                alias = Some("*".to_string());
                 break;
             }
             path.push(self.expect_identifier("expected name after '.'"));
         }
         self.expect_semicolon("import");
         uses.push(UseDecl {
-            alias: path.last().cloned().unwrap_or_default(),
+            alias: alias.unwrap_or_else(|| path.last().cloned().unwrap_or_default()),
             path,
             span,
         });
@@ -440,9 +458,24 @@ impl Parser {
                     function.name = format!("__mcfc_agent_event_{kind}");
                 }
             }
-            "Command" => {
+            "Command" | "Menu" => {
+                let menu = annotation.name == "Menu";
                 let name = match annotation.args.as_slice() {
-                    [] => resource_name(&function.name),
+                    [] if !menu => resource_name(&function.name),
+                    [
+                        (
+                            None,
+                            Expr {
+                                kind: ExprKind::String(label),
+                                ..
+                            },
+                        ),
+                    ] if menu => {
+                        // The button label rides in the name, hex-encoded so it
+                        // stays a valid function path; the backend decodes it.
+                        let hex: String = label.bytes().map(|b| format!("{b:02x}")).collect();
+                        format!("{}__menu_{hex}", resource_name(&function.name))
+                    }
                     [
                         (
                             None,
@@ -452,6 +485,10 @@ impl Parser {
                             },
                         ),
                     ] => name.clone(),
+                    _ if menu => {
+                        self.error_at("@Menu takes a button label string", span);
+                        return;
+                    }
                     _ => {
                         self.error_at("@Command takes an optional command name string", span);
                         return;
@@ -506,6 +543,12 @@ impl Parser {
                     "__mcfc_task_{}_{schedule}_ticks_{ticks}",
                     resource_name(&function.name)
                 );
+            }
+            "Test" => {
+                if !annotation.args.is_empty() || !function.params.is_empty() {
+                    self.error_at("@Test functions take no arguments or parameters", span);
+                }
+                function.name = format!("__mcfc_test_{}", resource_name(&function.name));
             }
             other => self.error_at(&format!("unknown annotation '@{other}'"), span),
         }
@@ -676,6 +719,46 @@ impl Parser {
                 self.expect_semicolon("return");
                 StmtKind::Return(value)
             }
+            // `assert c : msg;` is `if (!c) { assert_fail("line N: " + msg); }`.
+            TokenKind::Identifier(word)
+                if word == "assert"
+                    && !matches!(
+                        self.peek_at(1),
+                        TokenKind::Assign | TokenKind::Dot | TokenKind::Semicolon
+                    ) =>
+            {
+                self.bump();
+                let condition = self.parse_expr();
+                let at = string_expr(&format!("line {}", span.line), &span);
+                let message = if self.eat(&TokenKind::Colon) {
+                    let message = self.parse_expr();
+                    Expr {
+                        kind: ExprKind::Binary {
+                            op: BinaryOp::Add,
+                            left: Box::new(string_expr(&format!("line {}: ", span.line), &span)),
+                            right: Box::new(message),
+                        },
+                        span: span.clone(),
+                    }
+                } else {
+                    at
+                };
+                self.expect_semicolon("assert");
+                StmtKind::If {
+                    condition: Expr {
+                        kind: ExprKind::Unary {
+                            op: UnaryOp::Not,
+                            expr: Box::new(condition),
+                        },
+                        span: span.clone(),
+                    },
+                    then_body: vec![Stmt {
+                        kind: StmtKind::Expr(call("assert_fail", vec![message], &span)),
+                        span: span.clone(),
+                    }],
+                    else_body: Vec::new(),
+                }
+            }
             TokenKind::Identifier(word)
                 if word == "switch" && matches!(self.peek_at(1), TokenKind::LeftParen) =>
             {
@@ -768,8 +851,20 @@ impl Parser {
         }
 
         let expr = self.parse_expr();
+        let shift_assign = match self.adjacent_pair() {
+            Some((TokenKind::Lt, TokenKind::Lte)) => Some(BinaryOp::Shl),
+            Some((TokenKind::Gt, TokenKind::Gte)) => Some(BinaryOp::Shr),
+            _ => None,
+        };
+        if shift_assign.is_some() {
+            self.bump();
+        }
         let op = match self.peek().kind {
+            _ if shift_assign.is_some() => shift_assign,
             TokenKind::Assign => None,
+            TokenKind::AmpAssign => Some(BinaryOp::BitAnd),
+            TokenKind::PipeAssign => Some(BinaryOp::BitOr),
+            TokenKind::CaretAssign => Some(BinaryOp::BitXor),
             TokenKind::PlusAssign | TokenKind::PlusPlus => Some(BinaryOp::Add),
             TokenKind::MinusAssign | TokenKind::MinusMinus => Some(BinaryOp::Sub),
             TokenKind::StarAssign => Some(BinaryOp::Mul),
@@ -1099,11 +1194,14 @@ impl Parser {
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
         let mut left = self.parse_prefix();
-        while let Some((op, left_bp, right_bp)) = infix_binding_power(&self.peek().kind) {
+        while let Some((op, left_bp, right_bp)) = self.infix_operator() {
             if left_bp < min_bp {
                 break;
             }
             let span = self.bump().span;
+            if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                self.bump();
+            }
             let right = self.parse_expr_bp(right_bp);
             left = Expr {
                 kind: ExprKind::Binary {
@@ -1115,6 +1213,24 @@ impl Parser {
             };
         }
         left
+    }
+
+    /// `<<` and `>>` are two adjacent `<` or `>` tokens, so `List<List<int>>`
+    /// still closes two generic lists.
+    fn infix_operator(&self) -> Option<(BinaryOp, u8, u8)> {
+        match self.adjacent_pair() {
+            Some((TokenKind::Lt, TokenKind::Lt)) => Some((BinaryOp::Shl, 15, 16)),
+            Some((TokenKind::Gt, TokenKind::Gt)) => Some((BinaryOp::Shr, 15, 16)),
+            // `<<=` and `>>=` end the expression; the statement parser takes them.
+            Some((TokenKind::Lt, TokenKind::Lte) | (TokenKind::Gt, TokenKind::Gte)) => None,
+            _ => infix_binding_power(&self.peek().kind),
+        }
+    }
+
+    fn adjacent_pair(&self) -> Option<(TokenKind, TokenKind)> {
+        let next = self.tokens.get(self.index + 1)?;
+        (self.peek().range.end == next.range.start)
+            .then(|| (self.peek().kind.clone(), next.kind.clone()))
     }
 
     fn parse_prefix(&mut self) -> Expr {
@@ -1230,29 +1346,46 @@ impl Parser {
                 }
             }
             TokenKind::Identifier(name)
-                if name == "Sidebar" && matches!(self.peek().kind, TokenKind::Dot) =>
+                if matches!(self.peek().kind, TokenKind::Dot)
+                    && STATIC_METHODS.iter().any(|(class, _)| *class == name) =>
             {
+                let (_, methods) = STATIC_METHODS
+                    .iter()
+                    .find(|(class, _)| *class == name)
+                    .unwrap();
                 self.bump();
                 let method = match &self.peek().kind {
                     TokenKind::Identifier(method) => method.clone(),
                     _ => String::new(),
                 };
                 self.bump();
-                let builtin = SIDEBAR_METHODS
+                let builtin = methods
                     .iter()
                     .find(|(java, _)| *java == method)
                     .map(|(_, builtin)| *builtin);
                 if builtin.is_none() {
-                    self.error_at(
-                        "Sidebar has setTitle, setLine, removeLine and clear",
-                        span.clone(),
-                    );
+                    let names: Vec<&str> = methods.iter().map(|(java, _)| *java).collect();
+                    self.error_at(&format!("{name} has {}", names.join(", ")), span.clone());
                 }
-                self.expect(TokenKind::LeftParen, "expected '(' after Sidebar method");
+                self.expect(
+                    TokenKind::LeftParen,
+                    &format!("expected '(' after {name}.{method}"),
+                );
                 let args = self.parse_call_args();
-                call(builtin.unwrap_or("sidebar_clear"), args, &span)
+                call(builtin.unwrap_or(methods[0].1), args, &span)
             }
-            TokenKind::Identifier(name) => {
+            TokenKind::Identifier(mut name) => {
+                // `util::twice(x)` is a resolved full name; the resolver writes
+                // these into `$(...)` placeholders, which are parsed again later.
+                while matches!(self.peek().kind, TokenKind::Colon)
+                    && matches!(self.peek_at(1), TokenKind::Colon)
+                    && let TokenKind::Identifier(next) = self.peek_at(2).clone()
+                {
+                    self.bump();
+                    self.bump();
+                    self.bump();
+                    name = format!("{name}::{next}");
+                }
                 if self.eat(&TokenKind::LeftParen) {
                     if let Some((ty, _)) = CASTS.iter().find(|(_, builtin)| *builtin == name) {
                         self.error_at(&format!("use a cast: '({ty}) value'"), span.clone());
@@ -1708,23 +1841,27 @@ impl Parser {
     }
 }
 
-const PREFIX_BP: u8 = 13;
+const PREFIX_BP: u8 = 21;
 
+/// Java precedence; shifts (15, 16) are matched in `infix_operator`.
 fn infix_binding_power(kind: &TokenKind) -> Option<(BinaryOp, u8, u8)> {
     Some(match kind {
         TokenKind::OrOr => (BinaryOp::Or, 1, 2),
         TokenKind::AndAnd => (BinaryOp::And, 3, 4),
-        TokenKind::EqEq => (BinaryOp::Eq, 5, 6),
-        TokenKind::BangEq => (BinaryOp::NotEq, 5, 6),
-        TokenKind::Lt => (BinaryOp::Lt, 7, 8),
-        TokenKind::Lte => (BinaryOp::Lte, 7, 8),
-        TokenKind::Gt => (BinaryOp::Gt, 7, 8),
-        TokenKind::Gte => (BinaryOp::Gte, 7, 8),
-        TokenKind::Plus => (BinaryOp::Add, 9, 10),
-        TokenKind::Minus => (BinaryOp::Sub, 9, 10),
-        TokenKind::Star => (BinaryOp::Mul, 11, 12),
-        TokenKind::Slash => (BinaryOp::Div, 11, 12),
-        TokenKind::Percent => (BinaryOp::Rem, 11, 12),
+        TokenKind::Pipe => (BinaryOp::BitOr, 5, 6),
+        TokenKind::Caret => (BinaryOp::BitXor, 7, 8),
+        TokenKind::Amp => (BinaryOp::BitAnd, 9, 10),
+        TokenKind::EqEq => (BinaryOp::Eq, 11, 12),
+        TokenKind::BangEq => (BinaryOp::NotEq, 11, 12),
+        TokenKind::Lt => (BinaryOp::Lt, 13, 14),
+        TokenKind::Lte => (BinaryOp::Lte, 13, 14),
+        TokenKind::Gt => (BinaryOp::Gt, 13, 14),
+        TokenKind::Gte => (BinaryOp::Gte, 13, 14),
+        TokenKind::Plus => (BinaryOp::Add, 17, 18),
+        TokenKind::Minus => (BinaryOp::Sub, 17, 18),
+        TokenKind::Star => (BinaryOp::Mul, 19, 20),
+        TokenKind::Slash => (BinaryOp::Div, 19, 20),
+        TokenKind::Percent => (BinaryOp::Rem, 19, 20),
         _ => return None,
     })
 }

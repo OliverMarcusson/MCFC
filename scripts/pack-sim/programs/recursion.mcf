@@ -1,0 +1,62 @@
+int fact(int n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+
+int fib(int n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+boolean isEven(int n) {
+    if (n == 0) {
+        return true;
+    }
+    return isOdd(n - 1);
+}
+
+boolean isOdd(int n) {
+    if (n == 0) {
+        return false;
+    }
+    return isEven(n - 1);
+}
+
+// Params swap places, so arguments must not clobber each other.
+int gcd(int a, int b) {
+    if (b == 0) {
+        return a;
+    }
+    return gcd(b, a % b);
+}
+
+String stars(int n) {
+    if (n == 0) {
+        return "";
+    }
+    String rest = stars(n - 1);
+    return "*" + rest;
+}
+
+List<Integer> countdown(List<Integer> out, int n) {
+    if (n < 0) {
+        return out;
+    }
+    out.add(n);
+    return countdown(out, n - 1);
+}
+
+void main() {
+    mcf("say fact $(fact(5)) $(fact(10))");
+    mcf("say fib $(fib(10))");
+    mcf("say even $(isEven(10)) $(isOdd(7)) $(isEven(3))");
+    mcf("say gcd $(gcd(84, 36)) $(gcd(17, 5))");
+    mcf("say stars $(stars(4))");
+    var xs = List.of(9);
+    xs = countdown(xs, 3);
+    mcf("say list $(xs.size()) $(xs.get(1).orElse(-1)) $(xs.get(4).orElse(-1))");
+}

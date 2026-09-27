@@ -44,6 +44,8 @@
 
 Integer `/` rounds down, and `%` takes the sign of the divisor, the same as Minecraft's scoreboard `/=` and `%=`. So `-7 / 2` is `-4` and `-7 % 3` is `2`. Casting a float with `(int)` also floors: `(int) -2.7` is `-3`. Dividing by `0` leaves the left side unchanged. Overflow wraps.
 
+`&`, `|`, `^`, `<<` and `>>` work like Java's on 32-bit ints, with Java's precedence, and the shift count is taken modulo 32. `>>` keeps the sign. There's no `>>>` or `~`; use `-x - 1` for `~x`. Scoreboards have no bit operations, so `&`, `|` and `^` run a generated loop of up to 32 steps, and `<<` and `>>` multiply or divide by a power of two.
+
 `n.toString()` converts to text. `Integer.parseInt("42")` goes the other way and returns `0` if the text isn't a whole number.
 
 ## `float`
@@ -96,16 +98,14 @@ void main() {
 | `indexOf(part)` | The first index, or `-1` |
 | `charAt(index)` | One-character `String`; MCFC has no `char` type. |
 | `isEmpty()` | `boolean` |
+| `replace(target, replacement)` | Every `target` replaced. `target` is plain text. |
+| `split(separator)` | `List<String>`. `separator` is plain text, not a regex. Like Java, trailing empty parts are dropped. |
+| `toUpperCase()`, `toLowerCase()` | Changes ASCII letters only. |
 | `toString()` | The same string |
 
 `Integer.parseInt(s)` returns a number or `0` for invalid text. `String.valueOf(x)`, `Integer.toString(x)` and `Float.toString(x)` convert values to text.
 
-**Limits.** Joining, `toString()` and `$(...)` go through a Minecraft macro, which pastes the value in without escaping it. As a result:
-
-- A value containing `"` breaks the command, and the result is `""`.
-- A `\` is read as an escape, so `\n` becomes a newline.
-
-Player names and ids never contain these characters. Text players type, such as chat, item names and signs, can.
+**Limits.** Joining strings is safe for any text, including `"`, `\` and newlines. `$(...)` in `mcf(...)` pastes the value into the command as it is, so text players type (chat, item names, signs) can change what the command does. Show such values through a [`Component`](./builders) instead.
 
 ## `List<T>` {#list}
 
@@ -206,7 +206,7 @@ Some methods only work on players, and `heal` only works on non-players. The com
 
 ## `Block`
 
-A block position, created with `Block.of("~ ~ ~")` or read from `entity.position`. `Block.of(...)` needs a literal string, so a position can't be computed at run time yet. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, Block.of("~1 ~ ~"))` or an [`at` block](./statements#as-and-at).
+A block position, created with `Block.of("~ ~ ~")` or read from `entity.position`. The string must be a literal. For a position computed at run time, pass world coordinates as ints: `Block.of(x, 64, z)`. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, Block.of("~1 ~ ~"))` or an [`at` block](./statements#as-and-at).
 
 | Method | Does |
 | --- | --- |
@@ -220,6 +220,10 @@ A block position, created with `Block.of("~ ~ ~")` or read from `entity.position
 | `debugMarker(label)`, `debugMarker(label, block)` | Places a visible marker for debugging |
 | `nbt.*` | Block-entity NBT |
 | `getLightLevel() -> int` | Light level 0 to 15 |
+| `getType() -> String` | The block's id, such as `"minecraft:oak_stairs"`. Found with a binary search over block tags, about 16 commands. |
+| `getState(name) -> String` | A block state such as `getState("facing")` → `"east"`, or `""` if the block doesn't have it. `name` must be a literal. |
+| `copyTo(destination: Block)` | Copies the block, with its states and block-entity data, to `destination`. |
+| `getX()`, `getY()`, `getZ()` `-> int` | World coordinates of the block. Each call summons and removes a marker. |
 | `getBiome() -> String`, `inBiome(id) -> boolean` | `inBiome` accepts a `#tag` |
 | `getEnvironment(attribute) -> float` | A numeric environment attribute, such as `"gameplay/sky_light_level"`. The id must be a literal. |
 

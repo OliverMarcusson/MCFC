@@ -403,6 +403,8 @@ pub struct TypedProgram {
     pub functions: Vec<TypedFunction>,
     pub function_signatures: BTreeMap<String, FunctionSignature>,
     pub call_depths: BTreeMap<String, usize>,
+    /// Recursive functions to their group id; see `analyze_calls`.
+    pub recursion_groups: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -1030,8 +1032,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         }
     }
 
-    detect_recursion(&functions, &mut diagnostics);
-    let call_depths = compute_call_depths(&functions, &mut diagnostics);
+    let (call_depths, recursion_groups) = analyze_calls(&functions);
 
     diagnostics.into_result(TypedProgram {
         struct_defs,
@@ -1039,6 +1040,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         function_signatures: signatures,
         player_states: program.player_states.clone(),
         call_depths,
+        recursion_groups,
     })
 }
 
@@ -2585,6 +2587,21 @@ fn type_check_expr(
                     }
                     Type::Int
                 }
+                BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor
+                | BinaryOp::Shl
+                | BinaryOp::Shr => {
+                    left = coerce_expr_to_expected_type(left, &Type::Int);
+                    right = coerce_expr_to_expected_type(right, &Type::Int);
+                    if left.ty != Type::Int || right.ty != Type::Int {
+                        diagnostics.push(Diagnostic::new(
+                            "bitwise operators require 'int' operands",
+                            expr.span.clone(),
+                        ));
+                    }
+                    Type::Int
+                }
                 BinaryOp::And | BinaryOp::Or => {
                     left = coerce_expr_to_expected_type(left, &Type::Bool);
                     right = coerce_expr_to_expected_type(right, &Type::Bool);
@@ -4056,12 +4073,33 @@ fn type_check_builtin_call(
                 called_functions,
                 diagnostics,
             );
+            if args.len() == 3 {
+                for index in 0..3 {
+                    expect_arg_type(
+                        function,
+                        &args,
+                        index,
+                        Type::Int,
+                        "coordinate",
+                        expr,
+                        diagnostics,
+                    );
+                }
+                return Some(TypedExpr {
+                    kind: TypedExprKind::Call {
+                        function: "block_at".to_string(),
+                        args,
+                    },
+                    ty: Type::BlockRef,
+                    ref_kind: RefKind::Unknown,
+                });
+            }
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first()
                 && arg.ty != Type::String
             {
                 diagnostics.push(Diagnostic::new(
-                    "Block.of(...) requires a 'String' argument",
+                    "Block.of(...) requires a 'String' or three 'int' coordinates",
                     expr.span.clone(),
                 ));
             }
@@ -4071,6 +4109,43 @@ fn type_check_builtin_call(
                 ty: Type::BlockRef,
                 ref_kind: RefKind::Unknown,
             })
+        }
+        "log_debug" | "log_info" | "log_warn" | "log_error" | "log_level" | "log_dump"
+        | "assert_fail" => {
+            let args = type_check_args(
+                args,
+                struct_defs,
+                signatures,
+                env,
+                ref_env,
+                called_functions,
+                diagnostics,
+            );
+            expect_arity(function, &args, 1, expr, diagnostics);
+            match function {
+                "log_dump" => {}
+                "log_level" => {
+                    if !matches!(
+                        args.first().map(|arg| &arg.kind),
+                        Some(TypedExprKind::String(level)) if LOG_LEVELS.contains(&level.as_str())
+                    ) {
+                        diagnostics.push(Diagnostic::new(
+                            "Log.setLevel(...) takes \"debug\", \"info\", \"warn\", \"error\" or \"off\"",
+                            expr.span.clone(),
+                        ));
+                    }
+                }
+                _ => expect_arg_type(
+                    function,
+                    &args,
+                    0,
+                    Type::String,
+                    "message",
+                    expr,
+                    diagnostics,
+                ),
+            }
+            Some(builtin_call_expr(function, args, Type::Void))
         }
         "sidebar_title" | "sidebar_line" | "sidebar_remove_line" | "sidebar_clear" => {
             let args = type_check_args(
@@ -4728,6 +4803,32 @@ fn type_check_method_call(
             return Some(TypedExpr {
                 kind: TypedExprKind::Call {
                     function: function.to_string(),
+                    args: call_args,
+                },
+                ty,
+                ref_kind: RefKind::Unknown,
+            });
+        }
+        "replace" | "split" | "toUpperCase" | "toLowerCase" if receiver.ty == Type::String => {
+            let (arity, ty) = match method {
+                "replace" => (2, Type::String),
+                "split" => (1, Type::Array(Box::new(Type::String))),
+                _ => (0, Type::String),
+            };
+            expect_arity(method, &args, arity, expr, diagnostics);
+            if args.iter().any(|arg| arg.ty != Type::String) {
+                diagnostics.push(Diagnostic::new(
+                    format!("{} needs 'String' arguments", display_call(method)),
+                    expr.span.clone(),
+                ));
+            }
+            let function = format!("std::str::{method}");
+            called_functions.insert(function.clone());
+            let mut call_args = vec![receiver];
+            call_args.extend(args);
+            return Some(TypedExpr {
+                kind: TypedExprKind::Call {
+                    function,
                     args: call_args,
                 },
                 ty,
@@ -5505,6 +5606,28 @@ fn type_check_method_call(
             );
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
+        "actionbar" if args.len() == 2 => {
+            expect_entity_receiver(method, &receiver, expr, diagnostics);
+            expect_arg_matches(
+                method,
+                &args,
+                0,
+                |ty| matches!(ty, Type::String | Type::TextDef),
+                "'String' or 'Component'",
+                "message",
+                expr,
+                diagnostics,
+            );
+            if !matches!(&args[1].kind, TypedExprKind::String(priority)
+                if ACTIONBAR_PRIORITIES.contains(&priority.as_str()))
+            {
+                diagnostics.push(Diagnostic::new(
+                    "the actionbar priority is \"override\", \"notification\", \"conditional\" or \"persistent\"",
+                    expr.span.clone(),
+                ));
+            }
+            Some(method_call_expr(receiver, method, args, Type::Void))
+        }
         "tellraw" | "title" | "actionbar" => {
             expect_entity_receiver(method, &receiver, expr, diagnostics);
             expect_arity(method, &args, 1, expr, diagnostics);
@@ -5572,9 +5695,51 @@ fn type_check_method_call(
             expect_arg_type(method, &args, 0, Type::String, "label", expr, diagnostics);
             Some(method_call_expr(receiver, method, args, Type::Void))
         }
-        "light" | "biome" | "in_biome" | "environment" if receiver.ty == Type::BlockRef => {
+        "copyTo" if receiver.ty == Type::BlockRef => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            expect_arg_type(
+                method,
+                &args,
+                0,
+                Type::BlockRef,
+                "destination",
+                expr,
+                diagnostics,
+            );
+            Some(method_call_expr(receiver, "copy_to", args, Type::Void))
+        }
+        "getState" if receiver.ty == Type::BlockRef => {
+            expect_arity(method, &args, 1, expr, diagnostics);
+            match args.first().map(|arg| &arg.kind) {
+                Some(TypedExprKind::String(name))
+                    if crate::minecraft_ids::BLOCK_PROPERTIES
+                        .iter()
+                        .any(|(property, _)| property == name) => {}
+                Some(TypedExprKind::String(name)) => diagnostics.push(Diagnostic::new(
+                    format!("unknown block state '{name}'"),
+                    expr.span.clone(),
+                )),
+                _ => diagnostics.push(Diagnostic::new(
+                    "getState(...) needs a literal state name, such as \"facing\"",
+                    expr.span.clone(),
+                )),
+            }
+            Some(method_call_expr(
+                receiver,
+                "block_state",
+                args,
+                Type::String,
+            ))
+        }
+        "getType" if receiver.ty == Type::BlockRef => {
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(receiver, "block_type", args, Type::String))
+        }
+        "light" | "biome" | "in_biome" | "environment" | "x" | "y" | "z"
+            if receiver.ty == Type::BlockRef =>
+        {
             let (arity, ty) = match method {
-                "light" => (0, Type::Int),
+                "light" | "x" | "y" | "z" => (0, Type::Int),
                 "biome" => (0, Type::String),
                 "in_biome" => (1, Type::Bool),
                 _ => (1, Type::Float),
@@ -6157,6 +6322,12 @@ fn removed_builtin_message(function: &str) -> String {
     )
 }
 
+/// `Log.setLevel` names, lowest first; a message shows at or above the level.
+/// Smithed Actionbar priorities, highest first.
+const ACTIONBAR_PRIORITIES: &[&str] = &["override", "notification", "conditional", "persistent"];
+
+pub(crate) const LOG_LEVELS: &[&str] = &["debug", "info", "warn", "error", "off"];
+
 /// `Sidebar.*` and `player.*Sidebar*`: title `(String)`, line `(int, String)`,
 /// remove `(int)`, clear `()`.
 fn check_sidebar_args(name: &str, args: &[TypedExpr], expr: &Expr, diagnostics: &mut Diagnostics) {
@@ -6177,8 +6348,16 @@ fn check_sidebar_args(name: &str, args: &[TypedExpr], expr: &Expr, diagnostics: 
         expect_arg_type(name, args, 0, Type::Int, "line", expr, diagnostics);
     }
     if has_text {
-        let index = usize::from(has_line);
-        expect_arg_type(name, args, index, Type::String, "text", expr, diagnostics);
+        expect_arg_matches(
+            name,
+            args,
+            usize::from(has_line),
+            |ty| matches!(ty, Type::String | Type::TextDef),
+            "a String or Component",
+            "text",
+            expr,
+            diagnostics,
+        );
     }
 }
 
@@ -8103,109 +8282,93 @@ fn is_plain_player_name_target(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
-fn detect_recursion(functions: &[TypedFunction], diagnostics: &mut Diagnostics) {
-    let graph: BTreeMap<_, _> = functions
+/// Call depths and recursion groups. A group is a cycle in the call graph (a
+/// strongly connected component of 2+ functions, or one that calls itself);
+/// its members share one frame depth and save their frames around calls to
+/// each other. Depths are longest paths over the graph with groups condensed.
+fn analyze_calls(
+    functions: &[TypedFunction],
+) -> (BTreeMap<String, usize>, BTreeMap<String, usize>) {
+    let graph: BTreeMap<&str, Vec<&str>> = functions
         .iter()
-        .map(|function| (function.name.clone(), function.called_functions.clone()))
+        .map(|function| {
+            let callees = function.called_functions.iter().map(String::as_str);
+            (function.name.as_str(), callees.collect())
+        })
         .collect();
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    let mut emitted = HashSet::new();
-
-    for function in functions {
-        dfs_cycle(
-            &function.name,
-            &graph,
-            &mut visiting,
-            &mut visited,
-            &mut emitted,
-            diagnostics,
-        );
+    let mut tarjan = Tarjan::default();
+    for name in graph.keys() {
+        if !tarjan.index.contains_key(name) {
+            tarjan.visit(name, &graph);
+        }
     }
+    // Tarjan emits a component only after every component it calls.
+    let mut component_of = HashMap::new();
+    let mut depths = BTreeMap::new();
+    let mut groups = BTreeMap::new();
+    for (id, component) in tarjan.components.iter().enumerate() {
+        for name in component {
+            component_of.insert(*name, id);
+        }
+        let depth = component
+            .iter()
+            .flat_map(|name| &graph[name])
+            .filter(|callee| component_of.get(*callee) != Some(&id))
+            .map(|callee| 1 + depths.get(*callee).copied().unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        let recursive = component.len() > 1 || graph[component[0]].contains(&component[0]);
+        for name in component {
+            depths.insert(name.to_string(), depth);
+            if recursive {
+                groups.insert(name.to_string(), id);
+            }
+        }
+    }
+    (depths, groups)
 }
 
-fn dfs_cycle(
-    node: &str,
-    graph: &BTreeMap<String, BTreeSet<String>>,
-    visiting: &mut HashSet<String>,
-    visited: &mut HashSet<String>,
-    emitted: &mut HashSet<String>,
-    diagnostics: &mut Diagnostics,
-) {
-    if visited.contains(node) {
-        return;
-    }
-    visiting.insert(node.to_string());
+#[derive(Default)]
+struct Tarjan<'a> {
+    next: usize,
+    index: HashMap<&'a str, usize>,
+    stack: Vec<&'a str>,
+    on_stack: HashSet<&'a str>,
+    components: Vec<Vec<&'a str>>,
+}
 
-    if let Some(neighbors) = graph.get(node) {
-        for neighbor in neighbors {
-            if visiting.contains(neighbor) {
-                let key = format!("{}->{}", node, neighbor);
-                if emitted.insert(key) {
-                    diagnostics.push(Diagnostic::new(
-                        format!("recursion is not supported: cycle includes '{}'", neighbor),
-                        Span::new(1, 1),
-                    ));
-                }
+impl<'a> Tarjan<'a> {
+    /// Returns the node's low-link.
+    fn visit(&mut self, node: &'a str, graph: &BTreeMap<&'a str, Vec<&'a str>>) -> usize {
+        let index = self.next;
+        self.next += 1;
+        self.index.insert(node, index);
+        self.stack.push(node);
+        self.on_stack.insert(node);
+        let mut low = index;
+        for &callee in &graph[node] {
+            if !graph.contains_key(callee) {
                 continue;
             }
-            dfs_cycle(neighbor, graph, visiting, visited, emitted, diagnostics);
+            match self.index.get(callee) {
+                None => low = low.min(self.visit(callee, graph)),
+                Some(&seen) if self.on_stack.contains(callee) => low = low.min(seen),
+                Some(_) => {}
+            }
         }
-    }
-
-    visiting.remove(node);
-    visited.insert(node.to_string());
-}
-
-fn compute_call_depths(
-    functions: &[TypedFunction],
-    diagnostics: &mut Diagnostics,
-) -> BTreeMap<String, usize> {
-    let graph: BTreeMap<_, _> = functions
-        .iter()
-        .map(|function| (function.name.clone(), function.called_functions.clone()))
-        .collect();
-    let mut memo = BTreeMap::new();
-    for function in functions {
-        let depth = longest_path(
-            &function.name,
-            &graph,
-            &mut memo,
-            &mut HashSet::new(),
-            diagnostics,
-        );
-        memo.insert(function.name.clone(), depth);
-    }
-    memo
-}
-
-fn longest_path(
-    node: &str,
-    graph: &BTreeMap<String, BTreeSet<String>>,
-    memo: &mut BTreeMap<String, usize>,
-    visiting: &mut HashSet<String>,
-    diagnostics: &mut Diagnostics,
-) -> usize {
-    if let Some(depth) = memo.get(node) {
-        return *depth;
-    }
-    if !visiting.insert(node.to_string()) {
-        diagnostics.push(Diagnostic::new(
-            format!("recursion is not supported: '{}'", node),
-            Span::new(1, 1),
-        ));
-        return 0;
-    }
-
-    let mut best = 0;
-    if let Some(callees) = graph.get(node) {
-        for callee in callees {
-            best = best.max(1 + longest_path(callee, graph, memo, visiting, diagnostics));
+        if low == index {
+            let mut component = Vec::new();
+            while let Some(member) = self.stack.pop() {
+                self.on_stack.remove(member);
+                component.push(member);
+                if member == node {
+                    break;
+                }
+            }
+            self.components.push(component);
         }
+        low
     }
-    visiting.remove(node);
-    memo.insert(node.to_string(), best);
-    best
 }
 
 fn collect_macro_placeholders(

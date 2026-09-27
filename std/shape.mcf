@@ -1,0 +1,63 @@
+// Filled shapes. Each fills whole columns or rows, one `fill` per column,
+// so a radius-10 sphere is a few hundred commands, not thousands.
+
+import std.noise;
+
+// Every block within `radius` of `center`.
+public void sphere(Block center, int radius, String block) {
+    var cx = center.getX();
+    var cy = center.getY();
+    var cz = center.getZ();
+    var r2 = radius * radius;
+    for (int dx = -radius; dx <= radius; dx++) {
+        for (int dz = -radius; dz <= radius; dz++) {
+            var rest = r2 - dx * dx - dz * dz;
+            if (rest >= 0) {
+                var h = isqrt(rest);
+                Block.of(cx + dx, cy - h, cz + dz).fill(Block.of(cx + dx, cy + h, cz + dz), block);
+            }
+        }
+    }
+}
+
+// An upright cylinder standing on `base`, `height` blocks tall.
+public void cylinder(Block base, int radius, int height, String block) {
+    if (height <= 0) {
+        return;
+    }
+    var cx = base.getX();
+    var cy = base.getY();
+    var cz = base.getZ();
+    for (int dx = -radius; dx <= radius; dx++) {
+        var w = isqrt(radius * radius - dx * dx);
+        Block.of(cx + dx, cy, cz - w).fill(Block.of(cx + dx, cy + height - 1, cz + w), block);
+    }
+}
+
+// Terrain: a `width` by `depth` area from `corner`, each column filled up to
+// `corner`'s height plus perlin noise times `amplitude`. `scale` sets the hill
+// size; try 0.05.
+public void heightmap(Block corner, int width, int depth, int amplitude, float scale, String block) {
+    var x0 = corner.getX();
+    var y0 = corner.getY();
+    var z0 = corner.getZ();
+    for (int dx = 0; dx < width; dx++) {
+        for (int dz = 0; dz < depth; dz++) {
+            var n = noise.fractal((x0 + dx) * scale, (z0 + dz) * scale, 3);
+            var top = y0 + (int) ((n + 1.0) * 0.5 * amplitude);
+            Block.of(x0 + dx, y0, z0 + dz).fill(Block.of(x0 + dx, top, z0 + dz), block);
+        }
+    }
+}
+
+// Whole-number square root, rounded down.
+int isqrt(int n) {
+    var root = (int) Math.sqrt(n);
+    while (root * root > n) {
+        root = root - 1;
+    }
+    while ((root + 1) * (root + 1) <= n) {
+        root = root + 1;
+    }
+    return root;
+}

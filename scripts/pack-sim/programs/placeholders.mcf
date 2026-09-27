@@ -1,0 +1,14 @@
+// Calls inside $(...) use this file's imports, like calls outside them.
+import std.math;
+import std.math.clamp;
+import std.str.*;
+
+int twice(int x) {
+    return x * 2;
+}
+
+void main() {
+    var x = 7;
+    var name = "steve";
+    mcf("say $(twice(x)) $(math.max(x, 9)) $(clamp(x, 0, 5)) $(name.length()) $(startsWith(name, \"st\"))");
+}

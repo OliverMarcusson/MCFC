@@ -11,6 +11,7 @@ pub const VANILLA_EVENTS: &[&str] = &[
     "player_kill_entity",
     "player_hurt_entity",
     "player_interact_entity",
+    "entity_hurt_player",
 ];
 
 /// Vanilla events raised by an advancement trigger, with the trigger they use.
@@ -21,6 +22,7 @@ pub const ADVANCEMENT_EVENTS: &[(&str, &str)] = &[
     ("player_kill_entity", "player_killed_entity"),
     ("player_hurt_entity", "player_hurt_entity"),
     ("player_interact_entity", "player_interacted_with_entity"),
+    ("entity_hurt_player", "entity_hurt_player"),
 ];
 
 /// Vanilla events whose payload also has `block()`, the block involved.
@@ -30,7 +32,10 @@ pub fn vanilla_event_has_block(kind: &str) -> bool {
 
 /// Vanilla events whose payload also has `entity()`, the other entity involved.
 pub fn vanilla_event_has_entity(kind: &str) -> bool {
-    matches!(kind, "player_hurt_entity" | "player_interact_entity")
+    matches!(
+        kind,
+        "player_hurt_entity" | "player_interact_entity" | "entity_hurt_player"
+    )
 }
 pub const AGENT_EVENTS: &[&str] = &[
     "chat",

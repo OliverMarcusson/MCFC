@@ -1,0 +1,9 @@
+say n 4
+say part [a]
+say part [b]
+say part []
+say part [c]
+say r a,b;c;
+say e -a-b-
+say u HELLO WORLD l hello world
+say c 3

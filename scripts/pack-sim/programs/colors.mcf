@@ -1,0 +1,15 @@
+// Also guards an optimizer bug: early returns in a function with several callers.
+import std.color;
+
+void main() {
+    var c = color.rgb(255, 128, 300);
+    var hex = color.toHex(c);
+    var r = color.red(c);
+    var g = color.green(c);
+    var b = color.blue(c);
+    mcf("say c $(c) hex $(hex) r $(r) g $(g) b $(b)");
+    var back = color.fromHex("#FF80fF");
+    var bad = color.fromHex("#12345g");
+    var small = color.toHex(color.rgb(1, 2, 3));
+    mcf("say back $(back) bad $(bad) small $(small)");
+}

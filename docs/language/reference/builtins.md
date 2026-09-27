@@ -101,3 +101,25 @@ void inspect(Entity pig) {
 ## Debugging
 
 `debug(message: String)` sends `[MCFC debug] message` to every player with `tellraw @a`.
+
+## Logging
+
+`Log` sends leveled messages to players who opt in with `/tag @s add mcfc.log`, so a pack can keep its logging in place without spamming everyone.
+
+```mcfc
+void main() {
+    Log.setLevel("debug");
+    Log.info("arena loaded");
+    var alive = 3;
+    Log.dump(alive);
+    Log.warn("only $(alive) players left");
+}
+```
+
+| Call | Does |
+| --- | --- |
+| `Log.debug(msg)`, `Log.info(msg)`, `Log.warn(msg)`, `Log.error(msg)` | Sends `[<namespace> LEVEL] msg` if the level is enabled. |
+| `Log.dump(value)` | Shows any value at debug level: a number, or a string, list, map or record as NBT. |
+| `Log.setLevel(level)` | `"debug"`, `"info"`, `"warn"`, `"error"` or `"off"`. Levels below it are skipped. The default is `"info"`, and the level is kept across reloads. |
+
+Each pack has its own level, stored in the score `#log.<namespace>` of the `mcfc` objective, so `/scoreboard players set #log.mypack mcfc 0` turns on debug output without a rebuild.

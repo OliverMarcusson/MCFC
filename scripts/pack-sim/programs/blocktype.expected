@@ -1,0 +1,5 @@
+say minecraft:stone facing= half=
+say minecraft:oak_stairs facing=east half=top
+say minecraft:zombie_head facing= half=
+say minecraft:air facing= half=
+clone 1 2 3 1 2 3 5 5 5

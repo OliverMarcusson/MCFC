@@ -4,15 +4,14 @@ What MCFC doesn't do yet, with workarounds where there are any.
 
 ## Language
 
-- **No recursion.** A function can't call itself, directly or indirectly. Use a `while` loop.
+- **Recursive functions can't pause.** A function that calls itself, directly or indirectly, can't `sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
 - **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans and enums to text. Other conversions need a cast or `toString()`.
 - **No generic records.** Generic type parameters work on functions, but record declarations are not generic.
-- **Imports:** no re-exports, no `*` imports and no renaming.
-- **`$(...)` in `mcf`** doesn't apply imports. Write `$(util.twice(x))` with the full path.
+- **Imports:** no re-exports and no renaming.
 
 ## Runtime values
 
-- **Strings aren't escaped** when they're joined or inserted with `$(...)`. A value containing `"` or `\` breaks the command. See [string limits](./reference/types#string).
+- **`$(...)` in `mcf(...)` isn't escaped.** The value is pasted into the command as it is. Joining strings with `+` is safe. See [string limits](./reference/types#string).
 - **`Block.of(...)` needs a literal string.** Positions can't be computed at run time yet.
 - **`Selector.findFirst()`** needs a literal `Selector.of(...)`, not a variable.
 - **`hasData`** only works on storage values (lists, maps, records), not on entity NBT.

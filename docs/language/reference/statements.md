@@ -16,7 +16,7 @@ void greet(Player player, String message) {
 }
 ```
 
-The return type comes first and every parameter has a type. Duplicate function or parameter names are errors. Recursion isn't supported.
+The return type comes first and every parameter has a type. Duplicate function or parameter names are errors. Functions may call themselves or each other recursively, but a recursive function can't pause (see [Functions that pause](#functions-that-pause)).
 
 Two names are special:
 
@@ -141,10 +141,12 @@ void main() {
 | --- | --- |
 | `import a.b.name;` | the function, record or enum `name` |
 | `import a.b;` | the module `b`, so `b.name(...)` works |
+| `import a.b.*;` | every public function, record and enum of `a.b` |
 
-- Imports are private to their module. There are no `*` imports and no renaming.
+- Imports are private to their module. There's no renaming.
+- As in Java, a name defined in the module or imported by name wins over a `*` import.
 - Functions, records and modules have separate namespaces.
-- `$(...)` placeholders don't apply imports, so inside them write the full path from the root, such as `$(util.twice(x))`.
+- Calls inside `$(...)` placeholders use the same imports as calls outside them.
 
 ### `@PlayerState`
 
@@ -202,6 +204,19 @@ void status(Player player) {
 
 Players run the command with `/trigger status`, which needs no operator permissions. The trigger objective is named after the command, so two packs with the same command name share it. The handler runs as that player, and the optional `Player` parameter is that player. Without a string, the command is named after the function. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
 
+### `@Menu`
+
+```mcfc
+@Menu("Settings")
+void settings(Player player) {
+    player.sendMessage("Settings");
+}
+```
+
+`@Menu("label")` is a `@Command` named after the function that is also a button in your pack's page of the pause-screen data pack menu. The menu follows the [Smithed Data Pack Menu](https://docs.smithed.dev/conventions/data-pack-menu/) convention, so every pack using it shares one list. The page is titled with the namespace.
+
+Data pack dialogs are registry entries, so a new or changed `@Menu` needs a world or server restart, not `/reload`. For dialogs you open from code, use [`std.dialog`](./std#std-dialog), which has neither limit.
+
 ### `@Every` and `@After`
 
 ```mcfc
@@ -217,6 +232,24 @@ void setup() {
 ```
 
 `@Every` repeats every `n` ticks. `@After` runs once, `n` ticks after load. Both take `ticks = n` or `seconds = n` (20 ticks each). Tasks take no parameters and run as the server, not as a player. Use `for (Player player : Selector.of("@a")) { ... }` to act on each player.
+
+### `@Test` and `assert`
+
+```mcfc
+int triple(int x) {
+    return x * 3;
+}
+
+@Test
+void triplesNumbers() {
+    assert triple(2) == 6;
+    assert triple(-1) == -3 : "negatives";
+}
+```
+
+`/function <namespace>:test` runs every `@Test` function and prints `[ns TEST] 1 passed, 0 failed`. A false `assert` prints `assertion failed at line N: message` and marks the test failed; the test keeps running. Tests take no parameters and must finish in the tick they start, so they can't `sleep`.
+
+`assert` works in any function. Outside a test it still prints the failure.
 
 ## In a function
 
@@ -246,7 +279,7 @@ void main() {
 }
 ```
 
-The target is a local variable or a writable path, and the new value must have the same type. `+=`, `-=`, `*=`, `/=`, `%=`, `++` and `--` are statements, not expressions: `x = y++;` is an error.
+The target is a local variable or a writable path, and the new value must have the same type. `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `++` and `--` are statements, not expressions: `x = y++;` is an error.
 
 ### `if`
 

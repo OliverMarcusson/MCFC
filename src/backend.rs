@@ -60,11 +60,19 @@ struct Backend {
     uses_raycast: bool,
     uses_ownership: bool,
     uses_sidebar: bool,
+    uses_bitwise: bool,
+    uses_log: bool,
+    uses_actionbar: bool,
+    uses_escape: bool,
     bukkit: BukkitRuntime,
     /// Per-site RPC waiter functions to register on the tick tag (reload-safe).
     rpc_tick_functions: Vec<String>,
     /// Functions that can pause, see `suspending_functions`.
     suspending: BTreeSet<String>,
+    /// Recursive functions to their group, see `types::analyze_calls`.
+    recursion_groups: BTreeMap<String, usize>,
+    /// `(depth, function)` frames that recursive calls save and restore.
+    frame_saves: BTreeSet<(usize, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +98,8 @@ struct BukkitRuntime {
     commands: Vec<BukkitCommand>,
     every_tasks: Vec<(String, u32)>,
     after_tasks: Vec<(String, u32)>,
+    /// `(button label, trigger objective)` for `@Menu` commands.
+    menu_buttons: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,9 +245,15 @@ impl Backend {
             uses_raycast: false,
             uses_ownership: false,
             uses_sidebar: false,
+            uses_bitwise: false,
+            uses_log: false,
+            uses_actionbar: false,
+            uses_escape: false,
             bukkit: discover_bukkit_runtime(program),
             rpc_tick_functions: Vec::new(),
             suspending: suspending_functions(program),
+            recursion_groups: program.recursion_groups.clone(),
+            frame_saves: BTreeSet::new(),
         }
     }
 
@@ -279,6 +295,26 @@ impl Backend {
         if self.uses_raycast {
             self.emit_raycast_runtime();
         }
+        if self.uses_bitwise {
+            self.emit_bitwise_runtime();
+        }
+        if self.uses_actionbar {
+            self.emit_actionbar_runtime();
+        }
+        if self.uses_escape {
+            self.emit_escape_runtime();
+        }
+        if self.uses_log {
+            // Default level info; `Log.setLevel` persists across reloads.
+            let ns = self.namespace.clone();
+            let setup = format!("data/{ns}/function/generated/setup.mcfunction");
+            if let Some(body) = self.files.get_mut(&setup) {
+                body.push_str(&format!(
+                    "execute unless score #log.{ns} mcfc matches -2147483648.. run scoreboard players set #log.{ns} mcfc 1
+"
+                ));
+            }
+        }
         if self.uses_sidebar {
             let setup = format!(
                 "data/{}/function/generated/setup.mcfunction",
@@ -319,9 +355,12 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
         }
         self.emit_auto_export_wrappers(program, &options.exports);
         self.emit_export_wrappers(&options.exports);
+        self.emit_test_runner(program);
+        self.emit_pack_menu();
         if self.uses_rpc {
             self.emit_rpc_runtime();
         }
+        self.emit_frame_stack();
         // Emit the tick tag last so it can include the per-site RPC waiters
         // collected while emitting function bodies.
         self.emit_tick_tag(program, options.tick_tag_values.as_deref());
@@ -388,6 +427,9 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
         }
         if self.uses_health {
             values.push(format!("{}:generated/health_tick", self.namespace));
+        }
+        if self.uses_actionbar {
+            values.push(format!("{}:generated/actionbar/tick", self.namespace));
         }
         if !self.bukkit.join_handlers.is_empty()
             || !self.bukkit.death_handlers.is_empty()
@@ -498,6 +540,32 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 self.namespace
             ),
             lines.join("\n") + "\n",
+        );
+    }
+
+    /// `escape.c.v` to `escape.s`, escaped for a "..." string. The game prints
+    /// `escape.c` as `{v:"..."}` with the value escaped, unless the value's
+    /// first quote is `"`: then it uses '...', which leaves `"` bare. Then a
+    /// `'` is put in front, which makes the game pick "..." again.
+    fn emit_escape_runtime(&mut self) {
+        let ns = &self.namespace;
+        let runtime = format!("storage {ns}:runtime");
+        self.files.insert(
+            format!("data/{ns}/function/generated/escape_string.mcfunction"),
+            format!(
+                "data modify {runtime} escape.q set string {runtime} escape.c 3 4
+data modify {runtime} escape.s set string {runtime} escape.c 4 -2
+execute if data {runtime} escape{{q:\"'\"}} run function {ns}:generated/escape_string_single with {runtime} escape
+"
+            ),
+        );
+        self.files.insert(
+            format!("data/{ns}/function/generated/escape_string_single.mcfunction"),
+            format!(
+                "$data modify {runtime} escape.c.v set value '\\'$(s)'
+data modify {runtime} escape.s set string {runtime} escape.c 5 -2
+"
+            ),
         );
     }
 
@@ -704,6 +772,120 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         }
     }
 
+    /// `block.getType()`: a binary search over every block id. Each node tests
+    /// a block tag holding the lower half of its ids; leaves test up to 8 ids
+    /// one by one, so a lookup is about 16 commands.
+    fn emit_block_type_probe(&mut self) {
+        let ns = self.namespace.clone();
+        if self.files.contains_key(&format!(
+            "data/{ns}/function/generated/block_type/0.mcfunction"
+        )) {
+            return;
+        }
+        fn node(
+            files: &mut BTreeMap<String, String>,
+            ns: &str,
+            ids: &[&str],
+            next: &mut usize,
+        ) -> usize {
+            let index = *next;
+            *next += 1;
+            let body = if ids.len() <= 8 {
+                ids.iter()
+                    .map(|id| format!("execute if block ~ ~ ~ {id} run return run data modify storage {ns}:runtime block_type set value \"{id}\"
+"))
+                    .collect::<String>()
+            } else {
+                let (low, high) = ids.split_at(ids.len() / 2);
+                let low_node = node(files, ns, low, next);
+                let high_node = node(files, ns, high, next);
+                let values: Vec<String> = low.iter().map(|id| id.to_string()).collect();
+                files.insert(
+                    format!("data/{ns}/tags/block/mcfc_block_type/{index}.json"),
+                    render_tag_file(&values),
+                );
+                format!(
+                    "execute if block ~ ~ ~ #{ns}:mcfc_block_type/{index} run return run function {ns}:generated/block_type/{low_node}
+function {ns}:generated/block_type/{high_node}
+"
+                )
+            };
+            files.insert(
+                format!("data/{ns}/function/generated/block_type/{index}.mcfunction"),
+                body,
+            );
+            index
+        }
+        node(
+            &mut self.files,
+            &ns,
+            crate::minecraft_ids::BLOCK_IDS,
+            &mut 0,
+        );
+    }
+
+    /// Bitwise ops on scores `#bit_a`, `#bit_b` into `#bit_r`. `bitwise` walks
+    /// the bits low to high with floored `%` and `/`, which keep the sign; `shift` multiplies or floor-divides by a power of two.
+    fn emit_bitwise_runtime(&mut self) {
+        let ns = self.namespace.clone();
+        let bitwise = "scoreboard players set #bit_r mcfc 0
+scoreboard players set #bit_p mcfc 1
+scoreboard players set #bit_two mcfc 2
+function NS:generated/bitwise/step
+";
+        // Once both inputs are 0 or -1, every higher bit is that sign bit, so the
+        // rest of the result is all ones (-p) or all zeros.
+        let step = "execute if score #bit_a mcfc matches -1..0 if score #bit_b mcfc matches -1..0 run return run function NS:generated/bitwise/tail
+scoreboard players operation #bit_x mcfc = #bit_a mcfc
+scoreboard players operation #bit_x mcfc %= #bit_two mcfc
+scoreboard players operation #bit_y mcfc = #bit_b mcfc
+scoreboard players operation #bit_y mcfc %= #bit_two mcfc
+scoreboard players operation #bit_x mcfc += #bit_y mcfc
+execute if score #bit_op mcfc matches 0 if score #bit_x mcfc matches 2 run scoreboard players operation #bit_r mcfc += #bit_p mcfc
+execute if score #bit_op mcfc matches 1 if score #bit_x mcfc matches 1.. run scoreboard players operation #bit_r mcfc += #bit_p mcfc
+execute if score #bit_op mcfc matches 2 if score #bit_x mcfc matches 1 run scoreboard players operation #bit_r mcfc += #bit_p mcfc
+scoreboard players operation #bit_a mcfc /= #bit_two mcfc
+scoreboard players operation #bit_b mcfc /= #bit_two mcfc
+scoreboard players operation #bit_p mcfc += #bit_p mcfc
+function NS:generated/bitwise/step
+";
+        let tail = "scoreboard players operation #bit_x mcfc = #bit_a mcfc
+scoreboard players operation #bit_x mcfc += #bit_b mcfc
+execute if score #bit_op mcfc matches 0 if score #bit_x mcfc matches -2 run scoreboard players operation #bit_r mcfc -= #bit_p mcfc
+execute if score #bit_op mcfc matches 1 if score #bit_x mcfc matches ..-1 run scoreboard players operation #bit_r mcfc -= #bit_p mcfc
+execute if score #bit_op mcfc matches 2 if score #bit_x mcfc matches -1 run scoreboard players operation #bit_r mcfc -= #bit_p mcfc
+";
+        // Java masks the count to 0..31; `%=` is floorMod, so -1 becomes 31.
+        let mut shift = "scoreboard players set #bit_two mcfc 32
+scoreboard players operation #bit_b mcfc %= #bit_two mcfc
+"
+        .to_string();
+        for bit in 0..32 {
+            shift.push_str(&format!(
+                "execute if score #bit_b mcfc matches {bit} run scoreboard players set #bit_p mcfc {}
+",
+                1i32.wrapping_shl(bit)
+            ));
+        }
+        shift.push_str("scoreboard players operation #bit_r mcfc = #bit_a mcfc
+execute if score #bit_op mcfc matches 0 run scoreboard players operation #bit_r mcfc *= #bit_p mcfc
+execute if score #bit_op mcfc matches 1 unless score #bit_b mcfc matches 31 run scoreboard players operation #bit_r mcfc /= #bit_p mcfc
+execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 run scoreboard players set #bit_r mcfc 0
+execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score #bit_a mcfc matches ..-1 run scoreboard players set #bit_r mcfc -1
+");
+        for (name, body) in [
+            ("bitwise", bitwise.to_string()),
+            ("step", step.to_string()),
+            ("tail", tail.to_string()),
+            ("shift", shift),
+        ] {
+            self.files.insert(
+                format!("data/{ns}/function/generated/bitwise/{name}.mcfunction"),
+                body.replace("NS", &ns),
+            );
+        }
+    }
+
     /// Each advancement event gets an advancement whose reward runs as the player,
     /// revokes itself so it fires again, and calls the handler.
     fn emit_advancement_events(&mut self) {
@@ -713,10 +895,16 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 .iter()
                 .find(|(event, _)| *event == kind)
                 .unwrap();
+            // Only hits from an entity: falls and fire have nothing for entity().
+            let conditions = if kind == "entity_hurt_player" {
+                ",\"conditions\":{\"damage\":{\"source_entity\":{}}}"
+            } else {
+                ""
+            };
             self.files.insert(
                 format!("data/{ns}/advancement/mcfc_event/{kind}.json"),
                 format!(
-                    "{{\"criteria\":{{\"event\":{{\"trigger\":\"minecraft:{trigger}\"}}}},\"rewards\":{{\"function\":\"{ns}:generated/bukkit/{kind}\"}}}}
+                    "{{\"criteria\":{{\"event\":{{\"trigger\":\"minecraft:{trigger}\"{conditions}}}}},\"rewards\":{{\"function\":\"{ns}:generated/bukkit/{kind}\"}}}}
 "
                 ),
             );
@@ -749,7 +937,9 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                     format!("execute if score #ray_hit mcfc matches 1 run data modify {out}.value.pos set from storage {ns}:runtime mcfc_ray.pos"),
                 ]);
             }
-            if has_entity {
+            if kind == "entity_hurt_player" {
+                lines.push("execute on attacker run tag @s add mcfc_event_target".to_string());
+            } else if has_entity {
                 self.emit_raycast_runtime();
                 lines.extend([
                     ray_reach_steps("entity"),
@@ -1135,6 +1325,112 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 self.namespace, task
             ),
             contents,
+        );
+    }
+
+    /// `@Menu` buttons live in `ns:about`, listed in the Smithed data pack menu
+    /// on the pause screen (docs.smithed.dev/conventions/data-pack-menu).
+    fn emit_pack_menu(&mut self) {
+        if self.bukkit.menu_buttons.is_empty() {
+            return;
+        }
+        let ns = self.namespace.clone();
+        let entry = |id: &str| {
+            format!(
+                "{{
+  \"values\": [
+    {{
+      \"id\": \"{id}\",
+      \"required\": false
+    }}
+  ]
+}}
+"
+            )
+        };
+        let back = r#"{"action":{"type":"show_dialog","dialog":"smithed:data_packs"},"label":{"translate":"gui.back"},"width":200}"#;
+        let actions = self
+            .bukkit
+            .menu_buttons
+            .iter()
+            .map(|(label, objective)| {
+                format!(
+                    r#"{{"label":{},"action":{{"type":"run_command","command":"/trigger {objective}"}}}}"#,
+                    quoted(label)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let about = format!(
+            r#"{{"type":"minecraft:multi_action","title":{},"actions":[{actions}],"exit_action":{back}}}"#,
+            quoted(&ns)
+        );
+        let root = r##"{"type":"minecraft:dialog_list","external_title":{"translate":"menu.smithed.data_packs","fallback":"%s...","with":[{"translate":"selectWorld.dataPacks"}]},"title":{"translate":"menu.smithed.data_packs.title","fallback":"%s","with":[{"translate":"selectWorld.dataPacks"}]},"dialogs":"#smithed:data_packs","exit_action":{"label":{"translate":"gui.back"},"width":200}}"##;
+        self.files.insert(
+            format!("data/{ns}/dialog/about.json"),
+            about
+                + "
+",
+        );
+        self.files.insert(
+            "data/smithed/dialog/data_packs.json".to_string(),
+            root.to_string()
+                + "
+",
+        );
+        self.files.insert(
+            "data/smithed/tags/dialog/data_packs.json".to_string(),
+            entry(&format!("{ns}:about")),
+        );
+        self.files.insert(
+            "data/minecraft/tags/dialog/pause_screen_additions.json".to_string(),
+            entry("smithed:data_packs"),
+        );
+    }
+
+    /// `/function ns:test` runs every `@Test` function and prints a summary.
+    /// ponytail: tests must finish in one tick; suspending tests are not awaited.
+    fn emit_test_runner(&mut self, program: &IrProgram) {
+        let ns = self.namespace.clone();
+        let mut lines = vec![
+            "scoreboard players set #test_pass mcfc 0".to_string(),
+            "scoreboard players set #test_fail mcfc 0".to_string(),
+        ];
+        for function in &program.functions {
+            let Some(test) = function.name.strip_prefix("__mcfc_test_") else {
+                continue;
+            };
+            if function.generated {
+                continue;
+            }
+            lines.push("scoreboard players set #test_failed mcfc 0".to_string());
+            lines.push(format!(
+                "scoreboard players set {} mcfc 0",
+                control_slot(0, &function.name)
+            ));
+            lines.push(format!(
+                "function {ns}:{}",
+                self.function_entry_name(&function.name, 0)
+            ));
+            lines.push("execute if score #test_failed mcfc matches 0 run scoreboard players add #test_pass mcfc 1".to_string());
+            lines.push("execute if score #test_failed mcfc matches 1 run scoreboard players add #test_fail mcfc 1".to_string());
+            lines.push(format!(
+                "execute if score #test_failed mcfc matches 1 run tellraw @a {{\"text\":\"[{ns} TEST] FAIL {test}\",\"color\":\"red\"}}"
+            ));
+        }
+        if lines.len() == 2 {
+            return;
+        }
+        lines.push(format!(
+            "tellraw @a [{{\"text\":\"[{ns} TEST] \"}},{{\"score\":{{\"name\":\"#test_pass\",\"objective\":\"mcfc\"}},\"color\":\"green\"}},{{\"text\":\" passed, \"}},{{\"score\":{{\"name\":\"#test_fail\",\"objective\":\"mcfc\"}},\"color\":\"red\"}},{{\"text\":\" failed\"}}]"
+        ));
+        self.files.insert(
+            format!("data/{ns}/function/test.mcfunction"),
+            lines.join(
+                "
+",
+            ) + "
+",
         );
     }
 
@@ -2669,57 +2965,88 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 if self.compile_builtin_call(function, depth, callee, args, target, lines) {
                     return;
                 }
-                let callee_depth = depth + 1;
+                // A call inside a recursion group reuses this depth's frames,
+                // so the caller saves its own frame around it.
+                let recursive = self.recursion_groups.get(&function.name).is_some()
+                    && self.recursion_groups.get(&function.name)
+                        == self.recursion_groups.get(callee);
+                let callee_depth = if recursive { depth } else { depth + 1 };
                 if let Some(info) = self.functions.get(callee).cloned() {
-                    lines.push(format!(
+                    let mut call = Vec::new();
+                    let mut temps = Vec::new();
+                    if recursive {
+                        // The callee's params may be this frame's own slots.
+                        for ((_, param_ty), arg) in info.params.iter().zip(args.iter()) {
+                            let name = self.new_temp();
+                            let temp = local_slot(depth, &function.name, &name, param_ty);
+                            self.compile_expr_into_slot(function, depth, arg, &temp, lines);
+                            temps.push(temp);
+                        }
+                        call.push(self.frame_call("save", depth, &function.name));
+                    }
+                    call.push(format!(
                         "scoreboard players set {} mcfc 0",
                         control_slot(callee_depth, callee)
                     ));
-                    for ((param_name, param_ty), arg) in info.params.iter().zip(args.iter()) {
-                        let param_slot = local_slot(callee_depth, callee, param_name, param_ty);
-                        self.compile_expr_into_slot(function, depth, arg, &param_slot, lines);
+                    for (index, ((param_name, param_ty), arg)) in
+                        info.params.iter().zip(args.iter()).enumerate()
+                    {
+                        let param = local_slot(callee_depth, callee, param_name, param_ty);
+                        match temps.get(index) {
+                            Some(temp) => call.push(self.copy_slot(param_ty, temp, &param)),
+                            None => {
+                                self.compile_expr_into_slot(function, depth, arg, &param, &mut call)
+                            }
+                        }
                     }
-                    lines.push(format!(
+                    call.push(format!(
                         "function {}:{}",
                         self.namespace,
                         self.function_entry_name(callee, callee_depth)
                     ));
-                    match expr.ty {
-                        Type::Int | Type::Bool | Type::Enum(_) => lines.push(format!(
-                            "scoreboard players operation {} mcfc = {} mcfc",
-                            target.numeric_name(),
+                    let ret = SlotRef {
+                        name: if is_score_type(&expr.ty) {
                             numeric_return_slot(callee_depth, callee)
-                        )),
-                        Type::String
-                        | Type::Float
-                        | Type::Array(_)
-                        | Type::Dict(_)
-                        | Type::Optional(_)
-                        | Type::Struct(_)
-                        | Type::EntityDef
-                        | Type::BlockDef
-                        | Type::ItemDef
-                        | Type::TextDef
-                        | Type::ItemSlot
-                        | Type::Bossbar => lines.push(format!(
-                            "data modify storage {}:runtime {} set from storage {}:runtime {}",
-                            self.namespace,
-                            target.storage_path(),
-                            self.namespace,
+                        } else {
                             string_return_slot(callee_depth, callee)
-                        )),
-                        Type::EntitySet
-                        | Type::EntityRef
-                        | Type::PlayerRef
-                        | Type::BlockRef
-                        | Type::Nbt => lines.push(format!(
-                            "data modify storage {}:runtime {} set from storage {}:runtime {}",
-                            self.namespace,
-                            target.storage_path(),
-                            self.namespace,
-                            string_return_slot(callee_depth, callee)
-                        )),
-                        Type::Void => {}
+                        },
+                    };
+                    let has_value = expr.ty != Type::Void;
+                    if !recursive {
+                        if has_value {
+                            call.push(self.copy_slot(&expr.ty, &ret, target));
+                        }
+                        lines.extend(call);
+                        return;
+                    }
+                    // The callee shares this frame's control flag, so the call
+                    // runs in its own function where no guard reads the flag
+                    // before the restore puts it back. The value waits in a
+                    // scratch slot because the restore rewrites this frame.
+                    let scratch = SlotRef {
+                        name: if is_score_type(&expr.ty) {
+                            "$rec_ret"
+                        } else {
+                            "rec_ret"
+                        }
+                        .to_string(),
+                    };
+                    if has_value {
+                        call.push(self.copy_slot(&expr.ty, &ret, &scratch));
+                    }
+                    call.push(self.frame_call("restore", depth, &function.name));
+                    let (path, relative) = self.new_block(function, depth, "call");
+                    self.files.insert(
+                        path,
+                        call.join(
+                            "
+",
+                        ) + "
+",
+                    );
+                    lines.push(format!("function {}:{relative}", self.namespace));
+                    if has_value {
+                        lines.push(self.copy_slot(&expr.ty, &scratch, target));
                     }
                 }
             }
@@ -4237,6 +4564,74 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         }
     }
 
+    /// `Log.*`: messages go to players tagged `mcfc.log` when their level is at
+    /// least this pack's `#log.<ns>` score. `dump` shows any value through a
+    /// `score` or `nbt` text component, so it needs no macro.
+    fn compile_log(
+        &mut self,
+        function: &IrFunction,
+        depth: usize,
+        callee: &str,
+        arg: &IrExpr,
+        lines: &mut Vec<String>,
+    ) {
+        self.uses_log = true;
+        let ns = self.namespace.clone();
+        let level_of = |name: &str| {
+            crate::types::LOG_LEVELS
+                .iter()
+                .position(|l| *l == name)
+                .unwrap()
+        };
+        if callee == "log_level" {
+            if let IrExprKind::String(level) = &arg.kind {
+                lines.push(format!(
+                    "scoreboard players set #log.{ns} mcfc {}",
+                    level_of(level)
+                ));
+            }
+            return;
+        }
+        let (level, label, color) = match callee {
+            "log_debug" => ("debug", "DEBUG", "gray"),
+            "log_warn" => ("warn", "WARN", "yellow"),
+            "log_error" => ("error", "ERROR", "red"),
+            "log_dump" => ("debug", "DUMP", "aqua"),
+            "assert_fail" => ("error", "TEST", "red"),
+            _ => ("info", "INFO", "white"),
+        };
+        let slot = local_slot(depth, &function.name, &self.new_temp(), &arg.ty);
+        self.compile_expr_into_slot(function, depth, arg, &slot, lines);
+        let body = if callee != "log_dump" {
+            format!(
+                "{{\"storage\":\"{ns}:runtime\",\"nbt\":{},\"color\":\"white\"}}",
+                quoted(slot.storage_path())
+            )
+        } else if matches!(arg.ty, Type::Int | Type::Bool | Type::Enum(_)) {
+            format!(
+                "{{\"score\":{{\"name\":{},\"objective\":\"mcfc\"}},\"color\":\"white\"}}",
+                quoted(slot.numeric_name())
+            )
+        } else {
+            format!(
+                "{{\"storage\":\"{ns}:runtime\",\"nbt\":{},\"color\":\"white\"}}",
+                quoted(slot.storage_path())
+            )
+        };
+        if callee == "assert_fail" {
+            // Failures always print; `/function ns:test` counts them.
+            lines.push("scoreboard players set #test_failed mcfc 1".to_string());
+            lines.push(format!(
+                "tellraw @a [{{\"text\":\"[{ns} TEST] assertion failed at \",\"color\":\"{color}\"}},{body}]"
+            ));
+            return;
+        }
+        lines.push(format!(
+            "execute if score #log.{ns} mcfc matches ..{} run tellraw @a[tag=mcfc.log] [{{\"text\":\"[{ns} {label}] \",\"color\":\"{color}\"}},{body}]",
+            level_of(level)
+        ));
+    }
+
     /// The shared sidebar is the `mcfc_sidebar` objective; line `n` is the
     /// fake player `mcfc.line.n` with score `-n`, so line 0 is on top. A player
     /// receiver queues the change in `mcfc:agent sidebar` for mcfd-agent, which
@@ -4265,6 +4660,11 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                     "execute store result storage {ns}:runtime {path}.line int 1 run scoreboard players get {} mcfc",
                     slot.numeric_name()
                 )
+            } else if arg.ty == Type::TextDef {
+                format!(
+                    "data modify storage {ns}:runtime {path}.text set from storage {ns}:runtime {}",
+                    slot.storage_path()
+                )
             } else {
                 format!(
                     "data modify storage {ns}:runtime {path}.text.text set from storage {ns}:runtime {}",
@@ -4278,9 +4678,6 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
             let kind = op.trim_start_matches("sidebar_");
             lines.push(format!(
                 "data modify storage {ns}:runtime {path}.op set value \"{kind}\""
-            ));
-            lines.push(format!(
-                "data modify storage {ns}:runtime {path}.text set from storage {ns}:runtime {path}.text.text"
             ));
             lines.push(self.query_command(&query, format!(
                 "execute as $(selector) run data modify storage {ns}:runtime {path}.uuid set from entity @s UUID"
@@ -4510,7 +4907,10 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 self.compile_value_as_nbt(function, depth, receiver, target, lines);
                 return;
             }
-            "light" | "biome" | "in_biome" | "environment" if receiver.ty == Type::BlockRef => {
+            "light" | "biome" | "in_biome" | "environment" | "x" | "y" | "z" | "block_type"
+            | "copy_to" | "block_state"
+                if receiver.ty == Type::BlockRef =>
+            {
                 self.compile_block_query(function, depth, receiver, method, args, target, lines);
                 return;
             }
@@ -4573,6 +4973,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                         body,
                         &placeholders,
                         fallback,
+                        false,
                         lines,
                     );
                 }
@@ -4601,6 +5002,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                     body,
                     &placeholders,
                     None,
+                    false,
                     lines,
                 );
                 return;
@@ -5404,6 +5806,27 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         lines: &mut Vec<String>,
     ) -> bool {
         match callee {
+            "block_at" => {
+                // Absolute coordinates; macros render ints as plain numbers.
+                let ns = self.namespace.clone();
+                let coords = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
+                for (arg, axis) in args.iter().zip(["x", "y", "z"]) {
+                    let slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
+                    self.compile_expr_into_slot(function, depth, arg, &slot, lines);
+                    lines.push(format!(
+                        "execute store result storage {ns}:runtime {}.{axis} int 1 run scoreboard players get {} mcfc",
+                        coords.storage_path(),
+                        slot.numeric_name()
+                    ));
+                }
+                self.write_block_slot(target, "", "0 0 0", lines);
+                let command = format!(
+                    "data modify storage {ns}:runtime {}.pos set value \"$(x) $(y) $(z)\"",
+                    target.storage_path()
+                );
+                lines.push(self.inline_macro_command(coords.storage_path(), command));
+                true
+            }
             "__mcfc_event_block" => {
                 lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime mcfc_event.block",
@@ -6090,6 +6513,11 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 self.compile_sidebar(function, depth, None, callee, args, lines);
                 true
             }
+            "log_debug" | "log_info" | "log_warn" | "log_error" | "log_level" | "log_dump"
+            | "assert_fail" => {
+                self.compile_log(function, depth, callee, &args[0], lines);
+                true
+            }
             "debug_marker" => {
                 self.compile_debug_marker_builtin(function, depth, args, lines);
                 true
@@ -6261,7 +6689,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
             let command = match callee {
                 "tellraw" => format!("tellraw $(selector) {}", component),
                 "title" => format!("title $(selector) title {}", component),
-                _ => format!("title $(selector) actionbar {}", component),
+                _ => self.actionbar_command(&component, args),
             };
             lines.push(self.query_command(&target_slot, command, true));
             return;
@@ -6279,7 +6707,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
             let command = match callee {
                 "tellraw" => "tellraw $(selector) $(message)".to_string(),
                 "title" => "title $(selector) title $(message)".to_string(),
-                _ => "title $(selector) actionbar $(message)".to_string(),
+                _ => self.actionbar_command("$(message)", args),
             };
             lines.push(self.query_command(&target_slot, command, true));
             return;
@@ -6296,6 +6724,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 &target_slot,
                 template,
                 placeholders,
+                args,
                 lines,
             );
             return;
@@ -6312,11 +6741,97 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         let command = match callee {
             "tellraw" => "tellraw $(selector) [\"$(message)\"]".to_string(),
             "title" => "title $(selector) title [\"$(message)\"]".to_string(),
-            _ => "title $(selector) actionbar [\"$(message)\"]".to_string(),
+            _ => self.actionbar_command("[\"$(message)\"]", args),
         };
         lines.push(self.query_command(&target_slot, command, true));
     }
 
+    /// Actionbars follow the Smithed Actionbar library's priorities, so packs
+    /// don't overwrite each other's messages. See `emit_actionbar_runtime`.
+    fn actionbar_command(&mut self, component: &str, args: &[IrExpr]) -> String {
+        self.uses_actionbar = true;
+        let priority = match args.get(2).map(|arg| &arg.kind) {
+            Some(IrExprKind::String(priority)) => priority.as_str(),
+            _ => "notification",
+        };
+        // A list, so `$(json)` in `show` substitutes it as quoted SNBT.
+        format!(
+            "execute as $(selector) run function {}:generated/actionbar/show {{json:[{component}],priority:\"{priority}\"}}",
+            self.namespace
+        )
+    }
+
+    /// With Smithed Actionbar loaded, messages go through it. Otherwise this is
+    /// a port of its algorithm on the same objectives, so MCFC packs still
+    /// coordinate: a message shows unless the player has a higher-priority one
+    /// (or an `override`) frozen on screen, and freezes for 20 ticks.
+    fn emit_actionbar_runtime(&mut self) {
+        let ns = self.namespace.clone();
+        let loaded = "score $default.freeze smithed.actionbar.const matches -2147483648..";
+        let files = [
+            (
+                "show",
+                format!(
+                    "$data modify storage smithed.actionbar:input message set value {{json:$(json),priority:\"$(priority)\"}}
+execute if {loaded} run return run function #smithed.actionbar:message
+scoreboard players add @s smithed.actionbar.priority 0
+execute if data storage smithed.actionbar:input message{{priority:\"override\"}} run scoreboard players set #actionbar mcfc 1
+execute if data storage smithed.actionbar:input message{{priority:\"notification\"}} run scoreboard players set #actionbar mcfc 2
+execute if data storage smithed.actionbar:input message{{priority:\"conditional\"}} run scoreboard players set #actionbar mcfc 3
+execute if data storage smithed.actionbar:input message{{priority:\"persistent\"}} run scoreboard players set #actionbar mcfc 4
+execute if score @s smithed.actionbar.priority matches 0 run return run function {ns}:generated/actionbar/display
+execute unless score @s smithed.actionbar.priority matches 1 if score #actionbar mcfc <= @s smithed.actionbar.priority run function {ns}:generated/actionbar/display
+"
+                ),
+            ),
+            (
+                "display",
+                "title @s actionbar {\"storage\":\"smithed.actionbar:input\",\"nbt\":\"message.json[0]\",\"interpret\":true}
+scoreboard players set @s smithed.actionbar.freeze 20
+scoreboard players operation @s smithed.actionbar.priority = #actionbar mcfc
+"
+                .to_string(),
+            ),
+            (
+                "tick",
+                // Every MCFC pack runs this; the gametime stamp makes it count once a tick.
+                format!(
+                    "execute if {loaded} run return 0
+execute store result score #now smithed.actionbar.freeze run time query gametime
+execute if score #now smithed.actionbar.freeze = #last smithed.actionbar.freeze run return 0
+scoreboard players operation #last smithed.actionbar.freeze = #now smithed.actionbar.freeze
+scoreboard players set @a[scores={{smithed.actionbar.freeze=1}}] smithed.actionbar.priority 0
+scoreboard players remove @a[scores={{smithed.actionbar.freeze=1..}}] smithed.actionbar.freeze 1
+"
+                ),
+            ),
+        ];
+        for (name, body) in files {
+            self.files.insert(
+                format!("data/{ns}/function/generated/actionbar/{name}.mcfunction"),
+                body,
+            );
+        }
+        // Makes `#smithed.actionbar:message` valid without the library; tags merge with it.
+        self.files.insert(
+            "data/smithed.actionbar/tags/function/message.json".to_string(),
+            "{
+  \"values\": []
+}
+"
+            .to_string(),
+        );
+        let setup = format!("data/{ns}/function/generated/setup.mcfunction");
+        if let Some(body) = self.files.get_mut(&setup) {
+            body.push_str(
+                "scoreboard objectives add smithed.actionbar.priority dummy
+scoreboard objectives add smithed.actionbar.freeze dummy
+",
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn compile_interpolated_display_builtin(
         &mut self,
         function: &IrFunction,
@@ -6325,6 +6840,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         target_slot: &SlotRef,
         template: &str,
         placeholders: &[IrMacroPlaceholder],
+        args: &[IrExpr],
         lines: &mut Vec<String>,
     ) {
         self.macro_counter += 1;
@@ -6352,7 +6868,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         let command = match callee {
             "tellraw" => format!("$(prefix)tellraw $(selector) {}", component),
             "title" => format!("$(prefix)title $(selector) title {}", component),
-            _ => format!("$(prefix)title $(selector) actionbar {}", component),
+            _ => format!("$(prefix){}", self.actionbar_command(&component, args)),
         };
         let namespace = self.namespace.clone();
         let macro_name = self.ensure_inline_macro(command);
@@ -8241,6 +8757,28 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         let block = local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
         self.compile_expr_into_slot(function, depth, receiver, &block, lines);
         match method {
+            "x" | "y" | "z" => {
+                // Relative positions resolve where this runs; a marker aligned
+                // to the block reports the whole-number corner.
+                let axis = match method {
+                    "x" => 0,
+                    "y" => 1,
+                    _ => 2,
+                };
+                let tag = format!("mcfc_block_{}", self.new_temp());
+                for command in [
+                    format!(
+                        "execute positioned $(pos) align xyz run summon minecraft:marker ~ ~ ~ {{Tags:[\"{tag}\"]}}"
+                    ),
+                    format!(
+                        "execute store result score {} mcfc run data get entity @e[type=minecraft:marker,tag={tag},limit=1] Pos[{axis}]",
+                        target.numeric_name()
+                    ),
+                    format!("kill @e[type=minecraft:marker,tag={tag}]"),
+                ] {
+                    lines.push(self.block_command(&block, command, true));
+                }
+            }
             "light" => {
                 self.write_light_probe(0, 15);
                 lines.push("scoreboard players set #light mcfc 0".to_string());
@@ -8277,6 +8815,77 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                 ));
                 lines.push(format!(
                     "data modify storage {ns}:runtime {} set from storage {ns}:runtime biome_probe",
+                    target.storage_path()
+                ));
+            }
+            "copy_to" => {
+                let to = local_slot(depth, &function.name, &self.new_temp(), &Type::BlockRef);
+                self.compile_expr_into_slot(function, depth, &args[0], &to, lines);
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {}.to set from storage {ns}:runtime {}.pos",
+                    block.storage_path(),
+                    to.storage_path()
+                ));
+                lines.push(self.block_command(
+                    &block,
+                    "clone $(pos) $(pos) $(to)".to_string(),
+                    true,
+                ));
+            }
+            "block_state" => {
+                let IrExprKind::String(name) = &args[0].kind else {
+                    return;
+                };
+                let values = crate::minecraft_ids::BLOCK_PROPERTIES
+                    .iter()
+                    .find(|(property, _)| property == name)
+                    .map_or(&[][..], |(_, values)| *values);
+                // Tag predicates only match blocks that have the property.
+                self.files.insert(
+                    format!("data/{ns}/tags/block/mcfc_all_blocks.json"),
+                    render_tag_file(
+                        &crate::minecraft_ids::BLOCK_IDS
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+                let probe = values
+                    .iter()
+                    .map(|value| format!("execute if block ~ ~ ~ #{ns}:mcfc_all_blocks[{name}={value}] run return run data modify storage {ns}:runtime block_state set value \"{value}\"
+"))
+                    .collect::<String>();
+                self.files.insert(
+                    format!("data/{ns}/function/generated/block_state/{name}.mcfunction"),
+                    probe,
+                );
+                lines.push(format!(
+                    "data modify storage {ns}:runtime block_state set value \"\""
+                ));
+                lines.push(self.block_command(
+                    &block,
+                    format!(
+                        "execute positioned $(pos) run function {ns}:generated/block_state/{name}"
+                    ),
+                    true,
+                ));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:runtime block_state",
+                    target.storage_path()
+                ));
+            }
+            "block_type" => {
+                self.emit_block_type_probe();
+                lines.push(format!(
+                    "data modify storage {ns}:runtime block_type set value \"\""
+                ));
+                lines.push(self.block_command(
+                    &block,
+                    format!("execute positioned $(pos) run function {ns}:generated/block_type/0"),
+                    true,
+                ));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {} set from storage {ns}:runtime block_type",
                     target.storage_path()
                 ));
             }
@@ -8621,6 +9230,37 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
                     right_slot.numeric_name()
                 ));
             }
+            BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::Shl
+            | BinaryOp::Shr => {
+                self.uses_bitwise = true;
+                let ns = &self.namespace;
+                let (mode, runtime) = match op {
+                    BinaryOp::BitAnd => (0, "bitwise"),
+                    BinaryOp::BitOr => (1, "bitwise"),
+                    BinaryOp::BitXor => (2, "bitwise"),
+                    BinaryOp::Shl => (0, "shift"),
+                    _ => (1, "shift"),
+                };
+                lines.extend([
+                    format!(
+                        "scoreboard players operation #bit_a mcfc = {} mcfc",
+                        left_slot.numeric_name()
+                    ),
+                    format!(
+                        "scoreboard players operation #bit_b mcfc = {} mcfc",
+                        right_slot.numeric_name()
+                    ),
+                    format!("scoreboard players set #bit_op mcfc {mode}"),
+                    format!("function {ns}:generated/bitwise/{runtime}"),
+                    format!(
+                        "scoreboard players operation {} mcfc = #bit_r mcfc",
+                        target.numeric_name()
+                    ),
+                ]);
+            }
             BinaryOp::Eq | BinaryOp::NotEq
                 if matches!(left.ty, Type::String) && matches!(right.ty, Type::String) =>
             {
@@ -8713,6 +9353,82 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
 
     fn function_entry_name(&self, function: &str, depth: usize) -> String {
         format!("generated/{}__d{}__entry", path_name(function), depth)
+    }
+
+    /// `function ...` to save or restore `function`'s frame at `depth`; the
+    /// bodies are written by `emit_frame_stack` once every file exists.
+    fn frame_call(&mut self, kind: &str, depth: usize, function: &str) -> String {
+        self.frame_saves.insert((depth, function.to_string()));
+        format!(
+            "function {}:generated/{}__d{}__{kind}",
+            self.namespace,
+            path_name(function),
+            depth
+        )
+    }
+
+    fn copy_slot(&self, ty: &Type, from: &SlotRef, to: &SlotRef) -> String {
+        if is_score_type(ty) {
+            format!(
+                "scoreboard players operation {} mcfc = {} mcfc",
+                to.numeric_name(),
+                from.numeric_name()
+            )
+        } else {
+            let ns = &self.namespace;
+            format!(
+                "data modify storage {ns}:runtime {} set from storage {ns}:runtime {}",
+                to.storage_path(),
+                from.storage_path()
+            )
+        }
+    }
+
+    /// Frame save/restore for recursive calls: every `$d<depth>_<fn>_*` score
+    /// the pack mentions, plus the `frames.d<depth>.<fn>` storage, pushed onto
+    /// the `stack` list and popped back.
+    fn emit_frame_stack(&mut self) {
+        let ns = self.namespace.clone();
+        for (depth, function) in std::mem::take(&mut self.frame_saves) {
+            let prefix = format!("$d{depth}_{}_", sanitize(&function));
+            let mut scores = BTreeSet::new();
+            for (path, body) in &self.files {
+                if !path.ends_with(".mcfunction") {
+                    continue;
+                }
+                for (at, _) in body.match_indices(&prefix) {
+                    let len = body[at + 1..]
+                        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                        .map_or(body.len() - at, |end| end + 1);
+                    scores.insert(body[at..at + len].to_string());
+                }
+            }
+            let frame = format!("frames.d{depth}.{}", sanitize(&function));
+            let mut save = vec![
+                format!("data modify storage {ns}:runtime stack append value {{}}"),
+                format!(
+                    "data modify storage {ns}:runtime stack[-1].frame set from storage {ns}:runtime {frame}"
+                ),
+            ];
+            let mut restore = Vec::new();
+            for (index, score) in scores.iter().enumerate() {
+                save.push(format!("execute store result storage {ns}:runtime stack[-1].s{index} int 1 run scoreboard players get {score} mcfc"));
+                restore.push(format!("execute store result score {score} mcfc run data get storage {ns}:runtime stack[-1].s{index}"));
+            }
+            restore.push(format!("data remove storage {ns}:runtime {frame}"));
+            restore.push(format!("data modify storage {ns}:runtime {frame} set from storage {ns}:runtime stack[-1].frame"));
+            restore.push(format!("data remove storage {ns}:runtime stack[-1]"));
+            let base = format!(
+                "data/{ns}/function/generated/{}__d{depth}",
+                path_name(&function)
+            );
+            self.files
+                .insert(format!("{base}__save.mcfunction"), save.join("\n") + "\n");
+            self.files.insert(
+                format!("{base}__restore.mcfunction"),
+                restore.join("\n") + "\n",
+            );
+        }
     }
 
     fn emit_macro_command(
@@ -8837,6 +9553,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
             body,
             placeholders,
             fallback,
+            true,
             lines,
         );
     }
@@ -8974,6 +9691,7 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         body: String,
         placeholders: &[IrMacroPlaceholder],
         fallback: Option<String>,
+        escape_strings: bool,
         lines: &mut Vec<String>,
     ) {
         self.macro_counter += 1;
@@ -8989,6 +9707,22 @@ function {ns}:generated/raycast/pos with storage {ns}:runtime mcfc_ray"
         self.files.insert(path, body + "\n");
         let storage_base = macro_storage_base(depth, &function.name, macro_id);
         self.write_macro_placeholder_values(function, depth, &storage_base, placeholders, lines);
+        if escape_strings {
+            // String values go inside "...", so their quotes and backslashes
+            // need escaping.
+            let ns = &self.namespace;
+            for placeholder in placeholders.iter().filter(|p| p.ty == Type::String) {
+                let path = format!("{storage_base}.{}", placeholder.key);
+                lines.push(format!(
+                    "data modify storage {ns}:runtime escape.c.v set from storage {ns}:runtime {path}"
+                ));
+                lines.push(format!("function {ns}:generated/escape_string"));
+                lines.push(format!(
+                    "data modify storage {ns}:runtime {path} set from storage {ns}:runtime escape.s"
+                ));
+            }
+            self.uses_escape |= placeholders.iter().any(|p| p.ty == Type::String);
+        }
         lines.extend(fallback);
         lines.push(format!(
             "function {}:{} with storage {}:runtime {}",
@@ -10919,10 +11653,22 @@ fn discover_bukkit_runtime(program: &IrProgram) -> BukkitRuntime {
             continue;
         }
         if let Some(command) = name.strip_prefix("__mcfc_command_") {
+            let (command, hex) = command.rsplit_once("__menu_").unwrap_or((command, ""));
+            let objective = bukkit_command_objective(command, &mut command_objectives);
+            if name.contains("__menu_") {
+                let bytes = (0..hex.len())
+                    .step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                    .collect::<Vec<_>>();
+                runtime.menu_buttons.push((
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                    objective.clone(),
+                ));
+            }
             runtime.commands.push(BukkitCommand {
                 command: command.to_string(),
                 handler: name.clone(),
-                objective: bukkit_command_objective(command, &mut command_objectives),
+                objective,
             });
             continue;
         }
@@ -11019,6 +11765,7 @@ fn is_bukkit_generated_function(name: &str) -> bool {
         || name.starts_with("__mcfc_agent_event_")
         || name.starts_with("__mcfc_command_")
         || name.starts_with("__mcfc_task_")
+        || name.starts_with("__mcfc_test_")
 }
 
 fn bukkit_command_objective(command: &str, used: &mut BTreeSet<String>) -> String {

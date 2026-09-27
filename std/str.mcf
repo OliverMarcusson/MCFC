@@ -32,3 +32,94 @@ public int find(String s, String needle) {
 public boolean contains(String s, String needle) {
     return find(s, needle) != -1;
 }
+
+// Every `target` replaced, left to right. Like Java, an empty target puts
+// `replacement` before each character and at the end.
+public String replace(String s, String target, String replacement) {
+    var width = target.length();
+    var out = "";
+    if (width == 0) {
+        var i = 0;
+        while (i < s.length()) {
+            out = out + replacement + s.charAt(i);
+            i = i + 1;
+        }
+        return out + replacement;
+    }
+    var last = s.length() - width;
+    var start = 0;
+    var i = 0;
+    while (i <= last) {
+        if (s.substring(i, i + width) == target) {
+            out = out + s.substring(start, i) + replacement;
+            i = i + width;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out + s.substring(start);
+}
+
+// Splits on plain text, not a regex. Like Java, trailing empty parts are
+// dropped and an empty separator splits into characters.
+public List<String> split(String s, String separator) {
+    List<String> parts = List.of();
+    var width = separator.length();
+    var start = 0;
+    var i = 0;
+    if (width == 0) {
+        while (i < s.length()) {
+            parts.add(s.charAt(i));
+            i = i + 1;
+        }
+        return parts;
+    }
+    var last = s.length() - width;
+    while (i <= last) {
+        if (s.substring(i, i + width) == separator) {
+            parts.add(s.substring(start, i));
+            i = i + width;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    parts.add(s.substring(start));
+    while (parts.size() > 0 && parts.get(parts.size() - 1).orElse("x") == "") {
+        parts.remove(parts.size() - 1);
+    }
+    return parts;
+}
+
+// ASCII letters only, one map lookup per character.
+public String toUpperCase(String s) {
+    var upper = Map.of(
+        "a", "A", "b", "B", "c", "C", "d", "D", "e", "E", "f", "F", "g", "G",
+        "h", "H", "i", "I", "j", "J", "k", "K", "l", "L", "m", "M", "n", "N",
+        "o", "O", "p", "P", "q", "Q", "r", "R", "s", "S", "t", "T", "u", "U",
+        "v", "V", "w", "W", "x", "X", "y", "Y", "z", "Z"
+    );
+    return mapChars(s, upper);
+}
+
+public String toLowerCase(String s) {
+    var lower = Map.of(
+        "A", "a", "B", "b", "C", "c", "D", "d", "E", "e", "F", "f", "G", "g",
+        "H", "h", "I", "i", "J", "j", "K", "k", "L", "l", "M", "m", "N", "n",
+        "O", "o", "P", "p", "Q", "q", "R", "r", "S", "s", "T", "t", "U", "u",
+        "V", "v", "W", "w", "X", "x", "Y", "y", "Z", "z"
+    );
+    return mapChars(s, lower);
+}
+
+String mapChars(String s, Map<String, String> table) {
+    var out = "";
+    var i = 0;
+    while (i < s.length()) {
+        var c = s.charAt(i);
+        out = out + table.get(c).orElse(c);
+        i = i + 1;
+    }
+    return out;
+}

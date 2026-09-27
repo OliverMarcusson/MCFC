@@ -1,0 +1,6 @@
+say perlin -500
+say perlin 66
+say perlin 15
+say perlin -224
+say perlin 0
+say fractal -148

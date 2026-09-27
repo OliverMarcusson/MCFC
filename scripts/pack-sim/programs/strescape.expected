@@ -1,0 +1,4 @@
+tellraw @a say "hi" | C:\dir\n | it's "both" | "x" 'y'
+say lengths 8 43 86
+say swapped 11 1
+say empty 0 1

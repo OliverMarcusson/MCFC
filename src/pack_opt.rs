@@ -244,6 +244,15 @@ fn writes_of(line: &str, skip_zero: bool) -> Writes<'_> {
     Writes::Some(holders)
 }
 
+/// Whether `line` may change `holder`, directly or through a function it calls.
+fn may_write_score(line: &str, holder: &str) -> bool {
+    line.contains("function ")
+        || match writes_of(line, false) {
+            Writes::Unknown => true,
+            Writes::Some(holders) => holders.contains(&holder),
+        }
+}
+
 /// `execute unless score H mcfc matches 0 run return 0`: past it, H is zero.
 fn return_check(line: &str) -> Option<&str> {
     line.strip_prefix("execute unless score ")?
@@ -1879,7 +1888,12 @@ impl Pack {
             let mut out = Vec::with_capacity(lines.len() + starts.len());
             for (index, line) in lines.iter().enumerate() {
                 for (start, holder) in &starts {
-                    if *start == index {
+                    // The run's lines were each guarded, so a line that can set
+                    // the flag (such as a call to a returning block) needs the
+                    // check again after it.
+                    if *start == index
+                        || (*start < index && may_write_score(&lines[index - 1], holder))
+                    {
                         out.push(format!(
                             "execute unless score {holder} mcfc matches 0 run return 0"
                         ));

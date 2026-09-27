@@ -8,7 +8,8 @@
 //! records, and types to those names. Root-module items keep their bare
 //! names, so single-file programs compile exactly as before.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::lexer::TokenKind;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast::*;
@@ -38,8 +39,12 @@ pub struct LoadedModules {
 const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
     ("attribute.mcf", include_str!("../std/attribute.mcf")),
+    ("color.mcf", include_str!("../std/color.mcf")),
+    ("dialog.mcf", include_str!("../std/dialog.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
+    ("noise.mcf", include_str!("../std/noise.mcf")),
+    ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
     ("vec.mcf", include_str!("../std/vec.mcf")),
 ];
@@ -253,7 +258,10 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
         .zip(&enum_modules)
         .map(|(def, &module)| resolver.struct_name(module, &def.name))
         .collect();
-    for decl in &program.uses {
+    // Wildcards go last: like Java, names defined or imported by name win.
+    let (wildcards, named): (Vec<_>, Vec<_>) =
+        program.uses.iter().partition(|decl| decl.alias == "*");
+    for decl in named.into_iter().chain(wildcards) {
         let module = module_of(&decl.span);
         if let Err(message) = resolver.add_import(module, decl) {
             diagnostics.push(Diagnostic::new(message, decl.span.clone()));
@@ -436,6 +444,36 @@ impl Resolver {
 
     fn add_import(&mut self, module: usize, decl: &UseDecl) -> Result<(), String> {
         let targets = self.resolve_path(module, &decl.path)?;
+        if decl.alias == "*" {
+            let Some(source) = targets.iter().find_map(|target| match target {
+                Target::Module(source) => Some(*source),
+                _ => None,
+            }) else {
+                return Err(format!("'{}' is not a module", decl.path.join(".")));
+            };
+            let entry = &self.modules[source];
+            let names: BTreeSet<String> = entry
+                .functions
+                .iter()
+                .chain(&entry.structs)
+                .filter(|(_, is_pub)| **is_pub)
+                .map(|(name, _)| name.clone())
+                .collect();
+            for name in names {
+                let mut path = decl.path.clone();
+                path.push(name.clone());
+                // ponytail: a clash is skipped, not reported; two wildcards with the same name, first wins.
+                let _ = self.add_import(
+                    module,
+                    &UseDecl {
+                        path,
+                        alias: name,
+                        span: decl.span.clone(),
+                    },
+                );
+            }
+            return Ok(());
+        }
         let entry = &mut self.modules[module];
         let alias = &decl.alias;
         // Modules, functions, and records are separate namespaces.
@@ -611,14 +649,11 @@ impl Resolver {
             StmtKind::Return(Some(value)) | StmtKind::Expr(value) => {
                 self.walk_expr(scope, value, diagnostics)
             }
-            // ponytail: `$(...)` placeholders are parsed later by the type checker,
-            // so calls inside them must use the full path from the root module.
-            // Resolve them here if relative paths in placeholders are needed.
+            StmtKind::MacroCommand(command) => self.resolve_placeholders(scope, command),
             StmtKind::Return(None)
             | StmtKind::Break
             | StmtKind::Continue
-            | StmtKind::RawCommand(_)
-            | StmtKind::MacroCommand(_) => {}
+            | StmtKind::RawCommand(_) => {}
         }
     }
 
@@ -822,11 +857,64 @@ impl Resolver {
                     self.walk_expr(scope, default, diagnostics);
                 }
             }
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::String(_)
-            | ExprKind::Variable(_) => {}
+            ExprKind::String(text) => self.resolve_placeholders(scope, text),
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Variable(_) => {}
+        }
+    }
+
+    /// `$(...)` placeholders are parsed later by the type checker, which
+    /// doesn't know this module's imports, so each call in them is rewritten
+    /// to its full name here: `$(twice(x))` becomes `$(util::twice(x))`.
+    /// Unknown names are left for the type checker to report.
+    fn resolve_placeholders(&self, scope: &Scope, text: &mut String) {
+        if !text.contains("$(") {
+            return;
+        }
+        let mut edits = Vec::new();
+        for (start, end) in placeholder_ranges(text) {
+            let Ok(tokens) = crate::lexer::lex(&text[start..end]) else {
+                continue;
+            };
+            let name = |i: usize| match tokens.get(i).map(|token| &token.kind) {
+                Some(TokenKind::Identifier(name)) => Some(name.clone()),
+                _ => None,
+            };
+            for i in 0..tokens.len() {
+                let after_dot =
+                    i > 0 && matches!(tokens[i - 1].kind, TokenKind::Dot | TokenKind::Colon);
+                let Some(first) = name(i).filter(|_| !after_dot) else {
+                    continue;
+                };
+                if scope.locals.contains(&first) {
+                    continue;
+                }
+                let mut segments = vec![first];
+                let mut last = i;
+                while matches!(tokens.get(last + 1).map(|t| &t.kind), Some(TokenKind::Dot))
+                    && let Some(next) = name(last + 2)
+                {
+                    segments.push(next);
+                    last += 2;
+                }
+                if !matches!(
+                    tokens.get(last + 1).map(|t| &t.kind),
+                    Some(TokenKind::LeftParen)
+                ) {
+                    continue;
+                }
+                if let Ok(Some(resolved)) =
+                    self.resolve_function(scope.module, &segments.join("::"))
+                {
+                    edits.push((
+                        start + tokens[i].range.start,
+                        start + tokens[last].range.end,
+                        resolved,
+                    ));
+                }
+            }
+        }
+        for (from, to, resolved) in edits.into_iter().rev() {
+            text.replace_range(from..to, &resolved);
         }
     }
 
@@ -888,4 +976,39 @@ fn collect_locals(stmts: &[Stmt], locals: &mut HashSet<String>) {
             _ => {}
         }
     }
+}
+
+/// Byte ranges of each `$(...)` body in `text`, skipping quoted parentheses.
+fn placeholder_ranges(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if !(bytes[index] == b'$' && bytes[index + 1] == b'(') {
+            index += 1;
+            continue;
+        }
+        let start = index + 2;
+        let (mut depth, mut quote) = (1, None);
+        index = start;
+        while index < bytes.len() {
+            match (quote, bytes[index]) {
+                (Some(_), b'\\') => index += 1,
+                (Some(q), ch) if ch == q => quote = None,
+                (Some(_), _) => {}
+                (None, ch @ (b'"' | b'\'')) => quote = Some(ch),
+                (None, b'(') => depth += 1,
+                (None, b')') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        ranges.push((start, index));
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+    ranges
 }

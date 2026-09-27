@@ -1,0 +1,34 @@
+// Vanilla dialogs, shown inline so nothing needs a registry or a restart.
+// A button runs `/trigger <command>`, which reaches the `@Command` handler of
+// that name, so players without operator permissions can click it.
+// The records mirror the dialog format, so the game writes the SNBT.
+
+public record Button(String label, String command) {}
+
+record Message(String type, String contents) {}
+record RunCommand(String type, String command) {}
+record Action(String label, RunCommand action) {}
+record Notice(String type, String title, Message body) {}
+record Menu(String type, String title, Message body, List<Action> actions) {}
+
+public void notice(Player player, String title, String body) {
+    var dialog = new Notice("minecraft:notice", title, message(body));
+    as (player) {
+        mcf("dialog show @s $(dialog)");
+    }
+}
+
+public void menu(Player player, String title, String body, List<Button> buttons) {
+    List<Action> actions = List.of();
+    for (Button button : buttons) {
+        actions.add(new Action(button.label(), new RunCommand("run_command", "/trigger " + button.command())));
+    }
+    var dialog = new Menu("minecraft:multi_action", title, message(body), actions);
+    as (player) {
+        mcf("dialog show @s $(dialog)");
+    }
+}
+
+Message message(String contents) {
+    return new Message("minecraft:plain_message", contents);
+}

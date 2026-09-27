@@ -312,4 +312,9 @@ pub enum BinaryOp {
     Gte,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }

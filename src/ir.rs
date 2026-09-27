@@ -12,6 +12,7 @@ pub struct IrProgram {
     pub player_states: Vec<crate::ast::PlayerStateDef>,
     pub functions: Vec<IrFunction>,
     pub call_depths: BTreeMap<String, usize>,
+    pub recursion_groups: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +208,7 @@ pub fn lower(program: &TypedProgram) -> IrProgram {
         player_states: program.player_states.clone(),
         functions,
         call_depths: program.call_depths.clone(),
+        recursion_groups: program.recursion_groups.clone(),
     }
 }
 

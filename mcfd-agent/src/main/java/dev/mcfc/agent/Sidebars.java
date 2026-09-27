@@ -10,7 +10,8 @@ import java.util.UUID;
 
 /**
  * Per-player sidebars, like Paper's per-player scoreboards. Datapacks queue
- * changes in `mcfc:agent sidebar` as {op, uuid, line, text}; every tick they
+ * changes in `mcfc:agent sidebar` as {op, uuid, line, text}, where text is
+ * a text component in NBT form; every tick they
  * are drained and sent to that player alone as packets for a client-only
  * objective, so no two players share it. Line `n` has score `-n`, so line 0
  * is on top.
@@ -25,14 +26,15 @@ final class Sidebars {
     }
 
     private static final class Board {
-        String title = "";
-        final TreeMap<Integer, String> lines = new TreeMap<>();
+        /** Components; null until set. */
+        Object title;
+        final TreeMap<Integer, Object> lines = new TreeMap<>();
         /** The connection that has this board; a new one (a rejoin) gets it resent. */
         Object connection;
     }
 
     /** One pending change, decoded from storage. */
-    record Op(String op, UUID player, int line, String text) {
+    record Op(String op, UUID player, int line, Object text) {
     }
 
     static void tick(Object server) {
@@ -43,6 +45,14 @@ final class Sidebars {
             if (game == null) {
                 try {
                     game = new Game(server.getClass().getClassLoader());
+                    // Registry-aware ops, so hover items and the like decode too.
+                    Object registries = server.getClass().getMethod("registryAccess").invoke(server);
+                    for (Method method : registries.getClass().getMethods()) {
+                        if (method.getName().equals("createSerializationContext")) {
+                            game.ops = method.invoke(registries, game.ops);
+                            break;
+                        }
+                    }
                 } catch (ReflectiveOperationException error) {
                     unsupported = true;
                     System.err.println("[mcfd-agent] player sidebars unavailable: " + error);
@@ -87,7 +97,7 @@ final class Sidebars {
                 (String) game.getString.invoke(tag, "op", ""),
                 uuid(parts),
                 (Integer) game.getInt.invoke(tag, "line", 0),
-                (String) game.getString.invoke(tag, "text", ""));
+                game.component(game.getTag.invoke(tag, "text")));
     }
 
     /** Updates the board, and a player who already has it gets just the change. */
@@ -115,7 +125,7 @@ final class Sidebars {
             }
             case "clear" -> {
                 boards.remove(op.player());
-                if (connection != null) send(connection, game.objectivePacket("", game.methodRemove));
+                if (connection != null) send(connection, game.objectivePacket(null, game.methodRemove));
             }
             default -> {
             }
@@ -125,7 +135,7 @@ final class Sidebars {
     private static void sendAll(Object connection, Board board) throws Exception {
         send(connection, game.objectivePacket(board.title, game.methodAdd));
         send(connection, game.displayPacket(board.title));
-        for (Map.Entry<Integer, String> line : board.lines.entrySet()) {
+        for (Map.Entry<Integer, Object> line : board.lines.entrySet()) {
             send(connection, game.scorePacket(line.getKey(), line.getValue()));
         }
     }
@@ -150,9 +160,16 @@ final class Sidebars {
         Class.forName("net.minecraft.SharedConstants", true, loader).getMethod("tryDetectVersion").invoke(null);
         Class.forName("net.minecraft.server.Bootstrap", true, loader).getMethod("bootStrap").invoke(null);
         Game check = new Game(loader);
-        check.objectivePacket("Title", check.methodAdd);
-        check.displayPacket("Title");
-        check.scorePacket(1, "Line");
+        Object tags = Class.forName("net.minecraft.nbt.TagParser", true, loader)
+                .getMethod("parseCompoundFully", String.class)
+                .invoke(null, "{title:{text:\"Title\",color:\"gold\"},line:\"Line\"}");
+        Object title = check.component(check.getTag.invoke(tags, "title"));
+        if (!String.valueOf(title).contains("gold")) {
+            throw new IllegalStateException("component styles were lost: " + title);
+        }
+        check.objectivePacket(title, check.methodAdd);
+        check.displayPacket(null);
+        check.scorePacket(1, check.component(check.getTag.invoke(tags, "line")));
         check.resetPacket(1);
     }
 
@@ -171,6 +188,11 @@ final class Sidebars {
         final Method getIntArray;
         final Method getString;
         final Method getInt;
+        final Method getTag;
+        final Method parse;
+        final Method result;
+        final Object codec;
+        Object ops;
         final Method playerList;
         final Method getPlayer;
         final Method literal;
@@ -214,6 +236,14 @@ final class Sidebars {
             getIntArray = compound.getMethod("getIntArray", String.class);
             getString = compound.getMethod("getStringOr", String.class, String.class);
             getInt = compound.getMethod("getIntOr", String.class, int.class);
+            getTag = compound.getMethod("get", String.class);
+            Class<?> dynamicOps = Class.forName("com.mojang.serialization.DynamicOps", false, loader);
+            parse = Class.forName("com.mojang.serialization.Decoder", false, loader)
+                    .getMethod("parse", dynamicOps, Object.class);
+            result = Class.forName("com.mojang.serialization.DataResult", false, loader).getMethod("result");
+            codec = Class.forName("net.minecraft.network.chat.ComponentSerialization", true, loader)
+                    .getField("CODEC").get(null);
+            ops = Class.forName("net.minecraft.nbt.NbtOps", true, loader).getField("INSTANCE").get(null);
             playerList = server.getMethod("getPlayerList");
             getPlayer = players.getMethod("getPlayer", UUID.class);
             literal = component.getMethod("literal", String.class);
@@ -239,22 +269,32 @@ final class Sidebars {
             methodChange = setObjective.getField("METHOD_CHANGE").getInt(null);
         }
 
-        Object objective(String title) throws Exception {
-            return objective.newInstance(
-                    scoreboard.newInstance(), OBJECTIVE, dummy, literal.invoke(null, title), integer, false, blank);
+        /** A text component from its NBT form (a string or a compound); empty if invalid. */
+        Object component(Object tag) throws Exception {
+            if (tag != null) {
+                Optional<?> decoded = (Optional<?>) result.invoke(parse.invoke(codec, ops, tag));
+                if (decoded.isPresent()) {
+                    return decoded.get();
+                }
+            }
+            return literal.invoke(null, "");
         }
 
-        Object objectivePacket(String title, int method) throws Exception {
+        Object objective(Object title) throws Exception {
+            return objective.newInstance(scoreboard.newInstance(), OBJECTIVE, dummy,
+                    title == null ? literal.invoke(null, "") : title, integer, false, blank);
+        }
+
+        Object objectivePacket(Object title, int method) throws Exception {
             return objectivePacket.newInstance(objective(title), method);
         }
 
-        Object displayPacket(String title) throws Exception {
+        Object displayPacket(Object title) throws Exception {
             return displayPacket.newInstance(sidebar, objective(title));
         }
 
-        Object scorePacket(int line, String text) throws Exception {
-            return scorePacket.newInstance(
-                    owner(line), OBJECTIVE, -line, Optional.of(literal.invoke(null, text)), Optional.empty());
+        Object scorePacket(int line, Object text) throws Exception {
+            return scorePacket.newInstance(owner(line), OBJECTIVE, -line, Optional.of(text), Optional.empty());
         }
 
         Object resetPacket(int line) throws Exception {

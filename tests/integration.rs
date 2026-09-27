@@ -2088,18 +2088,22 @@ void main() {
 }
 
 #[test]
-fn rejects_recursion() {
+fn rejects_sleep_in_recursion() {
     let source = r#"
 int a(int x) {
+    sleepTicks(1);
     return b(x);
 }
 int b(int x) {
     return a(x);
 }
+void main() {
+    int y = a(1);
+}
 "#;
 
     let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("recursion is not supported"));
+    assert!(error.to_string().contains("'a' is recursive"), "{error}");
 }
 
 #[test]
@@ -3541,6 +3545,17 @@ void main() {
 
 #[test]
 fn advancement_events_generate_triggers_and_rewards() {
+    // entity_hurt_player: only hits with an attacker, who becomes entity().
+    let check_attacker = |files: &std::collections::BTreeMap<String, String>| {
+        assert!(
+            files["data/mcfc/advancement/mcfc_event/entity_hurt_player.json"]
+                .contains("\"source_entity\":{}")
+        );
+        assert!(
+            files["data/mcfc/function/generated/bukkit/entity_hurt_player.mcfunction"]
+                .contains("execute on attacker run tag @s add mcfc_event_target")
+        );
+    };
     let source = r#"
 @EventHandler
 void onPlace(BlockPlaceEvent event) {
@@ -3557,6 +3572,8 @@ void onKill(PlayerKillEntityEvent event) { event.player().sendMessage("kill"); }
 void onHit(PlayerHurtEntityEvent event) { event.entity().damage(1); }
 @EventHandler
 void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
+@EventHandler
+void onHurt(EntityHurtPlayerEvent event) { event.entity().damage(1); }
 "#;
     let result = compile_source(source, &lowering()).expect("advancement events should compile");
     let files = &result.artifacts.files;
@@ -3567,6 +3584,7 @@ void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
         ("player_kill_entity", "player_killed_entity"),
         ("player_hurt_entity", "player_hurt_entity"),
         ("player_interact_entity", "player_interacted_with_entity"),
+        ("entity_hurt_player", "entity_hurt_player"),
     ] {
         let advancement = files
             .get(&format!("data/mcfc/advancement/mcfc_event/{kind}.json"))
@@ -3581,6 +3599,7 @@ void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
             "advancement revoke @s only mcfc:mcfc_event/{kind}"
         )));
     }
+    check_attacker(files);
     let hurt = files
         .get("data/mcfc/function/generated/bukkit/player_hurt_entity.mcfunction")
         .unwrap();
@@ -4019,6 +4038,9 @@ void main() {
     Sidebar.removeLine(3);
     var player = (Player) Selector.of("@p").getFirst();
     player.setSidebarLine(1, "Coins");
+    var title = new Component("Gold");
+    title.color = "gold";
+    player.setSidebarTitle(title);
     player.clearSidebar();
 }
 "#;
@@ -4048,4 +4070,164 @@ void main() {
     let error = compile_source("void main() { Sidebar.setLine(\"x\", 1); }", &lowering())
         .expect_err("wrong argument types are rejected");
     assert!(format!("{error:?}").contains("line"));
+}
+
+#[test]
+fn block_of_accepts_computed_coordinates() {
+    let source = r#"
+void main() {
+    for (int x = 0; x < 3; x++) {
+        Block.of(x, 64, -2).setBlock("minecraft:stone");
+    }
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("computed blocks should compile");
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    assert!(output.contains(".pos set value \"$(x) $(y) $(z)\""));
+    assert!(output.contains(".x int 1 run scoreboard players get"));
+    assert!(compile_source("void main() { Block.of(1, 2.0, 3); }", &lowering()).is_err());
+}
+
+#[test]
+fn shifts_do_not_break_nested_generics() {
+    let source = r#"
+void main() {
+    List<List<Integer>> grid = List.of();
+    int x = 5;
+    x >>= 1;
+    x <<= 2;
+    boolean small = x >> 1 > 2;
+}
+"#;
+    compile_source(source, &lowering()).expect("generics and shifts should both parse");
+}
+
+#[test]
+fn block_state_names_are_checked() {
+    let error = compile_source(
+        "void main() { var s = Block.of(0, 0, 0).getState(\"facingg\"); }",
+        &lowering(),
+    )
+    .expect_err("unknown state names are rejected");
+    assert!(format!("{error:?}").contains("unknown block state 'facingg'"));
+}
+
+#[test]
+fn log_levels_filter_messages_for_tagged_players() {
+    let source = r#"
+void main() {
+    Log.setLevel("warn");
+    Log.info("hi");
+    Log.error("bad");
+    Log.dump(42);
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("logging should compile");
+    let output = result.artifacts.files.values().cloned().collect::<String>();
+    for expected in [
+        "execute unless score #log.mcfc mcfc matches -2147483648.. run scoreboard players set #log.mcfc mcfc 1",
+        "scoreboard players set #log.mcfc mcfc 2",
+        "execute if score #log.mcfc mcfc matches ..1 run tellraw @a[tag=mcfc.log] [{\"text\":\"[mcfc INFO] \"",
+        "execute if score #log.mcfc mcfc matches ..3 run tellraw @a[tag=mcfc.log] [{\"text\":\"[mcfc ERROR] \"",
+        "[mcfc DUMP] ",
+    ] {
+        assert!(output.contains(expected), "missing {expected}");
+    }
+    assert!(compile_source("void main() { Log.setLevel(\"loud\"); }", &lowering()).is_err());
+    assert!(compile_source("void main() { Log.shout(\"x\"); }", &lowering()).is_err());
+}
+
+#[test]
+fn menu_commands_join_the_smithed_data_pack_menu() {
+    let source = r#"
+@Menu("Open \"settings\"")
+void settings(Player player) {
+    player.sendMessage("hi");
+}
+"#;
+    let result = compile_source(source, &lowering()).expect("@Menu should compile");
+    let files = &result.artifacts.files;
+    let about = &files["data/mcfc/dialog/about.json"];
+    assert!(about.contains(r#""label":"Open \"settings\"""#), "{about}");
+    let objective = about
+        .split("/trigger ")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("button runs a trigger");
+    let tick = files.values().cloned().collect::<String>();
+    assert!(tick.contains(&format!("scoreboard players enable @a {objective}")));
+    assert!(files["data/smithed/tags/dialog/data_packs.json"].contains("mcfc:about"));
+    assert!(
+        files["data/minecraft/tags/dialog/pause_screen_additions.json"]
+            .contains("smithed:data_packs")
+    );
+    assert!(files.contains_key("data/smithed/dialog/data_packs.json"));
+    assert!(about.contains("\"/trigger settings\""), "{about}");
+    assert!(compile_source("@Menu void f() {}", &lowering()).is_err());
+}
+
+#[test]
+fn actionbar_priorities_are_checked() {
+    assert!(
+        compile_source(
+            "void f(Player p) { p.sendActionBar(\"hud\", \"conditional\"); }",
+            &lowering()
+        )
+        .is_ok()
+    );
+    assert!(
+        compile_source(
+            "void f(Player p) { p.sendActionBar(\"hud\", \"loud\"); }",
+            &lowering()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn wildcard_imports_bring_in_public_names() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(
+        src_dir.join("util.mcf"),
+        "public int twice(int x) {\n    return x * 2;\n}\n\npublic int max(int a, int b) {\n    return a;\n}\n\nint hidden() {\n    return 0;\n}\n",
+    )
+    .unwrap();
+    // `max` is imported by name, so the wildcard's `util.max` loses, as in Java.
+    fs::write(
+        src_dir.join("main.mcf"),
+        "import util.*;\nimport std.math.max;\n\nvoid main() {\n    var x = twice(max(1, 2));\n}\n",
+    )
+    .unwrap();
+    let compile = || {
+        compile_project(
+            &project.join("mcfc.toml"),
+            &project.join("dist"),
+            &lowering(),
+        )
+    };
+    let result = compile().expect("wildcard import should resolve");
+    let mut names: Vec<_> = result
+        .typed_program
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["main", "std::math::max", "util::twice"]);
+
+    fs::write(
+        src_dir.join("main.mcf"),
+        "import util.*;\n\nvoid main() {\n    hidden();\n}\n",
+    )
+    .unwrap();
+    assert!(compile().is_err(), "private names stay private");
+    fs::write(
+        src_dir.join("main.mcf"),
+        "import util.twice.*;\n\nvoid main() {\n}\n",
+    )
+    .unwrap();
+    assert!(compile().is_err(), "a wildcard needs a module");
 }

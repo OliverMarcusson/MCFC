@@ -1,0 +1,63 @@
+// Colors as 0xRRGGBB ints, the form text, particles and display entities use.
+
+// Channels are clamped to 0..255.
+public int rgb(int red, int green, int blue) {
+    return channel(red) * 65536 + channel(green) * 256 + channel(blue);
+}
+
+public int red(int color) {
+    return color / 65536 % 256;
+}
+
+public int green(int color) {
+    return color / 256 % 256;
+}
+
+public int blue(int color) {
+    return color % 256;
+}
+
+// "#rrggbb", lowercase, as text component `color` fields expect.
+public String toHex(int color) {
+    var out = "#";
+    var shift = 16777216;
+    var i = 0;
+    while (i < 6) {
+        shift = shift / 16;
+        out = out + "0123456789abcdef".charAt(color / shift % 16);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Reads "#rrggbb" or "rrggbb" in either case; -1 if it isn't a hex color.
+public int fromHex(String hex) {
+    var start = 0;
+    if (hex.length() == 7 && hex.charAt(0) == "#") {
+        start = 1;
+    }
+    if (hex.length() - start != 6) {
+        return -1;
+    }
+    var color = 0;
+    var i = start;
+    while (i < hex.length()) {
+        var digit = "0123456789abcdef".indexOf(hex.charAt(i).toLowerCase());
+        if (digit == -1) {
+            return -1;
+        }
+        color = color * 16 + digit;
+        i = i + 1;
+    }
+    return color;
+}
+
+int channel(int value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 255) {
+        return 255;
+    }
+    return value;
+}

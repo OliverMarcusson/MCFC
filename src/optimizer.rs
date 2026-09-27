@@ -286,6 +286,16 @@ fn fold_binary(op: BinaryOp, left: &IrExpr, right: &IrExpr) -> Option<IrExprKind
             BinaryOp::Rem if *right != 0 => {
                 floor_div(*left, *right).map(|q| IrExprKind::Int(left - q * right))
             }
+            // Java int semantics: 32 bits, shift counts masked to 0..31.
+            BinaryOp::BitAnd => Some(IrExprKind::Int(left & right)),
+            BinaryOp::BitOr => Some(IrExprKind::Int(left | right)),
+            BinaryOp::BitXor => Some(IrExprKind::Int(left ^ right)),
+            BinaryOp::Shl => Some(IrExprKind::Int(
+                ((*left as i32).wrapping_shl(*right as u32 & 31)) as i64,
+            )),
+            BinaryOp::Shr => Some(IrExprKind::Int(
+                ((*left as i32) >> (*right as u32 & 31)) as i64,
+            )),
             BinaryOp::Eq => Some(IrExprKind::Bool(left == right)),
             BinaryOp::NotEq => Some(IrExprKind::Bool(left != right)),
             BinaryOp::Lt => Some(IrExprKind::Bool(left < right)),

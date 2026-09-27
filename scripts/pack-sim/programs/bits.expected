@@ -1,0 +1,7 @@
+say and 0 or 13846 xor 13846
+say shl -2147483648 shr 0 0 24616
+say and 8193 or 518015 xor 509822
+say shl 1073741824 shr 0 0 935482
+say and 104 or 19483503 xor 19483399
+say shl 0 shr 0 0 34637524
+say total 370152172 n 22 prec 25

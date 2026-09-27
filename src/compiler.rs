@@ -152,10 +152,23 @@ fn prune_unreachable(mut program: TypedProgram, exports: &[ExportedFunction]) ->
         .call_depths
         .retain(|name, _| reachable.contains(name));
     program
+        .recursion_groups
+        .retain(|name, _| reachable.contains(name));
+    program
 }
 
 fn validate_suspending_calls(program: &IrProgram) -> Result<(), Diagnostics> {
     let mut diagnostics = Diagnostics::new();
+    // A paused frame lives in fixed slots that a recursive call would reuse.
+    let suspending = backend::suspending_functions(program);
+    for name in program.recursion_groups.keys() {
+        if suspending.contains(name) {
+            diagnostics.push(Diagnostic::new(
+                format!("'{name}' is recursive, so it cannot sleep, sort or wait on a host call"),
+                Span::new(1, 1),
+            ));
+        }
+    }
     for (caller, callee) in backend::misplaced_suspending_calls(program) {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -641,7 +654,9 @@ void main() {
             .join("\n");
         assert!(files.contains("tellraw $(selector) [\"hello \",{"));
         assert!(files.contains("title $(selector) title \"Danger\""));
-        assert!(files.contains("title $(selector) actionbar \"Run\""));
+        assert!(
+            files.contains("generated/actionbar/show {json:[\"Run\"],priority:\"notification\"}")
+        );
         assert!(files.contains("bossbar add $(id) [\"Boss \",{"));
         assert!(files.contains("bossbar set $(id) value $(value)"));
         assert!(files.contains("bossbar set $(id) max $(value)"));

@@ -17,6 +17,7 @@ A function annotated with `@EventHandler` runs when something happens in game. I
 | `PlayerKillEntityEvent` | When a player kills an entity. |
 | `PlayerHurtEntityEvent` | When a player hurts an entity, including with projectiles, or left-clicks an interaction entity. Has `entity()`. |
 | `PlayerInteractEntityEvent` | When a player right-clicks an entity, including an interaction entity. Has `entity()`. |
+| `EntityHurtPlayerEvent` | When an entity hurts a player, directly or with a projectile. Has `entity()`, the attacker. Damage with no attacker, such as falling, doesn't count. |
 
 Vanilla handlers run as the affected player, which is `event.player()`:
 
@@ -34,7 +35,7 @@ void onPlayerDeath(PlayerDeathEvent event) {
 }
 ```
 
-Minecraft doesn't say which entity or block was involved, so MCFC finds it after the fact. `entity()` is the entity this player hurt this tick for `PlayerHurtEntityEvent`, and otherwise the first entity along the player's view within their `entity_interaction_range`. It is only valid inside the handler. `block()` is an `Optional<Block>`: the first block along the view within the player's `block_interaction_range`. It is empty or wrong when the placed block is replaceable, such as snow layers or tall grass, because the ray passes through those.
+Minecraft doesn't say which entity or block was involved, so MCFC finds it after the fact. `entity()` is the entity this player hurt this tick for `PlayerHurtEntityEvent`, the attacker for `EntityHurtPlayerEvent` (the shooter for projectiles), and otherwise the first entity along the player's view within their `entity_interaction_range`. It is only valid inside the handler. `block()` is an `Optional<Block>`: the first block along the view within the player's `block_interaction_range`. It is empty or wrong when the placed block is replaceable, such as snow layers or tall grass, because the ray passes through those.
 
 Interaction entities are invisible hitboxes. Summon one to make a clickable area, and handle clicks with `PlayerInteractEntityEvent` and `PlayerHurtEntityEvent`.
 

@@ -1,0 +1,2 @@
+say c 16744703 hex #ff80ff r 255 g 128 b 255
+say back 16744703 bad -1 small #010203

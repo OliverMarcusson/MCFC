@@ -110,3 +110,101 @@ documentation, LSP, and VS Code support have been migrated to the new names.
 The `javaapi` program probes world method compilation, and the integration test checks
 the generated Minecraft commands. The simulator cannot execute those commands or
 floating-point `/compute`; live Minecraft behavior has not been tested.
+
+## Handoff: datapack systems backlog (2026-09-27)
+
+Last commit: `2442148` (Tier 3 + sidebars). Everything below is **uncommitted** on
+`feat/datapack-systems`. The checklist is in untracked `TASKS.md`.
+
+### State at handoff
+
+All checks green, recursion included:
+- `cargo test`: 83 unit + 123 integration + 4
+- `python scripts/pack-sim/check.py`: 21 programs pass, plain and optimized
+- `bun run docs:check`: 92/92 (run `cargo build --release` first); `docs:build` passes
+- `cargo fmt --check`: clean
+- clippy: 31 warnings (baseline 32)
+
+### Done since `2442148`
+
+**Carried over from earlier in the session**
+- Sidebar Component text
+- `EntityHurtPlayerEvent`
+- `Block.of(x, y, z)`
+- Bitwise operators and shifts
+- `String.replace/split/toUpperCase/toLowerCase`
+- `std.color`, `std.noise`, `std.shape`
+- `Block.getX/Y/Z`, `getType`, `copyTo`, `getState`
+- `Log.*`
+- `pack_opt` early-return fix
+
+**`@Test` + `assert`**
+- `assert c [: msg];` desugars in the parser (`parse_stmt`) to `if (!c) assert_fail("line N: " + msg)`.
+- `@Test` renames the function to `__mcfc_test_<name>`.
+- `assert_fail` is lowered in `compile_log`: it sets `#test_failed` and prints a red tellraw.
+- `emit_test_runner` writes `data/<ns>/function/test.mcfunction`, which prints pass/fail counts.
+- Covered by sim program `tests`.
+
+**`std.dialog`** (`std/dialog.mcf`)
+- `dialog.notice(player, title, body)` and `dialog.menu(player, title, body, List<Button>)`.
+- `Button(label, command)` runs `/trigger <command>`, which reaches `@Command` handlers.
+- The dialog is built from records, so the game writes and escapes the SNBT.
+- Covered by sim program `dialogs`.
+
+**`@Menu("Label")`**
+- Works as `@Command`, plus a button in the generated `data/<ns>/dialog/about.json`.
+- Also emits the Smithed Data Pack Menu files: `smithed:data_packs` dialog, `#smithed:data_packs`, `#minecraft:pause_screen_additions`.
+- The label is hex-encoded into the handler name (`__mcfc_command_<cmd>__menu_<hex>`) and decoded in `discover_bukkit_runtime`.
+- Code: `emit_pack_menu`. Test: `menu_commands_join_the_smithed_data_pack_menu`.
+
+**Actionbar coordination**
+- `sendActionBar(msg[, "override"|"notification"|"conditional"|"persistent"])`. The default is `"notification"`.
+- Call sites go through `actionbar_command` → `generated/actionbar/show {json:[…],priority:"…"}`.
+- If the Smithed Actionbar library is loaded (`$default.freeze smithed.actionbar.const` set), messages go to `#smithed.actionbar:message`.
+- Otherwise a port of its algorithm runs on the same objectives. Its tick has a gametime guard, so several MCFC packs only tick once.
+- An empty `#smithed.actionbar:message` tag keeps the call valid without the library.
+- Covered by sim program `actionbar` and test `actionbar_priorities_are_checked`.
+
+**Wildcard imports** (`import a.b.*;`)
+- The parser sets the alias to `"*"`.
+- The resolver's `add_import` expands it to every public function and record.
+- Wildcards are applied after named imports. Clashes are skipped, as in Java, where local and named imports win.
+- Test: `wildcard_imports_bring_in_public_names`.
+
+**Imports inside `$(...)`**
+- `Resolver::resolve_placeholders` (modules.rs) lexes each placeholder.
+- It resolves `a.b(`-style call chains that don't start at a local, and rewrites them to their full name `util::twice(`.
+- The parser now accepts `a::b` as one identifier.
+- Covered by sim program `placeholders`.
+
+**Pack simulator** (`mcsim.py`)
+- tellraw and actionbar lines render as plain text.
+- One pretend player: `execute as @a/@s`, and `@a[scores={o=r}]` treats the pretend player as `@s`.
+- `function id {inline args}`.
+- Compound path filters `a{k:v}`.
+- SNBT escapes `\n` and `\t`.
+- `dialog` lines are traced.
+
+**Recursion** (direct and mutual)
+- `types::analyze_calls`: Tarjan SCCs. A group is 2+ functions in a cycle, or one that calls itself. `recursion_groups` (function to group id) rides on `TypedProgram`/`IrProgram`; call depths are longest paths with groups condensed.
+- Calls inside a group stay at the caller's depth. Args go into fresh temps first, then a per-site `__call_N` function runs: save frame, set params, call, copy return to `$rec_ret`/`rec_ret`, restore frame. It is its own function because the callee shares the caller's `__ctrl`, which would skip guarded lines after the call.
+- `emit_frame_stack` (end of `generate`) writes `<fn>__d<d>__save/restore`: every `$d<d>_<fn>_*` score in the pack plus `frames.d<d>.<fn>`, pushed onto `<ns>:runtime stack`.
+- `validate_suspending_calls` rejects recursive functions that can pause. Test: `rejects_sleep_in_recursion`.
+- Sim program `recursion`: factorial, fibonacci, isEven/isOdd, gcd (swapped params), a String and a List function.
+- Docs: limitations.md and statements.md; also removed the stale "no `*` imports" and "`$(...)` ignores imports" limitations.
+
+**String escaping in `+`**
+- `call_macro(..., escape_strings)`: string-building macros (`compile_interpolated_string`) pass each `String` placeholder through `generated/escape_string` first.
+- It copies the value into `escape.c.v` and reads `escape.c` back with `set string`: the game's own SNBT printer escapes it. If the value's first quote is `"`, the printer uses `'...'`, so `escape_string_single` puts a `'` in front and prints again.
+- Costs about 6 commands per String operand; budgets rose for colors, strings, strtools and others.
+- `mcsim.py` now prints SNBT like the game (quote choice, control-character escapes) and reads non-string `set string` sources as SNBT. The control-character escapes are assumed from 1.21.5, unverified in 26.3.
+- Sim program `strescape`. `$(...)` in `mcf(...)` is still pasted raw, by design.
+
+### Still open in TASKS.md
+- Live-test the per-player sidebar on a 26.3 server with the agent attached. This needs the user.
+- Unverified in-game:
+  - dialogs, the `@Menu` pause-screen entry, and actionbar priorities
+  - `nbt` text components
+  - block predicate state matching
+  - marker coordinates
+  - string escaping (`set string` on a compound, SNBT quote choice)

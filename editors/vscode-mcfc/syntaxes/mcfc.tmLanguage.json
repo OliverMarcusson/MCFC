@@ -101,7 +101,7 @@
       "patterns": [
         {
           "name": "meta.annotation.mcfc",
-          "match": "(@)(EventHandler|Command|Every|After|PlayerState|EntityState|Book|[A-Za-z_][A-Za-z0-9_]*)\\b(?:\\s*\\(\\s*([A-Z][A-Z0-9_]*)\\s*\\))?",
+          "match": "(@)(EventHandler|Command|Menu|Every|After|Test|PlayerState|EntityState|Book|[A-Za-z_][A-Za-z0-9_]*)\\b(?:\\s*\\(\\s*([A-Z][A-Z0-9_]*)\\s*\\))?",
           "captures": {
             "1": { "name": "punctuation.definition.annotation.mcfc" },
             "2": { "name": "storage.type.annotation.mcfc" },
@@ -165,7 +165,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcfc",
-          "match": "\\b(?:if|else|switch|case|default|yield|while|do|for|break|continue|return|async)\\b"
+          "match": "\\b(?:if|else|switch|case|default|yield|while|do|for|break|continue|return|async|assert)\\b"
         },
         {
           "name": "keyword.other.module.mcfc",
@@ -251,6 +251,14 @@
         {
           "name": "keyword.operator.increment.mcfc",
           "match": "\\+\\+|--"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.mcfc",
+          "match": "<<=|>>=|[&|^]="
+        },
+        {
+          "name": "keyword.operator.bitwise.mcfc",
+          "match": "<<|>>|&|\\||\\^"
         },
         {
           "name": "keyword.operator.comparison.mcfc",

@@ -44,11 +44,23 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | --- | --- |
 | `sendMessage(msg)` | `tellraw` |
 | `sendTitle(msg)` | `title ... title` |
-| `sendActionBar(msg)` | `title ... actionbar` |
+| `sendActionBar(msg)`, `sendActionBar(msg, priority)` | `title ... actionbar`, [coordinated](#action-bar-priorities) |
 | `playSound(sound, category)` | `playsound` |
 | `stopSound(category, sound)` | `stopsound` |
 
 `msg` is a `String` or a [`Component`](./builders#text-builders) for formatted text. Strings can use `$(...)` to insert values.
+
+### Action bar priorities
+
+Packs share one action bar, so `sendActionBar` follows the [Smithed Actionbar](https://docs.smithed.dev/libraries/actionbar/) priorities: `"override"`, `"notification"` (the default), `"conditional"` for a HUD shown while something is true, and `"persistent"` for one that is always on. A shown message stays for 20 ticks, and until then only a message of the same or higher priority replaces it. An `"override"` can't be replaced.
+
+```mcfc
+void hud(Player player) {
+    player.sendActionBar("Holding a compass", "conditional");
+}
+```
+
+When the Smithed Actionbar pack is installed, messages go through it. Without it, MCFC runs the same rules on the same scoreboards, so MCFC packs still coordinate with each other.
 
 ```mcfc
 void celebrate(Player player) {
@@ -77,12 +89,12 @@ void showScore(Player player) {
 
 | Call | Does |
 | --- | --- |
-| `Sidebar.setTitle(text)` | Sets the title. |
+| `Sidebar.setTitle(text)` | Sets the title. `text` is a `String` or `Component`. |
 | `Sidebar.setLine(line, text)` | Sets or replaces a line. |
 | `Sidebar.removeLine(line)` | Removes a line. |
 | `Sidebar.clear()` | Removes every line. |
 
-Players also have `setSidebarTitle(text)`, `setSidebarLine(line, text)`, `removeSidebarLine(line)` and `clearSidebar()` for a sidebar only that player sees. <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." /> Per-player sidebars need [`mcfd-agent`](/runtime/mcfd-agent) and `[helper.agent] enabled = true`; without it, the same calls change the shared `Sidebar`. A player's sidebar replaces the shared one on their screen and comes back when they rejoin. `clearSidebar()` removes it. Text is plain; formatting codes are not supported yet.
+Players also have `setSidebarTitle(text)`, `setSidebarLine(line, text)`, `removeSidebarLine(line)` and `clearSidebar()` for a sidebar only that player sees. <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." /> Per-player sidebars need [`mcfd-agent`](/runtime/mcfd-agent) and `[helper.agent] enabled = true`; without it, the same calls change the shared `Sidebar`. A player's sidebar replaces the shared one on their screen and comes back when they rejoin. `clearSidebar()` removes it. `text` is a `String` or a [`Component`](./builders#text-builders) for colors and styles.
 
 The shared sidebar is the `mcfc_sidebar` objective with a blank number format. Line `n` is the fake player `mcfc.line.n` with score `-n`. It's displayed when the pack loads, so another pack displaying its own sidebar objective replaces it.
 

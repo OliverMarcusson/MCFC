@@ -26,7 +26,13 @@ try {
             $file = if ($classifier) { "$artifact-$version-$classifier.jar" } else { "$artifact-$version.jar" }
             "$prism\libraries\$($group -replace '\.', '\')\$artifact\$version\$file"
         } | Where-Object { Test-Path -LiteralPath $_ }) | Set-Content $classpath
-        & $java25 -cp "$agent;$classes" dev.mcfc.agent.McfdHooksSelfTest $classpath
+        # The game's logger writes logs/ to the working directory.
+        Push-Location $classes
+        try {
+            & $java25 -cp "$agent;$classes" dev.mcfc.agent.McfdHooksSelfTest $classpath
+        } finally {
+            Pop-Location
+        }
         if ($LASTEXITCODE -ne 0) { throw 'sidebar packet check failed' }
     }
 } finally {

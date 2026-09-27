@@ -1140,7 +1140,10 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
         "pow" => Some("Math.pow(x: float, exponent: float) -> float".to_string()),
         "EntityData" => Some("new EntityData(id: String)".to_string()),
         "ItemStack" => Some("new ItemStack(id: String)".to_string()),
-        "block" => Some("Block.of(position: String) -> Block".to_string()),
+        "block" => Some(
+            "Block.of(position: String) -> Block, Block.of(x: int, y: int, z: int) -> Block"
+                .to_string(),
+        ),
         "BlockData" => Some("new BlockData(id: String)".to_string()),
         "sleep" => Some("sleep(seconds: int) -> void".to_string()),
         "sleepTicks" => Some("sleepTicks(ticks: int) -> void".to_string()),
@@ -1519,6 +1522,17 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
         ),
         "Selector" => Some("```mcfc\nSelector.of(value: String) -> Selector\n```"),
+        "Log" => Some(
+            "```mcfc
+Log.debug(msg: String)
+Log.info(msg: String)
+Log.warn(msg: String)
+Log.error(msg: String)
+Log.dump(value)
+Log.setLevel(level: String)
+```
+Shown to players tagged `mcfc.log`.",
+        ),
         "Sidebar" => Some(
             "```mcfc\nSidebar.setTitle(text: String)\nSidebar.setLine(line: int, text: String)\nSidebar.removeLine(line: int)\nSidebar.clear()\n```\nThe sidebar every player sees. Line 0 is on top.",
         ),
@@ -1542,7 +1556,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             "```mcfc\nString.isEmpty() -> boolean\nList<T>.isEmpty() -> boolean\nMap<String, T>.isEmpty() -> boolean\nOptional<T>.isEmpty() -> boolean\n```",
         ),
         "hasData" => Some("```mcfc\nhasData(value: storage_path) -> boolean\n```"),
-        "Block" => Some("```mcfc\nBlock.of(position: String) -> Block\n```"),
+        "Block" => Some(
+            "```mcfc\nBlock.of(position: String) -> Block\nBlock.of(x: int, y: int, z: int) -> Block\n```",
+        ),
         "at" => Some(
             "```mcfc\nat(anchor: Entity, value: Selector|Entity|Block) -> Selector|Entity|Block\n\nat(anchor) {\n    ...\n}\n```",
         ),
@@ -1615,9 +1631,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
             Some("```mcfc\nentity.sendMessage(message: String|Component) -> void\n```")
         }
         "sendTitle" => Some("```mcfc\nentity.sendTitle(message: String|Component) -> void\n```"),
-        "sendActionBar" => {
-            Some("```mcfc\nentity.sendActionBar(message: String|Component) -> void\n```")
-        }
+        "sendActionBar" => Some(
+            "```mcfc\nentity.sendActionBar(message: String|Component, priority?: String) -> void\n```\nPriority is \"override\", \"notification\" (default), \"conditional\" or \"persistent\", as in Smithed Actionbar.",
+        ),
         "debug" => Some("```mcfc\ndebug(message: String) -> void\n```"),
         "debugMarker" => Some(
             "```mcfc\nblock.debugMarker(label: String) -> void\nblock.debugMarker(label: String, markerBlock: String) -> void\n```",
@@ -2259,8 +2275,8 @@ fn static_completion_items() -> Vec<CompletionItem> {
     let mut items = Vec::new();
     for keyword in [
         "var", "return", "if", "else", "switch", "case", "default", "while", "for", "break",
-        "continue", "async", "new", "mc", "mcf", "true", "false", "record", "enum", "import",
-        "public", "final", "static", "do", "yield",
+        "continue", "async", "assert", "new", "mc", "mcf", "true", "false", "record", "enum",
+        "import", "public", "final", "static", "do", "yield",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -2312,6 +2328,22 @@ fn static_completion_items() -> Vec<CompletionItem> {
             "@Every",
             "Repeat a task every positive number of ticks",
             "@Every(ticks = ${1:20})\nvoid ${2:tick}() {\n\t$0\n}",
+        ),
+        (
+            "@Menu",
+            "A command that is also a button in the pause-screen data pack menu",
+            "@Menu(\"${1:Settings}\")
+void ${2:settings}(Player player) {
+	$0
+}",
+        ),
+        (
+            "@Test",
+            "A test run by /function <namespace>:test",
+            "@Test
+void ${1:test}() {
+	assert ${2:true};
+}",
         ),
         (
             "record ...",
@@ -2975,6 +3007,26 @@ fn string_method_items() -> Vec<CompletionItem> {
             "String.substring(start: int, end: int) -> String",
             "substring(${1:start}, ${2:end})",
         ),
+        (
+            "replace",
+            "String.replace(target: String, replacement: String) -> String",
+            "replace(${1:target}, ${2:replacement})",
+        ),
+        (
+            "split",
+            "String.split(separator: String) -> List<String>",
+            "split(${1:separator})",
+        ),
+        (
+            "toUpperCase",
+            "String.toUpperCase() -> String",
+            "toUpperCase()",
+        ),
+        (
+            "toLowerCase",
+            "String.toLowerCase() -> String",
+            "toLowerCase()",
+        ),
         ("toString", "String.toString() -> String", "toString()"),
     ]
     .into_iter()
@@ -3540,6 +3592,20 @@ fn block_ref_items() -> Vec<CompletionItem> {
             "getLightLevel()",
         ),
         ("getBiome", "block.getBiome() -> String", "getBiome()"),
+        ("getType", "block.getType() -> String", "getType()"),
+        (
+            "getState",
+            "block.getState(name: String) -> String",
+            "getState(${1:\"facing\"})",
+        ),
+        (
+            "copyTo",
+            "block.copyTo(destination: Block) -> void",
+            "copyTo(${1:Block.of(\"~ ~1 ~\")})",
+        ),
+        ("getX", "block.getX() -> int", "getX()"),
+        ("getY", "block.getY() -> int", "getY()"),
+        ("getZ", "block.getZ() -> int", "getZ()"),
         (
             "inBiome",
             "block.inBiome(getBiome: String) -> boolean",

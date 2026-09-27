@@ -1970,12 +1970,16 @@ int round;
 Entity camera;
 @PlayerState
 Entity seatCamera;
+@WorldState
+GameMode defaultMode;
 
 void main() {
     var player = (Player) Selector.of("@p").getFirst();
     var all = Selector.of("@a");
     player.setGameMode(GameMode.CREATIVE);
     GameMode mode = player.getGameMode();
+    defaultMode = GameMode.ADVENTURE;
+    player.setGameMode(defaultMode);
     all.setLevel(3);
     player.giveExp(10);
     all.sendTitle("Go", "round 1", 5, 40, 5);

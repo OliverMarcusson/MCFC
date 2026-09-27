@@ -904,7 +904,11 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         );
     }
     let mut normalized = program.clone();
-    for state in &mut normalized.player_states {
+    for state in normalized
+        .player_states
+        .iter_mut()
+        .chain(normalized.world_states.iter_mut())
+    {
         resolve_enum_type(&mut state.ty, &struct_defs);
     }
     for def in &mut normalized.structs {
@@ -1010,7 +1014,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
         types.insert(path_name, state.ty.clone());
     }
     let mut world_state_types = BTreeMap::new();
-    for state in &program.world_states {
+    for state in &normalized.world_states {
         if !matches!(
             state.ty,
             Type::Int
@@ -1020,6 +1024,7 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 | Type::Struct(_)
                 | Type::Dict(_)
                 | Type::Array(_)
+                | Type::Enum(_)
                 | Type::EntityRef
                 | Type::PlayerRef
         ) {

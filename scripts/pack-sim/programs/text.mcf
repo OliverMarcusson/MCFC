@@ -1,0 +1,26 @@
+// std.text: fluent components and runtime MiniMessage, printed as SNBT.
+import std.text;
+
+void main() {
+    var a = text.append(text.colored("a", "gold"), text.plain("b"));
+    var b = text.append(a, text.plain("c"));
+    mcf("say a $(a)");
+    mcf("say b $(b)");
+    var e = text.decorate(text.plain("x"), "bold");
+    e = text.clickEvent(e, text.runCommand("/help"));
+    e = text.hoverEvent(e, text.plain("tip"));
+    mcf("say e $(e)");
+    mcf("say m1 $(text.parseMiniMessage(\"<red>Hi <b>there</b>!\"))");
+    mcf("say m2 $(text.parseMiniMessage(\"<click:run_command:/op me>x</click> <#00ff00>g<reset>n<br>\"))");
+    mcf("say m3 $(text.parseMiniMessage(\"a < b <nope> <!italic>c\"))");
+    var name = "Ann";
+    var f = Component.text("Hi ", NamedTextColor.GOLD)
+        .append(Component.text(name).decorate(TextDecoration.BOLD))
+        .clickEvent(ClickEvent.openUrl("https://x.y"))
+        .color(TextColor.color(255, 0, 0))
+        .decoration(TextDecoration.ITALIC, false);
+    mcf("say f $(f)");
+    List<Component> kids = f.children();
+    mcf("say k $(kids.size()) $(Component.empty().children(kids).appendSpace())");
+    mcf("say l $(MiniMessage.miniMessage().deserialize(\"<green>a<hover:show_text:'b'>c\"))");
+}

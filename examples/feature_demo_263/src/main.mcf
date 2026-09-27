@@ -66,6 +66,8 @@ void runTests() {
     sleepTicks(1);
     gaps();
     sleepTicks(1);
+    adventure();
+    sleepTicks(1);
     floatSortTest(3000);
     sortTest(1000, 0);
     sortTest(5000, 3);
@@ -340,6 +342,26 @@ void floatSortTest(int size) {
 
 // Player, world, team, inventory, region and timer helpers. Each check puts
 // back what it changes.
+// Look at chat too: gold/bold line with hover + click, a gradient line, and
+// the typed line with its <click> left as text.
+void adventure() {
+    var p = (Player) Selector.of("@a[limit=1]").getFirst();
+    var c = Component.text("MCFC ", NamedTextColor.GOLD)
+        .append(Component.text("adventure").decorate(TextDecoration.BOLD))
+        .hoverEvent(HoverEvent.showText(Component.text("hover works")))
+        .clickEvent(ClickEvent.suggestCommand("/say clicked"));
+    List<Component> kids = c.children();
+    check("adventure_children", kids.size() == 1, "" + kids.size());
+    p.sendMessage(c);
+    p.sendMessage(MiniMessage.miniMessage().deserialize(
+        "<gradient:gold:red>MiniMessage gradient</gradient> <click:suggest_command:'/say mm'><u>click me</u>"));
+    var input = "<red>player <b>input</b> <click:run_command:/op @s>x";
+    var typed = MiniMessage.miniMessage().deserialize(input);
+    List<Component> runs = typed.children();
+    check("minimessage_runtime", runs.size() == 3, "" + runs.size());
+    p.sendMessage(typed);
+}
+
 void gaps() {
     var p = (Player) Selector.of("@a[limit=1]").getFirst();
     var before = demoRuns;

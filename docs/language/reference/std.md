@@ -311,6 +311,10 @@ Shapes replace what's there, like `fill`.
 
 The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`, `split`, `toUpperCase` and `toLowerCase` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so they cost a few commands per character. `startsWith`, `endsWith`, `find` and `contains` never paste the text into a command, so `"` and `\` are safe. The others build new strings by joining, which has the [joining limits](./types#string).
 
+## `std.text`
+
+The functions behind the [Adventure API](./builders#adventure-api) (`Component.text(...)`, `c.append(...)`, `ClickEvent.*`) and [MiniMessage](./builders#minimessage). Use those forms. `text.parseMiniMessage(s)` is the runtime parser for text players type. It applies style tags only.
+
 ## `std.vec`
 
 `Vec3` is a record of three floats, for velocities, directions and positions. Import the record and the module:

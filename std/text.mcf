@@ -1,0 +1,301 @@
+// Adventure-style text: `Component.text(...)`, `.color(...)`, `.append(...)`,
+// click and hover events, and MiniMessage. Methods return a changed copy and
+// leave the receiver alone, like Adventure's immutable components.
+
+public record ClickEvent(String action, String value) {}
+
+public Component plain(String content) {
+    return new Component(content);
+}
+
+public Component colored(String content, String color) {
+    var out = new Component(content);
+    out.color = color;
+    return out;
+}
+
+public Component empty() {
+    return new Component("");
+}
+
+public Component newline() {
+    return new Component("\n");
+}
+
+public Component space() {
+    return new Component(" ");
+}
+
+public Component translatable(String key) {
+    var out = new Component();
+    out.translate = key;
+    return out;
+}
+
+public Component translatableWith(String key, List<Component> args) {
+    var out = translatable(key);
+    out.with = args;
+    return out;
+}
+
+// `color` is a name such as "red" or "#rrggbb".
+public Component color(Component c, String color) {
+    var out = c;
+    out.color = color;
+    return out;
+}
+
+public Component decorate(Component c, String decoration) {
+    return decoration(c, decoration, true);
+}
+
+// "bold", "italic", "underlined", "strikethrough" or "obfuscated".
+public Component decoration(Component c, String decoration, boolean on) {
+    var out = c;
+    if (decoration == "bold") {
+        out.bold = on;
+    } else if (decoration == "italic") {
+        out.italic = on;
+    } else if (decoration == "underlined") {
+        out.underlined = on;
+    } else if (decoration == "strikethrough") {
+        out.strikethrough = on;
+    } else if (decoration == "obfuscated") {
+        out.obfuscated = on;
+    }
+    return out;
+}
+
+// The child inherits `c`'s style, as in Adventure.
+public Component append(Component c, Component child) {
+    var out = c;
+    List<Component> parts = c.extra;
+    parts.add(child);
+    out.extra = parts;
+    return out;
+}
+
+public Component appendNewline(Component c) {
+    return append(c, newline());
+}
+
+public Component appendSpace(Component c) {
+    return append(c, space());
+}
+
+public Component withChildren(Component c, List<Component> children) {
+    var out = c;
+    out.extra = children;
+    return out;
+}
+
+public List<Component> children(Component c) {
+    List<Component> parts = c.extra;
+    return parts;
+}
+
+public Component insertion(Component c, String text) {
+    var out = c;
+    out.insertion = text;
+    return out;
+}
+
+public Component font(Component c, String font) {
+    var out = c;
+    out.font = font;
+    return out;
+}
+
+public ClickEvent runCommand(String command) {
+    return new ClickEvent("run_command", command);
+}
+
+public ClickEvent suggestCommand(String command) {
+    return new ClickEvent("suggest_command", command);
+}
+
+public ClickEvent openUrl(String url) {
+    return new ClickEvent("open_url", url);
+}
+
+public ClickEvent copyToClipboard(String text) {
+    return new ClickEvent("copy_to_clipboard", text);
+}
+
+public Component clickEvent(Component c, ClickEvent event) {
+    var out = c;
+    var action = event.action();
+    out.click_event.action = action;
+    if (action == "open_url") {
+        out.click_event.url = event.value();
+    } else if (action == "copy_to_clipboard") {
+        out.click_event.value = event.value();
+    } else {
+        out.click_event.command = event.value();
+    }
+    return out;
+}
+
+public Component hoverEvent(Component c, Component text) {
+    var out = c;
+    out.hover_event.action = "show_text";
+    out.hover_event.value = text;
+    return out;
+}
+
+public String hexColor(int rgb) {
+    return std.color.toHex(rgb);
+}
+
+public String rgbColor(int red, int green, int blue) {
+    return std.color.toHex(std.color.rgb(red, green, blue));
+}
+
+// MiniMessage for text players type. Only colors, decorations, <reset> and
+// <newline> apply; any other tag (click, hover, ...) stays as plain text, so
+// player input can't make others run commands. String literals are parsed by
+// the compiler instead and support every tag.
+// ponytail: no `\<` escapes; add when players need a literal tag.
+public Component parseMiniMessage(String s) {
+    List<Component> runs = List.of();
+    List<String> stack = List.of();
+    var rest = s;
+    var buf = "";
+    while (rest.length() > 0) {
+        var lt = std.str.find(rest, "<");
+        if (lt == -1) {
+            buf = buf + rest;
+            rest = "";
+            continue;
+        }
+        buf = buf + rest.substring(0, lt);
+        var after = rest.substring(lt + 1);
+        var gt = std.str.find(after, ">");
+        var tag = "";
+        if (gt != -1) {
+            tag = styleTag(after.substring(0, gt));
+        }
+        if (tag == "") {
+            buf = buf + "<";
+            rest = after;
+            continue;
+        }
+        if (buf != "") {
+            runs.add(styled(buf, stack));
+            buf = "";
+        }
+        rest = after.substring(gt + 1);
+        if (tag == "reset") {
+            stack.clear();
+        } else if (tag == "newline") {
+            runs.add(styled("\n", stack));
+        } else if (tag.charAt(0) == "/") {
+            var name = tag.substring(1);
+            var i = stack.size() - 1;
+            while (i >= 0) {
+                if (stack[i] == name) {
+                    stack.remove(i);
+                    i = -1;
+                }
+                i = i - 1;
+            }
+        } else {
+            stack.add(tag);
+        }
+    }
+    if (buf != "") {
+        runs.add(styled(buf, stack));
+    }
+    return withChildren(empty(), runs);
+}
+
+// The tag's canonical name ("red", "#ff0000", "bold", "!bold", "/bold",
+// "reset", "newline"), or "" if it isn't a style tag.
+String styleTag(String raw) {
+    if (raw.length() == 0) {
+        return "";
+    }
+    if (raw.charAt(0) == "/") {
+        var name = styleTag(raw.substring(1));
+        if (name == "" || name == "reset" || name == "newline") {
+            return "";
+        }
+        return "/" + name;
+    }
+    if (raw.charAt(0) == "!") {
+        var name = decorationName(raw.substring(1));
+        if (name == "") {
+            return "";
+        }
+        return "!" + name;
+    }
+    var tag = std.str.toLowerCase(raw);
+    if (tag == "reset" || tag == "newline" || tag == "br") {
+        if (tag == "br") {
+            return "newline";
+        }
+        return tag;
+    }
+    var decoration = decorationName(tag);
+    if (decoration != "") {
+        return decoration;
+    }
+    for (String prefix : List.of("color:", "colour:", "c:")) {
+        if (std.str.startsWith(tag, prefix)) {
+            tag = tag.substring(prefix.length());
+        }
+    }
+    if (isColor(tag)) {
+        return tag;
+    }
+    return "";
+}
+
+String decorationName(String raw) {
+    var tag = std.str.toLowerCase(raw);
+    var names = Map.of(
+        "bold", "bold", "b", "bold",
+        "italic", "italic", "i", "italic", "em", "italic",
+        "underlined", "underlined", "u", "underlined",
+        "strikethrough", "strikethrough", "st", "strikethrough",
+        "obfuscated", "obfuscated", "obf", "obfuscated"
+    );
+    return names.get(tag).orElse("");
+}
+
+boolean isColor(String tag) {
+    if (tag.length() == 7 && tag.charAt(0) == "#") {
+        var i = 1;
+        while (i < 7) {
+            if (!std.str.contains("0123456789abcdef", tag.charAt(i))) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+    for (String name : List.of(
+        "black", "dark_blue", "dark_green", "dark_aqua", "dark_red", "dark_purple",
+        "gold", "gray", "dark_gray", "blue", "green", "aqua", "red",
+        "light_purple", "yellow", "white"
+    )) {
+        if (tag == name) {
+            return true;
+        }
+    }
+    return tag == "grey" || tag == "dark_grey";
+}
+
+Component styled(String content, List<String> stack) {
+    var out = new Component(content);
+    for (String tag : stack) {
+        if (isColor(tag)) {
+            out.color = std.str.replace(tag, "grey", "gray");
+        } else if (tag.charAt(0) == "!") {
+            out = decoration(out, tag.substring(1), false);
+        } else {
+            out = decoration(out, tag, true);
+        }
+    }
+    return out;
+}

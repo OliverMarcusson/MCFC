@@ -1,0 +1,9 @@
+say a {text:"a",color:"gold",extra:[{text:"b"}]}
+say b {text:"a",color:"gold",extra:[{text:"b"},{text:"c"}]}
+say e {text:"x",bold:1,click_event:{action:"run_command",command:"/help"},hover_event:{action:"show_text",value:{text:"tip"}}}
+say m1 {text:"",extra:[{text:"Hi ",color:"red"},{text:"there",color:"red",bold:1},{text:"!",color:"red"}]}
+say m2 {text:"",extra:[{text:"<click:run_command:/op me>x</click> "},{text:"g",color:"#00ff00"},{text:"n"},{text:"\n"}]}
+say m3 {text:"",extra:[{text:"a < b <nope> "},{text:"c",italic:0}]}
+say f {text:"Hi ",color:"#ff0000",extra:[{text:"Ann",bold:1}],click_event:{action:"open_url",url:"https://x.y"},italic:0}
+say k 1 {text:"",extra:[{text:"Ann",bold:1},{text:" "}]}
+say l {text:"",extra:[{text:"a",color:"green"},{text:"c",color:"green",hover_event:{action:"show_text",value:{text:"",extra:[{text:"b"}]}}}]}

@@ -3753,6 +3753,19 @@ fn type_check_builtin_call(
             called_functions,
             diagnostics,
         )),
+        // A MiniMessage literal the parser turned into SNBT.
+        "text_snbt" => match args.first().map(|arg| &arg.kind) {
+            Some(ExprKind::String(snbt)) => Some(builtin_call_expr(
+                "text_snbt",
+                vec![TypedExpr {
+                    kind: TypedExprKind::String(snbt.clone()),
+                    ty: Type::String,
+                    ref_kind: RefKind::Unknown,
+                }],
+                Type::TextDef,
+            )),
+            _ => None,
+        },
         "text" => Some(type_check_text_constructor(
             args,
             expr,
@@ -4797,6 +4810,32 @@ fn type_check_method_call(
         return Some(recheck(
             ExprKind::Call {
                 function: format!("std::player::{std_method}"),
+                args: call_args,
+            },
+            called_functions,
+            diagnostics,
+        ));
+    }
+    // Adventure-style `Component` methods, written in `std/text.mcf`.
+    let text_method = match (method, args.len()) {
+        (
+            "color" | "decorate" | "append" | "appendNewline" | "appendSpace" | "clickEvent"
+            | "hoverEvent" | "insertion" | "font",
+            _,
+        )
+        | ("decoration", 2)
+        | ("children", 0) => Some(method),
+        ("children", 1) => Some("withChildren"),
+        _ => None,
+    };
+    if let Some(text_method) = text_method
+        && receiver.ty == Type::TextDef
+    {
+        let mut call_args = vec![receiver_expr.clone()];
+        call_args.extend(args.iter().cloned());
+        return Some(recheck(
+            ExprKind::Call {
+                function: format!("std::text::{text_method}"),
                 args: call_args,
             },
             called_functions,
@@ -7560,6 +7599,16 @@ fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
     }
     if *expected == Type::Nbt {
         return coerce_expr_to_nbt(expr);
+    }
+    // `List<Component> parts = c.extra;` reads a component's children back.
+    if expr.ty == Type::Nbt
+        && matches!(expected, Type::TextDef) | (*expected == Type::Array(Box::new(Type::TextDef)))
+        && matches!(&expr.kind, TypedExprKind::Path(path) if path.base.ty == Type::TextDef)
+    {
+        return TypedExpr {
+            ty: expected.clone(),
+            ..expr
+        };
     }
     // Java widens `int` to `float` wherever a `float` is expected.
     if *expected == Type::Float && expr.ty == Type::Int {

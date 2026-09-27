@@ -35,7 +35,17 @@ const BUILTIN_CONSTRUCTORS: &[(&str, &str)] = &[
 ];
 
 /// Classes whose static methods MCFC provides.
-const STATIC_CLASSES: &[&str] = &["Math", "Integer", "Float", "String"];
+const STATIC_CLASSES: &[&str] = &[
+    "Math",
+    "Integer",
+    "Float",
+    "String",
+    "Component",
+    "ClickEvent",
+    "HoverEvent",
+    "TextColor",
+    "MiniMessage",
+];
 
 /// `Math` methods. Each becomes a method on the first argument named `Math.<name>`.
 const MATH_METHODS: &[&str] = &[
@@ -46,6 +56,14 @@ const MATH_METHODS: &[&str] = &[
 const MATH_STD_FUNCTIONS: &[&str] = &["atan", "atan2", "asin", "acos"];
 
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
+const TEXT_DECORATIONS: &[&str] = &[
+    "bold",
+    "italic",
+    "underlined",
+    "strikethrough",
+    "obfuscated",
+];
+
 const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
 /// Static classes whose methods are builtins: `Sidebar.setLine(1, "Kills")`
@@ -1529,6 +1547,21 @@ impl Parser {
             } else if self.eat(&TokenKind::Dot) {
                 let span = self.current_span();
                 let field = self.expect_identifier("expected field name after '.'");
+                // `NamedTextColor.RED` is "red", `TextDecoration.BOLD` is "bold".
+                if let ExprKind::Variable(class) = &expr.kind
+                    && let Some(names) = match class.as_str() {
+                        "NamedTextColor" => Some(crate::minimessage::NAMED_COLORS),
+                        "TextDecoration" => Some(TEXT_DECORATIONS),
+                        _ => None,
+                    }
+                {
+                    let name = field.to_lowercase();
+                    if !names.contains(&name.as_str()) {
+                        self.error_at(&format!("unknown constant '{class}.{field}'"), span.clone());
+                    }
+                    expr = string_expr(&name, &span);
+                    continue;
+                }
                 expr = append_path_segment(expr, PathSegment::Field(field), span);
             } else if self.eat(&TokenKind::LeftBracket) {
                 let span = self.current_span();
@@ -1552,6 +1585,9 @@ impl Parser {
         mut args: Vec<Expr>,
         span: Span,
     ) -> Expr {
+        if let Some(expr) = self.adventure_call(&class, method, &mut args, &span) {
+            return expr;
+        }
         let known = match class.as_str() {
             "Math" => MATH_METHODS.contains(&method) || MATH_STD_FUNCTIONS.contains(&method),
             "Integer" => matches!(method, "parseInt" | "toString"),
@@ -1612,6 +1648,80 @@ impl Parser {
             },
             span,
         }
+    }
+
+    /// Adventure's text API (`Component.text`, `ClickEvent.runCommand`,
+    /// `MiniMessage.miniMessage().deserialize`) calls `std.text`.
+    fn adventure_call(
+        &mut self,
+        class: &str,
+        method: &str,
+        args: &mut Vec<Expr>,
+        span: &Span,
+    ) -> Option<Expr> {
+        if !matches!(
+            class,
+            "Component" | "ClickEvent" | "HoverEvent" | "TextColor" | "MiniMessage"
+        ) {
+            return None;
+        }
+        let function = match (class, method, args.len()) {
+            ("Component", "text", 1) => "plain",
+            ("Component", "text", 2) => "colored",
+            ("Component", "empty" | "newline" | "space", 0) => method,
+            ("Component", "translatable", 1) => "translatable",
+            ("Component", "translatable", 2) => "translatableWith",
+            ("ClickEvent", "runCommand" | "suggestCommand" | "openUrl" | "copyToClipboard", 1) => {
+                method
+            }
+            ("TextColor", "color", 1) => "hexColor",
+            ("TextColor", "color", 3) => "rgbColor",
+            // Hover text is the component itself, and colors are strings.
+            ("HoverEvent", "showText", 1) | ("TextColor", "fromHexString", 1) => {
+                return Some(args.remove(0));
+            }
+            // `.deserialize(...)` on this comes back here as `MiniMessage.deserialize`.
+            ("MiniMessage", "miniMessage", 0) => {
+                return Some(Expr {
+                    kind: ExprKind::Variable("MiniMessage".to_string()),
+                    span: span.clone(),
+                });
+            }
+            ("MiniMessage", "deserialize", 1) => match &args[0].kind {
+                ExprKind::String(source) if source.contains("$(") => {
+                    self.error_at(
+                        "a MiniMessage literal can't use $(...); append the value with .append(Component.text(x))",
+                        span.clone(),
+                    );
+                    "parseMiniMessage"
+                }
+                ExprKind::String(source) => {
+                    return Some(call(
+                        "text_snbt",
+                        vec![string_expr(&crate::minimessage::to_snbt(source), span)],
+                        span,
+                    ));
+                }
+                _ => "parseMiniMessage",
+            },
+            _ => {
+                self.error_at(
+                    &format!(
+                        "unknown method '{class}.{method}' with {} arguments",
+                        args.len()
+                    ),
+                    span.clone(),
+                );
+                "empty"
+            }
+        };
+        Some(Expr {
+            kind: ExprKind::Call {
+                function: format!("std::text::{function}"),
+                args: std::mem::take(args),
+            },
+            span: span.clone(),
+        })
     }
 
     fn parse_call_args(&mut self) -> Vec<Expr> {

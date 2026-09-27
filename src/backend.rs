@@ -735,7 +735,7 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
                 };
                 let magnitude = step as f64 / 10000.0;
                 effects.push(format!(
-                    "{{\"requirements\":{{\"condition\":\"minecraft:value_check\",\"value\":{{\"type\":\"minecraft:score\",\"target\":{{\"type\":\"minecraft:fixed\",\"name\":\"{score}_{bit}\"}},\"score\":\"mcfc\"}},\"range\":1}},\"effect\":{{\"type\":\"minecraft:apply_impulse\",\"direction\":{direction},\"coordinate_scale\":[1,1,1],\"magnitude\":{magnitude}}}}}"
+                    "{{\"requirements\":{{\"type\":\"minecraft:value_check\",\"value\":{{\"type\":\"minecraft:score\",\"target\":{{\"type\":\"minecraft:fixed\",\"name\":\"{score}_{bit}\"}},\"score\":\"mcfc\"}},\"range\":1}},\"effect\":{{\"type\":\"minecraft:apply_impulse\",\"direction\":{direction},\"coordinate_scale\":[1,1,1],\"magnitude\":{magnitude}}}}}"
                 ));
             }
         }
@@ -750,7 +750,7 @@ execute if score @s mcfc_food_now = @s mcfc_food_goal run scoreboard players set
                 "execute if entity @s[gamemode=survival] run scoreboard players set #impulse_mode mcfc 1",
                 "execute if entity @s[gamemode=adventure] run scoreboard players set #impulse_mode mcfc 2",
                 "execute if entity @s[gamemode=creative] run scoreboard players set #impulse_mode mcfc 3",
-                "execute if score #impulse_mode mcfc matches 3 if predicate {condition:\"minecraft:entity_properties\",entity:\"this\",predicate:{flags:{is_on_ground:false,is_flying:false}}} run scoreboard players set #impulse_mode mcfc 4",
+                "execute if score #impulse_mode mcfc matches 3 if predicate {type:\"minecraft:entity_properties\",entity:\"this\",predicate:{flags:{is_on_ground:false,is_flying:false}}} run scoreboard players set #impulse_mode mcfc 4",
                 "execute if score #impulse_mode mcfc matches 1..3 run gamemode spectator",
                 "execute if score #impulse_mode mcfc matches 4 run gamemode adventure",
                 "execute if score #impulse_mode mcfc matches 1 run gamemode survival",
@@ -3411,8 +3411,18 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
+                | Type::TextDef
                 | Type::Nbt
         ) {
+            // Component fields are optional; a missing one reads as missing,
+            // not as whatever the slot held from the last call.
+            if path.base.ty == Type::TextDef && path.ty == Type::Nbt {
+                lines.push(format!(
+                    "data remove storage {}:runtime {}",
+                    self.namespace,
+                    target.storage_path()
+                ));
+            }
             let path_text = self.render_storage_read_path(function, depth, path, &base_slot, lines);
             self.compile_storage_read_from_path(path_text, &path.ty, target, lines);
             return;
@@ -4327,7 +4337,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
         if let Some(key) = method.strip_prefix("input_") {
             let predicate = format!("data/{ns}/predicate/mcfc_input_{key}.json");
             self.files.insert(predicate, format!(
-                "{{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":{{\"type_specific\":{{\"type\":\"minecraft:player\",\"input\":{{\"{key}\":true}}}}}}}}"
+                "{{\"type\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":{{\"type_specific\":{{\"type\":\"minecraft:player\",\"input\":{{\"{key}\":true}}}}}}}}"
             ));
             lines.push(format!(
                 "scoreboard players set {} mcfc 0",
@@ -6236,6 +6246,16 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     self.namespace,
                     target.storage_path()
                 ));
+                true
+            }
+            "text_snbt" => {
+                if let Some(IrExprKind::String(snbt)) = args.first().map(|arg| &arg.kind) {
+                    lines.push(format!(
+                        "data modify storage {}:runtime {} set value {snbt}",
+                        self.namespace,
+                        target.storage_path()
+                    ));
+                }
                 true
             }
             "text" => {

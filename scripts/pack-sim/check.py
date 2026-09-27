@@ -37,6 +37,7 @@ BUDGET = {
     "stdlib2": 1188,
     "strings": 119,
     "switchy": 68,
+    "text": 13801,
     "timed": 392,
     "trig": 1426,
     "nested": 78,

@@ -2632,6 +2632,83 @@ fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
                 "join(${1:separator}, ${2:parts})",
             ),
         ],
+        "Component" => &[
+            (
+                "text",
+                "Component.text(s, color?) -> Component",
+                "text(${1:s})",
+            ),
+            ("empty", "Component.empty() -> Component", "empty()"),
+            ("newline", "Component.newline() -> Component", "newline()"),
+            ("space", "Component.space() -> Component", "space()"),
+            (
+                "translatable",
+                "Component.translatable(key, args?) -> Component",
+                "translatable(${1:key})",
+            ),
+        ],
+        "ClickEvent" => &[
+            (
+                "runCommand",
+                "ClickEvent.runCommand(command)",
+                "runCommand(${1:command})",
+            ),
+            (
+                "suggestCommand",
+                "ClickEvent.suggestCommand(command)",
+                "suggestCommand(${1:command})",
+            ),
+            ("openUrl", "ClickEvent.openUrl(url)", "openUrl(${1:url})"),
+            (
+                "copyToClipboard",
+                "ClickEvent.copyToClipboard(text)",
+                "copyToClipboard(${1:text})",
+            ),
+        ],
+        "HoverEvent" => &[(
+            "showText",
+            "HoverEvent.showText(text: Component)",
+            "showText(${1:text})",
+        )],
+        "TextColor" => &[
+            (
+                "color",
+                "TextColor.color(rgb) or color(r, g, b) -> String",
+                "color(${1:rgb})",
+            ),
+            (
+                "fromHexString",
+                "TextColor.fromHexString(hex) -> String",
+                "fromHexString(${1:hex})",
+            ),
+        ],
+        "MiniMessage" => &[(
+            "miniMessage",
+            "MiniMessage.miniMessage().deserialize(text) -> Component",
+            "miniMessage().deserialize(${1:text})",
+        )],
+        "NamedTextColor" | "TextDecoration" => {
+            let names = if name == "NamedTextColor" {
+                crate::minimessage::NAMED_COLORS
+            } else {
+                &[
+                    "bold",
+                    "italic",
+                    "underlined",
+                    "strikethrough",
+                    "obfuscated",
+                ]
+            };
+            return Some(
+                names
+                    .iter()
+                    .map(|n| {
+                        let constant = n.to_uppercase();
+                        snippet_item(&constant, CompletionItemKind::CONSTANT, name, &constant)
+                    })
+                    .collect(),
+            );
+        }
         _ => return None,
     };
     Some(

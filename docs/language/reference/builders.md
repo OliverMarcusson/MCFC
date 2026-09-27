@@ -104,7 +104,52 @@ void sendPrompt(Player player) {
 }
 ```
 
-Assigning a `Component` into a nested text-component field stores the nested component object directly.
+Assigning a `Component` into a nested text-component field stores the nested component object directly. Reading a field such as `prompt.extra` gives `Nbt`; declare it as `List<Component>` or `Component` to use it as one.
+
+### Adventure API
+
+Paper's Adventure calls work too. Each method returns a changed copy and leaves the component it's called on alone, as in Adventure.
+
+```mcfc
+void greet(Player player, String name) {
+    var message = Component.text("Welcome, ", NamedTextColor.GOLD)
+        .append(Component.text(name).decorate(TextDecoration.BOLD))
+        .clickEvent(ClickEvent.suggestCommand("/msg " + name))
+        .hoverEvent(HoverEvent.showText(Component.text("Click to message")));
+    player.sendMessage(message);
+}
+```
+
+| Call | Result |
+|---|---|
+| `Component.text(s)`, `Component.text(s, color)` | A text component |
+| `Component.empty()`, `newline()`, `space()` | `""`, `"
+"`, `" "` |
+| `Component.translatable(key)`, `translatable(key, args)` | A translated component; `args` is a `List<Component>` |
+| `c.color(color)` | `color` is a `NamedTextColor.RED`-style constant, `TextColor.color(0xff8800)`, `TextColor.color(r, g, b)`, `TextColor.fromHexString("#ff8800")`, or a string such as `"red"` |
+| `c.decorate(d)`, `c.decoration(d, on)` | `d` is `TextDecoration.BOLD`, `ITALIC`, `UNDERLINED`, `STRIKETHROUGH` or `OBFUSCATED` |
+| `c.append(child)`, `c.appendNewline()`, `c.appendSpace()` | Adds a child, which takes `c`'s style |
+| `c.children()`, `c.children(list)` | Reads or replaces the children |
+| `c.clickEvent(e)` | `e` is `ClickEvent.runCommand(cmd)`, `suggestCommand(cmd)`, `openUrl(url)` or `copyToClipboard(text)` |
+| `c.hoverEvent(HoverEvent.showText(text))` | Shows `text` on hover |
+| `c.insertion(text)`, `c.font(id)` | Shift-click insertion text, and the font |
+
+Serializers (`LegacyComponentSerializer`, `PlainTextComponentSerializer`, Gson), `ClickEvent.callback` and `replaceText` aren't supported. They need Java on the server.
+
+### MiniMessage
+
+`MiniMessage.miniMessage().deserialize(text)` turns [MiniMessage](https://docs.advntr.dev/minimessage/format.html) markup into a `Component`.
+
+```mcfc
+void announce(Player player) {
+    player.sendMessage(MiniMessage.miniMessage().deserialize(
+        "<gradient:gold:red>Arena open</gradient> <click:run_command:'/trigger join'><u>join</u>"));
+}
+```
+
+A string literal is parsed by the compiler into one constant component, so it costs one command. It supports colors (`<red>`, `<#ff8800>`, `<color:red>`), decorations and `<!bold>`, `<reset>`, `<newline>`/`<br>`, `<click:...>`, `<hover:show_text:'...'>`, `<gradient:...>`, `<rainbow>`, `<lang:key:args...>`, `<key:...>`, `<insert:...>` and `<font:...>`. `"\\<red>"` writes a literal `<red>`. Unknown tags stay as text. A literal can't use `$(...)`; append the value with `.append(Component.text(x))`.
+
+Any other string, such as text a player typed, is parsed while the pack runs by `std.text.parseMiniMessage`. It only applies colors, decorations, `<reset>` and `<newline>`. Every other tag, including `<click>` and `<hover>`, stays as plain text, so a player's message can't make someone else run a command. It costs a few hundred commands per tag and a few per character, so keep it to chat-length text.
 
 ## Builder-to-NBT Coercion
 

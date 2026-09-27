@@ -52,6 +52,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
     ("team.mcf", include_str!("../std/team.mcf")),
+    ("text.mcf", include_str!("../std/text.mcf")),
     ("time.mcf", include_str!("../std/time.mcf")),
     ("timer.mcf", include_str!("../std/timer.mcf")),
     ("vec.mcf", include_str!("../std/vec.mcf")),

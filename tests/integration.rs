@@ -2060,6 +2060,19 @@ void main() {
 }
 
 #[test]
+fn rejects_interpolated_minimessage_and_unknown_text_constants() {
+    let source = r#"void main() {
+    var name = "a";
+    var c = MiniMessage.miniMessage().deserialize("<red>$(name)");
+    var d = NamedTextColor.PINK;
+}
+"#;
+    let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
+    assert!(rendered.contains("a MiniMessage literal can't use $(...)"));
+    assert!(rendered.contains("unknown constant 'NamedTextColor.PINK'"));
+}
+
+#[test]
 fn for_condition_runs_every_iteration_and_continue_runs_the_update() {
     let source = r#"
 int finish() {

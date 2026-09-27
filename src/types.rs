@@ -4835,9 +4835,14 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
-    // Player actions written in `std/player.mcf`; they take a `Player` or a `Selector`.
+    // Entity actions written in `std/player.mcf`; they take an entity or a `Selector`.
     let std_method = match (method, args.len()) {
-        ("setGameMode" | "setLevel" | "giveExp" | "giveExpLevels", _) => Some(method),
+        (
+            "setGameMode" | "setLevel" | "giveExp" | "giveExpLevels" | "remove" | "spectate"
+            | "stopSpectating",
+            _,
+        ) => Some(method),
+        ("teleport", 3) => Some("teleportFacing"),
         ("sendTitle", 2) => Some("sendTitleSubtitle"),
         ("sendTitle", 5) => Some("sendTitleTimed"),
         _ => None,
@@ -6063,6 +6068,11 @@ fn type_check_method_call(
                 );
             }
             Some(method_call_expr(receiver, method, args, Type::Void))
+        }
+        "isLoaded" => {
+            expect_block_receiver(method, &receiver, expr, diagnostics);
+            expect_arity(method, &args, 0, expr, diagnostics);
+            Some(method_call_expr(receiver, method, args, Type::Bool))
         }
         "is" => {
             expect_block_receiver(method, &receiver, expr, diagnostics);

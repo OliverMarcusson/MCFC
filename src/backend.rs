@@ -5475,6 +5475,24 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 self.compile_builtin_call(function, depth, method, &synthetic, target, lines);
                 return;
             }
+            "isLoaded" => {
+                let receiver_slot =
+                    local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);
+                self.compile_expr_into_slot(function, depth, receiver, &receiver_slot, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(self.block_command(
+                    &receiver_slot,
+                    format!(
+                        "execute if loaded $(pos) run scoreboard players set {} mcfc 1",
+                        target.numeric_name()
+                    ),
+                    true,
+                ));
+                return;
+            }
             "is" => {
                 let receiver_slot =
                     local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);

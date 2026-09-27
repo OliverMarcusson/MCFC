@@ -1575,7 +1575,11 @@ Shown to players tagged `mcfc.log`.",
         "summon" => Some(
             "```mcfc\nsummon(entityId: String) -> Entity\nsummon(entityId: String, data: Nbt) -> Entity\nsummon(spec: EntityData) -> Entity\nblock.summon(entityId: String) -> Entity\nblock.summon(entityId: String, data: Nbt) -> Entity\nblock.summon(spec: EntityData) -> Entity\n```",
         ),
-        "teleport" => Some("```mcfc\nentity.teleport(destination: Entity|Block) -> void\n```"),
+        "teleport" => Some(
+            "```mcfc\nentity.teleport(destination: Entity|Block) -> void\nentity.teleport(pos: Vec3, yaw: float, pitch: float) -> void\n```",
+        ),
+        "spectate" => Some("```mcfc\nplayer.spectate(camera: Entity) -> void\n```"),
+        "stopSpectating" => Some("```mcfc\nplayer.stopSpectating() -> void\n```"),
         "damage" => Some("```mcfc\nentity.damage(amount: int) -> void\n```"),
         "heal" => Some("```mcfc\nentity.heal(amount: int) -> void\n```"),
         "setVelocity" => {
@@ -1654,6 +1658,7 @@ Shown to players tagged `mcfc.log`.",
         ),
         "setBlock" => Some("```mcfc\nblock.setBlock(blockId: String|BlockData) -> void\n```"),
         "is" => Some("```mcfc\nblock.is(blockId: String) -> boolean\n```"),
+        "isLoaded" => Some("```mcfc\nblock.isLoaded() -> boolean\n```"),
         "fill" => Some("```mcfc\nblock.fill(to: Block, blockId: String|BlockData) -> void\n```"),
         "EntityData" => Some(
             "```mcfc\nnew EntityData(id: String)\n- id: String (read-only)\n- nbt.*\n- asNbt() -> Nbt\n```",
@@ -1685,7 +1690,7 @@ Shown to players tagged `mcfc.log`.",
         "removeLast" => Some("```mcfc\nList<T>.removeLast() -> T\n```"),
         "containsKey" => Some("```mcfc\nMap<String, T>.containsKey(key: String) -> boolean\n```"),
         "remove" => Some(
-            "```mcfc\nList<T>.remove(index: int) -> T\nMap<String, T>.remove(key: String) -> void\nBossBar.remove() -> void\n```",
+            "```mcfc\nList<T>.remove(index: int) -> T\nMap<String, T>.remove(key: String) -> void\nBossBar.remove() -> void\nentity.remove() -> void\n```",
         ),
         "effect" => {
             Some("```mcfc\nentity.effect(name: String, duration: int, amplifier: int) -> void\n```")
@@ -3046,6 +3051,7 @@ fn selector_method_items() -> Vec<CompletionItem> {
                 | "playSound"
                 | "stopSound"
                 | "teleport"
+                | "remove"
                 | "damage"
                 | "give"
                 | "clear"
@@ -3389,6 +3395,12 @@ fn generic_entity_root_items() -> Vec<CompletionItem> {
             CompletionItemKind::METHOD,
         ),
         (
+            "remove",
+            "entity.remove() -> void",
+            "remove()",
+            CompletionItemKind::METHOD,
+        ),
+        (
             "damage",
             "entity.damage(amount: int) -> void",
             "damage(${1:amount})",
@@ -3628,6 +3640,16 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
                 "setGameMode(${1:mode})",
             ),
             (
+                "spectate",
+                "player.spectate(camera: Entity)",
+                "spectate(${1:camera})",
+            ),
+            (
+                "stopSpectating",
+                "player.stopSpectating()",
+                "stopSpectating()",
+            ),
+            (
                 "setLevel",
                 "player.setLevel(levels: int)",
                 "setLevel(${1:levels})",
@@ -3704,6 +3726,7 @@ fn block_ref_items() -> Vec<CompletionItem> {
             "getLightLevel()",
         ),
         ("getBiome", "block.getBiome() -> String", "getBiome()"),
+        ("isLoaded", "block.isLoaded() -> boolean", "isLoaded()"),
         ("getType", "block.getType() -> String", "getType()"),
         (
             "getState",

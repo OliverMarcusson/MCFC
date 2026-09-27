@@ -1961,6 +1961,7 @@ import std.team;
 import std.inventory;
 import std.region;
 import std.timer;
+import std.vec.Vec3;
 
 @WorldState
 int round;
@@ -1985,6 +1986,17 @@ void main() {
     region.tagPlayers(arena, "inside");
     timer.start("round", 600);
     round = round + 1;
+    world.forceload(-16, -16, 15, 15);
+    world.setSpawn(Block.of(0, 65, 0));
+    var cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
+    cam.teleport(new Vec3(1.5, 70.25, -2.0), 90.0, 45.0);
+    player.spectate(cam);
+    player.stopSpectating();
+    cam.remove();
+    Selector.of("@e[tag=old]").remove();
+    if (Block.of(0, 64, 0).isLoaded()) {
+        round = 0;
+    }
 }
 "#;
     let project = temp_path();
@@ -2025,6 +2037,13 @@ void main() {
         "gamerule $(",
         "scoreboard objectives setdisplay $(",
         "team join $(",
+        "forceload add $(",
+        "setworldspawn $(",
+        "teleport @s $(p1) $(p2) $(p3) $(p4) $(p5)",
+        "spectate @e[tag=mcfc_spectate,limit=1] @s",
+        "run spectate\n",
+        "kill @s",
+        "execute if loaded $(pos) run",
         "world.stdTimers",
         "$world_round",
         "execute unless score $world_round mcfc matches -2147483648.. run scoreboard players set $world_round mcfc 0",

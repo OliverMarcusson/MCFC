@@ -1,6 +1,6 @@
 # Entities and Players
 
-Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clear`, `lootGive`, `effect`, `addTag`, `removeTag`, `setGameMode`, the experience methods, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").sendTitle("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
+Methods and fields on `Entity` and `Player`. `teleport`, `remove`, `damage`, `give`, `clear`, `lootGive`, `effect`, `addTag`, `removeTag`, `setGameMode`, `spectate`, `stopSpectating`, the experience methods, the message methods and the sound methods also work on a `Selector`, such as `Selector.of("@a").sendTitle("Go")`, and apply to every match. Commands target the reference's selector, run inside `execute as` / `execute at` when the context requires it. For how a reference is classified as a player or a non-player, see [Types: Entities](./types#entities).
 
 ## Selecting and checking entities
 
@@ -14,7 +14,9 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 
 | Method | Does | Command |
 | --- | --- | --- |
-| `teleport(to: Entity \| Block)` | Moves the entity | `teleport` |
+| `teleport(to: Entity \| Block)` | Moves the entity. A `Block` centres it on the block. | `teleport` |
+| `teleport(pos: Vec3, yaw: float, pitch: float)` | Moves to an exact position, facing yaw and pitch in degrees. | `teleport` |
+| `remove()` | Removes the entity from the world. Players die instead. | `kill` |
 | `damage(amount: int)` | Deals damage | `damage` |
 | `heal(amount: int)` | Restores health. Non-player references only. | NBT write |
 | `setVelocity(x: float, y: float, z: float)` | Replaces `Motion` on a known non-player entity. | NBT write |
@@ -35,6 +37,8 @@ Methods and fields on `Entity` and `Player`. `teleport`, `damage`, `give`, `clea
 | `clear(id, count: int)` | Removes items | `clear` |
 | `lootGive(table)` | Gives loot from a loot table | `loot give` |
 | `addTag(name)`, `removeTag(name)` | Adds or removes a scoreboard tag | `tag` |
+| `spectate(camera: Entity)` | Views the world from `camera`, as a spectator does. Players in spectator mode only. | `spectate` |
+| `stopSpectating()` | Returns the view to the player. | `spectate` |
 | `setGameMode(mode: int)` | 0 survival, 1 creative, 2 adventure, 3 spectator, the numbers `getGameMode()` returns. Other numbers do nothing. | `gamemode` |
 | `setLevel(levels: int)` | Sets the experience level | `xp set` |
 | `giveExpLevels(levels: int)`, `giveExp(points: int)` | Adds levels, or points that fill the bar. Negative numbers remove. | `xp add` |

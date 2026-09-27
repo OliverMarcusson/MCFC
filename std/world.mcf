@@ -43,3 +43,14 @@ public void showState(String state, String slot) {
 public void hideSlot(String slot) {
     mcf("scoreboard objectives setdisplay $(slot)");
 }
+
+// Keeps the chunks from column (x0, z0) to (x1, z1) loaded with nobody near.
+// Chunks load a few ticks later; check with `Block.isLoaded()`.
+public void forceload(int x0, int z0, int x1, int z1) {
+    mcf("forceload add $(x0) $(z0) $(x1) $(z1)");
+}
+
+// Where players spawn and respawn without a bed.
+public void setSpawn(Block block) {
+    mcf("setworldspawn $(block)");
+}

@@ -214,6 +214,7 @@ A block position, created with `Block.of("~ ~ ~")` or read from `entity.position
 | `setBlock(id \| BlockData)` | Places a block. Placing a `BlockData` also writes its NBT. |
 | `fill(to: Block, id \| BlockData)` | Fills the box between two positions (block id and states only) |
 | `is(id) -> boolean` | Tests the block at this position |
+| `isLoaded() -> boolean` | Whether the chunk here is loaded, for example a few ticks after `world.forceload`. |
 | `summon(id)`, `summon(id, Nbt)`, `summon(EntityData) -> Entity` | Summons at this position |
 | `spawnItem(ItemStack) -> Entity` | Drops an item stack |
 | `spawnParticle(name)`, `spawnParticle(name, count)`, `spawnParticle(name, count, viewers)` | Spawns particles. |

@@ -224,7 +224,7 @@ void buy(Player player) {
 
 ## `std.world`
 
-World settings, each one command. The names are Minecraft's own.
+World settings and chunk loading, each one command.
 
 ```mcfc
 import std.world;
@@ -250,6 +250,8 @@ void startGame() {
 | `void setGameRuleValue(String rule, int value)` | A number rule, such as `"random_tick_speed"`. |
 | `void showState(String state, String slot)` | Shows an `int` [player state](./statements#playerstate) in `"sidebar"`, `"below_name"` or `"list"`. It replaces what the slot showed, including the shared [`Sidebar`](./methods#sidebar). |
 | `void hideSlot(String slot)` | Empties a display slot. |
+| `void forceload(int x0, int z0, int x1, int z1)` | Keeps the chunks from column `x0, z0` to `x1, z1` loaded with nobody near. They load a few ticks later; check with [`Block.isLoaded()`](./types#block). |
+| `void setSpawn(Block block)` | Where players spawn and respawn without a bed. |
 
 To read a game rule, use the [`gamerule(name)`](./builtins) builtin.
 

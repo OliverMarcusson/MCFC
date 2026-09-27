@@ -2,153 +2,173 @@
 // click and hover events, and MiniMessage. Methods return a changed copy and
 // leave the receiver alone, like Adventure's immutable components.
 
-public record ClickEvent(String action, String value) {}
-
-public Component plain(String content) {
-    return new Component(content);
-}
-
-public Component colored(String content, String color) {
-    var out = new Component(content);
-    out.color = color;
-    return out;
-}
-
-public Component empty() {
-    return new Component("");
-}
-
-public Component newline() {
-    return new Component("\n");
-}
-
-public Component space() {
-    return new Component(" ");
-}
-
-public Component translatable(String key) {
-    var out = new Component();
-    out.translate = key;
-    return out;
-}
-
-public Component translatableWith(String key, List<Component> args) {
-    var out = translatable(key);
-    out.with = args;
-    return out;
-}
-
-// `color` is a name such as "red" or "#rrggbb".
-public Component color(Component c, String color) {
-    var out = c;
-    out.color = color;
-    return out;
-}
-
-public Component decorate(Component c, String decoration) {
-    return decoration(c, decoration, true);
-}
-
-// "bold", "italic", "underlined", "strikethrough" or "obfuscated".
-public Component decoration(Component c, String decoration, boolean on) {
-    var out = c;
-    if (decoration == "bold") {
-        out.bold = on;
-    } else if (decoration == "italic") {
-        out.italic = on;
-    } else if (decoration == "underlined") {
-        out.underlined = on;
-    } else if (decoration == "strikethrough") {
-        out.strikethrough = on;
-    } else if (decoration == "obfuscated") {
-        out.obfuscated = on;
+// A click action: `ClickEvent.runCommand("/spawn")`.
+public record ClickEvent(String action, String value) {
+    public static ClickEvent runCommand(String command) {
+        return new ClickEvent("run_command", command);
     }
-    return out;
-}
 
-// The child inherits `c`'s style, as in Adventure.
-public Component append(Component c, Component child) {
-    var out = c;
-    List<Component> parts = c.extra;
-    parts.add(child);
-    out.extra = parts;
-    return out;
-}
-
-public Component appendNewline(Component c) {
-    return append(c, newline());
-}
-
-public Component appendSpace(Component c) {
-    return append(c, space());
-}
-
-public Component withChildren(Component c, List<Component> children) {
-    var out = c;
-    out.extra = children;
-    return out;
-}
-
-public List<Component> children(Component c) {
-    List<Component> parts = c.extra;
-    return parts;
-}
-
-public Component insertion(Component c, String text) {
-    var out = c;
-    out.insertion = text;
-    return out;
-}
-
-public Component font(Component c, String font) {
-    var out = c;
-    out.font = font;
-    return out;
-}
-
-public ClickEvent runCommand(String command) {
-    return new ClickEvent("run_command", command);
-}
-
-public ClickEvent suggestCommand(String command) {
-    return new ClickEvent("suggest_command", command);
-}
-
-public ClickEvent openUrl(String url) {
-    return new ClickEvent("open_url", url);
-}
-
-public ClickEvent copyToClipboard(String text) {
-    return new ClickEvent("copy_to_clipboard", text);
-}
-
-public Component clickEvent(Component c, ClickEvent event) {
-    var out = c;
-    var action = event.action();
-    out.click_event.action = action;
-    if (action == "open_url") {
-        out.click_event.url = event.value();
-    } else if (action == "copy_to_clipboard") {
-        out.click_event.value = event.value();
-    } else {
-        out.click_event.command = event.value();
+    public static ClickEvent suggestCommand(String command) {
+        return new ClickEvent("suggest_command", command);
     }
-    return out;
+
+    public static ClickEvent openUrl(String url) {
+        return new ClickEvent("open_url", url);
+    }
+
+    public static ClickEvent copyToClipboard(String text) {
+        return new ClickEvent("copy_to_clipboard", text);
+    }
 }
 
-public Component hoverEvent(Component c, Component text) {
-    var out = c;
-    out.hover_event.action = "show_text";
-    out.hover_event.value = text;
-    return out;
+// The builtin text component's methods. Each returns a changed copy.
+public final class Component {
+    public static Component text(String content) {
+        return new Component(content);
+    }
+
+    public static Component text(String content, String color) {
+        Component out = new Component(content);
+        out.color = color;
+        return out;
+    }
+
+    public static Component empty() {
+        return new Component("");
+    }
+
+    public static Component newline() {
+        return new Component("\n");
+    }
+
+    public static Component space() {
+        return new Component(" ");
+    }
+
+    public static Component translatable(String key) {
+        Component out = new Component();
+        out.translate = key;
+        return out;
+    }
+
+    public static Component translatable(String key, List<Component> args) {
+        Component out = translatable(key);
+        out.with = args;
+        return out;
+    }
+
+    // `color` is a name such as "red" or "#rrggbb".
+    public Component color(String color) {
+        Component out = this;
+        out.color = color;
+        return out;
+    }
+
+    public Component decorate(String decoration) {
+        return decoration(decoration, true);
+    }
+
+    // "bold", "italic", "underlined", "strikethrough" or "obfuscated".
+    public Component decoration(String decoration, boolean on) {
+        Component out = this;
+        if (decoration == "bold") {
+            out.bold = on;
+        } else if (decoration == "italic") {
+            out.italic = on;
+        } else if (decoration == "underlined") {
+            out.underlined = on;
+        } else if (decoration == "strikethrough") {
+            out.strikethrough = on;
+        } else if (decoration == "obfuscated") {
+            out.obfuscated = on;
+        }
+
+        return out;
+    }
+
+    // The child inherits this component's style, as in Adventure.
+    public Component append(Component child) {
+        Component out = this;
+        List<Component> parts = this.extra;
+        parts.add(child);
+        out.extra = parts;
+        return out;
+    }
+
+    public Component appendNewline() {
+        return append(newline());
+    }
+
+    public Component appendSpace() {
+        return append(space());
+    }
+
+    public List<Component> children() {
+        List<Component> parts = this.extra;
+        return parts;
+    }
+
+    public Component children(List<Component> children) {
+        Component out = this;
+        out.extra = children;
+        return out;
+    }
+
+    public Component insertion(String text) {
+        Component out = this;
+        out.insertion = text;
+        return out;
+    }
+
+    public Component font(String font) {
+        Component out = this;
+        out.font = font;
+        return out;
+    }
+
+    public Component clickEvent(ClickEvent event) {
+        Component out = this;
+        String action = event.action();
+        out.click_event.action = action;
+        if (action == "open_url") {
+            out.click_event.url = event.value();
+        } else if (action == "copy_to_clipboard") {
+            out.click_event.value = event.value();
+        } else {
+            out.click_event.command = event.value();
+        }
+
+        return out;
+    }
+
+    public Component hoverEvent(Component text) {
+        Component out = this;
+        out.hover_event.action = "show_text";
+        out.hover_event.value = text;
+        return out;
+    }
 }
 
-public String hexColor(int rgb) {
-    return std.color.toHex(rgb);
+// Hover text is the component itself.
+public final class HoverEvent {
+    public static Component showText(Component text) {
+        return text;
+    }
 }
 
-public String rgbColor(int red, int green, int blue) {
-    return std.color.toHex(std.color.rgb(red, green, blue));
+// Colors are strings: a name such as "red", or "#rrggbb".
+public final class TextColor {
+    public static String color(int rgb) {
+        return std.color.toHex(rgb);
+    }
+
+    public static String color(int red, int green, int blue) {
+        return std.color.toHex(std.color.rgb(red, green, blue));
+    }
+
+    public static String fromHexString(String hex) {
+        return hex;
+    }
 }
 
 // MiniMessage for text players type. Only colors, decorations, <reset> and
@@ -206,7 +226,7 @@ public Component parseMiniMessage(String s) {
     if (buf != "") {
         runs.add(styled(buf, stack));
     }
-    return withChildren(empty(), runs);
+    return Component.empty().children(runs);
 }
 
 // The tag's canonical name ("red", "#ff0000", "bold", "!bold", "/bold",
@@ -292,9 +312,9 @@ Component styled(String content, List<String> stack) {
         if (isColor(tag)) {
             out.color = std.str.replace(tag, "grey", "gray");
         } else if (tag.charAt(0) == "!") {
-            out = decoration(out, tag.substring(1), false);
+            out = out.decoration(tag.substring(1), false);
         } else {
-            out = decoration(out, tag, true);
+            out = out.decoration(tag, true);
         }
     }
     return out;

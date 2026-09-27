@@ -1,105 +1,110 @@
-// Entity and player actions behind `player.setGameMode(...)` and friends. Each
-// is generic, so `target` is an `Entity`, a `Player` or a `Selector`; a selector
+// Entity and player actions: `player.setGameMode(...)` and friends. An
+// `Entity` method also runs on a `Player`, and on a `Selector`, where it
 // applies to every match.
 
 import std.gamemode.GameMode;
 import std.vec.Vec3;
 
-public <T> void setGameMode(T target, GameMode mode) {
-    String name = switch (mode) {
-        case SURVIVAL -> "survival";
-        case CREATIVE -> "creative";
-        case ADVENTURE -> "adventure";
-        case SPECTATOR -> "spectator";
-    };
-    as (target) {
-        mcf("gamemode $(name) @s");
+public final class Entity {
+    public void setGameMode(GameMode mode) {
+        String name = switch (mode) {
+            case SURVIVAL -> "survival";
+            case CREATIVE -> "creative";
+            case ADVENTURE -> "adventure";
+            case SPECTATOR -> "spectator";
+        };
+        as (this) {
+            mcf("gamemode $(name) @s");
+        }
+    }
+
+    public void setLevel(int levels) {
+        as (this) {
+            mcf("xp set @s $(levels) levels");
+        }
+    }
+
+    // Adds (or with a negative number, removes) whole levels.
+    public void giveExpLevels(int levels) {
+        as (this) {
+            mcf("xp add @s $(levels) levels");
+        }
+    }
+
+    // Adds experience points, which fill the bar and roll over into levels.
+    public void giveExp(int points) {
+        as (this) {
+            mcf("xp add @s $(points) points");
+        }
+    }
+
+    // The subtitle is set first, since the title shows both.
+    public void sendTitle(String title, String subtitle) {
+        as (this) {
+            mcf("title @s subtitle \"$(subtitle)\"");
+        }
+        this.sendTitle(title);
+    }
+
+    // Times in ticks.
+    public void sendTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+        as (this) {
+            mcf("title @s times $(fadeIn) $(stay) $(fadeOut)");
+        }
+        this.sendTitle(title, subtitle);
+    }
+
+    // Removes the entity from the world. Players die instead.
+    public void remove() {
+        as (this) {
+            mc("kill @s");
+        }
+    }
+
+    // Views the world from `camera`, as a spectator does. Players only, in spectator mode.
+    public void spectate(Entity camera) {
+        as (camera) {
+            mc("tag @s add mcfc_spectate");
+        }
+        as (this) {
+            mc("spectate @e[tag=mcfc_spectate,limit=1] @s");
+        }
+        as (camera) {
+            mc("tag @s remove mcfc_spectate");
+        }
+    }
+
+    public void stopSpectating() {
+        as (this) {
+            mc("spectate");
+        }
+    }
+
+    // Moves to an exact position, facing yaw and pitch in degrees. Teleporting
+    // to a `Block` centres on it instead.
+    public void teleport(Vec3 pos, float yaw, float pitch) {
+        float x = pos.x();
+        float y = pos.y();
+        float z = pos.z();
+        as (this) {
+            mcf("teleport @s $(x) $(y) $(z) $(yaw) $(pitch)");
+        }
     }
 }
 
-public GameMode getGameMode(Player player) {
-    int id = (int) player.nbt.playerGameType;
-    if (id == 1) {
-        return GameMode.CREATIVE;
-    }
-    if (id == 2) {
-        return GameMode.ADVENTURE;
-    }
-    if (id == 3) {
-        return GameMode.SPECTATOR;
-    }
-    return GameMode.SURVIVAL;
-}
+public final class Player {
+    public GameMode getGameMode() {
+        int id = (int) this.nbt.playerGameType;
+        if (id == 1) {
+            return GameMode.CREATIVE;
+        }
+        if (id == 2) {
+            return GameMode.ADVENTURE;
+        }
+        if (id == 3) {
+            return GameMode.SPECTATOR;
+        }
 
-public <T> void setLevel(T target, int levels) {
-    as (target) {
-        mcf("xp set @s $(levels) levels");
-    }
-}
-
-// Adds (or with a negative number, removes) whole levels.
-public <T> void giveExpLevels(T target, int levels) {
-    as (target) {
-        mcf("xp add @s $(levels) levels");
-    }
-}
-
-// Adds experience points, which fill the bar and roll over into levels.
-public <T> void giveExp(T target, int points) {
-    as (target) {
-        mcf("xp add @s $(points) points");
-    }
-}
-
-// `sendTitle(title, subtitle)`: the subtitle is set first, since the title shows both.
-public <T> void sendTitleSubtitle(T target, String title, String subtitle) {
-    as (target) {
-        mcf("title @s subtitle \"$(subtitle)\"");
-    }
-    target.sendTitle(title);
-}
-
-// `sendTitle(title, subtitle, fadeIn, stay, fadeOut)`, with times in ticks.
-public <T> void sendTitleTimed(T target, String title, String subtitle, int fadeIn, int stay, int fadeOut) {
-    as (target) {
-        mcf("title @s times $(fadeIn) $(stay) $(fadeOut)");
-    }
-    sendTitleSubtitle(target, title, subtitle);
-}
-
-// Removes the entity from the world. Players die instead.
-public <T> void remove(T target) {
-    as (target) {
-        mc("kill @s");
-    }
-}
-
-// Views the world from `camera`, as a spectator does. Players only, in spectator mode.
-public <T> void spectate(T target, Entity camera) {
-    as (camera) {
-        mc("tag @s add mcfc_spectate");
-    }
-    as (target) {
-        mc("spectate @e[tag=mcfc_spectate,limit=1] @s");
-    }
-    as (camera) {
-        mc("tag @s remove mcfc_spectate");
-    }
-}
-
-public <T> void stopSpectating(T target) {
-    as (target) {
-        mc("spectate");
-    }
-}
-
-// `teleport(pos, yaw, pitch)`: moves to an exact position, facing yaw and pitch
-// in degrees. Teleporting to a `Block` centres on it instead.
-public <T> void teleportFacing(T target, Vec3 pos, float yaw, float pitch) {
-    float x = pos.x();
-    float y = pos.y();
-    float z = pos.z();
-    as (target) {
-        mcf("teleport @s $(x) $(y) $(z) $(yaw) $(pitch)");
+        return GameMode.SURVIVAL;
     }
 }

@@ -363,7 +363,7 @@ The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`,
 
 ## `std.text`
 
-The functions behind the [Adventure API](./builders#adventure-api) (`Component.text(...)`, `c.append(...)`, `ClickEvent.*`) and [MiniMessage](./builders#minimessage). Use those forms. `text.parseMiniMessage(s)` is the runtime parser for text players type. It applies style tags only.
+Where the [Adventure API](./builders#adventure-api) is written: `final class Component { ... }` gives the builtin `Component` its methods (`Component.text(...)`, `c.append(...)`), and `ClickEvent`, `HoverEvent` and `TextColor` hold the static ones. A `final class` named after a builtin type (`Component`, `Entity`, `Player` or `Selector`) only adds methods, whose `this` is the builtin value. `text.parseMiniMessage(s)` is the runtime [MiniMessage](./builders#minimessage) parser for text players type. It applies style tags only.
 
 ## `std.vec`
 
@@ -391,7 +391,7 @@ void main() {
 
 ## `std.player`
 
-The code behind [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `remove`, `spectate`, `stopSpectating`, the facing `teleport` and the longer `sendTitle` forms](./methods) on `Player` and `Selector`. Call those methods instead of importing this module.
+Where [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `remove`, `spectate`, `stopSpectating`, the facing `teleport` and the longer `sendTitle` forms](./methods) are written, as `final class Entity` and `final class Player`. An `Entity` method also runs on a `Player` and on a `Selector`, where it applies to every match. Call the methods; there's nothing to import.
 
 ## `std.attribute`
 

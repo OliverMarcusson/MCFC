@@ -20,6 +20,10 @@ thread_local! {
     /// interfaces. Set by `type_check` for coercions, which see no definitions.
     static SUPERTYPES: std::cell::RefCell<HashMap<String, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
+    /// The owners of methods std gives builtin types (`final class Component`),
+    /// by the type's name: `Component` to `std::text::Component`.
+    static NATIVE: std::cell::RefCell<BTreeMap<String, Vec<String>>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
     /// Methods some subclass overrides; calls go through `F__mcfcVirtual`.
     static VIRTUAL: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
 }
@@ -1450,6 +1454,80 @@ fn find_method(
         })
 }
 
+const NATIVE_NAMES: &[&str] = &[
+    "Component",
+    "Player",
+    "Selector",
+    "Entity",
+    "ClickEvent",
+    "HoverEvent",
+    "TextColor",
+];
+
+/// A method std declares on `ty`, a builtin type: `c.color(...)` on a
+/// `Component`. A `Player` or a `Selector` also has `Entity`'s methods.
+fn native_method(
+    signatures: &BTreeMap<String, FunctionSignature>,
+    ty: &Type,
+    method: &str,
+    arity: usize,
+) -> Option<(String, bool)> {
+    let names: &[&str] = match ty {
+        Type::TextDef => &["Component"],
+        Type::PlayerRef => &["Player", "Entity"],
+        Type::EntityRef => &["Entity"],
+        Type::EntitySet => &["Selector", "Entity"],
+        _ => return None,
+    };
+    let owners: Vec<String> = NATIVE.with(|map| {
+        let map = map.borrow();
+        names
+            .iter()
+            .flat_map(|name| map.get(*name).cloned().unwrap_or_default())
+            .collect()
+    });
+    // A builtin method of the same name may take other arguments: `sendTitle(title)`.
+    let fits = |function: &str| {
+        let overloads = signatures
+            .get(&overload_key(function))
+            .map(|entry| entry.overloads.clone())
+            .unwrap_or_else(|| vec![function.to_string()]);
+        overloads.iter().any(|name| {
+            signatures.get(name).is_some_and(|signature| {
+                signature.params.len() == arity + usize::from(signature.instance)
+            })
+        })
+    };
+    owners
+        .iter()
+        .filter_map(|owner| find_method(signatures, owner, method))
+        .find(|(function, _)| fits(function))
+}
+
+/// `Component.text("hi")`: a static method std declares on a builtin type,
+/// written by the parser as `@native:Component__text`.
+fn native_static(
+    signatures: &BTreeMap<String, FunctionSignature>,
+    function: &str,
+) -> Option<String> {
+    let (name, method) = function.strip_prefix(NATIVE_CALL)?.split_once("__")?;
+    let owners = NATIVE.with(|map| map.borrow().get(name).cloned().unwrap_or_default());
+    let candidates: Vec<String> = owners
+        .iter()
+        .map(|owner| format!("{owner}__{method}"))
+        .collect();
+    candidates
+        .iter()
+        .find(|function| {
+            signatures.contains_key(*function) || signatures.contains_key(&overload_key(function))
+        })
+        .cloned()
+        // Unknown: named as written, for the error.
+        .or_else(|| Some(format!("{name}.{method}")))
+}
+
+const NATIVE_CALL: &str = "@native:";
+
 /// The signature entry listing the overloads of `name`.
 fn overload_key(name: &str) -> String {
     format!("@overload:{name}")
@@ -2130,6 +2208,18 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
         }
     }
     SUPERTYPES.with(|map| *map.borrow_mut() = supertype_map);
+    let mut native: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for owner in program.functions.iter().filter_map(|f| f.owner.as_deref()) {
+        let name = owner.rsplit("::").next().unwrap_or(owner);
+        let is_class = program.classes.iter().any(|class| class.name == owner);
+        if !is_class && NATIVE_NAMES.contains(&name) {
+            let owners = native.entry(name.to_string()).or_default();
+            if !owners.iter().any(|known| known == owner) {
+                owners.push(owner.to_string());
+            }
+        }
+    }
+    NATIVE.with(|map| *map.borrow_mut() = native);
     let mut normalized = program.clone();
     for class_def in &program.classes {
         for field in class_def.fields.iter().filter(|field| field.is_static) {
@@ -5085,9 +5175,17 @@ fn type_check_expr(
         }
         ExprKind::Call { function, args } => {
             let direct = function.starts_with(DIRECT);
-            let function = &function.trim_start_matches(DIRECT).to_string();
+            // `new Component(...)` and friends, which no method may take.
+            let constructor = function.strip_prefix("@new:");
+            let function = &native_static(signatures, function).unwrap_or_else(|| {
+                constructor
+                    .unwrap_or(function)
+                    .trim_start_matches(DIRECT)
+                    .to_string()
+            });
             // In a method, a bare `m(...)` calls another method of the same type.
-            if !function.contains("::")
+            if constructor.is_none()
+                && !function.contains("::")
                 && let Some(owner) = env_tag(env, OWNER_TAG)
                 && let Some((method, instance)) = find_method(signatures, owner, function)
             {
@@ -7171,52 +7269,16 @@ fn type_check_method_call(
             diagnostics,
         ));
     }
-    // Entity actions written in `std/player.mcf`; they take an entity or a `Selector`.
-    let std_method = match (method, args.len()) {
-        (
-            "setGameMode" | "getGameMode" | "setLevel" | "giveExp" | "giveExpLevels" | "remove"
-            | "spectate" | "stopSpectating",
-            _,
-        ) => Some(method),
-        ("teleport", 3) => Some("teleportFacing"),
-        ("sendTitle", 2) => Some("sendTitleSubtitle"),
-        ("sendTitle", 5) => Some("sendTitleTimed"),
-        _ => None,
-    };
-    if let Some(std_method) = std_method
-        && (is_entity_ref_type(&receiver.ty) || receiver.ty == Type::EntitySet)
+    if let Some((function, instance)) = native_method(signatures, &receiver.ty, method, args.len())
     {
-        let mut call_args = vec![receiver_expr.clone()];
+        let mut call_args = Vec::new();
+        if instance {
+            call_args.push(receiver_expr.clone());
+        }
         call_args.extend(args.iter().cloned());
         return Some(recheck(
             ExprKind::Call {
-                function: format!("std::player::{std_method}"),
-                args: call_args,
-            },
-            called_functions,
-            diagnostics,
-        ));
-    }
-    // Adventure-style `Component` methods, written in `std/text.mcf`.
-    let text_method = match (method, args.len()) {
-        (
-            "color" | "decorate" | "append" | "appendNewline" | "appendSpace" | "clickEvent"
-            | "hoverEvent" | "insertion" | "font",
-            _,
-        )
-        | ("decoration", 2)
-        | ("children", 0) => Some(method),
-        ("children", 1) => Some("withChildren"),
-        _ => None,
-    };
-    if let Some(text_method) = text_method
-        && receiver.ty == Type::TextDef
-    {
-        let mut call_args = vec![receiver_expr.clone()];
-        call_args.extend(args.iter().cloned());
-        return Some(recheck(
-            ExprKind::Call {
-                function: format!("std::text::{text_method}"),
+                function,
                 args: call_args,
             },
             called_functions,

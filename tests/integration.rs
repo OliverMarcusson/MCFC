@@ -5095,3 +5095,26 @@ fn phase_five_syntax_is_checked() {
     )
     .expect("throw, throws and try compile");
 }
+
+#[test]
+fn native_classes_add_methods_to_builtin_types() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let error = compile("final class Component {\n    int size = 0;\n}\nvoid main() {}\n")
+        .expect_err("fields on a builtin type");
+    assert!(
+        error.contains("'Component' is a builtin type, so its class only has methods"),
+        "{error}"
+    );
+    compile(
+        "final class Component {\n    Component shout() {\n        return this.color(\"red\").decorate(\"bold\");\n    }\n}\nvoid main() {\n    Component loud = Component.text(\"hi\").shout();\n    Component quiet = Component.empty().appendSpace();\n}\n",
+    )
+    .expect("a native class method next to std's");
+}

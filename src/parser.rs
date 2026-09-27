@@ -18,6 +18,21 @@ pub fn parse_expression(source: &str) -> Result<Expr, Diagnostics> {
     Parser::new(tokens).parse_expression_only()
 }
 
+/// The builtin types std gives methods with `final class Name { ... }`, and
+/// the type their `this` has. An `Entity` method also runs on a `Player` or a
+/// `Selector`, so its `this` is a type parameter, filled in by each call.
+fn native_this(name: &str) -> Option<Type> {
+    match name {
+        "Component" => Some(Type::TextDef),
+        "Player" => Some(Type::PlayerRef),
+        "Selector" => Some(Type::EntitySet),
+        "Entity" => Some(Type::Struct("mcfcSelf".to_string())),
+        // Only static methods.
+        "HoverEvent" | "TextColor" => Some(Type::Void),
+        _ => None,
+    }
+}
+
 /// `(int) x` and friends lower to these conversion builtins.
 const CASTS: &[(&str, &str)] = &[
     ("int", "int"),
@@ -183,7 +198,7 @@ impl Parser {
             } else if let Some(modifiers) = self.class_modifiers() {
                 self.reject_annotations(&annotations, "a class");
                 let class = self.parse_class(is_pub, modifiers, &mut program);
-                program.classes.push(class);
+                program.classes.extend(class);
             } else if self.at_word("enum") {
                 self.reject_annotations(&annotations, "an enum");
                 program
@@ -519,7 +534,8 @@ impl Parser {
         is_pub: bool,
         modifiers: ClassModifiers,
         program: &mut Program,
-    ) -> ClassDef {
+    ) -> Option<ClassDef> {
+        let first_method = program.functions.len();
         let is_interface = self.at_word("interface");
         self.bump();
         let span = self.current_span();
@@ -585,6 +601,21 @@ impl Parser {
         }
         self.class_body = saved_body;
         self.expect(TokenKind::RightBrace, "expected '}' after class body");
+        if let Some(this_type) = native_this(&name) {
+            self.native_class(&name, &fields, &constructors, &span);
+            for function in &mut program.functions[first_method..] {
+                match function.params.first_mut() {
+                    Some(param) if param.name == "this" => {
+                        param.ty = this_type.clone();
+                        if let Type::Struct(self_type) = &this_type {
+                            function.type_params.insert(0, self_type.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return None;
+        }
         let at = |kind: ExprKind| Expr {
             kind,
             span: span.clone(),
@@ -732,7 +763,7 @@ impl Parser {
             })];
             program.functions.push(clinit);
         }
-        ClassDef {
+        Some(ClassDef {
             name,
             is_pub,
             fields,
@@ -746,6 +777,23 @@ impl Parser {
             bounds,
             super_args,
             span,
+        })
+    }
+
+    /// `final class Component { ... }` names a builtin type, so it only adds
+    /// methods, whose `this` is that builtin value.
+    fn native_class(
+        &mut self,
+        name: &str,
+        fields: &[ClassField],
+        constructors: &[(Function, bool)],
+        span: &Span,
+    ) {
+        if !fields.is_empty() || !constructors.is_empty() {
+            self.error_at(
+                &format!("'{name}' is a builtin type, so its class only has methods"),
+                span.clone(),
+            );
         }
     }
 
@@ -2322,7 +2370,8 @@ impl Parser {
                 self.expect(TokenKind::LeftParen, "expected '(' after the type in 'new'");
                 let args = self.parse_call_args();
                 match BUILTIN_CONSTRUCTORS.iter().find(|(ty, _)| *ty == name) {
-                    Some((_, builtin)) => call(builtin, args, &span),
+                    // Marked, so a method named like the builtin can't take the call.
+                    Some((_, builtin)) => call(&format!("@new:{builtin}"), args, &span),
                     None => Expr {
                         kind: ExprKind::New {
                             name,
@@ -2833,21 +2882,17 @@ impl Parser {
         ) {
             return None;
         }
+        // Methods std declares on the builtin types, such as `Component.text(...)`.
+        if class != "MiniMessage" {
+            return Some(Expr {
+                kind: ExprKind::Call {
+                    function: format!("@native:{class}__{method}"),
+                    args: std::mem::take(args),
+                },
+                span: span.clone(),
+            });
+        }
         let function = match (class, method, args.len()) {
-            ("Component", "text", 1) => "plain",
-            ("Component", "text", 2) => "colored",
-            ("Component", "empty" | "newline" | "space", 0) => method,
-            ("Component", "translatable", 1) => "translatable",
-            ("Component", "translatable", 2) => "translatableWith",
-            ("ClickEvent", "runCommand" | "suggestCommand" | "openUrl" | "copyToClipboard", 1) => {
-                method
-            }
-            ("TextColor", "color", 1) => "hexColor",
-            ("TextColor", "color", 3) => "rgbColor",
-            // Hover text is the component itself, and colors are strings.
-            ("HoverEvent", "showText", 1) | ("TextColor", "fromHexString", 1) => {
-                return Some(args.remove(0));
-            }
             // `.deserialize(...)` on this comes back here as `MiniMessage.deserialize`.
             ("MiniMessage", "miniMessage", 0) => {
                 return Some(Expr {

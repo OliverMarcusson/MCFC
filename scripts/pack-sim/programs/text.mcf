@@ -1,14 +1,14 @@
-// std.text: fluent components and runtime MiniMessage, printed as SNBT.
+// Component methods from std.text and runtime MiniMessage, printed as SNBT.
 import std.text;
 
 void main() {
-    var a = text.append(text.colored("a", "gold"), text.plain("b"));
-    var b = text.append(a, text.plain("c"));
+    Component a = Component.text("a", "gold").append(Component.text("b"));
+    Component b = a.append(Component.text("c"));
     mcf("say a $(a)");
     mcf("say b $(b)");
-    var e = text.decorate(text.plain("x"), "bold");
-    e = text.clickEvent(e, text.runCommand("/help"));
-    e = text.hoverEvent(e, text.plain("tip"));
+    Component e = Component.text("x").decorate("bold");
+    e = e.clickEvent(ClickEvent.runCommand("/help"));
+    e = e.hoverEvent(Component.text("tip"));
     mcf("say e $(e)");
     mcf("say m1 $(text.parseMiniMessage(\"<red>Hi <b>there</b>!\"))");
     mcf("say m2 $(text.parseMiniMessage(\"<click:run_command:/op me>x</click> <#00ff00>g<reset>n<br>\"))");

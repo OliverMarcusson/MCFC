@@ -3621,7 +3621,7 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
             ("getLevel", "player.getLevel() -> int", "getLevel()"),
             (
                 "getGameMode",
-                "player.getGameMode() -> int",
+                "player.getGameMode() -> GameMode",
                 "getGameMode()",
             ),
             (
@@ -3636,7 +3636,7 @@ fn player_entity_root_items() -> Vec<CompletionItem> {
             ),
             (
                 "setGameMode",
-                "player.setGameMode(mode: int)",
+                "player.setGameMode(mode: GameMode)",
                 "setGameMode(${1:mode})",
             ),
             (

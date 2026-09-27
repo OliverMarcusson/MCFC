@@ -1962,14 +1962,18 @@ import std.inventory;
 import std.region;
 import std.timer;
 import std.vec.Vec3;
+import std.gamemode.GameMode;
 
 @WorldState
 int round;
+@WorldState
+Entity camera;
 
 void main() {
     var player = (Player) Selector.of("@p").getFirst();
     var all = Selector.of("@a");
-    player.setGameMode(1);
+    player.setGameMode(GameMode.CREATIVE);
+    GameMode mode = player.getGameMode();
     all.setLevel(3);
     player.giveExp(10);
     all.sendTitle("Go", "round 1", 5, 40, 5);
@@ -1988,7 +1992,9 @@ void main() {
     round = round + 1;
     world.forceload(-16, -16, 15, 15);
     world.setSpawn(Block.of(0, 65, 0));
-    var cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
+    Entity cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
+    camera = cam;
+    camera.teleport(Block.of(0, 70, 0));
     cam.teleport(new Vec3(1.5, 70.25, -2.0), 90.0, 45.0);
     player.spectate(cam);
     player.stopSpectating();
@@ -2044,6 +2050,10 @@ void main() {
         "run spectate\n",
         "kill @s",
         "execute if loaded $(pos) run",
+        "gamemode $(p1) @s",
+        "playerGameType",
+        "tag @e[tag=sample.camera] remove sample.camera",
+        "{prefix:\"\",selector:\"@e[tag=sample.camera,limit=1]\"}",
         "world.stdTimers",
         "$world_round",
         "execute unless score $world_round mcfc matches -2147483648.. run scoreboard players set $world_round mcfc 0",

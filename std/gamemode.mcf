@@ -1,0 +1,4 @@
+// Minecraft's game modes, in the order of their ids.
+public enum GameMode {
+    SURVIVAL, CREATIVE, ADVENTURE, SPECTATOR
+}

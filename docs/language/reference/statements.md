@@ -210,9 +210,26 @@ void endRound(int best) {
 }
 ```
 
-Allowed types are `int`, `boolean`, `String`, `float`, records, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
+Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
 
 `int` and `boolean` values are the scores `$world_<name>` in the `mcfc` objective; other types are in `<namespace>:runtime` storage at `world.<name>`.
+
+An `Entity` or `Player` world state is a handle the pack keeps to one entity, so you summon it once and don't look it up by selector later:
+
+```mcfc
+@WorldState
+Entity token;
+
+void setup() {
+    token = Block.of(0, 65, 0).summon("minecraft:armor_stand");
+}
+
+void hop() {
+    token.teleport(Block.of(4, 65, 0));
+}
+```
+
+Assigning moves the tag `<namespace>.<name>` onto the new entity and off the old one. Before the first assignment, or after the entity is gone, `token.isValid()` is `false` and commands on it do nothing.
 
 ### `@Command`
 

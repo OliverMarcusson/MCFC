@@ -185,7 +185,6 @@ pub const ENTITY_METHOD_NAMES: &[(&str, &str)] = &[
     ("getHealth", "health"),
     ("getFoodLevel", "food"),
     ("getLevel", "xp_level"),
-    ("getGameMode", "game_mode"),
     ("getSelectedSlot", "selected_slot"),
     ("getDimension", "dimension"),
 ];

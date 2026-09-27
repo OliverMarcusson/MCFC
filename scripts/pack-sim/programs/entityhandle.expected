@@ -1,0 +1,4 @@
+tellraw @a[tag=mcfc.log] [entityhandle INFO] before false
+tellraw @a[tag=mcfc.log] [entityhandle INFO] after true
+tellraw @a[tag=mcfc.log] [entityhandle INFO] self true
+tellraw @a[tag=mcfc.log] [entityhandle INFO] moved true false true

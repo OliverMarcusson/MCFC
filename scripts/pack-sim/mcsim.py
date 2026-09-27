@@ -394,6 +394,11 @@ class Sim:
             nbt = parse_snbt(" ".join(t[5:])) if len(t) > 5 else {}
             self.markers.append({"tags": set(nbt.get("Tags", [])), "pos": list(self.pos)})
             return True, 1
+        if head == "tag" and t[2] in ("add", "remove"):
+            hits = [m for m in self.markers if self.selects(t[1], m)]
+            for m in hits:
+                (m["tags"].add if t[2] == "add" else m["tags"].discard)(t[3])
+            return bool(hits), len(hits)
         if head == "kill":
             before = len(self.markers)
             self.markers = [m for m in self.markers if not self.selects(t[1], m)]
@@ -418,6 +423,12 @@ class Sim:
         raise Unsupported(line)
 
     def selects(self, selector, marker):
+        if selector == "@s" or selector.startswith("@s["):
+            if marker is not getattr(self, "me", None):
+                return False
+            selector = "@e" + selector[2:]
+            if selector == "@e":
+                return True
         m = re.fullmatch(r"@e\[(.*)\]", selector)
         if not m:
             raise Unsupported("selector " + selector)
@@ -673,6 +684,9 @@ class Sim:
                     ok = here in self.block_tags[test[1:]] if test.startswith("#") else here == test
                     ok = ok and all(here_states.get(k) == v for k, v in states.items())
                     i += 6
+                elif kind == "entity":
+                    ok = any(self.selects(t[i + 2], m) for m in self.markers)
+                    i += 3
                 elif kind == "function":
                     value, success = self.run_function(t[i + 2])
                     ok = success and value not in (None, 0)
@@ -699,6 +713,14 @@ class Sim:
             if w == "positioned" and all(re.fullmatch(r"-?[\d.]+", c) for c in t[i + 1:i + 4]):
                 self.pos = [float(c) for c in t[i + 1:i + 4]]
                 i += 4
+                continue
+            if w == "as" and t[i + 1].startswith("@e"):
+                # The first match only: enough for `limit=1` handles.
+                hits = [m for m in self.markers if self.selects(t[i + 1], m)]
+                if not hits:
+                    return False, 0
+                self.me = hits[0]
+                i += 2
                 continue
             if w == "as" and t[i + 1] in ("@a", "@s"):
                 # One pretend player: enough for code that talks to players.

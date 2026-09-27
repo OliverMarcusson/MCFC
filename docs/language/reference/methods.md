@@ -39,7 +39,7 @@ Methods and fields on `Entity` and `Player`. `teleport`, `remove`, `damage`, `gi
 | `addTag(name)`, `removeTag(name)` | Adds or removes a scoreboard tag | `tag` |
 | `spectate(camera: Entity)` | Views the world from `camera`, as a spectator does. Players in spectator mode only. | `spectate` |
 | `stopSpectating()` | Returns the view to the player. | `spectate` |
-| `setGameMode(mode: int)` | 0 survival, 1 creative, 2 adventure, 3 spectator, the numbers `getGameMode()` returns. Other numbers do nothing. | `gamemode` |
+| `setGameMode(mode: GameMode)` | `GameMode.SURVIVAL`, `CREATIVE`, `ADVENTURE` or `SPECTATOR`, from `import std.gamemode.GameMode;`. | `gamemode` |
 | `setLevel(levels: int)` | Sets the experience level | `xp set` |
 | `giveExpLevels(levels: int)`, `giveExp(points: int)` | Adds levels, or points that fill the bar. Negative numbers remove. | `xp add` |
 | `countItem(id) -> int` | How many of an item the player carries. Players only; see [`std.inventory`](./std#std-inventory) for costs. | `clear ... 0` |
@@ -133,7 +133,7 @@ Each call reads the entity's NBT again, so store the result in a `var` if you ne
 | `distanceTo(other: Entity)` | `float` |
 | `getFoodLevel()` | `int`, 0 to 20. Players only. |
 | `getLevel()` | `int`. Players only. |
-| `getGameMode()` | `int`: 0 survival, 1 creative, 2 adventure, 3 spectator. Players only. |
+| `getGameMode()` | `GameMode`. Players only. |
 | `getSelectedSlot()` | `int`, 0 to 8. Players only. |
 | `getDimension()` | `String`, such as `"minecraft:overworld"`. Players only. |
 

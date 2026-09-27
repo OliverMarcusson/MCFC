@@ -1013,9 +1013,11 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
                 | Type::Struct(_)
                 | Type::Dict(_)
                 | Type::Array(_)
+                | Type::EntityRef
+                | Type::PlayerRef
         ) {
             diagnostics.push(Diagnostic::new(
-                "@WorldState supports 'int', 'boolean', 'String', 'float', records, lists and maps",
+                "@WorldState supports 'int', 'boolean', 'String', 'float', 'Entity', 'Player', records, lists and maps",
                 state.span.clone(),
             ));
         }
@@ -1364,8 +1366,11 @@ fn check_declared_type(
     span: &Span,
     diagnostics: &mut Diagnostics,
 ) {
+    // A declared local's type isn't resolved, so an enum still reads as a record name.
+    let same_enum = matches!((declared, found), (Some(Type::Struct(a)), Type::Enum(b)) if a == b);
     if let Some(declared) = declared
         && declared != found
+        && !same_enum
     {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -4838,8 +4843,8 @@ fn type_check_method_call(
     // Entity actions written in `std/player.mcf`; they take an entity or a `Selector`.
     let std_method = match (method, args.len()) {
         (
-            "setGameMode" | "setLevel" | "giveExp" | "giveExpLevels" | "remove" | "spectate"
-            | "stopSpectating",
+            "setGameMode" | "getGameMode" | "setLevel" | "giveExp" | "giveExpLevels" | "remove"
+            | "spectate" | "stopSpectating",
             _,
         ) => Some(method),
         ("teleport", 3) => Some("teleportFacing"),
@@ -7112,7 +7117,6 @@ fn entity_read_expr(
         "health" => ("float", "Health", None, false),
         "food" => ("int", "foodLevel", None, true),
         "xp_level" => ("int", "XpLevel", None, true),
-        "game_mode" => ("int", "playerGameType", None, true),
         "selected_slot" => ("int", "SelectedItemSlot", None, true),
         "dimension" => ("string", "Dimension", None, true),
         "distance_to" => {

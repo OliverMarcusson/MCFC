@@ -42,6 +42,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("color.mcf", include_str!("../std/color.mcf")),
     ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
+    ("gamemode.mcf", include_str!("../std/gamemode.mcf")),
     ("inventory.mcf", include_str!("../std/inventory.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),

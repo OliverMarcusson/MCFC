@@ -1,0 +1,16 @@
+// An Entity world state is a handle the pack owns: assigning moves its tag.
+@WorldState Entity keeper;
+
+void main() {
+    Log.info("before $(keeper.isValid())");
+    Entity first = summon("minecraft:marker");
+    keeper = first;
+    Log.info("after $(keeper.isValid())");
+    keeper = keeper;
+    Log.info("self $(keeper.isValid())");
+    Entity second = summon("minecraft:marker");
+    keeper = second;
+    boolean firstHolds = first.hasTag("entityhandle.keeper");
+    boolean secondHolds = second.hasTag("entityhandle.keeper");
+    Log.info("moved $(keeper.isValid()) $(firstHolds) $(secondHolds)");
+}

@@ -200,6 +200,20 @@ void setupTeams() {
 | `void setFriendlyFire(String team, boolean allowed)` | Whether teammates can hurt each other. |
 | `void split(Selector players, List<String> teams)` | Deals `players` into `teams` in turn, so sizes differ by at most one. Pass a selector with `sort=random` for random teams. |
 
+## `std.gamemode`
+
+```mcfc
+import std.gamemode.GameMode;
+
+void watch(Player player) {
+    if (player.getGameMode() != GameMode.SPECTATOR) {
+        player.setGameMode(GameMode.SPECTATOR);
+    }
+}
+```
+
+`GameMode` is `SURVIVAL`, `CREATIVE`, `ADVENTURE` or `SPECTATOR`, the type of [`setGameMode` and `getGameMode`](./methods).
+
 ## `std.inventory`
 
 Costs for shops. `item` is an ID such as `"minecraft:emerald"`. To count items, use [`player.countItem(id)`](./methods).
@@ -344,7 +358,7 @@ void main() {
 
 ## `std.player`
 
-The code behind [`setGameMode`, `setLevel`, `giveExp`, `giveExpLevels` and the longer `sendTitle` forms](./methods) on `Player` and `Selector`. Call those methods instead of importing this module.
+The code behind [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `remove`, `spectate`, `stopSpectating`, the facing `teleport` and the longer `sendTitle` forms](./methods) on `Player` and `Selector`. Call those methods instead of importing this module.
 
 ## `std.attribute`
 

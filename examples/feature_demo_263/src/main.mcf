@@ -14,6 +14,7 @@ import std.math.gcd;
 import std.math.lerp;
 import std.math;
 import std.cooldown;
+import std.gamemode.GameMode;
 import std.inventory;
 import std.region;
 import std.team;
@@ -248,7 +249,7 @@ void reads() {
     check("read_health", p.getHealth() > 0.0, p.getHealth().toString());
     check("read_food", p.getFoodLevel() >= 0 && p.getFoodLevel() <= 20, p.getFoodLevel().toString());
     check("read_xp", p.getLevel() >= 0, p.getLevel().toString());
-    check("read_game_mode", p.getGameMode() >= 0 && p.getGameMode() <= 3, p.getGameMode().toString());
+    check("read_game_mode", p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.CREATIVE, "" + p.getGameMode());
     check("read_dimension", startsWith(p.getDimension(), "minecraft:"), p.getDimension());
     check("read_selected_slot", p.getSelectedSlot() >= 0 && p.getSelectedSlot() <= 8, p.getSelectedSlot().toString());
     mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
@@ -369,8 +370,8 @@ void gaps() {
     check("world_state", demoRuns == before + 1, demoRuns.toString());
 
     var mode = p.getGameMode();
-    p.setGameMode(2);
-    check("set_game_mode", p.getGameMode() == 2, p.getGameMode().toString());
+    p.setGameMode(GameMode.ADVENTURE);
+    check("set_game_mode", p.getGameMode() == GameMode.ADVENTURE, "" + p.getGameMode());
     p.setGameMode(mode);
 
     var level = p.getLevel();

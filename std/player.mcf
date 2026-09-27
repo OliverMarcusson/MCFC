@@ -2,17 +2,33 @@
 // is generic, so `target` is an `Entity`, a `Player` or a `Selector`; a selector
 // applies to every match.
 
+import std.gamemode.GameMode;
 import std.vec.Vec3;
 
-// 0 survival, 1 creative, 2 adventure, 3 spectator, the numbers getGameMode() returns.
-public <T> void setGameMode(T target, int mode) {
-    if (mode < 0 || mode > 3) {
-        return;
-    }
-    var name = List.of("survival", "creative", "adventure", "spectator")[mode];
+public <T> void setGameMode(T target, GameMode mode) {
+    String name = switch (mode) {
+        case SURVIVAL -> "survival";
+        case CREATIVE -> "creative";
+        case ADVENTURE -> "adventure";
+        case SPECTATOR -> "spectator";
+    };
     as (target) {
         mcf("gamemode $(name) @s");
     }
+}
+
+public GameMode getGameMode(Player player) {
+    int id = (int) player.nbt.playerGameType;
+    if (id == 1) {
+        return GameMode.CREATIVE;
+    }
+    if (id == 2) {
+        return GameMode.ADVENTURE;
+    }
+    if (id == 3) {
+        return GameMode.SPECTATOR;
+    }
+    return GameMode.SURVIVAL;
 }
 
 public <T> void setLevel(T target, int levels) {

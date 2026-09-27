@@ -1,0 +1,3 @@
+say wrap 180.0f
+say pick 3
+say join a-b-c

@@ -39,6 +39,7 @@ BUDGET = {
     "switchy": 68,
     "timed": 392,
     "trig": 1426,
+    "nested": 78,
 }
 
 

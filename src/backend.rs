@@ -3030,7 +3030,12 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 if let Some(info) = self.functions.get(callee).cloned() {
                     let mut call = Vec::new();
                     let mut temps = Vec::new();
-                    if recursive {
+                    // `f(x, f(y))`: the inner call writes the same param slots and
+                    // control flag, so evaluate every argument before touching them.
+                    let nested = args
+                        .iter()
+                        .any(|arg| expr_calls_any(arg, &BTreeSet::from([callee.clone()])));
+                    if recursive || nested {
                         // The callee's params may be this frame's own slots.
                         for ((_, param_ty), arg) in info.params.iter().zip(args.iter()) {
                             let name = self.new_temp();
@@ -3038,12 +3043,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                             self.compile_expr_into_slot(function, depth, arg, &temp, lines);
                             temps.push(temp);
                         }
+                    }
+                    if recursive {
                         call.push(self.frame_call("save", depth, &function.name));
                     }
-                    call.push(format!(
-                        "scoreboard players set {} mcfc 0",
-                        control_slot(callee_depth, callee)
-                    ));
                     for (index, ((param_name, param_ty), arg)) in
                         info.params.iter().zip(args.iter()).enumerate()
                     {
@@ -3055,6 +3058,11 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                             }
                         }
                     }
+                    // After the arguments: a call inside them sets this flag when it returns.
+                    call.push(format!(
+                        "scoreboard players set {} mcfc 0",
+                        control_slot(callee_depth, callee)
+                    ));
                     call.push(format!(
                         "function {}:{}",
                         self.namespace,

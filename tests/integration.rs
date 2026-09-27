@@ -623,6 +623,14 @@ void main() {
             .values()
             .any(|file| file.contains("scoreboard players operation $(selector) mcfs_quest_stage"))
     );
+    // Reading an int state lands in a score, not a storage path named like one.
+    assert!(
+        result
+            .artifacts
+            .files
+            .values()
+            .any(|file| file.contains("mcfc = $(selector) mcfs_quest_stage"))
+    );
     assert!(
         result
             .artifacts
@@ -728,7 +736,7 @@ void main() {
             .artifacts
             .files
             .values()
-            .any(|file| file.contains("scoreboard players get $(selector) mcfe_decay"))
+            .any(|file| file.contains("mcfc = $(selector) mcfe_decay"))
     );
 }
 
@@ -851,7 +859,7 @@ void main() {
             .artifacts
             .files
             .values()
-            .any(|file| file.contains("scoreboard players get $(selector) mcfe_alert"))
+            .any(|file| file.contains("mcfc = $(selector) mcfe_alert"))
     );
     assert!(
         result

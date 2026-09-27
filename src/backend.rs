@@ -7659,9 +7659,8 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                 lines.push(self.query_command(
                     base_slot,
                     format!(
-                        "execute store result storage {}:runtime {} int 1 run scoreboard players get $(selector) {}",
-                        self.namespace,
-                        target.storage_path(),
+                        "scoreboard players operation {} mcfc = $(selector) {}",
+                        target.numeric_name(),
                         objective
                     ),
                     true,

@@ -4987,3 +4987,47 @@ fn generic_classes_are_checked() {
     ))
     .expect("diamonds and generic functions making copies compile");
 }
+
+#[test]
+fn lambdas_are_checked() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let op = "interface IntOp { int apply(int x); }\ninterface Two { int a(); int b(); }\n";
+    let rejected = [
+        (
+            "void main() { int n = (x -> x).apply(1); }\n",
+            "a lambda needs a type",
+        ),
+        (
+            "void main() { Two t = () -> 1; }\n",
+            "a lambda needs a functional interface",
+        ),
+        (
+            "void main() { IntOp op = (a, b) -> a + b; }\n",
+            "takes 1 arguments, but the lambda has 2 parameters",
+        ),
+        (
+            "void main() { int total = 0; IntOp op = x -> total += x; }\n",
+            "a lambda can't change 'total'",
+        ),
+        (
+            "void main() { IntOp op = (String x) -> 1; }\n",
+            "lambda parameter 'x' is 'String'",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(&format!("{op}{source}")).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    compile(&format!(
+        "{op}class Tools {{ static int twice(int x) {{ return x * 2; }} }}\nvoid main() {{ int base = 1; IntOp add = x -> x + base; IntOp twice = Tools::twice; }}\n"
+    ))
+    .expect("captures and static method references compile");
+}

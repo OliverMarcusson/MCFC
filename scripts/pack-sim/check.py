@@ -45,6 +45,7 @@ BUDGET = {
     "classes": 899,
     "inherit": 1179,
     "generics": 1293,
+    "lambdas": 1392,
     "gc": 12272,
     "vectors": 380,
     "worldindex": 66,

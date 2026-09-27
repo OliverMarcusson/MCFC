@@ -1138,6 +1138,25 @@ impl Resolver {
                     self.walk_expr(scope, default, diagnostics);
                 }
             }
+            ExprKind::Lambda { params, body, .. } => {
+                let mut locals = scope.locals.clone();
+                locals.extend(params.iter().map(|(name, _)| name.clone()));
+                collect_locals(body, &mut locals);
+                for ty in params.iter_mut().filter_map(|(_, ty)| ty.as_mut()) {
+                    self.resolve_type(scope.module, scope.generics, ty, &span, diagnostics);
+                }
+                let inner = Scope {
+                    module: scope.module,
+                    generics: scope.generics,
+                    locals: &locals,
+                };
+                self.walk_stmts(&inner, body, diagnostics);
+            }
+            ExprKind::MethodRef { target, .. } => {
+                if target != "this" && !scope.locals.contains(target.as_str()) {
+                    self.resolve_record_name(scope, target, &span, diagnostics);
+                }
+            }
             ExprKind::String(text) => self.resolve_placeholders(scope, text),
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Variable(_) => {}
         }

@@ -393,6 +393,19 @@ pub enum ExprKind {
         arms: Vec<(Expr, Expr)>,
         default: Option<Box<Expr>>,
     },
+    /// `x -> x * 2` or `(int a, int b) -> { ... }`. A parameter's type is
+    /// `None` when not written. An expression body is one `return`, marked
+    /// by `expression`, since it is a statement when the method is `void`.
+    Lambda {
+        params: Vec<(String, Option<Type>)>,
+        body: Vec<Stmt>,
+        expression: bool,
+    },
+    /// `Type::method`, `Type::new`, `this::method` or `variable::method`.
+    MethodRef {
+        target: String,
+        method: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

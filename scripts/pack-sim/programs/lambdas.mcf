@@ -1,0 +1,90 @@
+// Lambdas and method references: each becomes a class implementing the
+// functional interface it is assigned to, holding what it captures.
+interface IntOp {
+    int apply(int x);
+}
+
+interface Mapper<T, R> {
+    R map(T value);
+}
+
+interface Action {
+    void run();
+}
+
+class Counter {
+    int count = 0;
+    int step = 2;
+
+    IntOp adder() {
+        return x -> x + step;
+    }
+
+    Action bump() {
+        return () -> count += step;
+    }
+
+    int twice(int x) {
+        return x * 2;
+    }
+
+    IntOp doubler() {
+        return this::twice;
+    }
+}
+
+class Tools {
+    static int square(int x) {
+        return x * x;
+    }
+}
+
+int applyTwice(IntOp op, int x) {
+    return op.apply(op.apply(x));
+}
+
+<T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper) {
+    List<R> out = List.of();
+    for (T value : values) {
+        out.add(mapper.map(value));
+    }
+
+    return out;
+}
+
+String join(List<String> parts) {
+    String out = "";
+    for (String part : parts) {
+        out = out + part;
+    }
+
+    return out;
+}
+
+void main() {
+    int offset = 10;
+    IntOp addOffset = x -> x + offset;
+    IntOp square = Tools::square;
+    IntOp block = (int x) -> {
+        int y = x * 3;
+        return y - 1;
+    };
+    String ops = "ops " + addOffset.apply(5) + " " + square.apply(4) + " " + block.apply(2) + " " + applyTwice(x -> x * 10, 3);
+    mcf("say $(ops)");
+
+    Counter counter = new Counter();
+    IntOp adder = counter.adder();
+    Action bump = counter.bump();
+    bump.run();
+    bump.run();
+    counter.step = 5;
+    String members = "members " + counter.count + " " + adder.apply(1) + " " + counter.doubler().apply(21);
+    mcf("say $(members)");
+
+    List<Integer> numbers = List.of(1, 2, 3);
+    List<String> labels = mapAll(numbers, n -> "n" + n);
+    List<Integer> lengths = mapAll(labels, String::length);
+    Mapper<Integer, Integer> nested = n -> applyTwice(x -> x + n, 0);
+    String generic = "generic " + join(labels) + " " + lengths[2] + " " + nested.map(4);
+    mcf("say $(generic)");
+}

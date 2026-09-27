@@ -11542,6 +11542,8 @@ fn infer_dynamic_nbt_index_type(function: &IrFunction, expr: &crate::ast::Expr) 
         | crate::ast::ExprKind::Conditional { .. }
         | crate::ast::ExprKind::InstanceOf { .. }
         | crate::ast::ExprKind::Cast { .. }
+        | crate::ast::ExprKind::Lambda { .. }
+        | crate::ast::ExprKind::MethodRef { .. }
         | crate::ast::ExprKind::Switch { .. } => None,
     }
 }

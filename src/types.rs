@@ -1,5 +1,8 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+mod lambdas;
 
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
@@ -50,6 +53,42 @@ fn dispatched(function: String) -> String {
     } else {
         function
     }
+}
+
+/// `type_check_expr` where a value of type `expected` is wanted: a lambda or
+/// method reference takes that type.
+#[allow(clippy::too_many_arguments)]
+fn type_check_expected(
+    expr: &Expr,
+    expected: &Type,
+    struct_defs: &BTreeMap<String, StructTypeDef>,
+    signatures: &BTreeMap<String, FunctionSignature>,
+    env: &HashMap<String, Type>,
+    ref_env: &HashMap<String, RefKind>,
+    called_functions: &mut BTreeSet<String>,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    if lambdas::is_function_value(expr) {
+        return lambdas::type_check_function_value(
+            expr,
+            expected,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        );
+    }
+    type_check_expr(
+        expr,
+        struct_defs,
+        signatures,
+        env,
+        ref_env,
+        called_functions,
+        diagnostics,
+    )
 }
 
 /// `bb.max` written in source: properties are read and written through get/set methods.
@@ -600,6 +639,8 @@ fn enum_field_switch(
 }
 
 const MODULE_TAG: &str = "@module:";
+/// The function being checked, which names the classes of its lambdas.
+const FUNCTION_TAG: &str = "@function:";
 const OWNER_TAG: &str = "@owner:";
 /// Set in a class's constructors and static initializer, which may set `final` fields.
 const INIT_TAG: &str = "@init:";
@@ -1519,7 +1560,9 @@ fn pick_overload(
         let mut bindings = BTreeMap::new();
         signature.params.len() == args.len()
             && signature.params.iter().zip(args).all(|(param, arg)| {
-                if !signature.type_params.is_empty() {
+                if lambdas::is_pending(arg) {
+                    matches!(param, Type::Class(_) | Type::Generic(..))
+                } else if !signature.type_params.is_empty() {
                     bind_type_params(param, &arg.ty, &signature.type_params, &mut bindings, false)
                 } else if convert {
                     coerce_expr_to_expected_type(arg.clone(), param).ty == *param
@@ -1797,19 +1840,32 @@ pub fn type_check(program: &Program, host: &HostModules) -> Result<TypedProgram,
     // Generic classes are copied per use first. A generic function can ask for
     // a copy no code wrote out (`Box<T>` once `T` is known); then check again
     // with that copy added.
+    // Lambdas work the same way: each needs a class, known once its types are.
     let mut wanted = crate::generics::Wanted::new();
+    let mut lambda_classes: BTreeMap<String, lambdas::LambdaClass> = BTreeMap::new();
     for _ in 0..MAX_EXPANSIONS {
         let mut diagnostics = Diagnostics::new();
-        let expanded = crate::generics::expand(program, &mut wanted, &mut diagnostics);
+        let mut with_lambdas = program.clone();
+        for (class, functions) in lambda_classes.values() {
+            with_lambdas.classes.push(class.clone());
+            with_lambdas.functions.extend(functions.iter().cloned());
+        }
+        let expanded = crate::generics::expand(&with_lambdas, &mut wanted, &mut diagnostics);
         if !diagnostics.0.is_empty() {
             return Err(diagnostics);
         }
         let result = type_check_expanded(&expanded, host);
         let late = crate::generics::take_late();
-        if late.keys().all(|instance| wanted.contains_key(instance)) {
+        let found = lambdas::take_found();
+        let new_copies = late.keys().any(|instance| !wanted.contains_key(instance));
+        let new_lambdas = found
+            .keys()
+            .any(|class| !lambda_classes.contains_key(class));
+        if !new_copies && !new_lambdas {
             return result;
         }
         wanted.extend(late);
+        lambda_classes.extend(found);
     }
     let mut diagnostics = Diagnostics::new();
     diagnostics.push(Diagnostic::new(
@@ -2094,6 +2150,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
         overloads.insert(name, mangled);
     }
     let class_functions = class_functions(&normalized, &unmangled, &struct_defs, &mut diagnostics);
+    lambdas::find_functional(&normalized, &unmangled);
     normalized.functions.extend(class_functions);
     for def in &normalized.structs {
         if let Some(registered) = struct_defs.get_mut(&def.name) {
@@ -2580,6 +2637,7 @@ fn type_check_function(
         if function.name != "tick" {
             env.insert(format!("{MODULE_TAG}{}", function.module), Type::Void);
         }
+        env.insert(format!("{FUNCTION_TAG}{}", function.name), Type::Void);
         if let Some(owner) = &function.owner {
             env.insert(format!("{OWNER_TAG}{owner}"), Type::Void);
             let is_named = |method: &str| {
@@ -2938,7 +2996,17 @@ fn type_check_block(
                             ty: ty.clone(),
                             ref_kind: RefKind::Unknown,
                         },
-                        _ => type_check_expr(
+                        (None, Some(ty)) => type_check_expected(
+                            value,
+                            ty,
+                            struct_defs,
+                            signatures,
+                            env,
+                            ref_env,
+                            called_functions,
+                            diagnostics,
+                        ),
+                        (_, None) => type_check_expr(
                             value,
                             struct_defs,
                             signatures,
@@ -2984,6 +3052,35 @@ fn type_check_block(
                         ty: Type::Int,
                         ref_kind: RefKind::Unknown,
                     }
+                } else if lambdas::is_function_value(value) {
+                    // A lambda takes the type of what it's assigned to.
+                    let target_expr = Expr {
+                        kind: match target {
+                            AssignTarget::Variable(name) => ExprKind::Variable(name.clone()),
+                            AssignTarget::Path(path) => ExprKind::Path(path.clone()),
+                        },
+                        span: statement.span.clone(),
+                    };
+                    let expected = type_check_expr(
+                        &target_expr,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        &mut BTreeSet::new(),
+                        &mut Diagnostics::new(),
+                    )
+                    .ty;
+                    type_check_expected(
+                        value,
+                        &expected,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    )
                 } else {
                     type_check_expr(
                         value,
@@ -3654,8 +3751,9 @@ fn type_check_block(
                             ref_kind: RefKind::Unknown,
                         };
                     }
-                    let value = type_check_expr(
+                    let value = type_check_expected(
                         expr,
+                        return_type,
                         struct_defs,
                         signatures,
                         env,
@@ -4073,6 +4171,13 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
             )
+        }
+        ExprKind::Lambda { .. } | ExprKind::MethodRef { .. } => {
+            diagnostics.push(Diagnostic::new(
+                "a lambda needs a type: assign it to a variable of a functional interface type, or pass it as an argument",
+                expr.span.clone(),
+            ));
+            void_expr()
         }
         ExprKind::New { name, .. } if crate::generics::is_generic(name) => {
             diagnostics.push(Diagnostic::new(
@@ -4908,15 +5013,19 @@ fn type_check_expr(
                 return builtin;
             }
             // `take(new Box<>(1))`: a diamond takes the parameter's type arguments.
-            let mut args = args.clone();
+            let mut raw_args = args.clone();
             if let Some(signature) = signatures.get(function) {
-                for (arg, param) in args.iter_mut().zip(&signature.params) {
+                for (arg, param) in raw_args.iter_mut().zip(&signature.params) {
                     crate::generics::fill_diamond(arg, param);
                 }
             }
-            let args: Vec<_> = args
+            // Lambdas wait for the parameter types, once the call is picked.
+            let mut args: Vec<_> = raw_args
                 .iter()
                 .map(|arg| {
+                    if lambdas::is_function_value(arg) {
+                        return lambdas::pending();
+                    }
                     type_check_expr(
                         arg,
                         struct_defs,
@@ -4985,7 +5094,12 @@ fn type_check_expr(
                 )
             } else {
                 let mut bindings = BTreeMap::new();
-                for (param, arg) in signature.params.iter().zip(&args) {
+                let lambda_free = signature
+                    .params
+                    .iter()
+                    .zip(&args)
+                    .filter(|(_, arg)| !lambdas::is_pending(arg));
+                for (param, arg) in lambda_free {
                     if !bind_type_params(
                         param,
                         &arg.ty,
@@ -4999,6 +5113,22 @@ fn type_check_expr(
                             ),
                             expr.span.clone(),
                         ));
+                    }
+                }
+                // Then what each lambda's parameters and result tell, in order,
+                // so `map(xs, x -> x + 1)` finds `R` from `T`.
+                for (param, arg) in signature.params.iter().zip(&raw_args) {
+                    if lambdas::is_function_value(arg) {
+                        lambdas::infer_type_params(
+                            arg,
+                            param,
+                            &signature.type_params,
+                            &mut bindings,
+                            struct_defs,
+                            signatures,
+                            env,
+                            ref_env,
+                        );
                     }
                 }
                 let mut types = Vec::new();
@@ -5033,6 +5163,20 @@ fn type_check_expr(
                     substitute(&signature.return_type, &bindings),
                 )
             };
+            for ((arg, raw), expected) in args.iter_mut().zip(&raw_args).zip(&params) {
+                if lambdas::is_pending(arg) {
+                    *arg = type_check_expected(
+                        raw,
+                        expected,
+                        struct_defs,
+                        signatures,
+                        env,
+                        ref_env,
+                        called_functions,
+                        diagnostics,
+                    );
+                }
+            }
             let args: Vec<_> = args
                 .into_iter()
                 .enumerate()

@@ -9,6 +9,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 - **Unchecked casts.** `(Dog) animal` doesn't check the object's class while the pack runs, and there is no `ClassCastException`. Test with `instanceof` first.
 - **Records don't implement interfaces**, and generic methods aren't virtual.
 - **Lists and maps are values.** Assigning or passing a `List` or `Map` copies it, unlike Java, where both names would see the same list. This is on purpose: a copy is one storage command, while a shared list would make every element read and write a macro call through the object heap. Class objects are shared, so wrap a list in a class when several places must see one list.
+- **Lambdas copy what they capture.** Since lists and maps are values, `x -> seen.add(x)` adds to the lambda's own copy of `seen`. Capture a class object instead. A generic call only infers type arguments from an expression lambda's result, not from a block's `return`.
 - **No generic records.** Generic type parameters work on functions and methods, but record declarations are not generic.
 - **Enum constructors** can only assign parameters to fields (`this.mass = mass;`), and fields are `final`.
 - **Only `toString()` and `equals(other)`** can be marked `@Override`.

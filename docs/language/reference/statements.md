@@ -350,6 +350,49 @@ void main() {
 - Like generic functions, each set of type arguments compiles its own copy of the class (`Pair__string__int`). The copies are unrelated classes: a `Pair<String, Integer>` isn't a `Pair<Integer, String>`, and there are no wildcards (`Pair<?, ?>`).
 - A generic class can't have `static` fields, since each copy would get its own. Static methods are fine.
 
+#### Lambdas and method references
+
+```mcfc
+interface IntOp {
+    int apply(int x);
+}
+
+class Counter {
+    int count = 0;
+
+    IntOp adder() {
+        return x -> x + count;
+    }
+
+    int twice(int x) {
+        return x * 2;
+    }
+}
+
+int applyTwice(IntOp op, int x) {
+    return op.apply(op.apply(x));
+}
+
+void main() {
+    int offset = 10;
+    IntOp addOffset = x -> x + offset;
+    IntOp block = (int x) -> {
+        int tripled = x * 3;
+        return tripled - 1;
+    };
+    Counter counter = new Counter();
+    IntOp doubler = counter::twice;
+    int result = applyTwice(x -> x * 10, 3) + addOffset.apply(5) + block.apply(2) + doubler.apply(4);
+}
+```
+
+- A lambda's type is a functional interface: an interface with exactly one abstract method. It takes that type from the variable it's assigned to, the `return` it's in, or the parameter it's passed to. `(x -> x).apply(1)` has no type and is an error.
+- Parameter types can be written, `(int x) -> ...`, or left out. A body is an expression, an assignment such as `() -> count += 1`, or a block.
+- A lambda captures the local variables it uses by copying them when it's made, so it can't assign to them. It can change the fields of `this`, which it keeps a reference to.
+- Method references: `Tools::square` (a static method), `String::length` (called on the first argument), `this::twice` or `counter::twice` (called on that object), and `Point::new` (a constructor).
+- A generic function infers its type arguments from a lambda's result: with `<T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper)`, `mapAll(numbers, n -> "n" + n)` is a `List<String>`.
+- Each lambda compiles to its own class implementing the interface, so calling one is a virtual call like any other.
+
 ### Modules and `public`
 
 In a project, every `.mcf` file under the source directory is a module named by its path: `src/util.mcf` is `util`, and `src/game/score.mcf` is `game.score`. The root file (`src/main.mcf`) is the root module. There is no module declaration.

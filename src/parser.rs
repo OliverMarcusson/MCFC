@@ -123,6 +123,8 @@ struct Parser {
     final_scopes: Vec<Vec<String>>,
     /// Set while parsing a class (`Some(false)`) or interface (`Some(true)`) body.
     class_body: Option<bool>,
+    /// Set while parsing a `case` label, whose `->` isn't a lambda's.
+    in_case_label: bool,
 }
 
 impl Parser {
@@ -133,6 +135,7 @@ impl Parser {
             diagnostics: Diagnostics::new(),
             final_scopes: Vec::new(),
             class_body: None,
+            in_case_label: false,
         }
     }
 
@@ -1707,6 +1710,13 @@ impl Parser {
     /// A `case` label: a constant, or a type pattern like `Circle c`, which is
     /// an `instanceof` of an empty variable.
     fn parse_case_pattern(&mut self) -> Expr {
+        let saved = std::mem::replace(&mut self.in_case_label, true);
+        let pattern = self.parse_case_pattern_inner();
+        self.in_case_label = saved;
+        pattern
+    }
+
+    fn parse_case_pattern_inner(&mut self) -> Expr {
         if let (TokenKind::Identifier(_), TokenKind::Identifier(binding)) =
             (self.peek().kind.clone(), self.peek_at(1).clone())
         {
@@ -2092,6 +2102,30 @@ impl Parser {
                 let args = self.parse_call_args();
                 call(builtin.unwrap_or(methods[0].1), args, &span)
             }
+            TokenKind::Identifier(name)
+                if !self.in_case_label && matches!(self.peek().kind, TokenKind::Arrow) =>
+            {
+                self.bump();
+                return self.parse_lambda_body(vec![(name, None)], span);
+            }
+            TokenKind::LeftParen if !self.in_case_label && self.lambda_params_ahead() => {
+                let mut params = Vec::new();
+                while !self.at(&TokenKind::RightParen) && !self.at(&TokenKind::Eof) {
+                    let untyped =
+                        matches!(self.peek_at(1), TokenKind::Comma | TokenKind::RightParen);
+                    let ty = (!untyped).then(|| self.parse_type());
+                    params.push((self.expect_identifier("expected a parameter name"), ty));
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(
+                    TokenKind::RightParen,
+                    "expected ')' after lambda parameters",
+                );
+                self.expect(TokenKind::Arrow, "expected '->' after lambda parameters");
+                return self.parse_lambda_body(params, span);
+            }
             TokenKind::Identifier(mut name) => {
                 // `util::twice(x)` is a resolved full name; the resolver writes
                 // these into `$(...)` placeholders, which are parsed again later.
@@ -2103,6 +2137,27 @@ impl Parser {
                     self.bump();
                     self.bump();
                     name = format!("{name}::{next}");
+                }
+                // `Type::new`, or `Type::method` when no call follows.
+                if matches!(self.peek().kind, TokenKind::Colon)
+                    && matches!(self.peek_at(1), TokenKind::Colon)
+                    && matches!(self.peek_at(2), TokenKind::New)
+                {
+                    self.bump();
+                    self.bump();
+                    self.bump();
+                    name.push_str("::new");
+                }
+                if let Some((target, method)) = name.rsplit_once("::")
+                    && !self.at(&TokenKind::LeftParen)
+                {
+                    return Expr {
+                        kind: ExprKind::MethodRef {
+                            target: target.to_string(),
+                            method: method.to_string(),
+                        },
+                        span,
+                    };
                 }
                 if self.eat(&TokenKind::LeftParen) {
                     if let Some((ty, _)) = CASTS.iter().find(|(_, builtin)| *builtin == name) {
@@ -2160,6 +2215,60 @@ impl Parser {
             }
         };
         self.parse_postfix(expr)
+    }
+
+    /// After a `(`: a lambda's parameter list, `(a, b) ->` or `(int a) ->`.
+    fn lambda_params_ahead(&self) -> bool {
+        let mut depth = 1;
+        let mut index = self.index;
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::LeftParen => depth += 1,
+                TokenKind::RightParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens.get(index + 1).map(|t| &t.kind),
+                            Some(TokenKind::Arrow)
+                        );
+                    }
+                }
+                TokenKind::Eof | TokenKind::Semicolon | TokenKind::LeftBrace => return false,
+                _ => {}
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// What follows a lambda's `->`: a block, or an expression it returns.
+    fn parse_lambda_body(&mut self, params: Vec<(String, Option<Type>)>, span: Span) -> Expr {
+        let saved = std::mem::replace(&mut self.in_case_label, false);
+        let (body, expression) = if self.at(&TokenKind::LeftBrace) {
+            (self.parse_block("lambda body"), false)
+        } else {
+            // An expression, or an assignment such as `() -> count += 1`.
+            let start = self.current_span();
+            match self.parse_simple_stmt() {
+                StmtKind::Expr(value) => {
+                    let stmt = Stmt {
+                        span: value.span.clone(),
+                        kind: StmtKind::Return(Some(value)),
+                    };
+                    (vec![stmt], true)
+                }
+                kind => (vec![Stmt { kind, span: start }], false),
+            }
+        };
+        self.in_case_label = saved;
+        Expr {
+            kind: ExprKind::Lambda {
+                params,
+                body,
+                expression,
+            },
+            span,
+        }
     }
 
     /// `Map.of("a", 1, "b", 2)`: keys are string literals.

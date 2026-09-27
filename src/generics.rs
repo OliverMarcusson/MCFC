@@ -29,6 +29,18 @@ thread_local! {
     static LATE: RefCell<Wanted> = const { RefCell::new(BTreeMap::new()) };
     /// The generic classes, which only exist as copies after `expand`.
     static GENERIC: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Generic interfaces with one abstract method: their type parameters,
+    /// and the method's parameter and return types written with them.
+    static FUNCTIONAL: RefCell<HashMap<String, GenericMethod>> = RefCell::new(HashMap::new());
+}
+
+/// A generic interface's type parameters and its one abstract method's
+/// parameter and return types, like `([T, R], [T], R)` for `Function<T, R>`.
+pub type GenericMethod = (Vec<String>, Vec<Type>, Type);
+
+/// The one abstract method of generic interface `name`, if it has one.
+pub fn generic_functional(name: &str) -> Option<GenericMethod> {
+    FUNCTIONAL.with(|map| map.borrow().get(name).cloned())
 }
 
 /// Names a generic class, which has to be written with type arguments.
@@ -147,6 +159,8 @@ pub fn expand(program: &Program, wanted: &mut Wanted, diagnostics: &mut Diagnost
     INSTANCES.with(|map| map.borrow_mut().clear());
     LATE.with(|late| late.borrow_mut().clear());
     GENERIC.with(|set| *set.borrow_mut() = generic.keys().map(|name| name.to_string()).collect());
+    let functional = generic_functional_methods(program, &generic);
+    FUNCTIONAL.with(|map| *map.borrow_mut() = functional);
     if generic.is_empty() && wanted.is_empty() {
         return program.clone();
     }
@@ -338,6 +352,60 @@ pub fn expand(program: &Program, wanted: &mut Wanted, diagnostics: &mut Diagnost
     out
 }
 
+/// The one abstract method of each generic interface that has one, found in
+/// the interface or, when it declares none, in the one interface it extends
+/// (`UnaryOperator<T> extends Function<T, T>`).
+fn generic_functional_methods(
+    program: &Program,
+    generic: &BTreeMap<&str, &ClassDef>,
+) -> HashMap<String, GenericMethod> {
+    fn find(
+        name: &str,
+        program: &Program,
+        generic: &BTreeMap<&str, &ClassDef>,
+        depth: usize,
+    ) -> Option<GenericMethod> {
+        let class = generic.get(name)?;
+        if !class.is_interface || depth > 8 {
+            return None;
+        }
+        let abstract_methods: Vec<&Function> = program
+            .functions
+            .iter()
+            .filter(|f| f.owner.as_deref() == Some(name) && f.is_abstract)
+            .filter(|f| f.params.first().is_some_and(|p| p.name == "this"))
+            .collect();
+        match abstract_methods.as_slice() {
+            [method] => Some((
+                class.type_params.clone(),
+                method.params[1..].iter().map(|p| p.ty.clone()).collect(),
+                method.return_type.clone(),
+            )),
+            [] if class.interfaces.len() == 1 => {
+                let parent = &class.interfaces[0];
+                let args = class.super_args.get(parent)?;
+                let (params, method_params, return_type) =
+                    find(parent, program, generic, depth + 1)?;
+                let bindings: BTreeMap<String, Type> =
+                    params.into_iter().zip(args.iter().cloned()).collect();
+                Some((
+                    class.type_params.clone(),
+                    method_params
+                        .iter()
+                        .map(|ty| substitute_plain(ty, &bindings))
+                        .collect(),
+                    substitute_plain(&return_type, &bindings),
+                ))
+            }
+            _ => None,
+        }
+    }
+    generic
+        .keys()
+        .filter_map(|name| Some((name.to_string(), find(name, program, generic, 0)?)))
+        .collect()
+}
+
 /// Whether `ty` is `bound` or a subtype of it, from the class declarations.
 fn extends(program: &Program, ty: &Type, bound: &Type) -> bool {
     if ty == bound {
@@ -363,7 +431,7 @@ fn extends(program: &Program, ty: &Type, bound: &Type) -> bool {
 }
 
 /// `substitute` without asking for copies: `expand` asks through `concretize`.
-fn substitute_plain(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
+pub fn substitute_plain(ty: &Type, bindings: &BTreeMap<String, Type>) -> Type {
     match ty {
         Type::Struct(name) => bindings.get(name).cloned().unwrap_or_else(|| ty.clone()),
         Type::Array(inner) => Type::Array(Box::new(substitute_plain(inner, bindings))),
@@ -473,6 +541,9 @@ fn concretize_body(body: &mut [Stmt], params: &[String], found: &mut Wanted) {
 fn new_calls(body: &mut [Stmt], params: &[String], want: &mut dyn FnMut(&str, &[Type], &Span)) {
     fn new_call(expr: &mut Expr, params: &[String], want: &mut dyn FnMut(&str, &[Type], &Span)) {
         each_child(expr, &mut |child| new_call(child, params, want));
+        if let ExprKind::Lambda { body, .. } = &mut expr.kind {
+            new_calls(body, params, want);
+        }
         if let ExprKind::New {
             name,
             args,
@@ -551,6 +622,14 @@ impl Rewriter<'_> {
             }
             ExprKind::InstanceOf { ty, .. } | ExprKind::Cast { ty, .. } => {
                 *ty = substitute_plain(ty, self.bindings)
+            }
+            ExprKind::Lambda { params, body, .. } => {
+                for ty in params.iter_mut().filter_map(|(_, ty)| ty.as_mut()) {
+                    *ty = substitute_plain(ty, self.bindings);
+                }
+                let saved = self.return_type.take();
+                self.stmts(body);
+                self.return_type = saved;
             }
             _ => {}
         }
@@ -717,11 +796,14 @@ pub fn each_child(expr: &mut Expr, visit: &mut dyn FnMut(&mut Expr)) {
                 visit(default);
             }
         }
+        // A lambda's body is statements; walkers that need it visit it themselves.
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::String(_)
-        | ExprKind::Variable(_) => {}
+        | ExprKind::Variable(_)
+        | ExprKind::Lambda { .. }
+        | ExprKind::MethodRef { .. } => {}
     }
 }
 
@@ -737,6 +819,12 @@ fn visit_stmts(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Type, &Span)) {
                 type_args: Some(types),
                 ..
             } => types.iter_mut().for_each(|ty| visit(ty, &e.span)),
+            ExprKind::Lambda { params, body, .. } => {
+                for ty in params.iter_mut().filter_map(|(_, ty)| ty.as_mut()) {
+                    visit(ty, &e.span);
+                }
+                visit_stmts(body, visit);
+            }
             _ => {}
         }
     }

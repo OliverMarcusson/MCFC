@@ -37,109 +37,119 @@ mcfc watch . --out "$env:APPDATA\.minecraft\saves\<world>\datapacks\coins"
 Replace `src/main.mcf` with:
 
 ```mcfc
-void main() {
-    Selector.of("@a").sendMessage("Coins pack loaded");
+class Main {
+    public static void main() {
+        Selector.of("@a").sendMessage("Coins pack loaded");
+    }
 }
 ```
 
-`main` runs every time the datapack loads, so it runs on world start and on every `/reload`. `Selector.of("@a")` matches every online player, and `sendMessage` sends them a chat message.
+Every piece of MCFC code lives in a class, as in Java. `public static void main()` is where the pack starts: it runs every time the datapack loads, so on world start and on every `/reload`. `Selector.of("@a")` matches every online player, and `sendMessage` sends them a chat message.
 
 Run `/reload`. You should see `Coins pack loaded` in chat.
 
 ## 4. Store coins per player
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-void main() {
-    Selector.of("@a").sendMessage("Coins pack loaded");
-}
+    public static void main() {
+        Selector.of("@a").sendMessage("Coins pack loaded");
+    }
 
-@Every(ticks = 20)
-void payday() {
-    for (Player player : Selector.of("@a")) {
-        player.state.coins = player.state.coins + 1;
-        player.sendActionBar("Coins: $(player.state.coins)");
+    @Every(ticks = 20)
+    static void payday() {
+        for (Player player : Selector.of("@a")) {
+            player.state.coins = player.state.coins + 1;
+            player.sendActionBar("Coins: $(player.state.coins)");
+        }
     }
 }
 ```
 
-- `@PlayerState("Coins") int coins;` declares a per-player integer. `"Coins"` is the display name of the scoreboard objective that backs it. A player who has never been paid reads as `0`.
-- `@Every(ticks = 20)` runs `payday` every 20 ticks, which is once per second.
+- `@PlayerState("Coins") static int coins;` declares a per-player integer, read as `player.state.coins`. `"Coins"` is the display name of the scoreboard objective that backs it. A player who has never been paid reads as `0`.
+- `@Every(ticks = 20)` runs the static method `payday` every 20 ticks, which is once per second.
 - `for (Player player : Selector.of("@a"))` runs the loop body once per online player, with `player` bound to that player.
 - `$(...)` inside a string inserts a value.
 
 Reload. The action bar now counts up once per second. Values are kept across reloads and restarts.
 
-## 5. Move repeated logic into a function
+## 5. Move repeated logic into a method
 
-The payout will be reused in step 7, so move it into a function:
+The payout will be reused in step 7, so move it into a method:
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-void main() {
-    Selector.of("@a").sendMessage("Coins pack loaded");
-}
+    public static void main() {
+        Selector.of("@a").sendMessage("Coins pack loaded");
+    }
 
-void pay(Player player, int amount) {
-    player.state.coins = player.state.coins + amount;
-    player.sendActionBar("Coins: $(player.state.coins)");
-}
+    static void pay(Player player, int amount) {
+        player.state.coins = player.state.coins + amount;
+        player.sendActionBar("Coins: $(player.state.coins)");
+    }
 
-@Every(ticks = 20)
-void payday() {
-    for (Player player : Selector.of("@a")) {
-        pay(player, 1);
+    @Every(ticks = 20)
+    static void payday() {
+        for (Player player : Selector.of("@a")) {
+            pay(player, 1);
+        }
     }
 }
 ```
 
-The return type comes first (`void` if there isn't one), and every parameter has a type. `Player` is a single player. See [Types](/language/reference/types) for the rest.
+The return type comes first (`void` if there isn't one), and every parameter has a type. `static` means the method belongs to the class, so `payday` calls it as `pay(...)`, or `Main.pay(...)` from another class. `Player` is a single player. See [Types](/language/reference/types) for the rest.
 
 ## 6. React to events
 
-Add these below `payday`:
+Event handlers go in a class that `implements Listener`. Add it to `Main`'s declaration and add these below `payday`:
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main implements Listener {
+    @PlayerState("Coins")
+    static int coins;
 
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player();
-    player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
-}
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.player();
+        player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
+    }
 
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player();
-    var lost = player.state.coins / 2;
-    player.state.coins = player.state.coins - lost;
-    player.sendMessage("You dropped $(lost) coins.");
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        Player player = event.player();
+        var lost = player.state.coins / 2;
+        player.state.coins = player.state.coins - lost;
+        player.sendMessage("You dropped $(lost) coins.");
+    }
 }
 ```
 
-`@EventHandler` works like Bukkit: the parameter's type picks the event. `PlayerJoinEvent` runs once for each player, the first time the pack sees them. `PlayerDeathEvent` runs each time a player dies. `event.player` is that player. Integer `/` rounds down. The [event reference](/language/reference/events) lists every event.
+`@EventHandler` works like Bukkit: handlers are methods of a listener, without `static`, and the parameter's type picks the event. `PlayerJoinEvent` runs once for each player, the first time the pack sees them. `PlayerDeathEvent` runs each time a player dies. `event.player()` is that player. Integer `/` rounds down. The [event reference](/language/reference/events) lists every event.
 
 To test, run `/kill` on yourself.
 
 ## 7. Add a command
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-@Command("buy")
-void buy(Player player) {
-    if (player.state.coins < 10) {
-        player.sendMessage("You need 10 coins.");
-        return;
+    @Command("buy")
+    static void buy(Player player) {
+        if (player.state.coins < 10) {
+            player.sendMessage("You need 10 coins.");
+            return;
+        }
+        player.state.coins = player.state.coins - 10;
+        player.give("minecraft:diamond", 1);
     }
-    player.state.coins = player.state.coins - 10;
-    player.give("minecraft:diamond", 1);
 }
 ```
 
@@ -149,14 +159,16 @@ Players run this with `/trigger buy`. Vanilla has no custom commands, so `@Comma
 
 ## 8. Wait without blocking
 
-Minecraft commands can't pause. MCFC compiles `sleep` into a scheduled continuation, so the rest of the game keeps running while a function waits:
+Minecraft commands can't pause. MCFC compiles `sleep` into a scheduled continuation, so the rest of the game keeps running while a method waits:
 
 ```mcfc
-void remind(Player player) {
-    Thread.start(() -> {
-        sleep(3);
-        player.sendMessage("Spend wisely.");
-    });
+class Main {
+    static void remind(Player player) {
+        Thread.start(() -> {
+            sleep(3);
+            player.sendMessage("Spend wisely.");
+        });
+    }
 }
 ```
 
@@ -165,55 +177,57 @@ Call `remind(player);` at the end of `buy`. `Thread.start(() -> { ... })` starts
 ## The finished pack
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main implements Listener {
+    @PlayerState("Coins")
+    static int coins;
 
-void main() {
-    Selector.of("@a").sendMessage("Coins pack loaded");
-}
-
-void pay(Player player, int amount) {
-    player.state.coins = player.state.coins + amount;
-    player.sendActionBar("Coins: $(player.state.coins)");
-}
-
-@Every(ticks = 20)
-void payday() {
-    for (Player player : Selector.of("@a")) {
-        pay(player, 1);
+    public static void main() {
+        Selector.of("@a").sendMessage("Coins pack loaded");
     }
-}
 
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player();
-    player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
-}
-
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player();
-    var lost = player.state.coins / 2;
-    player.state.coins = player.state.coins - lost;
-    player.sendMessage("You dropped $(lost) coins.");
-}
-
-@Command("buy")
-void buy(Player player) {
-    if (player.state.coins < 10) {
-        player.sendMessage("You need 10 coins.");
-        return;
+    static void pay(Player player, int amount) {
+        player.state.coins = player.state.coins + amount;
+        player.sendActionBar("Coins: $(player.state.coins)");
     }
-    player.state.coins = player.state.coins - 10;
-    player.give("minecraft:diamond", 1);
-    remind(player);
-}
 
-void remind(Player player) {
-    Thread.start(() -> {
-        sleep(3);
-        player.sendMessage("Spend wisely.");
-    });
+    @Every(ticks = 20)
+    static void payday() {
+        for (Player player : Selector.of("@a")) {
+            pay(player, 1);
+        }
+    }
+
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.player();
+        player.sendMessage("You earn 1 coin per second. Type /trigger buy to spend 10.");
+    }
+
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        Player player = event.player();
+        var lost = player.state.coins / 2;
+        player.state.coins = player.state.coins - lost;
+        player.sendMessage("You dropped $(lost) coins.");
+    }
+
+    @Command("buy")
+    static void buy(Player player) {
+        if (player.state.coins < 10) {
+            player.sendMessage("You need 10 coins.");
+            return;
+        }
+        player.state.coins = player.state.coins - 10;
+        player.give("minecraft:diamond", 1);
+        remind(player);
+    }
+
+    static void remind(Player player) {
+        Thread.start(() -> {
+            sleep(3);
+            player.sendMessage("Spend wisely.");
+        });
+    }
 }
 ```
 

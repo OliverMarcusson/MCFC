@@ -4,41 +4,96 @@ The whole language on one page. Each section links to its reference entry. If yo
 
 ## Layout
 
-MCFC is written like Java: blocks are `{ ... }`, statements end with `;`, and comments are `//` or `/* ... */`.
+MCFC is written like Java: blocks are `{ ... }`, statements end with `;`, and comments are `//` or `/* ... */`. Code lives in classes. There are no top-level functions or variables: every method and every piece of state belongs to a class, and a pack starts at `public static void main()`.
 
 ```mcfc
-void main() {
-    // runs on load and on /reload
-    Selector.of("@a").sendMessage("loaded");
+class Main {
+    public static void main() {
+        // runs on load and on /reload
+        Selector.of("@a").sendMessage("loaded");
+    }
 }
 ```
 
-## Functions
+## Classes
 
 ```mcfc
-int add(int a, int b) {
-    return a + b;
+class Counter {
+    private int count;
+
+    Counter(int start) {
+        this.count = start;
+    }
+
+    void add(int amount) {
+        count = count + amount;
+    }
+
+    int get() {
+        return count;
+    }
 }
 
-void tick() {
-    var n = add(1, 2);
+class Main {
+    static int rounds = 0;
+
+    public static void main() {
+        var counter = new Counter(10);
+        counter.add(5);
+        rounds = rounds + 1;
+        debug("$(counter.get()) after $(rounds) rounds");
+    }
+
+    @Tick
+    static void tick() {
+        rounds = rounds + 1;
+    }
 }
 ```
 
-Parameter and return types are always written out. `main` runs on load and `tick` runs every tick. Every other zero-argument `void` function can be called in game as `/function <namespace>:<name>`. Functions can be [generic](./reference/statements#generic-functions). → [Functions](./reference/statements#functions)
+A class has fields, constructors and methods. Objects are created with `new` and shared by reference, like Java's. A `static` field is one value for the whole world and survives reloads. A `static` method is called on the class, as in `Main.tick()`, or without the class name from inside it. Instance methods see `this`. Classes can extend a parent, implement interfaces and override methods, and calls are virtual. → [`class`](./reference/statements#class)
+
+`public static void main()` runs on load, and a `@Tick` method runs every tick. Every other `static void` method with no parameters can also be run in game as `/function <namespace>:<class>/<method>`. → [Entry points](./reference/statements#entry-points)
+
+## Methods
+
+```mcfc
+class Main {
+    static int add(int a, int b) {
+        return a + b;
+    }
+
+    static float add(float a, float b) {
+        return a + b;
+    }
+
+    static <T> T pick(boolean first, T a, T b) {
+        return first ? a : b;
+    }
+
+    public static void main() {
+        var n = add(1, 2);
+        var name = pick(true, "Alex", "Sam");
+    }
+}
+```
+
+Parameter and return types are always written out. Methods can be overloaded and [generic](./reference/statements#generic-methods). → [Methods](./reference/statements#methods)
 
 ## Values
 
 ```mcfc
-void main() {
-    var count = 3;
-    var speed = 1.5;
-    var ready = true;
-    var name = "Alex";
-    var line = "$(name) has $(count)";
-    var scores = List.of(1, 2, 3);
-    var teams = Map.of("red", 0, "blue", 0);
-    count = count + 1;
+class Main {
+    public static void main() {
+        var count = 3;
+        var speed = 1.5;
+        var ready = true;
+        var name = "Alex";
+        var line = "$(name) has $(count)";
+        var scores = List.of(1, 2, 3);
+        var teams = Map.of("red", 0, "blue", 0);
+        count = count + 1;
+    }
 }
 ```
 
@@ -47,26 +102,28 @@ void main() {
 ## Control flow
 
 ```mcfc
-void main() {
-    var hp = 12;
-    if (hp < 5) {
-        debug("low");
-    } else if (hp < 10) {
-        debug("mid");
-    } else {
-        debug("ok");
-    }
+class Main {
+    public static void main() {
+        var hp = 12;
+        if (hp < 5) {
+            debug("low");
+        } else if (hp < 10) {
+            debug("mid");
+        } else {
+            debug("ok");
+        }
 
-    for (int i = 0; i < 3; i++) {
-        debug("$(i)");
-    }
+        for (int i = 0; i < 3; i++) {
+            debug("$(i)");
+        }
 
-    for (Player player : Selector.of("@a")) {
-        player.addTag("seen");
-    }
+        for (Player player : Selector.of("@a")) {
+            player.addTag("seen");
+        }
 
-    while (hp > 0) {
-        hp = hp - 5;
+        while (hp > 0) {
+            hp = hp - 5;
+        }
     }
 }
 ```
@@ -97,27 +154,31 @@ enum Stage {
     }
 }
 
-void finish(Quest quest, Stage stage) {
-    Quest bonus = quest.doubled();
-    switch (stage) {
-        case NEW -> debug("started $(bonus.name())");
-        case DONE -> debug("$(stage.label()): reward $(bonus.reward())");
+class Main {
+    static void finish(Quest quest, Stage stage) {
+        Quest bonus = quest.doubled();
+        switch (stage) {
+            case NEW -> debug("started $(bonus.name())");
+            case DONE -> debug("$(stage.label()): reward $(bonus.reward())");
+        }
     }
 }
 ```
 
-Create a record with `new Quest("Mine", 5)`. Records and enums can have methods, including `static` ones, and records get `==`, `equals` and `toString()` from their components. Functions and methods can be overloaded. A `class` has fields that can change, and its objects are shared by reference like Java's. Classes can extend a parent and implement interfaces, and method calls are virtual. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum), [`class`](./reference/statements#class), [overloading](./reference/statements#overloading)
+Create a record with `new Quest("Mine", 5)`. Records and enums can have methods, including `static` ones, and records get `==`, `equals` and `toString()` from their components. A record's fields can't change after it's made. → [`record`](./reference/statements#record), [`enum`](./reference/statements#enum)
 
 ## Missing values
 
 `List.get`, `Map.get` and `findFirst` return an `Optional<T>`:
 
 ```mcfc
-void main() {
-    var first = List.of(4, 8).get(5).orElse(0);
-    var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
-    if (pig.isPresent()) {
-        debug("found a pig");
+class Main {
+    public static void main() {
+        var first = List.of(4, 8).get(5).orElse(0);
+        var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
+        if (pig.isPresent()) {
+            debug("found a pig");
+        }
     }
 }
 ```
@@ -127,15 +188,17 @@ void main() {
 ## Entities and players
 
 ```mcfc
-void main() {
-    var player = Selector.of("@p").getFirst();
-    player.sendMessage("Hi");
-    player.give("minecraft:bread", 3);
-    player.effect("minecraft:speed", 10, 1);
-    if (player.getHealth() < 6.0) {
-        player.sendTitle("Low health");
+class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        player.sendMessage("Hi");
+        player.give("minecraft:bread", 3);
+        player.effect("minecraft:speed", 10, 1);
+        if (player.getHealth() < 6.0) {
+            player.sendTitle("Low health");
+        }
+        player.position.setBlock("minecraft:torch");
     }
-    player.position.setBlock("minecraft:torch");
 }
 ```
 
@@ -144,24 +207,28 @@ void main() {
 To create customized entities, items, blocks and text before using them, use [builders](./reference/builders):
 
 ```mcfc
-void main() {
-    var sword = new ItemStack("minecraft:diamond_sword");
-    sword.setName("Quest Blade");
-    Selector.of("@p").getFirst().give(sword);
+class Main {
+    public static void main() {
+        var sword = new ItemStack("minecraft:diamond_sword");
+        sword.setName("Quest Blade");
+        Selector.of("@p").getFirst().give(sword);
+    }
 }
 ```
 
 ## Stored state
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-@EntityState
-String owner;
+    @EntityState
+    static String owner;
 
-void pay(Player player) {
-    player.state.coins = player.state.coins + 1;
+    static void pay(Player player) {
+        player.state.coins = player.state.coins + 1;
+    }
 }
 ```
 
@@ -170,48 +237,54 @@ State is stored per player or per entity and survives reloads. → [`@PlayerStat
 ## Events, commands and tasks
 
 ```mcfc
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player();
-    player.sendMessage("Welcome");
-}
+class Main implements Listener {
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.player();
+        player.sendMessage("Welcome");
+    }
 
-@Command("spawn")
-void spawn(Player player) {
-    player.teleport(Block.of("0 64 0"));
-}
+    @Command("spawn")
+    static void spawn(Player player) {
+        player.teleport(Block.of("0 64 0"));
+    }
 
-@Every(ticks = 6000)
-void reminder() {
-    Selector.of("@a").sendActionBar("Five minutes passed");
+    @Every(ticks = 6000)
+    static void reminder() {
+        Selector.of("@a").sendActionBar("Five minutes passed");
+    }
 }
 ```
 
-Handlers are ordinary functions with an annotation. A `@Command` is run with `/trigger <name>`. With the optional agent there are 34 events in total, many of them cancellable. → [Events](./reference/events), [`@Command`](./reference/statements#command), [`@Every`](./reference/statements#every-and-after)
+Event handlers are instance methods marked `@EventHandler`, in a class that `implements Listener`. `@Command`, `@Every`, `@After`, `@Menu` and `@Tick` go on `static` methods of any class. A `@Command` is run with `/trigger <name>`. With the optional agent there are 34 events in total, many of them cancellable. → [Events](./reference/events), [`@Command`](./reference/statements#command), [`@Every`](./reference/statements#every-and-after)
 
 ## Waiting
 
 ```mcfc
-void countdown(Player player) {
-    Thread.start(() -> {
-        for (int i = 0; i < 3; i++) {
-            player.sendTitle("$(3 - i)");
-            sleep(1);
-        }
-        player.sendTitle("Go");
-    });
+class Main {
+    static void countdown(Player player) {
+        Thread.start(() -> {
+            for (int i = 0; i < 3; i++) {
+                player.sendTitle("$(3 - i)");
+                sleep(1);
+            }
+            player.sendTitle("Go");
+        });
+    }
 }
 ```
 
-`sleep` and `sleepTicks` pause the function. `Thread.start(() -> { ... })` runs the lambda without the caller waiting for it. → [`Thread.start`](./reference/statements#thread-start), [Functions that pause](./reference/statements#functions-that-pause)
+`sleep` and `sleepTicks` pause the method. `Thread.start(() -> { ... })` runs the lambda without the caller waiting for it. → [`Thread.start`](./reference/statements#thread-start), [Methods that pause](./reference/statements#methods-that-pause)
 
 ## Raw commands
 
 ```mcfc
-void main() {
-    var n = 5;
-    mc("weather clear");
-    mcf("xp add @a $(n) levels");
+class Main {
+    public static void main() {
+        var n = 5;
+        mc("weather clear");
+        mcf("xp add @a $(n) levels");
+    }
 }
 ```
 
@@ -221,24 +294,39 @@ For commands MCFC has no feature for yet, `mc` emits a command exactly as writte
 
 <!-- no-check -->
 ```mcfc
-import std.math.clamp;
-
-void main() {
-    var hp = clamp(combat.damage(), 0, 20);
+// src/combat.mcf
+public class Combat {
+    public static int damage() {
+        return 30;
+    }
 }
 ```
 
-Each file is a module named by its path (`src/combat.mcf` is `combat`), and `combat.damage()` calls into it. Items are private unless marked `public`. `std` is always available. → [Modules](./reference/statements#modules-and-public), [`import`](./reference/statements#import), [std](./reference/std)
+<!-- no-check -->
+```mcfc
+// src/main.mcf
+import combat.Combat;
+
+class Main {
+    public static void main() {
+        var hp = Math.clamp(Combat.damage(), 0, 20);
+    }
+}
+```
+
+Each file is a module named by its path (`src/combat.mcf` is `combat`), and `import combat.Combat;` brings its class into scope. Classes and their members are private to their module unless marked `public`. The standard library is a set of classes under `std`, such as `std.timer.Timer`, and `Math` needs no import. → [Modules](./reference/statements#modules-and-public), [`import`](./reference/statements#import), [std](./reference/std)
 
 ## Outside the game <Badge type="danger" text="mcfd" title="Needs the mcfd helper running beside the server. Not available on Realms." />
 
 With the optional `mcfd` helper, a pack can make HTTP requests, read and write files, and query SQLite:
 
 ```mcfc
-void motd(Player player) {
-    var r = http.get("https://api.example.com/motd");
-    if (r.ok()) {
-        player.sendMessage(r.body());
+class Main {
+    static void motd(Player player) {
+        var r = http.get("https://api.example.com/motd");
+        if (r.ok()) {
+            player.sendMessage(r.body());
+        }
     }
 }
 ```

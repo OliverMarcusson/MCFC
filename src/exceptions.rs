@@ -477,7 +477,7 @@ fn report_uncaught(test: bool, span: &Span) -> Stmt {
         );
         call("assert_fail", vec![message], span)
     } else {
-        call("std::exception::uncaught", vec![variable], span)
+        call("std::exception::Thrown__uncaught", vec![variable], span)
     };
     if_stmt(
         is_thrown(true, span),

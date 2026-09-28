@@ -1,16 +1,18 @@
 // Item checks for shops and costs. `item` is an ID such as "minecraft:emerald".
 
-// `true` when the player carries at least `count` of `item`.
-public boolean has(Player player, String item, int count) {
-    return player.countItem(item) >= count;
-}
-
-// Removes `count` of `item` and returns `true`, or returns `false` and
-// removes nothing when the player has fewer.
-public boolean take(Player player, String item, int count) {
-    if (!has(player, item, count)) {
-        return false;
+public final class Inventory {
+    // `true` when the player carries at least `count` of `item`.
+    public static boolean has(Player player, String item, int count) {
+        return player.countItem(item) >= count;
     }
-    player.clear(item, count);
-    return true;
+
+    // Removes `count` of `item` and returns `true`, or returns `false` and
+    // removes nothing when the player has fewer.
+    public static boolean take(Player player, String item, int count) {
+        if (!has(player, item, count)) {
+            return false;
+        }
+        player.clear(item, count);
+        return true;
+    }
 }

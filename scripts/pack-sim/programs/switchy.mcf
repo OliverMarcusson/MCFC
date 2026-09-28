@@ -1,39 +1,41 @@
 enum Stage { NEW, MID, DONE }
 
-int score(Stage stage) {
-    switch (stage) {
-        case Stage.NEW -> return 1;
-        case Stage.MID -> return 5;
-        case Stage.DONE -> return 9;
-    }
-}
-
-int clampish(int v, int lo, int hi) {
-    if (v < lo) {
-        return lo;
-    } else if (v > hi) {
-        return hi;
-    } else {
-        return v;
-    }
-}
-
-void main() {
-    var a = score(Stage.NEW) + score(Stage.MID) + score(Stage.DONE);
-    mcf("say stages $(a)");
-    var b = clampish(-3, 0, 10) + clampish(4, 0, 10) * 100 + clampish(77, 0, 10) * 10000;
-    mcf("say clamp $(b)");
-    var d = Map.of("a", 1, "b", 2);
-    d["c"] = 3;
-    var t = d["a"] + d["b"] + d["c"];
-    mcf("say dict $(t)");
-    var arr = List.of(5, 3, 8);
-    arr.add(1);
-    var m = 0;
-    for (var v : arr) {
-        if (v > m) {
-            m = v;
+class Main {
+    static int score(Stage stage) {
+        switch (stage) {
+            case Stage.NEW -> return 1;
+            case Stage.MID -> return 5;
+            case Stage.DONE -> return 9;
         }
     }
-    mcf("say max $(m) len $(arr.size())");
+
+    static int clampish(int v, int lo, int hi) {
+        if (v < lo) {
+            return lo;
+        } else if (v > hi) {
+            return hi;
+        } else {
+            return v;
+        }
+    }
+
+    public static void main() {
+        var a = score(Stage.NEW) + score(Stage.MID) + score(Stage.DONE);
+        mcf("say stages $(a)");
+        var b = clampish(-3, 0, 10) + clampish(4, 0, 10) * 100 + clampish(77, 0, 10) * 10000;
+        mcf("say clamp $(b)");
+        var d = Map.of("a", 1, "b", 2);
+        d["c"] = 3;
+        var t = d["a"] + d["b"] + d["c"];
+        mcf("say dict $(t)");
+        var arr = List.of(5, 3, 8);
+        arr.add(1);
+        var m = 0;
+        for (var v : arr) {
+            if (v > m) {
+                m = v;
+            }
+        }
+        mcf("say max $(m) len $(arr.size())");
+    }
 }

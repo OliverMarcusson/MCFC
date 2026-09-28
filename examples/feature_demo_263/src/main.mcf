@@ -8,421 +8,490 @@
 // generics, lambdas, streams, exceptions, bossbar getters) has @Test
 // functions at the end: run them with /function mcfc_demo:test.
 
-import std.str.startsWith;
-import std.str.endsWith;
-import std.str.find;
-import std.str.contains;
-import std.math.gcd;
-import std.math.lerp;
-import std.math;
-import std.cooldown;
+import std.str.Strings;
+
+
+
+import std.cooldown.Cooldown;
 import std.gamemode.GameMode;
-import std.inventory;
-import std.region;
-import std.team;
-import std.timer;
-import std.world;
-import std.str;
+import std.inventory.Inventory;
+import std.region.Region;
+import std.team.Team;
+import std.timer.Timer;
+import std.world.World;
 
-@WorldState
-int demoRuns;
+class Main {
+    static int demoRuns;
 
-void tick() {
-    if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
-        mc("tag @a add mcfc_tested");
-        runTests();
-    }
-}
-
-void check(String name, boolean ok, String got) {
-    if (ok) {
-        mcf("say MCFCTEST PASS $(name) got=$(got)");
-    } else {
-        mcf("say MCFCTEST FAIL $(name) got=$(got)");
-    }
-}
-
-boolean near(float a, float b) {
-    return math.abs(a - b) < 0.001;
-}
-
-// Returns its argument unchanged, so the compiler cannot fold it.
-String runtime(String s) {
-    return s;
-}
-
-// Each group gets its own tick so a failure in one does not hide the others.
-void runTests() {
-    mc("say MCFCTEST BEGIN");
-    floats();
-    sleepTicks(1);
-    remainders();
-    strings();
-    sleepTicks(1);
-    arrays();
-    sleepTicks(1);
-    stdLibrary();
-    sleepTicks(1);
-    reads();
-    sleepTicks(1);
-    newFeatures();
-    sleepTicks(1);
-    gaps();
-    sleepTicks(1);
-    adventure();
-    sleepTicks(1);
-    floatSortTest(3000);
-    sortTest(1000, 0);
-    sortTest(5000, 3);
-    sortTest(10000, 6);
-    progress("sorts done", 9);
-    mc("say MCFCTEST END");
-}
-
-void floats() {
-    var x = 16.0;
-    check("float_sqrt", near(Math.sqrt(x), 4.0), Math.sqrt(x).toString());
-    var y = (x * 0.5 + 2.0) / 4.0 - 1.0;
-    check("float_arith", near(y, 1.5), y.toString());
-    check("float_neg", near(-y, -1.5), (-y).toString());
-    check("float_to_int_floor", (int) -2.7 == -3, ((int) -2.7).toString());
-    check("int_to_float", near((float) 7 / 2.0, 3.5), ((float) 7 / 2.0).toString());
-    check("float_pow", near(Math.pow(2.0, 10.0), 1024.0), Math.pow(2.0, 10.0).toString());
-    check("float_hypot", near(Math.hypot(3.0, 4.0), 5.0), Math.hypot(3.0, 4.0).toString());
-    check("float_floor", near(Math.floor(-1.5), -2.0), Math.floor(-1.5).toString());
-    check("float_ceil", near(Math.ceil(1.2), 2.0), Math.ceil(1.2).toString());
-    check("float_round", near(Math.round(2.5), 3.0), Math.round(2.5).toString());
-    check("float_trunc", near(Math.trunc(-1.7), -1.0), Math.trunc(-1.7).toString());
-    check("float_abs", near(math.abs(-3.25), 3.25), math.abs(-3.25).toString());
-    check("float_min_max", near(math.min(1.0, 2.0) + math.max(1.0, 2.0), 3.0), math.max(1.0, 2.0).toString());
-    check("float_clamp", near(math.clamp(9.0, 0.0, 5.0), 5.0), math.clamp(9.0, 0.0, 5.0).toString());
-    // One of these two passes: it tells us whether sin/cos take radians or degrees.
-    check("float_sin_radians", near(Math.sin(1.5707964), 1.0), Math.sin(1.5707964).toString());
-    check("float_sin_degrees", near(Math.sin(90.0), 1.0), Math.sin(90.0).toString());
-    check("float_cos_zero", near(Math.cos(0.0), 1.0), Math.cos(0.0).toString());
-    check("float_tan", near(Math.tan(0.7853982), 1.0), Math.tan(0.7853982).toString());
-    check("float_lt", 1.5 < 2.5, "1.5<2.5");
-    check("float_not_lt", !(2.5 < 1.5), "2.5<1.5");
-    check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5");
-    check("float_gt", 2.5 > 1.5, "2.5>1.5");
-    check("float_eq", x == 16.0, x.toString());
-    check("float_neq", x != 16.5, x.toString());
-    check("float_small_diff", 1.0 < 1.25, "1.0<1.25");
-    check("float_text_zero", 0.5.toString() == "0.5", 0.5.toString());
-    check("float_text_negative", (-0.25).toString() == "-0.25", (-0.25).toString());
-    check("float_text_whole", 4.0.toString() == "4", 4.0.toString());
-}
-
-void remainders() {
-    check("rem_const_neg", -7 % 3 == 2, (-7 % 3).toString());
-    check("rem_const_negdiv", 7 % -3 == -2, (7 % -3).toString());
-    var n = -7;
-    check("rem_runtime", n % 3 == 2, (n % 3).toString());
-    check("rem_float", near(5.5 % 2.0, 1.5), (5.5 % 2.0).toString());
-    check("rem_float_neg", near(-5.5 % 2.0, 0.5), (-5.5 % 2.0).toString());
-}
-
-void strings() {
-    var name = runtime("Steve");
-    var n = 42;
-    var line = "Hi " + name + " n=" + n.toString() + " f=" + 1.5.toString();
-    check("str_concat", line == "Hi Steve n=42 f=1.5", line);
-    check("str_len", line.length() == 19, line.length().toString());
-    check("str_slice", line.substring(3, 8) == "Steve", line.substring(3, 8));
-    check("str_slice_neg", line.substring(-3) == "1.5", line.substring(-3));
-    var start = 3;
-    var stop = 8;
-    check("str_slice_dynamic", line.substring(start, stop) == "Steve", line.substring(start, stop));
-    check("str_slice_out_of_range", name.substring(2, 99) == "", name.substring(2, 99));
-    check("str_parse_int", Integer.parseInt("-17") == -17, Integer.parseInt("-17").toString());
-    check("str_parse_int_bad", Integer.parseInt(runtime("abc")) == 0, Integer.parseInt(runtime("abc")).toString());
-    var quoted = runtime("say \"hi\"");
-    var joined = "<" + quoted + ">";
-    check("str_quote_fallback", joined == "", joined.length().toString());
-}
-
-void arrays() {
-    var xs = List.of(3, 1, 2);
-    xs.add(0, 9);
-    var i = 2;
-    xs.add(i, 7);
-    check("arr_insert", xs.size() == 5 && xs[0] == 9 && xs[2] == 7, xs.size().toString());
-    check("arr_first", xs.getFirst() == 9, xs.getFirst().toString());
-    check("arr_last", xs.getLast() == 2, xs.getLast().toString());
-    check("arr_contains", xs.contains(7), "7");
-    check("arr_not_contains", !xs.contains(8), "8");
-    check("arr_index_of", xs.indexOf(1) == 3, xs.indexOf(1).toString());
-    check("arr_index_of_missing", xs.indexOf(8) == -1, xs.indexOf(8).toString());
-    xs.reverse();
-    check("arr_reverse", xs[0] == 2 && xs[4] == 9, xs[0].toString());
-    var words = List.of("a", "b");
-    check("arr_contains_str", words.contains("b"), "b");
-    xs.clear();
-    check("arr_clear", xs.size() == 0, xs.size().toString());
-}
-
-// Shows which sort step is running on a bossbar.
-void progress(String label, int step) {
-    var bar = new BossBar("mcfc_demo:sort", "sorts");
-    bar.setMax(9);
-    bar.setValue(step);
-    bar.setName(label);
-    bar.setPlayers(Selector.of("@a"));
-    bar.setVisible(true);
-    mcf("say MCFCTEST INFO step $(step) $(label)");
-}
-
-// Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
-// tick runs too many commands, and sort() spreads itself over ticks. All of it
-// pauses run_tests, so the sizes run one after another.
-void sortTest(int size, int step) {
-    var name = "sort " + size.toString();
-    progress(name + ": filling", step);
-    var xs = List.of(0);
-    xs.clear();
-    var total = 0;
-    var k = 0;
-    while (k < size) {
-        var x = random(1000) - 500;
-        xs.add(x);
-        total = total + x;
-        k = k + 1;
-        if (k % 500 == 0) {
-            sleepTicks(1);
+    @Tick
+    static void tick() {
+        if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
+            mc("tag @a add mcfc_tested");
+            runTests();
         }
     }
-    progress(name + ": sorting", step + 1);
-    var started = gameTime();
-    xs.sort();
-    var ticks = gameTime() - started;
-    mcf("say MCFCTEST INFO sort $(size) took $(ticks) ticks");
-    progress(name + ": checking", step + 2);
-    var ordered = true;
-    var after = xs[0];
-    var j = 1;
-    while (j < xs.size()) {
-        if (xs[j - 1] > xs[j]) {
-            ordered = false;
-        }
-        after = after + xs[j];
-        j = j + 1;
-        if (j % 200 == 0) {
-            sleepTicks(1);
+
+    static void check(String name, boolean ok, String got) {
+        if (ok) {
+            mcf("say MCFCTEST PASS $(name) got=$(got)");
+        } else {
+            mcf("say MCFCTEST FAIL $(name) got=$(got)");
         }
     }
-    check("sort_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
-    check("sort_keeps_sum_" + size.toString(), after == total, total.toString());
-}
 
-void stdLibrary() {
-    var small = List.of(3, 1, 2, 1);
-    small.sort();
-    check("sort_small", small[0] == 1 && small[1] == 1 && small[3] == 3, small[3].toString());
-    var none = List.of(0);
-    none.clear();
-    none.sort();
-    check("sort_empty", none.size() == 0, none.size().toString());
-    var one = List.of(7);
-    one.sort();
-    check("sort_one", one.size() == 1 && one[0] == 7, one[0].toString());
-    var desc = List.of(5, 4, 3, 2, 1);
-    desc.sort();
-    check("sort_descending", desc[0] == 1 && desc[4] == 5, desc[4].toString());
-    check("std_min_max", std.list.min(List.of(4, -2, 9)) == -2 && std.list.max(List.of(4, -2, 9)) == 9, "-2,9");
-    check("std_starts_with", startsWith("minecraft:stone", "minecraft:"), "");
-    check("std_ends_with", endsWith("stone", "ne") && !endsWith("stone", "x"), "");
-    check("std_find", find("hello", "ll") == 2, find("hello", "ll").toString());
-    check("std_find_missing", find("hello", "z") == -1, find("hello", "z").toString());
-    check("std_contains_quote", contains(runtime("a\"b"), "\""), "");
-    check("std_gcd", gcd(12, -18) == 6, gcd(12, -18).toString());
-    check("std_lerp", near(lerp(0.0, 10.0, 0.25), 2.5), lerp(0.0, 10.0, 0.25).toString());
-}
-
-void reads() {
-    var p = (Player) Selector.of("@a[limit=1]").getFirst();
-    cooldown.start(p, "demo", 100);
-    check("cooldown_active", !cooldown.ready(p, "demo") && cooldown.remaining(p, "demo") == 100, cooldown.remaining(p, "demo").toString());
-    check("cooldown_other_ready", cooldown.ready(p, "other"), "");
-    cooldown.clear(p, "demo");
-    check("cooldown_cleared", cooldown.ready(p, "demo"), cooldown.remaining(p, "demo").toString());
-    var pos = p.getX().toString() + "," + p.getY().toString() + "," + p.getZ().toString();
-    var rot = p.getYaw().toString() + "," + p.getPitch().toString();
-    mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
-    check("read_health", p.getHealth() > 0.0, p.getHealth().toString());
-    check("read_food", p.getFoodLevel() >= 0 && p.getFoodLevel() <= 20, p.getFoodLevel().toString());
-    check("read_xp", p.getLevel() >= 0, p.getLevel().toString());
-    check("read_game_mode", p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.CREATIVE, "" + p.getGameMode());
-    check("read_dimension", startsWith(p.getDimension(), "minecraft:"), p.getDimension());
-    check("read_selected_slot", p.getSelectedSlot() >= 0 && p.getSelectedSlot() <= 8, p.getSelectedSlot().toString());
-    mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
-    var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]").getFirst();
-    check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
-    mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
-    check("read_game_time", gameTime() > 0, gameTime().toString());
-    check("read_world_time", worldTime() >= 0, worldTime().toString());
-    check("read_border_size", borderSize() > 0, borderSize().toString());
-}
-
-// A generic helper: one copy is compiled for each element type it is called with.
-<T> T pick(List<T> xs, int index) {
-    return xs[index];
-}
-
-void newFeatures() {
-    check("generic_int", pick(List.of(4, 5, 6), 1) == 5, pick(List.of(4, 5, 6), 1).toString());
-    check("generic_float", near(pick(List.of(0.5, 1.5), 1), 1.5), pick(List.of(0.5, 1.5), 1).toString());
-    check("generic_string", pick(List.of("a", "b"), 0) == "a", pick(List.of("a", "b"), 0));
-    var fs = List.of(2.5, -1.25, 0.5, 2.5, 100.0);
-    check("std_sum_float", near(std.list.sum(fs), 104.25), std.list.sum(fs).toString());
-    check("std_max_float", near(std.list.max(fs), 100.0), std.list.max(fs).toString());
-    fs.sort();
-    check("sort_float_small", near(fs[0], -1.25) && near(fs[4], 100.0), fs[0].toString());
-    var d = Map.of("wood", 2, "stone", 4);
-    d["gold"] = 7;
-    var keys = d.keySet();
-    check("dict_len", d.size() == 3, d.size().toString());
-    check("dict_keys", keys.size() == 3 && keys.contains("gold") && keys.contains("wood"), keys.size().toString());
-    check("gamerule", gamerule("max_entity_cramming") >= 0, gamerule("max_entity_cramming").toString());
-    check("random_weighted_zero", randomWeighted(List.of(0, 5)) == 1, "1");
-    var w = randomWeighted(List.of(3, 1));
-    check("random_weighted_range", w >= 0 && w <= 1, w.toString());
-    check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
-    check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
-    mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
-    var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]").getFirst();
-    check("look_west", near(pig.getLookX(), -1.0) && near(pig.getLookZ(), 0.0), pig.getLookX().toString());
-    mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
-    check("look_up", near(pig.getLookY(), 1.0), pig.getLookY().toString());
-    mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
-    var p = Selector.of("@a[limit=1]").getFirst();
-    Execute.at(p, () -> {
-        var here = Block.of("~ ~ ~");
-        var light = here.getLightLevel();
-        var biome = here.getBiome();
-        check("block_light", light >= 0 && light <= 15, light.toString());
-        // A light block emits level 15, so the air it fills reads 15.
-        mc("setblock ~ ~3 ~ minecraft:light[level=15]");
-        var lit = Block.of("~ ~3 ~").getLightLevel();
-        mc("setblock ~ ~3 ~ minecraft:air");
-        check("block_light_15", lit == 15, lit.toString());
-        check("block_biome", startsWith(biome, "minecraft:"), biome);
-        check("block_in_biome", here.inBiome(biome), biome);
-        check("block_not_in_void", !here.inBiome("minecraft:the_void"), biome);
-        var sky = here.getEnvironment("gameplay/sky_light_level");
-        check("block_environment", sky >= 0.0 && sky <= 15.0, sky.toString());
-    });
-}
-
-// Fill, sort and check `size` floats, like sort_test.
-void floatSortTest(int size) {
-    var xs = List.of(0.5);
-    xs.clear();
-    var k = 0;
-    while (k < size) {
-        xs.add((float) (random(1000) - 500) * 0.25);
-        k = k + 1;
-        if (k % 500 == 0) {
-            sleepTicks(1);
-        }
+    static boolean near(float a, float b) {
+        return Math.abs(a - b) < 0.001;
     }
-    var started = gameTime();
-    xs.sort();
-    var ticks = gameTime() - started;
-    mcf("say MCFCTEST INFO float sort $(size) took $(ticks) ticks");
-    var ordered = true;
-    var j = 1;
-    while (j < xs.size()) {
-        if (xs[j - 1] > xs[j]) {
-            ordered = false;
-        }
-        j = j + 1;
-        if (j % 200 == 0) {
-            sleepTicks(1);
-        }
+
+    // Returns its argument unchanged, so the compiler cannot fold it.
+    static String runtime(String s) {
+        return s;
     }
-    check("sort_float_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
-}
 
-// Player, world, team, inventory, region and timer helpers. Each check puts
-// back what it changes.
-// Look at chat too: gold/bold line with hover + click, a gradient line, and
-// the typed line with its <click> left as text.
-void adventure() {
-    var p = (Player) Selector.of("@a[limit=1]").getFirst();
-    var c = Component.text("MCFC ", NamedTextColor.GOLD)
-        .append(Component.text("adventure").decorate(TextDecoration.BOLD))
-        .hoverEvent(HoverEvent.showText(Component.text("hover works")))
-        .clickEvent(ClickEvent.suggestCommand("/say clicked"));
-    List<Component> kids = c.children();
-    check("adventure_children", kids.size() == 1, "" + kids.size());
-    p.sendMessage(c);
-    p.sendMessage(MiniMessage.miniMessage().deserialize(
-        "<gradient:gold:red>MiniMessage gradient</gradient> <click:suggest_command:'/say mm'><u>click me</u>"));
-    var input = "<red>player <b>input</b> <click:run_command:/op @s>x";
-    var typed = MiniMessage.miniMessage().deserialize(input);
-    List<Component> runs = typed.children();
-    check("minimessage_runtime", runs.size() == 3, "" + runs.size());
-    p.sendMessage(typed);
-}
+    // Each group gets its own tick so a failure in one does not hide the others.
+    static void runTests() {
+        mc("say MCFCTEST BEGIN");
+        floats();
+        sleepTicks(1);
+        remainders();
+        strings();
+        sleepTicks(1);
+        arrays();
+        sleepTicks(1);
+        stdLibrary();
+        sleepTicks(1);
+        reads();
+        sleepTicks(1);
+        newFeatures();
+        sleepTicks(1);
+        gaps();
+        sleepTicks(1);
+        adventure();
+        sleepTicks(1);
+        floatSortTest(3000);
+        sortTest(1000, 0);
+        sortTest(5000, 3);
+        sortTest(10000, 6);
+        progress("sorts done", 9);
+        mc("say MCFCTEST END");
+    }
 
-void gaps() {
-    var p = (Player) Selector.of("@a[limit=1]").getFirst();
-    var before = demoRuns;
-    demoRuns += 1;
-    check("world_state", demoRuns == before + 1, demoRuns.toString());
+    static void floats() {
+        var x = 16.0;
+        check("float_sqrt", near(Math.sqrt(x), 4.0), Math.sqrt(x).toString());
+        var y = (x * 0.5 + 2.0) / 4.0 - 1.0;
+        check("float_arith", near(y, 1.5), y.toString());
+        check("float_neg", near(-y, -1.5), (-y).toString());
+        check("float_to_int_floor", (int) -2.7 == -3, ((int) -2.7).toString());
+        check("int_to_float", near((float) 7 / 2.0, 3.5), ((float) 7 / 2.0).toString());
+        check("float_pow", near(Math.pow(2.0, 10.0), 1024.0), Math.pow(2.0, 10.0).toString());
+        check("float_hypot", near(Math.hypot(3.0, 4.0), 5.0), Math.hypot(3.0, 4.0).toString());
+        check("float_floor", near(Math.floor(-1.5), -2.0), Math.floor(-1.5).toString());
+        check("float_ceil", near(Math.ceil(1.2), 2.0), Math.ceil(1.2).toString());
+        check("float_round", near(Math.round(2.5), 3.0), Math.round(2.5).toString());
+        check("float_trunc", near(Math.trunc(-1.7), -1.0), Math.trunc(-1.7).toString());
+        check("float_abs", near(Math.abs(-3.25), 3.25), Math.abs(-3.25).toString());
+        check("float_min_max", near(Math.min(1.0, 2.0) + Math.max(1.0, 2.0), 3.0), Math.max(1.0, 2.0).toString());
+        check("float_clamp", near(Math.clamp(9.0, 0.0, 5.0), 5.0), Math.clamp(9.0, 0.0, 5.0).toString());
+        // One of these two passes: it tells us whether sin/cos take radians or degrees.
+        check("float_sin_radians", near(Math.sin(1.5707964), 1.0), Math.sin(1.5707964).toString());
+        check("float_sin_degrees", near(Math.sin(90.0), 1.0), Math.sin(90.0).toString());
+        check("float_cos_zero", near(Math.cos(0.0), 1.0), Math.cos(0.0).toString());
+        check("float_tan", near(Math.tan(0.7853982), 1.0), Math.tan(0.7853982).toString());
+        check("float_lt", 1.5 < 2.5, "1.5<2.5");
+        check("float_not_lt", !(2.5 < 1.5), "2.5<1.5");
+        check("float_lte_equal", 2.5 <= 2.5, "2.5<=2.5");
+        check("float_gt", 2.5 > 1.5, "2.5>1.5");
+        check("float_eq", x == 16.0, x.toString());
+        check("float_neq", x != 16.5, x.toString());
+        check("float_small_diff", 1.0 < 1.25, "1.0<1.25");
+        check("float_text_zero", 0.5.toString() == "0.5", 0.5.toString());
+        check("float_text_negative", (-0.25).toString() == "-0.25", (-0.25).toString());
+        check("float_text_whole", 4.0.toString() == "4", 4.0.toString());
+    }
 
-    var mode = p.getGameMode();
-    p.setGameMode(GameMode.ADVENTURE);
-    check("set_game_mode", p.getGameMode() == GameMode.ADVENTURE, "" + p.getGameMode());
-    p.setGameMode(mode);
+    static void remainders() {
+        check("rem_const_neg", -7 % 3 == 2, (-7 % 3).toString());
+        check("rem_const_negdiv", 7 % -3 == -2, (7 % -3).toString());
+        var n = -7;
+        check("rem_runtime", n % 3 == 2, (n % 3).toString());
+        check("rem_float", near(5.5 % 2.0, 1.5), (5.5 % 2.0).toString());
+        check("rem_float_neg", near(-5.5 % 2.0, 0.5), (-5.5 % 2.0).toString());
+    }
 
-    var level = p.getLevel();
-    p.setLevel(5);
-    p.giveExpLevels(2);
-    check("set_level", p.getLevel() == 7, p.getLevel().toString());
-    p.setLevel(level);
+    static void strings() {
+        var name = runtime("Steve");
+        var n = 42;
+        var line = "Hi " + name + " n=" + n.toString() + " f=" + 1.5.toString();
+        check("str_concat", line == "Hi Steve n=42 f=1.5", line);
+        check("str_len", line.length() == 19, line.length().toString());
+        check("str_slice", line.substring(3, 8) == "Steve", line.substring(3, 8));
+        check("str_slice_neg", line.substring(-3) == "1.5", line.substring(-3));
+        var start = 3;
+        var stop = 8;
+        check("str_slice_dynamic", line.substring(start, stop) == "Steve", line.substring(start, stop));
+        check("str_slice_out_of_range", name.substring(2, 99) == "", name.substring(2, 99));
+        check("str_parse_int", Integer.parseInt("-17") == -17, Integer.parseInt("-17").toString());
+        check("str_parse_int_bad", Integer.parseInt(runtime("abc")) == 0, Integer.parseInt(runtime("abc")).toString());
+        var quoted = runtime("say \"hi\"");
+        var joined = "<" + quoted + ">";
+        check("str_quote_fallback", joined == "", joined.length().toString());
+    }
 
-    p.sendTitle("MCFC", "subtitle check", 5, 30, 5);
+    static void arrays() {
+        var xs = List.of(3, 1, 2);
+        xs.add(0, 9);
+        var i = 2;
+        xs.add(i, 7);
+        check("arr_insert", xs.size() == 5 && xs[0] == 9 && xs[2] == 7, xs.size().toString());
+        check("arr_first", xs.getFirst() == 9, xs.getFirst().toString());
+        check("arr_last", xs.getLast() == 2, xs.getLast().toString());
+        check("arr_contains", xs.contains(7), "7");
+        check("arr_not_contains", !xs.contains(8), "8");
+        check("arr_index_of", xs.indexOf(1) == 3, xs.indexOf(1).toString());
+        check("arr_index_of_missing", xs.indexOf(8) == -1, xs.indexOf(8).toString());
+        xs.reverse();
+        check("arr_reverse", xs[0] == 2 && xs[4] == 9, xs[0].toString());
+        var words = List.of("a", "b");
+        check("arr_contains_str", words.contains("b"), "b");
+        xs.clear();
+        check("arr_clear", xs.size() == 0, xs.size().toString());
+    }
 
-    var all = Selector.of("@a");
-    all.addTag("mcfc_demo_tag");
-    check("selector_add_tag", p.hasTag("mcfc_demo_tag"), "");
-    all.removeTag("mcfc_demo_tag");
-    check("selector_remove_tag", !p.hasTag("mcfc_demo_tag"), "");
+    // Shows which sort step is running on a bossbar.
+    static void progress(String label, int step) {
+        var bar = new BossBar("mcfc_demo:sort", "sorts");
+        bar.setMax(9);
+        bar.setValue(step);
+        bar.setName(label);
+        bar.setPlayers(Selector.of("@a"));
+        bar.setVisible(true);
+        mcf("say MCFCTEST INFO step $(step) $(label)");
+    }
 
-    var had = p.countItem("minecraft:emerald");
-    p.give("minecraft:emerald", 5);
-    check("count_item", p.countItem("minecraft:emerald") == had + 5, p.countItem("minecraft:emerald").toString());
-    check("inventory_take", inventory.take(p, "minecraft:emerald", 3) && p.countItem("minecraft:emerald") == had + 2, p.countItem("minecraft:emerald").toString());
-    check("inventory_take_too_many", !inventory.take(p, "minecraft:emerald", 1000), "");
-    p.clear("minecraft:emerald", 2);
+    // Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
+    // tick runs too many commands, and sort() spreads itself over ticks. All of it
+    // pauses run_tests, so the sizes run one after another.
+    static void sortTest(int size, int step) {
+        var name = "sort " + size.toString();
+        progress(name + ": filling", step);
+        var xs = List.of(0);
+        xs.clear();
+        var total = 0;
+        var k = 0;
+        while (k < size) {
+            var x = random(1000) - 500;
+            xs.add(x);
+            total = total + x;
+            k = k + 1;
+            if (k % 500 == 0) {
+                sleepTicks(1);
+            }
+        }
+        progress(name + ": sorting", step + 1);
+        var started = gameTime();
+        xs.sort();
+        var ticks = gameTime() - started;
+        mcf("say MCFCTEST INFO sort $(size) took $(ticks) ticks");
+        progress(name + ": checking", step + 2);
+        var ordered = true;
+        var after = xs[0];
+        var j = 1;
+        while (j < xs.size()) {
+            if (xs[j - 1] > xs[j]) {
+                ordered = false;
+            }
+            after = after + xs[j];
+            j = j + 1;
+            if (j % 200 == 0) {
+                sleepTicks(1);
+            }
+        }
+        check("sort_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
+        check("sort_keeps_sum_" + size.toString(), after == total, total.toString());
+    }
 
-    var keep = gamerule("keep_inventory");
-    world.setGameRule("keep_inventory", keep == 0);
-    check("set_game_rule", gamerule("keep_inventory") != keep, gamerule("keep_inventory").toString());
-    world.setGameRule("keep_inventory", keep == 1);
+    static void stdLibrary() {
+        var small = List.of(3, 1, 2, 1);
+        small.sort();
+        check("sort_small", small[0] == 1 && small[1] == 1 && small[3] == 3, small[3].toString());
+        var none = List.of(0);
+        none.clear();
+        none.sort();
+        check("sort_empty", none.size() == 0, none.size().toString());
+        var one = List.of(7);
+        one.sort();
+        check("sort_one", one.size() == 1 && one[0] == 7, one[0].toString());
+        var desc = List.of(5, 4, 3, 2, 1);
+        desc.sort();
+        check("sort_descending", desc[0] == 1 && desc[4] == 5, desc[4].toString());
+        check("std_min_max", std.list.Lists.min(List.of(4, -2, 9)) == -2 && std.list.Lists.max(List.of(4, -2, 9)) == 9, "-2,9");
+        check("std_starts_with", Strings.startsWith("minecraft:stone", "minecraft:"), "");
+        check("std_ends_with", Strings.endsWith("stone", "ne") && !Strings.endsWith("stone", "x"), "");
+        check("std_find", Strings.find("hello", "ll") == 2, Strings.find("hello", "ll").toString());
+        check("std_find_missing", Strings.find("hello", "z") == -1, Strings.find("hello", "z").toString());
+        check("std_contains_quote", Strings.contains(runtime("a\"b"), "\""), "");
+        check("std_gcd", Math.gcd(12, -18) == 6, Math.gcd(12, -18).toString());
+        check("std_lerp", near(Math.lerp(0.0, 10.0, 0.25), 2.5), Math.lerp(0.0, 10.0, 0.25).toString());
+    }
 
-    team.create("mcfc_demo", "gold");
-    team.join(p, "mcfc_demo");
-    check("team_join", Selector.of("@a[team=mcfc_demo]").findFirst().isPresent(), "");
-    team.leave(p);
-    team.remove("mcfc_demo");
+    static void reads() {
+        var p = (Player) Selector.of("@a[limit=1]").getFirst();
+        Cooldown.start(p, "demo", 100);
+        check("cooldown_active", !Cooldown.ready(p, "demo") && Cooldown.remaining(p, "demo") == 100, Cooldown.remaining(p, "demo").toString());
+        check("cooldown_other_ready", Cooldown.ready(p, "other"), "");
+        Cooldown.clear(p, "demo");
+        check("cooldown_cleared", Cooldown.ready(p, "demo"), Cooldown.remaining(p, "demo").toString());
+        var pos = p.getX().toString() + "," + p.getY().toString() + "," + p.getZ().toString();
+        var rot = p.getYaw().toString() + "," + p.getPitch().toString();
+        mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
+        check("read_health", p.getHealth() > 0.0, p.getHealth().toString());
+        check("read_food", p.getFoodLevel() >= 0 && p.getFoodLevel() <= 20, p.getFoodLevel().toString());
+        check("read_xp", p.getLevel() >= 0, p.getLevel().toString());
+        check("read_game_mode", p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.CREATIVE, "" + p.getGameMode());
+        check("read_dimension", Strings.startsWith(p.getDimension(), "minecraft:"), p.getDimension());
+        check("read_selected_slot", p.getSelectedSlot() >= 0 && p.getSelectedSlot() <= 8, p.getSelectedSlot().toString());
+        mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
+        var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]").getFirst();
+        check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
+        mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
+        check("read_game_time", gameTime() > 0, gameTime().toString());
+        check("read_world_time", worldTime() >= 0, worldTime().toString());
+        check("read_border_size", borderSize() > 0, borderSize().toString());
+    }
 
-    var x = (int) Math.floor(p.getX());
-    var y = (int) Math.floor(p.getY());
-    var z = (int) Math.floor(p.getZ());
-    var around = region.of(Block.of(x + 2, y + 2, z + 2), Block.of(x - 2, y - 1, z - 2));
-    var away = region.of(Block.of(x + 10, y, z + 10), Block.of(x + 12, y + 2, z + 12));
-    check("region_contains", region.contains(around, p) && !region.contains(away, p), "");
-    check("region_count", region.countPlayers(around) >= 1, region.countPlayers(around).toString());
+    // A generic helper: one copy is compiled for each element type it is called with.
+    static <T> T pick(List<T> xs, int index) {
+        return xs[index];
+    }
 
-    timer.start("mcfc_demo", 100);
-    check("timer_running", timer.running("mcfc_demo") && timer.remaining("mcfc_demo") == 100, timer.remaining("mcfc_demo").toString());
-    timer.stop("mcfc_demo");
-    check("timer_stopped", !timer.running("mcfc_demo"), "");
+    static void newFeatures() {
+        check("generic_int", pick(List.of(4, 5, 6), 1) == 5, pick(List.of(4, 5, 6), 1).toString());
+        check("generic_float", near(pick(List.of(0.5, 1.5), 1), 1.5), pick(List.of(0.5, 1.5), 1).toString());
+        check("generic_string", pick(List.of("a", "b"), 0) == "a", pick(List.of("a", "b"), 0));
+        var fs = List.of(2.5, -1.25, 0.5, 2.5, 100.0);
+        check("std_sum_float", near(std.list.Lists.sum(fs), 104.25), std.list.Lists.sum(fs).toString());
+        check("std_max_float", near(std.list.Lists.max(fs), 100.0), std.list.Lists.max(fs).toString());
+        fs.sort();
+        check("sort_float_small", near(fs[0], -1.25) && near(fs[4], 100.0), fs[0].toString());
+        var d = Map.of("wood", 2, "stone", 4);
+        d["gold"] = 7;
+        var keys = d.keySet();
+        check("dict_len", d.size() == 3, d.size().toString());
+        check("dict_keys", keys.size() == 3 && keys.contains("gold") && keys.contains("wood"), keys.size().toString());
+        check("gamerule", gamerule("max_entity_cramming") >= 0, gamerule("max_entity_cramming").toString());
+        check("random_weighted_zero", randomWeighted(List.of(0, 5)) == 1, "1");
+        var w = randomWeighted(List.of(3, 1));
+        check("random_weighted_range", w >= 0 && w <= 1, w.toString());
+        check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
+        check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
+        mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
+        var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]").getFirst();
+        check("look_west", near(pig.getLookX(), -1.0) && near(pig.getLookZ(), 0.0), pig.getLookX().toString());
+        mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
+        check("look_up", near(pig.getLookY(), 1.0), pig.getLookY().toString());
+        mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
+        var p = Selector.of("@a[limit=1]").getFirst();
+        Execute.at(p, () -> {
+            var here = Block.of("~ ~ ~");
+            var light = here.getLightLevel();
+            var biome = here.getBiome();
+            check("block_light", light >= 0 && light <= 15, light.toString());
+            // A light block emits level 15, so the air it fills reads 15.
+            mc("setblock ~ ~3 ~ minecraft:light[level=15]");
+            var lit = Block.of("~ ~3 ~").getLightLevel();
+            mc("setblock ~ ~3 ~ minecraft:air");
+            check("block_light_15", lit == 15, lit.toString());
+            check("block_biome", Strings.startsWith(biome, "minecraft:"), biome);
+            check("block_in_biome", here.inBiome(biome), biome);
+            check("block_not_in_void", !here.inBiome("minecraft:the_void"), biome);
+            var sky = here.getEnvironment("gameplay/sky_light_level");
+            check("block_environment", sky >= 0.0 && sky <= 15.0, sky.toString());
+        });
+    }
 
-    check("format_float", str.formatFloat(3.14159, 2) == "3.14", str.formatFloat(3.14159, 2));
-    check("with_commas", str.withCommas(1234567) == "1,234,567", str.withCommas(1234567));
+    // Fill, sort and check `size` floats, like sort_test.
+    static void floatSortTest(int size) {
+        var xs = List.of(0.5);
+        xs.clear();
+        var k = 0;
+        while (k < size) {
+            xs.add((float) (random(1000) - 500) * 0.25);
+            k = k + 1;
+            if (k % 500 == 0) {
+                sleepTicks(1);
+            }
+        }
+        var started = gameTime();
+        xs.sort();
+        var ticks = gameTime() - started;
+        mcf("say MCFCTEST INFO float sort $(size) took $(ticks) ticks");
+        var ordered = true;
+        var j = 1;
+        while (j < xs.size()) {
+            if (xs[j - 1] > xs[j]) {
+                ordered = false;
+            }
+            j = j + 1;
+            if (j % 200 == 0) {
+                sleepTicks(1);
+            }
+        }
+        check("sort_float_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
+    }
+
+    // Player, world, team, inventory, region and timer helpers. Each check puts
+    // back what it changes.
+    // Look at chat too: gold/bold line with hover + click, a gradient line, and
+    // the typed line with its <click> left as text.
+    static void adventure() {
+        var p = (Player) Selector.of("@a[limit=1]").getFirst();
+        var c = Component.text("MCFC ", NamedTextColor.GOLD)
+            .append(Component.text("adventure").decorate(TextDecoration.BOLD))
+            .hoverEvent(HoverEvent.showText(Component.text("hover works")))
+            .clickEvent(ClickEvent.suggestCommand("/say clicked"));
+        List<Component> kids = c.children();
+        check("adventure_children", kids.size() == 1, "" + kids.size());
+        p.sendMessage(c);
+        p.sendMessage(MiniMessage.miniMessage().deserialize(
+            "<gradient:gold:red>MiniMessage gradient</gradient> <click:suggest_command:'/say mm'><u>click me</u>"));
+        var input = "<red>player <b>input</b> <click:run_command:/op @s>x";
+        var typed = MiniMessage.miniMessage().deserialize(input);
+        List<Component> runs = typed.children();
+        check("minimessage_runtime", runs.size() == 3, "" + runs.size());
+        p.sendMessage(typed);
+    }
+
+    static void gaps() {
+        var p = (Player) Selector.of("@a[limit=1]").getFirst();
+        var before = demoRuns;
+        demoRuns += 1;
+        check("world_state", demoRuns == before + 1, demoRuns.toString());
+
+        var mode = p.getGameMode();
+        p.setGameMode(GameMode.ADVENTURE);
+        check("set_game_mode", p.getGameMode() == GameMode.ADVENTURE, "" + p.getGameMode());
+        p.setGameMode(mode);
+
+        var level = p.getLevel();
+        p.setLevel(5);
+        p.giveExpLevels(2);
+        check("set_level", p.getLevel() == 7, p.getLevel().toString());
+        p.setLevel(level);
+
+        p.sendTitle("MCFC", "subtitle check", 5, 30, 5);
+
+        var all = Selector.of("@a");
+        all.addTag("mcfc_demo_tag");
+        check("selector_add_tag", p.hasTag("mcfc_demo_tag"), "");
+        all.removeTag("mcfc_demo_tag");
+        check("selector_remove_tag", !p.hasTag("mcfc_demo_tag"), "");
+
+        var had = p.countItem("minecraft:emerald");
+        p.give("minecraft:emerald", 5);
+        check("count_item", p.countItem("minecraft:emerald") == had + 5, p.countItem("minecraft:emerald").toString());
+        check("inventory_take", Inventory.take(p, "minecraft:emerald", 3) && p.countItem("minecraft:emerald") == had + 2, p.countItem("minecraft:emerald").toString());
+        check("inventory_take_too_many", !Inventory.take(p, "minecraft:emerald", 1000), "");
+        p.clear("minecraft:emerald", 2);
+
+        var keep = gamerule("keep_inventory");
+        World.setGameRule("keep_inventory", keep == 0);
+        check("set_game_rule", gamerule("keep_inventory") != keep, gamerule("keep_inventory").toString());
+        World.setGameRule("keep_inventory", keep == 1);
+
+        Team.create("mcfc_demo", "gold");
+        Team.join(p, "mcfc_demo");
+        check("team_join", Selector.of("@a[team=mcfc_demo]").findFirst().isPresent(), "");
+        Team.leave(p);
+        Team.remove("mcfc_demo");
+
+        var x = (int) Math.floor(p.getX());
+        var y = (int) Math.floor(p.getY());
+        var z = (int) Math.floor(p.getZ());
+        var around = Region.of(Block.of(x + 2, y + 2, z + 2), Block.of(x - 2, y - 1, z - 2));
+        var away = Region.of(Block.of(x + 10, y, z + 10), Block.of(x + 12, y + 2, z + 12));
+        check("region_contains", around.contains(p) && !away.contains(p), "");
+        check("region_count", around.countPlayers() >= 1, around.countPlayers().toString());
+
+        Timer.start("mcfc_demo", 100);
+        check("timer_running", Timer.running("mcfc_demo") && Timer.remaining("mcfc_demo") == 100, Timer.remaining("mcfc_demo").toString());
+        Timer.stop("mcfc_demo");
+        check("timer_stopped", !Timer.running("mcfc_demo"), "");
+
+        check("format_float", Strings.formatFloat(3.14159, 2) == "3.14", Strings.formatFloat(3.14159, 2));
+        check("with_commas", Strings.withCommas(1234567) == "1,234,567", Strings.withCommas(1234567));
+    }
+
+    static void bumpTwice(Counter counter) {
+        counter.bump();
+        counter.bump();
+    }
+
+    @Test
+    static void objectsAreSharedByReference() {
+        Counter counter = new Counter();
+        Counter alias = counter;
+        bumpTwice(alias);
+        assert counter.count == 2 : "got $(counter.count)";
+        Counter none = null;
+        assert none == null;
+    }
+
+    @Test
+    static void methodsDispatchOnTheObjectsClass() {
+        Animal dog = new Dog();
+        Animal puppy = new Puppy();
+        assert dog.speak() == "says woof" : dog.speak();
+        assert puppy.speak() == "says yip!" : puppy.speak();
+        assert puppy instanceof Dog;
+        Shape shape = new Circle(2);
+        String kind = switch (shape) {
+            case Square s -> "square";
+            case Circle c -> "circle";
+        };
+        assert kind == "circle";
+        assert shape.describe() == "area 12" : shape.describe();
+    }
+
+    static <T> T unbox(Box<T> box) {
+        return box.value;
+    }
+
+    @Test
+    static void genericsLambdasAndStreams() {
+        Box<String> box = new Box<>("hi");
+        assert unbox<String>(box) == "hi";
+        List<Integer> numbers = List.of(4, 1, 3);
+        int bigger = numbers.stream().filter(n -> n > 1).map(n -> n * 10).reduce(0, (a, b) -> a + b);
+        assert bigger == 70 : "got $(bigger)";
+        numbers.sort((a, b) -> a - b);
+        assert numbers[0] == 1;
+    }
+
+    @Test
+    static void exceptionsUnwindToTheCatch() {
+        String seen = "";
+        try {
+            seen = seen + "a";
+            throw new IllegalStateException("stop");
+        } catch (IllegalStateException e) {
+            seen = seen + "b";
+        } finally {
+            seen = seen + "c";
+        }
+        assert seen == "abc" : seen;
+        assert String.format("%s=%d", "x", 3) == "x=3";
+    }
+
+    @Test
+    static void bossBarGettersReadTheGame() {
+        var bar = new BossBar("mcfc_demo:test_bar", "Test");
+        bar.setMax(20);
+        bar.setValue(7);
+        assert bar.getValue() == 7 : "value";
+        assert bar.getMax() == 20 : "max";
+        bar.remove();
+    }
 }
 
 // Object model: `/function mcfc_demo:test` runs these @Test functions.
@@ -433,21 +502,6 @@ class Counter {
     void bump() {
         count += 1;
     }
-}
-
-void bumpTwice(Counter counter) {
-    counter.bump();
-    counter.bump();
-}
-
-@Test
-void objectsAreSharedByReference() {
-    Counter counter = new Counter();
-    Counter alias = counter;
-    bumpTwice(alias);
-    assert counter.count == 2 : "got $(counter.count)";
-    Counter none = null;
-    assert none == null;
 }
 
 sealed interface Shape permits Square, Circle {
@@ -508,66 +562,10 @@ class Puppy extends Dog {
     }
 }
 
-@Test
-void methodsDispatchOnTheObjectsClass() {
-    Animal dog = new Dog();
-    Animal puppy = new Puppy();
-    assert dog.speak() == "says woof" : dog.speak();
-    assert puppy.speak() == "says yip!" : puppy.speak();
-    assert puppy instanceof Dog;
-    Shape shape = new Circle(2);
-    String kind = switch (shape) {
-        case Square s -> "square";
-        case Circle c -> "circle";
-    };
-    assert kind == "circle";
-    assert shape.describe() == "area 12" : shape.describe();
-}
-
 class Box<T> {
     T value;
 
     Box(T value) {
         this.value = value;
     }
-}
-
-<T> T unbox(Box<T> box) {
-    return box.value;
-}
-
-@Test
-void genericsLambdasAndStreams() {
-    Box<String> box = new Box<>("hi");
-    assert unbox<String>(box) == "hi";
-    List<Integer> numbers = List.of(4, 1, 3);
-    int bigger = numbers.stream().filter(n -> n > 1).map(n -> n * 10).reduce(0, (a, b) -> a + b);
-    assert bigger == 70 : "got $(bigger)";
-    numbers.sort((a, b) -> a - b);
-    assert numbers[0] == 1;
-}
-
-@Test
-void exceptionsUnwindToTheCatch() {
-    String seen = "";
-    try {
-        seen = seen + "a";
-        throw new IllegalStateException("stop");
-    } catch (IllegalStateException e) {
-        seen = seen + "b";
-    } finally {
-        seen = seen + "c";
-    }
-    assert seen == "abc" : seen;
-    assert String.format("%s=%d", "x", 3) == "x=3";
-}
-
-@Test
-void bossBarGettersReadTheGame() {
-    var bar = new BossBar("mcfc_demo:test_bar", "Test");
-    bar.setMax(20);
-    bar.setValue(7);
-    assert bar.getValue() == 7 : "value";
-    assert bar.getMax() == 20 : "max";
-    bar.remove();
 }

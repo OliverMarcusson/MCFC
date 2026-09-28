@@ -1,22 +1,24 @@
 // @Test functions and assert: `function ns:test` runs them all.
-int triple(int x) {
-    return x * 3;
-}
+class Main {
+    static int triple(int x) {
+        return x * 3;
+    }
 
-@Test
-void triplesSmallNumbers() {
-    assert triple(1) == 3;
-    assert triple(-2) == -6 : "negatives";
-}
+    @Test
+    static void triplesSmallNumbers() {
+        assert triple(1) == 3;
+        assert triple(-2) == -6 : "negatives";
+    }
 
-@Test
-void catchesWrongAnswers() {
-    var got = triple(2);
-    assert got == 7 : "expected 7, got $(got)";
-    assert got == 6;
-}
+    @Test
+    static void catchesWrongAnswers() {
+        var got = triple(2);
+        assert got == 7 : "expected 7, got $(got)";
+        assert got == 6;
+    }
 
-void main() {
-    mc("function tests:test");
-    mc("execute if score #test_pass mcfc matches 1 if score #test_fail mcfc matches 1 run say one passed one failed");
+    public static void main() {
+        mc("function tests:test");
+        mc("execute if score #test_pass mcfc matches 1 if score #test_fail mcfc matches 1 run say one passed one failed");
+    }
 }

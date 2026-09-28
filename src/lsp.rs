@@ -904,37 +904,9 @@ fn function_reference_ranges(source: &str, word: &str) -> Vec<TextRange> {
 }
 
 fn scope_at_offset(source: &str, offset: usize) -> Option<TextRange> {
-    let mut line_start = 0usize;
-    let mut active = None;
-    for line in source.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if !line.starts_with(char::is_whitespace) && is_scope_header(trimmed) {
-            if line_start <= offset {
-                active = Some(line_start);
-            } else {
-                break;
-            }
-        }
-        line_start += line.len();
-    }
-    let start = active?;
-    let end = source[start..]
-        .find('\n')
-        .map(|_| {
-            let mut cursor = start;
-            for line in source[start..].split_inclusive('\n') {
-                if cursor > start
-                    && !line.starts_with(char::is_whitespace)
-                    && is_scope_header(line.trim_start())
-                {
-                    return cursor;
-                }
-                cursor += line.len();
-            }
-            source.len()
-        })
-        .unwrap_or(source.len());
-    Some(TextRange::new(start, end))
+    method_scopes(source)
+        .into_iter()
+        .find(|scope| scope.start <= offset && offset <= scope.end)
 }
 
 fn local_definition_in_scope(source: &str, scope: &TextRange, word: &str) -> Option<TextRange> {
@@ -1110,8 +1082,11 @@ fn format_mcfc(source: &str) -> String {
 /// (`util::double` matches `double`).
 // ponytail: first match wins when two modules share a name; resolve through
 // the cursor's module and imports if that ambiguity matters.
+/// Whether `function` is what `word` names: `util::greet` or the method
+/// `util::Tools__greet` for `greet`.
 fn is_named(function: &str, word: &str) -> bool {
-    function.rsplit("::").next() == Some(word)
+    let local = function.rsplit("::").next().unwrap_or(function);
+    local == word || split_method(local).is_some_and(|(_, method)| method == word)
 }
 
 fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
@@ -1242,17 +1217,20 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
     };
     let short = |name: &str| name.rsplit("::").next().unwrap_or(name).to_string();
     let mut records = HashSet::new();
+    let mut classes = HashSet::new();
     let mut enums = HashSet::new();
-    let mut world_states = HashSet::new();
+    let mut static_fields = HashSet::new();
     if let Some(program) = &analysis.program {
         records.extend(program.structs.iter().map(|def| short(&def.name)));
-        records.extend(program.classes.iter().map(|def| short(&def.name)));
+        classes.extend(program.classes.iter().map(|def| short(&def.name)));
         enums.extend(program.enums.iter().map(|def| short(&def.name)));
-        world_states.extend(
+        static_fields.extend(
             program
-                .world_states
+                .classes
                 .iter()
-                .map(|state| state.path.join(".")),
+                .flat_map(|class| &class.fields)
+                .filter(|field| field.is_static)
+                .map(|field| field.name.clone()),
         );
     }
 
@@ -1277,6 +1255,10 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
     // The paren depth inside a top-level declaration's parameter list, and
     // whether that list is a record's components.
     let mut param_list: Option<(usize, bool)> = None;
+    // A method's parameter list was read and its body hasn't opened yet; then
+    // the brace depth of the body it opened.
+    let mut pending_method = false;
+    let mut method_body: Option<usize> = None;
     // `class Box<T, U>`: where its `<` is, then the `<...>` depth inside it.
     let mut class_params_at: Option<usize> = None;
     let mut class_params: Option<usize> = None;
@@ -1294,8 +1276,17 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
             _ => {}
         }
         match &token.kind {
-            TokenKind::LeftBrace => brace_depth += 1,
+            TokenKind::LeftBrace => {
+                brace_depth += 1;
+                if std::mem::take(&mut pending_method) {
+                    method_body = Some(brace_depth);
+                }
+            }
             TokenKind::RightBrace => {
+                if method_body == Some(brace_depth) {
+                    method_body = None;
+                    params.clear();
+                }
                 brace_depth = brace_depth.saturating_sub(1);
                 if brace_depth == 0 {
                     params.clear();
@@ -1303,7 +1294,10 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
                     in_enum_body = false;
                 }
             }
-            TokenKind::Semicolon => in_import = false,
+            TokenKind::Semicolon => {
+                in_import = false;
+                pending_method = false;
+            }
             TokenKind::LeftParen => {
                 if let Some((depth, _)) = &mut param_list {
                     *depth += 1;
@@ -1339,11 +1333,11 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
         if class_params == Some(1) && matches!(previous, Some(TokenKind::Lt | TokenKind::Comma)) {
             type_params.insert(name.clone());
         }
-        // `<T>` before a top-level function's return type.
-        if brace_depth == 0
+        // `<T>` before a method's return type.
+        if method_body.is_none()
             && previous == Some(&TokenKind::Lt)
             && next == Some(&TokenKind::Gt)
-            && before_previous == Some("public")
+            && matches!(before_previous, Some("public" | "private" | "protected" | "static"))
         {
             type_params.insert(name.clone());
         }
@@ -1378,10 +1372,14 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
                 } else {
                     TOKEN_CLASS
                 }
-            } else if brace_depth == 0 && param_list.is_none() {
+            } else if method_body.is_none()
+                && param_list.is_none()
+                && matches!(previous, Some(TokenKind::Identifier(_) | TokenKind::Gt))
+            {
                 // A declaration: its parameter list follows.
                 let is_record = identifier(index.wrapping_sub(1)) == Some("record");
                 param_list = Some((0, is_record));
+                pending_method = !is_record;
                 if is_record {
                     TOKEN_RECORD
                 } else {
@@ -1394,6 +1392,8 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
             TOKEN_TYPE_PARAMETER
         } else if enums.contains(name) {
             TOKEN_ENUM
+        } else if classes.contains(name) {
+            TOKEN_CLASS
         } else if records.contains(name) {
             TOKEN_RECORD
         } else if (in_enum_body && brace_depth > 0)
@@ -1403,7 +1403,7 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
         } else if name.starts_with(char::is_uppercase) && !is_all_caps(name) {
             TOKEN_CLASS
         } else if let Some((_, is_record)) = param_list
-            && brace_depth == 0
+            && method_body.is_none()
             && matches!(next, Some(TokenKind::Comma | TokenKind::RightParen))
         {
             params.insert(name.clone());
@@ -1414,7 +1414,7 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
             }
         } else if params.contains(name) {
             TOKEN_PARAMETER
-        } else if world_states.contains(name) {
+        } else if static_fields.contains(name) {
             TOKEN_PROPERTY
         } else {
             TOKEN_VARIABLE
@@ -1755,8 +1755,8 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
     match word {
         "record" => Some("```mcfc\nrecord Name(int field, String label) {}\n```"),
         "enum" => Some("```mcfc\nenum Mode { IDLE, RUNNING }\n```"),
-        "PlayerState" => Some("```mcfc\n@PlayerState(\"Money\")\nint money;\n```"),
-        "EntityState" => Some("```mcfc\n@EntityState\nString sendTitle;\n```"),
+        "PlayerState" => Some("```mcfc\n@PlayerState(\"Money\")\nstatic int money;\n```"),
+        "EntityState" => Some("```mcfc\n@EntityState\nstatic String title;\n```"),
         "switch" => Some(
             "```mcfc\nswitch (mode) {\n    case Mode.IDLE -> ...;\n    default -> { ... }\n}\n```",
         ),
@@ -1991,16 +1991,20 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
         items
     };
 
-    for function in analysis
-        .functions
-        .iter()
-        .filter(|function| !function.name.starts_with("__mcfc_"))
-    {
+    // Methods of the class around the cursor can be called by their name.
+    let current_class = function_at_offset(analysis, offset).and_then(|f| f.owner.as_deref());
+    for function in analysis.functions.iter() {
+        let Some((_, method)) = split_method(&function.name) else {
+            continue;
+        };
+        if function.owner.as_deref() != current_class || is_synthetic_method(method) {
+            continue;
+        }
         items.push(CompletionItem {
-            label: function.name.clone(),
+            label: method.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             detail: Some(function.signature()),
-            insert_text: Some(format!("{}($0)", function.name)),
+            insert_text: Some(format!("{method}($0)")),
             insert_text_format: Some(tower_lsp::lsp_types::InsertTextFormat::SNIPPET),
             ..CompletionItem::default()
         });
@@ -2042,17 +2046,50 @@ fn completion_items(source: &str, analysis: &AnalysisResult, offset: usize) -> V
     items
 }
 
+/// `game::Score__add` as (`game::Score`, `add`); `None` for hooks and other
+/// functions no class declares.
+fn split_method(name: &str) -> Option<(&str, &str)> {
+    let local = name.rfind("::").map_or(0, |i| i + 2);
+    let split = local + name[local..].find("__").filter(|&at| at > 0)?;
+    Some((&name[..split], &name[split + 2..]))
+}
+
+/// Functions the compiler adds to a class: factories, getters, initializers.
+fn is_synthetic_method(method: &str) -> bool {
+    method == "new" || method == "clinit" || method.starts_with("mcfc")
+}
+
 fn is_declaration_completion_position(source: &str, offset: usize) -> bool {
     let line_start = source[..offset.min(source.len())]
         .rfind('\n')
         .map(|index| index + 1)
         .unwrap_or(0);
     let before_cursor = &source[line_start..offset.min(source.len())];
-    // Declarations are only legal at top level. A partially typed keyword is
-    // still a declaration position, but indented code is always an expression.
-    !before_cursor.starts_with(char::is_whitespace)
+    // Declarations go at top level or in a class body, not in a method body.
+    // A partially typed keyword is still a declaration position.
+    let in_body = scope_at_offset(source, offset).is_some_and(|scope| {
+        let header_end = source[scope.start..]
+            .find('{')
+            .map_or(scope.end, |brace| scope.start + brace);
+        offset > header_end
+    });
+    !in_body
         && before_cursor.split_whitespace().next().is_none_or(|word| {
-            word.starts_with('@') || matches!(word, "record" | "enum" | "public" | "import")
+            word.starts_with('@')
+                || matches!(
+                    word,
+                    "record"
+                        | "enum"
+                        | "class"
+                        | "interface"
+                        | "public"
+                        | "private"
+                        | "protected"
+                        | "static"
+                        | "final"
+                        | "abstract"
+                        | "import"
+                )
         })
 }
 
@@ -2531,7 +2568,8 @@ fn static_completion_items() -> Vec<CompletionItem> {
     for keyword in [
         "var", "return", "if", "else", "switch", "case", "default", "while", "for", "break",
         "continue", "assert", "new", "mc", "mcf", "true", "false", "record", "enum", "import",
-        "public", "final", "static", "do", "yield",
+        "public", "final", "static", "do", "yield", "class", "interface", "extends",
+        "implements", "private", "abstract",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -2578,20 +2616,30 @@ fn static_completion_items() -> Vec<CompletionItem> {
 
     for (label, detail, insert_text) in [
         (
+            "class Main",
+            "The class whose static main() runs on load",
+            "class ${1:Main} {\n\tpublic static void main() {\n\t\t$0\n\t}\n}",
+        ),
+        (
+            "@Tick",
+            "Run a static method every game tick",
+            "@Tick\nstatic void ${1:tick}() {\n\t$0\n}",
+        ),
+        (
             "@Command",
             "Register a trigger command and optional agent root command",
-            "@Command(\"${1:status}\")\nvoid ${2:status}() {\n\t$0\n}",
+            "@Command(\"${1:status}\")\nstatic void ${2:status}(Player player) {\n\t$0\n}",
         ),
         (
             "@Every",
             "Repeat a task every positive number of ticks",
-            "@Every(ticks = ${1:20})\nvoid ${2:tick}() {\n\t$0\n}",
+            "@Every(ticks = ${1:20})\nstatic void ${2:heartbeat}() {\n\t$0\n}",
         ),
         (
             "@Menu",
             "A command that is also a button in the pause-screen data pack menu",
             "@Menu(\"${1:Settings}\")
-void ${2:settings}(Player player) {
+static void ${2:settings}(Player player) {
 	$0
 }",
         ),
@@ -2599,7 +2647,7 @@ void ${2:settings}(Player player) {
             "@Test",
             "A test run by /function <namespace>:test",
             "@Test
-void ${1:test}() {
+static void ${1:test}() {
 	assert ${2:true};
 }",
         ),
@@ -2621,12 +2669,12 @@ void ${1:test}() {
         (
             "@PlayerState",
             "Declare player scoreboard state with a display name",
-            "@PlayerState(\"${3:Money}\")\n${2:int} ${1:money};",
+            "@PlayerState(\"${3:Money}\")\nstatic ${2:int} ${1:money};",
         ),
         (
             "@EntityState",
             "Declare typed persistent entity state",
-            "@EntityState\n${2:String} ${1:title};",
+            "@EntityState\nstatic ${2:String} ${1:title};",
         ),
         (
             "Selector.of",
@@ -5202,13 +5250,16 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
     // drops it. Unfinished code is fine: an unclosed block just stays open.
     let mut locals: Vec<(CompletionLocal, usize)> = Vec::new();
     let mut depth = 0usize;
+    // The brace depth the current method's header is at.
+    let mut method: Option<usize> = None;
 
     for line in prefix.lines() {
         let code = strip_line_comment(line).trim();
-        if depth == 0 && is_scope_header(code) {
+        if method.is_none() && is_scope_header(code) {
             locals.clear();
-            locals.extend(parse_params(code).into_iter().map(|local| (local, 1)));
-        } else if depth > 0 {
+            locals.extend(parse_params(code).into_iter().map(|local| (local, depth + 1)));
+            method = Some(depth);
+        } else if method.is_some_and(|method| depth > method) {
             let visible = locals
                 .iter()
                 .map(|(local, _)| local.clone())
@@ -5250,6 +5301,10 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
                 depth = depth.saturating_sub(1);
                 locals.retain(|(_, binding_depth)| *binding_depth <= depth);
             }
+        }
+        if method.is_some_and(|method| depth <= method) && code.contains('}') {
+            method = None;
+            locals.clear();
         }
     }
 
@@ -5327,13 +5382,14 @@ fn agent_event_member_completion_items(
 /// Find the handler around the cursor when it is an `@EventHandler` with an
 /// event parameter, e.g. `void onChat(ChatEvent event) {`.
 fn agent_event_context(source: &str, offset: usize) -> Option<(String, String)> {
-    let prefix = &source[..offset.min(source.len())];
-    let mut lines = prefix.lines().rev();
-    let header = lines.find(|line| {
-        !line.starts_with(char::is_whitespace) && is_scope_header(strip_line_comment(line).trim())
-    })?;
-    let annotation = lines.map(str::trim).find(|line| !line.is_empty())?;
-    if annotation != "@EventHandler" {
+    let scope = scope_at_offset(source, offset)?;
+    let header = source[scope.start..].lines().next()?;
+    let annotation = source[..scope.start]
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    if annotation != "@EventHandler" && !header.trim_start().starts_with("@EventHandler") {
         return None;
     }
     let [(ty, name)] = <[_; 1]>::try_from(header_params(strip_line_comment(header).trim())).ok()?;
@@ -5356,7 +5412,7 @@ fn upsert_scoped_completion_local(
 
 /// A top-level function header: `[public] Type name(params) {`.
 fn is_scope_header(line: &str) -> bool {
-    let line = line.strip_prefix("public ").unwrap_or(line);
+    let line = strip_method_modifiers(line);
     let Some(open) = line.find('(') else {
         return false;
     };
@@ -5366,6 +5422,68 @@ fn is_scope_header(line: &str) -> bool {
             "record" | "enum" | "import" | "new" | "return" | "else" | "case"
         )
     })
+}
+
+/// Drops what can come before a method's return type: annotations,
+/// modifiers and type parameters, as in `@Command("x") public static <T> T`.
+fn strip_method_modifiers(mut line: &str) -> &str {
+    const MODIFIERS: &[&str] = &[
+        "public", "private", "protected", "static", "final", "abstract", "default",
+    ];
+    loop {
+        line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('@') {
+            let name_end = rest.find(|ch: char| !is_member_word_char(ch)).unwrap_or(rest.len());
+            let rest = &rest[name_end..];
+            line = match rest.strip_prefix('(') {
+                Some(args) => args.find(')').map_or("", |close| &args[close + 1..]),
+                None => rest,
+            };
+        } else if let Some(rest) = line.strip_prefix('<') {
+            line = rest.find('>').map_or("", |close| &rest[close + 1..]);
+        } else if let Some(word) = MODIFIERS.iter().find(|word| {
+            line.strip_prefix(**word)
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+        }) {
+            line = &line[word.len()..];
+        } else {
+            return line;
+        }
+    }
+}
+
+/// Each method's lines, from its header to its closing brace. A method is a
+/// scope header that isn't inside another method.
+fn method_scopes(source: &str) -> Vec<TextRange> {
+    let mut scopes = Vec::new();
+    let mut depth = 0usize;
+    let mut method: Option<(usize, usize)> = None;
+    let mut line_start = 0usize;
+    for line in source.split_inclusive('\n') {
+        let code = strip_line_comment(line).trim();
+        if method.is_none() && is_scope_header(code) {
+            method = Some((line_start, depth));
+        }
+        for brace in code_braces(code) {
+            if brace == '{' {
+                depth += 1;
+            } else {
+                depth = depth.saturating_sub(1);
+            }
+        }
+        line_start += line.len();
+        if let Some((start, method_depth)) = method
+            && depth <= method_depth
+            && code.contains('}')
+        {
+            scopes.push(TextRange::new(start, line_start));
+            method = None;
+        }
+    }
+    if let Some((start, _)) = method {
+        scopes.push(TextRange::new(start, source.len()));
+    }
+    scopes
 }
 
 /// Splits `Type name` (the type may be generic, `Map<String, int>`).
@@ -5384,6 +5502,7 @@ fn split_declaration(text: &str) -> Option<(&str, &str)> {
 
 /// `(type, name)` for each parameter of a function header.
 fn header_params(line: &str) -> Vec<(String, String)> {
+    let line = strip_method_modifiers(line);
     let (Some(open), Some(close)) = (line.find('('), line.rfind(')')) else {
         return Vec::new();
     };
@@ -5779,13 +5898,15 @@ mod tests {
 
     #[test]
     fn completes_static_and_analysis_items() {
-        let source = r#"
-int helper(int x) {
-    return x;
-}
-void main() {
-    var value = helper(1);
-    value = value + 1;
+        let source = r#"class Main {
+    static int helper(int x) {
+        return x;
+    }
+
+    public static void main() {
+        var value = helper(1);
+        value = value + 1;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -5800,11 +5921,12 @@ void main() {
 
     #[test]
     fn completes_syntactic_locals_when_source_is_incomplete() {
-        let source = r#"
-void main(String kind) {
-    var me = Selector.of("@a").getFirst();
-    var amount = 1;
-    me.team.;
+        let source = r#"class Main {
+    static void main(String kind) {
+        var me = Selector.of("@a").getFirst();
+        var amount = 1;
+        me.team.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -5821,11 +5943,12 @@ void main(String kind) {
 
     #[test]
     fn completes_locals_and_members_inside_lowered_event_declarations() {
-        let source = r#"
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player();
-    player.;
+        let source = r#"class Main implements Listener {
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        Player player = event.player();
+        player.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -5848,14 +5971,16 @@ void onPlayerDeath(PlayerDeathEvent event) {
 
     #[test]
     fn semantic_ranges_exclude_strings_comments_members_and_other_scopes() {
-        let source = r#"
-void first() {
-    var player = Selector.of("@s").getFirst();
-    player.sendMessage("player");  // player
-}
-void second() {
-    var player = Selector.of("@p").getFirst();
-    player.sendMessage("ok");
+        let source = r#"class Main {
+    static void first() {
+        var player = Selector.of("@s").getFirst();
+        player.sendMessage("player");  // player
+    }
+
+    static void second() {
+        var player = Selector.of("@p").getFirst();
+        player.sendMessage("ok");
+    }
 }
 "#;
         let offset = source.find("player.sendMessage").unwrap();
@@ -5869,13 +5994,14 @@ void second() {
 
     #[test]
     fn completion_does_not_leak_dedented_branch_locals() {
-        let source = r#"
-void main() {
-    var outer = 1;
-    if (true) {
-        var branch_only = 2;
+        let source = r#"class Main {
+    public static void main() {
+        var outer = 1;
+        if (true) {
+            var branch_only = 2;
+        }
+        outer;
     }
-    outer;
 }
 "#;
         let analysis = analyze_source(source);
@@ -5886,12 +6012,13 @@ void main() {
 
     #[test]
     fn narrows_member_completions_by_receiver_type() {
-        let source = r#"
-void main() {
-    var values = List.of(1, 2, 3);
-    var me = Selector.of("@a").getFirst();
-    values.;
-    me.;
+        let source = r#"class Main {
+    public static void main() {
+        var values = List.of(1, 2, 3);
+        var me = Selector.of("@a").getFirst();
+        values.;
+        me.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -5911,10 +6038,13 @@ void main() {
         let source = r#"
 record Profile(int duration, String label) {}
 record Action(Profile profile, String kind) {}
-void main(Action action) {
-    var next = action.profile();
-    var duration = next.duration();
-    var kind = action.kind();
+
+class Main {
+    static void main(Action action) {
+        var next = action.profile();
+        var duration = next.duration();
+        var kind = action.kind();
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -5972,9 +6102,11 @@ class Tally extends Counter {
     }
 }
 
-void main() {
-    Tally counter = new Tally();
-    counter.add(1);
+class Main {
+    public static void main() {
+        Tally counter = new Tally();
+        counter.add(1);
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6025,11 +6157,13 @@ enum Planet {
     }
 }
 
-void main() {
-    Point point = new Point(1, 2);
-    int total = point.sum();
-    Planet home = Planet.EARTH;
-    int twice = home.doubled();
+class Main {
+    public static void main() {
+        Point point = new Point(1, 2);
+        int total = point.sum();
+        Planet home = Planet.EARTH;
+        int twice = home.doubled();
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6058,17 +6192,18 @@ void main() {
 
     #[test]
     fn completes_nested_player_member_paths() {
-        let source = r#"
-void main() {
-    var me = (Player) Selector.of("@a").getFirst();
-    var asserted = (Player) Selector.of("@e[limit=1]").getFirst();
-    me.mainhand.;
-    me.inventory[0].;
-    me.inventory[-1].;
-    me.hotbar[0].;
-    me.hotbar[-1].;
-    asserted.;
-    mcf("say $(me.mainhand.)");
+        let source = r#"class Main {
+    public static void main() {
+        var me = (Player) Selector.of("@a").getFirst();
+        var asserted = (Player) Selector.of("@e[limit=1]").getFirst();
+        me.mainhand.;
+        me.inventory[0].;
+        me.inventory[-1].;
+        me.hotbar[0].;
+        me.hotbar[-1].;
+        asserted.;
+        mcf("say $(me.mainhand.)");
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6143,10 +6278,11 @@ void main() {
 
     #[test]
     fn completes_gameplay_builtins_and_generic_entity_members() {
-        let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    pig.;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        pig.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6200,16 +6336,17 @@ void main() {
 
     #[test]
     fn completes_state_namespace_consistently_for_generic_entities_and_players() {
-        let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    var player = (Player) Selector.of("@a[limit=1]").getFirst();
-    pig.state.;
-    player.state.;
-    Selector.of("@e[type=pig,limit=1]").getFirst().state.;
-    ((Player) Selector.of("@a[limit=1]").getFirst()).state.;
-    pig.position.foo.;
-    Selector.of("@e[type=pig,limit=1]").getFirst().position.foo.;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        var player = (Player) Selector.of("@a[limit=1]").getFirst();
+        pig.state.;
+        player.state.;
+        Selector.of("@e[type=pig,limit=1]").getFirst().state.;
+        ((Player) Selector.of("@a[limit=1]").getFirst()).state.;
+        pig.position.foo.;
+        Selector.of("@e[type=pig,limit=1]").getFirst().position.foo.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6268,19 +6405,20 @@ void main() {
 
     #[test]
     fn completes_builder_members_and_hover_signatures() {
-        let source = r#"
-void main() {
-    var pig = new EntityData("minecraft:pig");
-    var chest = new BlockData("minecraft:chest");
-    var stack = new ItemStack("minecraft:apple");
-    var msg = new Component("Hello");
-    pig.;
-    chest.;
-    stack.;
-    msg.;
-    new ItemStack("minecraft:apple").;
-    new Component("Hello").;
-    Block.of("~ ~ ~").;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = new EntityData("minecraft:pig");
+        var chest = new BlockData("minecraft:chest");
+        var stack = new ItemStack("minecraft:apple");
+        var msg = new Component("Hello");
+        pig.;
+        chest.;
+        stack.;
+        msg.;
+        new ItemStack("minecraft:apple").;
+        new Component("Hello").;
+        Block.of("~ ~ ~").;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6376,14 +6514,15 @@ void main() {
 
     #[test]
     fn completes_text_def_nested_members() {
-        let source = r#"
-void main() {
-    var msg = new Component("Hello");
-    msg.hover_event.;
-    msg.click_event.;
-    msg.score.;
-    msg.extra[0].;
-    new Component("Hello").hover_event.;
+        let source = r#"class Main {
+    public static void main() {
+        var msg = new Component("Hello");
+        msg.hover_event.;
+        msg.click_event.;
+        msg.score.;
+        msg.extra[0].;
+        new Component("Hello").hover_event.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6431,15 +6570,16 @@ void main() {
 
     #[test]
     fn completes_schema_backed_nbt_fields_for_inline_and_local_builders() {
-        let source = r#"
-void main() {
-    new EntityData("minecraft:mannequin").nbt.;
-    new EntityData("minecraft:mannequin").nbt.profile.;
-    var mannequin = new EntityData("minecraft:mannequin");
-    var alias = mannequin;
-    alias.nbt.profile.;
-    new BlockData("minecraft:player_head").nbt.;
-    new ItemStack("minecraft:player_head").nbt.;
+        let source = r#"class Main {
+    public static void main() {
+        new EntityData("minecraft:mannequin").nbt.;
+        new EntityData("minecraft:mannequin").nbt.profile.;
+        var mannequin = new EntityData("minecraft:mannequin");
+        var alias = mannequin;
+        alias.nbt.profile.;
+        new BlockData("minecraft:player_head").nbt.;
+        new ItemStack("minecraft:player_head").nbt.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6503,16 +6643,17 @@ void main() {
 
     #[test]
     fn completes_schema_backed_nbt_fields_for_runtime_refs() {
-        let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    var player = (Player) Selector.of("@a[limit=1]").getFirst();
-    var chest = Block.of("~ ~ ~");
-    pig.nbt.;
-    Selector.of("@e[type=pig,limit=1]").getFirst().nbt.;
-    player.nbt.;
-    chest.nbt.;
-    Block.of("~ ~ ~").nbt.;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        var player = (Player) Selector.of("@a[limit=1]").getFirst();
+        var chest = Block.of("~ ~ ~");
+        pig.nbt.;
+        Selector.of("@e[type=pig,limit=1]").getFirst().nbt.;
+        player.nbt.;
+        chest.nbt.;
+        Block.of("~ ~ ~").nbt.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6562,10 +6703,11 @@ void main() {
 
     #[test]
     fn completes_full_upstream_nbt_for_additional_exact_ids() {
-        let source = r#"
-void main() {
-    new EntityData("minecraft:armor_stand").nbt.;
-    new ItemStack("minecraft:diamond_sword").nbt.;
+        let source = r#"class Main {
+    public static void main() {
+        new EntityData("minecraft:armor_stand").nbt.;
+        new ItemStack("minecraft:diamond_sword").nbt.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6603,15 +6745,16 @@ void main() {
 
     #[test]
     fn falls_back_to_default_nbt_schema_for_dynamic_builder_ids() {
-        let source = r#"
-void main() {
-    var id = "minecraft:unknown";
-    var entity_value = new EntityData(id);
-    var block_value = new BlockData(id);
-    var item_value = new ItemStack(id);
-    entity_value.nbt.;
-    block_value.nbt.;
-    item_value.nbt.;
+        let source = r#"class Main {
+    public static void main() {
+        var id = "minecraft:unknown";
+        var entity_value = new EntityData(id);
+        var block_value = new BlockData(id);
+        var item_value = new ItemStack(id);
+        entity_value.nbt.;
+        block_value.nbt.;
+        item_value.nbt.;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6641,9 +6784,10 @@ void main() {
 
     #[test]
     fn replaces_partial_nbt_field_names() {
-        let source = r#"
-void main() {
-    new EntityData("minecraft:mannequin").nbt.pro;
+        let source = r#"class Main {
+    public static void main() {
+        new EntityData("minecraft:mannequin").nbt.pro;
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6672,20 +6816,21 @@ void main() {
 
     #[test]
     fn completes_contextual_minecraft_ids_inside_string_arguments() {
-        let source = r#"
-void main() {
-    var player = (Player) Selector.of("@a").getFirst();
-    new EntityData("pig");
-    new ItemStack("diamond_swo");
-    new ItemStack("music_disc_boun");
-    Block.of("~ ~ ~").setBlock("gold_bloc");
-    player.playSound("entity.experience_orb.picku", "master");
-    player.playSound("block.sulfur_spike.brea", "master");
-    Block.of("~ ~ ~").spawnParticle("happy_villag");
-    Block.of("~ ~ ~").spawnParticle("geyser_poo");
-    player.effect("glowin", 3, 0);
-    player.give("stick", 1);
-    player.position.lootSpawn("chests/simple_dungeo");
+        let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@a").getFirst();
+        new EntityData("pig");
+        new ItemStack("diamond_swo");
+        new ItemStack("music_disc_boun");
+        Block.of("~ ~ ~").setBlock("gold_bloc");
+        player.playSound("entity.experience_orb.picku", "master");
+        player.playSound("block.sulfur_spike.brea", "master");
+        Block.of("~ ~ ~").spawnParticle("happy_villag");
+        Block.of("~ ~ ~").spawnParticle("geyser_poo");
+        player.effect("glowin", 3, 0);
+        player.give("stick", 1);
+        player.position.lootSpawn("chests/simple_dungeo");
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6858,11 +7003,12 @@ void main() {
 
     #[test]
     fn completes_selector_entity_ids_and_top_level_debug_marker_block_ids() {
-        let source = r#"
-void main() {
-    var matching = Selector.of("@e[type=chicke,limit=1]");
-    var negated = Selector.of("@e[type=!zomb,limit=1]");
-    debugMarker(Block.of("~ ~ ~"), "marker", "gold_bloc");
+        let source = r#"class Main {
+    public static void main() {
+        var matching = Selector.of("@e[type=chicke,limit=1]");
+        var negated = Selector.of("@e[type=!zomb,limit=1]");
+        debugMarker(Block.of("~ ~ ~"), "marker", "gold_bloc");
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6914,10 +7060,11 @@ void main() {
 
     #[test]
     fn does_not_offer_item_id_completions_for_read_only_item_slot_ids() {
-        let source = r#"
-void main() {
-    var player = (Player) Selector.of("@a").getFirst();
-    player.hotbar[0].id = "stick";
+        let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@a").getFirst();
+        player.hotbar[0].id = "stick";
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -6931,7 +7078,7 @@ void main() {
 
     #[test]
     fn minecraft_id_completions_replace_the_full_string_contents() {
-        let source = "void main() {\n    new EntityData(\"pig\");\n}\n";
+        let source = "class Main {\n    public static void main() {\n        new EntityData(\"pig\");\n    }\n}\n";
         let analysis = analyze_source(source);
         let items = completion_items(
             source,
@@ -6970,8 +7117,8 @@ void main() {
         );
         let source_file = src_dir.join("main.mcf");
         let asset_file = asset_dir.join("ignored.mcf");
-        write_file(&source_file, "void main() {\n}\n");
-        write_file(&asset_file, "void ignored() {\n}\n");
+        write_file(&source_file, "class Main {\n    public static void main() {\n    }\n}\n");
+        write_file(&asset_file, "class Main {\n    static void ignored() {\n    }\n}\n");
 
         let source_config = resolve_project_config_for_path(&source_file)
             .unwrap()
@@ -7001,10 +7148,10 @@ void main() {
         );
         let first = src_dir.join("main.mcf");
         let second = src_dir.join("beta.mcf");
-        write_file(&first, "public void alpha() {\n}\n");
+        write_file(&first, "class Main {\n    public static void alpha() {\n    }\n}\n");
         write_file(
             &second,
-            "import main.alpha;\nvoid beta() {\n    alpha();\n}",
+            "import main.alpha;\n\nclass Main {\n    static void beta() {\n        alpha();\n    }\n}",
         );
 
         let snapshot = build_project_snapshot(
@@ -7036,8 +7183,8 @@ void main() {
         let src_dir = project.join("src");
         fs::create_dir_all(&src_dir).unwrap();
         write_file(&project.join("mcfc.toml"), "namespace = \"sample\"\n");
-        write_file(&src_dir.join("main.mcf"), "void tick() {\n}\n");
-        write_file(&src_dir.join("game.mcf"), "void tick() {\n}\n");
+        write_file(&src_dir.join("main.mcf"), "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n");
+        write_file(&src_dir.join("game.mcf"), "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n");
 
         let snapshot = build_project_snapshot(
             &ProjectConfig {
@@ -7072,16 +7219,21 @@ void main() {
             &helper,
             r#"
 public record Action(String kind) {}
-public void helper() {
-    return;
+
+public class Helper {
+    public static void greet() {
+        return;
+    }
 }
 "#,
         );
-        let main_source = r#"import helper.helper;
+        let main_source = r#"import helper.Helper;
 import helper.Action;
 
-void main() {
-    helper();
+class Main {
+    public static void main() {
+        Helper.greet();
+    }
 }
 "#;
         write_file(&main, main_source);
@@ -7099,23 +7251,20 @@ void main() {
             .segment_for_path(&main)
             .expect("main file should have segment");
         let main_text = fs::read_to_string(&main).unwrap();
-        let local_call_offset = main_text.find("    helper()").unwrap() + 4;
+        let local_call_offset = main_text.find("greet()").unwrap();
         let merged_call_offset = main_segment.local_to_merged_offset(local_call_offset);
         let (word, _) = crate::analysis::word_at_offset(&snapshot.merged_text, merged_call_offset)
-            .expect("word at helper call");
+            .expect("word at greet call");
         let hover = super::hover_contents(&snapshot.analysis, merged_call_offset, &word)
             .expect("hover should resolve cross-file function");
-        assert!(hover.contains("void helper::helper()"));
+        assert!(hover.contains("void greet()"), "{hover}");
 
+        let statement_offset =
+            main_segment.local_to_merged_offset(main_text.find("Helper.greet").unwrap());
         let top_level_items = completion_items(
             &snapshot.merged_text,
             &snapshot.analysis,
-            merged_call_offset,
-        );
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "helper::helper")
+            statement_offset,
         );
         assert!(
             top_level_items
@@ -7128,7 +7277,7 @@ void main() {
         assert!(
             !main_symbols
                 .iter()
-                .any(|symbol| symbol.name.ends_with("helper"))
+                .any(|symbol| symbol.name.ends_with("greet"))
         );
 
         let mut overrides = HashMap::new();
@@ -7153,13 +7302,13 @@ void main() {
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains("cannot find 'helper'"))
+                .any(|diagnostic| diagnostic.message.contains("cannot find 'Helper'"))
         );
     }
 
     #[test]
     fn completes_java_static_and_selector_calls() {
-        let source = "void main() {\n    var sel = Selector.of(\"@e\");\n    sel.;\n}";
+        let source = "class Main {\n    public static void main() {\n        var sel = Selector.of(\"@e\");\n        sel.;\n    }\n}";
         let analysis = analyze_source(source);
         let selector = completion_items(source, &analysis, source.find("sel.").unwrap() + 4);
         assert!(selector.iter().any(|item| item.label == "getFirst"));
@@ -7182,16 +7331,19 @@ void main() {
     fn completes_results_of_conditional_and_switch_expressions() {
         let source = r#"
 enum Stage { NEW, DONE }
-void main() {
-    var label = true ? "yes" : "no";
-    var code = switch (Stage.NEW) {
-        case NEW -> "new";
-        case DONE -> "done";
-    };
-    var stage = Stage.NEW;
-    debug(label.toString());
-    debug(code.toString());
-    debug(stage.name());
+
+class Main {
+    public static void main() {
+        var label = true ? "yes" : "no";
+        var code = switch (Stage.NEW) {
+            case NEW -> "new";
+            case DONE -> "done";
+        };
+        var stage = Stage.NEW;
+        debug(label.toString());
+        debug(code.toString());
+        debug(stage.name());
+    }
 }
 "#;
         let analysis = analyze_source(source);
@@ -7221,18 +7373,23 @@ void main() {
         let source = r#"import std.vec.Vec3;
 record Space(String name, int price) {}
 enum Mode { SURVIVAL, CREATIVE }
-@WorldState int builtLayout;
-// a comment with words in it
-@Command("bk_start")
-void start(Player player) {
-    if (builtLayout != LAYOUT()) {
-        Space hovered = new Space("a", 1);
-        player.sendMessage(hovered.name());
+
+class Main {
+    static int builtLayout;
+
+    // a comment with words in it
+    @Command("bk_start")
+    static void start(Player player) {
+        if (builtLayout != LAYOUT()) {
+            Space hovered = new Space("a", 1);
+            player.sendMessage(hovered.name());
+        }
+        Mode mode = Mode.CREATIVE;
     }
-    Mode mode = Mode.CREATIVE;
-}
-int LAYOUT() {
-    return 9;
+
+    static int LAYOUT() {
+        return 9;
+    }
 }
 class Cell<Item> implements Comparable<Cell<Item>> {
     Item held;
@@ -7265,7 +7422,8 @@ class Cell<Item> implements Comparable<Cell<Item>> {
             "name=recordComponent",
             "Mode=enum",
             "SURVIVAL=enumMember",
-            "WorldState=annotation",
+            "Command=annotation",
+            "Main=class",
             "builtLayout=property",
             "start=method",
             "Player=class",

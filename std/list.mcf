@@ -4,121 +4,122 @@
 
 import std.function.*;
 
-// Sum of all elements. An empty array gives 0.
-public <T> T sum(List<T> xs) {
-    var total = xs[0];
-    for (int i = 1; i < xs.size(); i++) {
-        total = total + xs[i];
-    }
-    return total;
-}
-
-// Smallest element. An empty array gives 0.
-public <T> T min(List<T> xs) {
-    var best = xs[0];
-    for (var x : xs) {
-        if (x < best) {
-            best = x;
+public final class Lists {
+    // Sum of all elements. An empty array gives 0.
+    public static <T> T sum(List<T> xs) {
+        var total = xs[0];
+        for (int i = 1; i < xs.size(); i++) {
+            total = total + xs[i];
         }
+        return total;
     }
-    return best;
-}
 
-// Largest element. An empty array gives 0.
-public <T> T max(List<T> xs) {
-    var best = xs[0];
-    for (var x : xs) {
-        if (x > best) {
-            best = x;
-        }
-    }
-    return best;
-}
-
-// `sortBy` and `top` order any list by a parallel list of int keys, where
-// `keys[i]` belongs to `items[i]`, such as player names and their scores.
-// ponytail: insertion sort, O(n²) commands; fine for player-sized lists.
-
-// `items` ordered by `keys`, smallest first. Equal keys keep their order.
-public <T> List<T> sortBy(List<T> items, List<Integer> keys) {
-    List<Integer> order = List.of();
-    for (int i = 0; i < items.size(); i++) {
-        var j = order.size();
-        while (j > 0 && keys[order[j - 1]] > keys[i]) {
-            j = j - 1;
-        }
-        order.add(j, i);
-    }
-    return pick(items, order);
-}
-
-// The `n` items with the largest keys, largest first. Equal keys keep their order.
-public <T> List<T> top(List<T> items, List<Integer> keys, int n) {
-    List<Integer> order = List.of();
-    for (int i = 0; i < items.size(); i++) {
-        var j = order.size();
-        while (j > 0 && keys[order[j - 1]] < keys[i]) {
-            j = j - 1;
-        }
-        if (j < n) {
-            order.add(j, i);
-            if (order.size() > n) {
-                order.removeLast();
+    // Smallest element. An empty array gives 0.
+    public static <T> T min(List<T> xs) {
+        var best = xs[0];
+        for (var x : xs) {
+            if (x < best) {
+                best = x;
             }
         }
+        return best;
     }
-    return pick(items, order);
-}
 
-<T> List<T> pick(List<T> items, List<Integer> indexes) {
-    List<T> out = List.of();
-    for (var i : indexes) {
-        out.add(items[i]);
+    // Largest element. An empty array gives 0.
+    public static <T> T max(List<T> xs) {
+        var best = xs[0];
+        for (var x : xs) {
+            if (x > best) {
+                best = x;
+            }
+        }
+        return best;
     }
-    return out;
-}
 
-// What `xs.forEach(f)`, `xs.removeIf(p)`, `xs.replaceAll(f)` and
-// `xs.sort(order)` call. Lists are values, so the ones that change the list
-// return the new list, and the compiler assigns it back.
+    // `sortBy` and `top` order any list by a parallel list of int keys, where
+    // `keys[i]` belongs to `items[i]`, such as player names and their scores.
+    // ponytail: insertion sort, O(n²) commands; fine for player-sized lists.
 
-<T> void forEach(List<T> values, Consumer<T> action) {
-    for (T value : values) {
-        action.accept(value);
+    // `items` ordered by `keys`, smallest first. Equal keys keep their order.
+    public static <T> List<T> sortBy(List<T> items, List<Integer> keys) {
+        List<Integer> order = List.of();
+        for (int i = 0; i < items.size(); i++) {
+            var j = order.size();
+            while (j > 0 && keys[order[j - 1]] > keys[i]) {
+                j = j - 1;
+            }
+            order.add(j, i);
+        }
+        return pick(items, order);
     }
-}
 
-<T> List<T> removeIf(List<T> values, Predicate<T> filter) {
-    List<T> kept = List.of();
-    for (T value : values) {
-        if (!filter.test(value)) {
-            kept.add(value);
+    // The `n` items with the largest keys, largest first. Equal keys keep their order.
+    public static <T> List<T> top(List<T> items, List<Integer> keys, int n) {
+        List<Integer> order = List.of();
+        for (int i = 0; i < items.size(); i++) {
+            var j = order.size();
+            while (j > 0 && keys[order[j - 1]] < keys[i]) {
+                j = j - 1;
+            }
+            if (j < n) {
+                order.add(j, i);
+                if (order.size() > n) {
+                    order.removeLast();
+                }
+            }
+        }
+        return pick(items, order);
+    }
+
+    static <T> List<T> pick(List<T> items, List<Integer> indexes) {
+        List<T> out = List.of();
+        for (var i : indexes) {
+            out.add(items[i]);
+        }
+        return out;
+    }
+
+    // What `xs.forEach(f)`, `xs.removeIf(p)`, `xs.replaceAll(f)` and
+    // `xs.sort(order)` call. Lists are values, so the ones that change the list
+    // return the new list, and the compiler assigns it back.
+    public static <T> void forEach(List<T> values, Consumer<T> action) {
+        for (T value : values) {
+            action.accept(value);
         }
     }
 
-    return kept;
-}
-
-<T> List<T> replaceAll(List<T> values, UnaryOperator<T> operator) {
-    List<T> replaced = List.of();
-    for (T value : values) {
-        replaced.add(operator.apply(value));
-    }
-
-    return replaced;
-}
-
-// ponytail: insertion sort, O(n²) compare calls; fine for player-sized lists.
-// Equal values keep their order.
-public <T> List<T> sortWith(List<T> values, Comparator<T> order) {
-    List<T> sorted = List.of();
-    for (T value : values) {
-        int index = sorted.size();
-        while (index > 0 && order.compare(sorted[index - 1], value) > 0) {
-            index = index - 1;
+    public static <T> List<T> removeIf(List<T> values, Predicate<T> filter) {
+        List<T> kept = List.of();
+        for (T value : values) {
+            if (!filter.test(value)) {
+                kept.add(value);
+            }
         }
-        sorted.add(index, value);
+
+        return kept;
     }
 
-    return sorted;
+    public static <T> List<T> replaceAll(List<T> values, UnaryOperator<T> operator) {
+        List<T> replaced = List.of();
+        for (T value : values) {
+            replaced.add(operator.apply(value));
+        }
+
+        return replaced;
+    }
+
+    // ponytail: insertion sort, O(n²) compare calls; fine for player-sized lists.
+    // Equal values keep their order.
+    public static <T> List<T> sortWith(List<T> values, Comparator<T> order) {
+        List<T> sorted = List.of();
+        for (T value : values) {
+            int index = sorted.size();
+            while (index > 0 && order.compare(sorted[index - 1], value) > 0) {
+                index = index - 1;
+            }
+            sorted.add(index, value);
+        }
+
+        return sorted;
+    }
 }

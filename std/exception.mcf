@@ -39,11 +39,11 @@ public class UnsupportedOperationException extends RuntimeException {
 }
 
 // The exception being thrown, or null.
-class Thrown {
+public class Thrown {
     public static Exception value = null;
-}
 
-// Logs an exception nothing caught, where it left a function no code calls.
-void uncaught(Exception exception) {
-    Log.error("uncaught exception: " + exception.getMessage());
+    // Logs an exception nothing caught, where it left a function no code calls.
+    public static void uncaught(Exception exception) {
+        Log.error("uncaught exception: " + exception.getMessage());
+    }
 }

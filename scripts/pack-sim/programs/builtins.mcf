@@ -1,28 +1,30 @@
 // Builtin types whose methods std declares: BossBar and ItemStack getters,
 // and `instanceof` on entities known from their selector.
-void main() {
-    var bar = new BossBar("demo:boss", "Boss");
-    bar.setMax(20);
-    bar.setValue(7);
-    bar.setVisible(true);
-    int value = bar.getValue();
-    int max = bar.getMax();
-    boolean visible = bar.isVisible();
-    mcf("say bar $(value)/$(max) visible $(visible)");
-    bar.setPlayers(Selector.of("@a"));
-    bar.remove();
+class Main {
+    public static void main() {
+        var bar = new BossBar("demo:boss", "Boss");
+        bar.setMax(20);
+        bar.setValue(7);
+        bar.setVisible(true);
+        int value = bar.getValue();
+        int max = bar.getMax();
+        boolean visible = bar.isVisible();
+        mcf("say bar $(value)/$(max) visible $(visible)");
+        bar.setPlayers(Selector.of("@a"));
+        bar.remove();
 
-    var sword = new ItemStack("minecraft:diamond_sword");
-    sword.setCount(3);
-    sword.setName("Quest Blade");
-    int count = sword.getCount();
-    String name = (String) sword.getName();
-    String id = sword.getId();
-    mcf("say item $(count) $(name) $(id)");
+        var sword = new ItemStack("minecraft:diamond_sword");
+        sword.setCount(3);
+        sword.setName("Quest Blade");
+        int count = sword.getCount();
+        String name = (String) sword.getName();
+        String id = sword.getId();
+        mcf("say item $(count) $(name) $(id)");
 
-    Entity self = Selector.of("@s").getFirst();
-    Entity pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    boolean selfIsPlayer = self instanceof Player;
-    boolean pigIsPlayer = pig instanceof Player;
-    mcf("say player $(selfIsPlayer) $(pigIsPlayer)");
+        Entity self = Selector.of("@s").getFirst();
+        Entity pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        boolean selfIsPlayer = self instanceof Player;
+        boolean pigIsPlayer = pig instanceof Player;
+        mcf("say player $(selfIsPlayer) $(pigIsPlayer)");
+    }
 }

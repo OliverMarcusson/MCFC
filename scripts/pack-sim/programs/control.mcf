@@ -1,75 +1,77 @@
-int classify(int n) {
-    if (n < 0) {
-        return -1;
-    }
-    if (n == 0) {
-        return 0;
-    }
-    var k = n;
-    while (k > 10) {
-        k = k - 10;
-        if (k == 13) {
-            return 99;
+class Main {
+    static int classify(int n) {
+        if (n < 0) {
+            return -1;
         }
-    }
-    return k;
-}
-
-int findFirstEven(int limit) {
-    var found = -1;
-    for (int i = 1; i < limit; i++) {
-        if (i % 2 == 1) {
-            continue;
+        if (n == 0) {
+            return 0;
         }
-        if (found == -1) {
-            found = i;
-            break;
-        }
-    }
-    return found;
-}
-
-int nested(int a, int b) {
-    var total = 0;
-    for (int i = 0; i < a; i++) {
-        for (int j = 0; j < b; j++) {
-            if (j == 2) {
-                break;
+        var k = n;
+        while (k > 10) {
+            k = k - 10;
+            if (k == 13) {
+                return 99;
             }
-            if (i == 1) {
+        }
+        return k;
+    }
+
+    static int findFirstEven(int limit) {
+        var found = -1;
+        for (int i = 1; i < limit; i++) {
+            if (i % 2 == 1) {
                 continue;
             }
-            total = total + i * 10 + j;
+            if (found == -1) {
+                found = i;
+                break;
+            }
         }
-        if (total > 50) {
-            return total;
-        }
+        return found;
     }
-    return total;
-}
 
-void main() {
-    var xs = List.of(-5, 0, 7, 23, 42);
-    for (var x : xs) {
-        var c = classify(x);
-        mcf("say classify $(x) = $(c)");
-    }
-    var e = findFirstEven(9);
-    mcf("say even $(e)");
-    var n1 = nested(3, 5);
-    var n2 = nested(9, 4);
-    mcf("say nested $(n1) $(n2)");
-    var s = 0;
-    var i = 0;
-    while (true) {
-        i = i + 1;
-        if (i > 20) {
-            break;
+    static int nested(int a, int b) {
+        var total = 0;
+        for (int i = 0; i < a; i++) {
+            for (int j = 0; j < b; j++) {
+                if (j == 2) {
+                    break;
+                }
+                if (i == 1) {
+                    continue;
+                }
+                total = total + i * 10 + j;
+            }
+            if (total > 50) {
+                return total;
+            }
         }
-        if (i % 3 == 0) {
-            continue;
-        }
-        s = s + i;
+        return total;
     }
-    mcf("say sum $(s)");
+
+    public static void main() {
+        var xs = List.of(-5, 0, 7, 23, 42);
+        for (var x : xs) {
+            var c = classify(x);
+            mcf("say classify $(x) = $(c)");
+        }
+        var e = findFirstEven(9);
+        mcf("say even $(e)");
+        var n1 = nested(3, 5);
+        var n2 = nested(9, 4);
+        mcf("say nested $(n1) $(n2)");
+        var s = 0;
+        var i = 0;
+        while (true) {
+            i = i + 1;
+            if (i > 20) {
+                break;
+            }
+            if (i % 3 == 0) {
+                continue;
+            }
+            s = s + i;
+        }
+        mcf("say sum $(s)");
+    }
 }

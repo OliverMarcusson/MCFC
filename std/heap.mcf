@@ -8,114 +8,109 @@
 
 public record Slot(int mcfcClass) {}
 
-@WorldState
-List<Slot> mcfcHeap;
+public final class Heap {
+    public static List<Slot> mcfcHeap;
 
-@WorldState
-List<Integer> mcfcFree;
+    public static List<Integer> mcfcFree;
 
-// 1 for each object reached in the current collection.
-@WorldState
-List<Integer> mcfcMarks;
+    // 1 for each object reached in the current collection.
+    static List<Integer> mcfcMarks;
 
-// Objects reached but whose fields are not marked yet.
-@WorldState
-List<Integer> mcfcGray;
+    // Objects reached but whose fields are not marked yet.
+    static List<Integer> mcfcGray;
 
-@WorldState
-int mcfcAllocated;
+    static int mcfcAllocated;
 
-@WorldState
-int mcfcLive;
+    public static int mcfcLive;
 
-// Collect once more objects than this were made since the last collection.
-// The tick tag compares it directly, so an idle tick costs one command.
-@WorldState
-int mcfcThreshold;
+    // Collect once more objects than this were made since the last collection.
+    // The tick tag compares it directly, so an idle tick costs one command.
+    static int mcfcThreshold;
 
-public int alloc(int classId) {
-    if (mcfcHeap.isEmpty()) {
-        mcfcHeap.add(new Slot(0));
-        mcfcAllocated = 0;
-        mcfcLive = 0;
-        mcfcThreshold = 64;
-    }
-
-    mcfcAllocated += 1;
-    if (!mcfcFree.isEmpty()) {
-        int id = mcfcFree.removeLast();
-        mcfcHeap[id] = new Slot(classId);
-        return id;
-    }
-
-    mcfcHeap.add(new Slot(classId));
-    return mcfcHeap.size() - 1;
-}
-
-// The default `toString()` of an object: `Counter@3`, or `null`.
-public String describe(String className, int id) {
-    if (id == 0) {
-        return "null";
-    }
-
-    return className + "@" + id;
-}
-
-// Collect once the objects made since the last collection outnumber the
-// survivors, so each object costs a bounded share of collection work.
-public boolean due() {
-    return mcfcAllocated > mcfcThreshold;
-}
-
-// Start a collection with nothing marked.
-public void begin() {
-    mcfcMarks = List.of();
-    for (int id = 0; id < mcfcHeap.size(); id++) {
-        mcfcMarks.add(0);
-    }
-
-    mcfcGray = List.of();
-}
-
-// Ids can come from stale locals, so anything outside the heap is ignored.
-public void mark(int id) {
-    if (id < 1 || id >= mcfcMarks.size()) {
-        return;
-    }
-
-    if (mcfcMarks[id] == 1) {
-        return;
-    }
-
-    mcfcMarks[id] = 1;
-    mcfcGray.add(id);
-}
-
-public boolean hasGray() {
-    return !mcfcGray.isEmpty();
-}
-
-public int nextGray() {
-    return mcfcGray.removeLast();
-}
-
-public int classOf(int id) {
-    return mcfcHeap[id].mcfcClass();
-}
-
-// Free every object the collection didn't reach.
-public void sweep() {
-    mcfcFree = List.of();
-    mcfcLive = 0;
-    for (int id = 1; id < mcfcHeap.size(); id++) {
-        if (mcfcMarks[id] == 1) {
-            mcfcLive += 1;
-        } else {
-            mcfcHeap[id] = new Slot(0);
-            mcfcFree.add(id);
+    public static int alloc(int classId) {
+        if (mcfcHeap.isEmpty()) {
+            mcfcHeap.add(new Slot(0));
+            mcfcAllocated = 0;
+            mcfcLive = 0;
+            mcfcThreshold = 64;
         }
+
+        mcfcAllocated += 1;
+        if (!mcfcFree.isEmpty()) {
+            int id = mcfcFree.removeLast();
+            mcfcHeap[id] = new Slot(classId);
+            return id;
+        }
+
+        mcfcHeap.add(new Slot(classId));
+        return mcfcHeap.size() - 1;
     }
 
-    mcfcAllocated = 0;
-    mcfcThreshold = mcfcLive + 64;
+    // The default `toString()` of an object: `Counter@3`, or `null`.
+    public static String describe(String className, int id) {
+        if (id == 0) {
+            return "null";
+        }
+
+        return className + "@" + id;
+    }
+
+    // Collect once the objects made since the last collection outnumber the
+    // survivors, so each object costs a bounded share of collection work.
+    public static boolean due() {
+        return mcfcAllocated > mcfcThreshold;
+    }
+
+    // Start a collection with nothing marked.
+    public static void begin() {
+        mcfcMarks = List.of();
+        for (int id = 0; id < mcfcHeap.size(); id++) {
+            mcfcMarks.add(0);
+        }
+
+        mcfcGray = List.of();
+    }
+
+    // Ids can come from stale locals, so anything outside the heap is ignored.
+    public static void mark(int id) {
+        if (id < 1 || id >= mcfcMarks.size()) {
+            return;
+        }
+
+        if (mcfcMarks[id] == 1) {
+            return;
+        }
+
+        mcfcMarks[id] = 1;
+        mcfcGray.add(id);
+    }
+
+    public static boolean hasGray() {
+        return !mcfcGray.isEmpty();
+    }
+
+    public static int nextGray() {
+        return mcfcGray.removeLast();
+    }
+
+    public static int classOf(int id) {
+        return mcfcHeap[id].mcfcClass();
+    }
+
+    // Free every object the collection didn't reach.
+    public static void sweep() {
+        mcfcFree = List.of();
+        mcfcLive = 0;
+        for (int id = 1; id < mcfcHeap.size(); id++) {
+            if (mcfcMarks[id] == 1) {
+                mcfcLive += 1;
+            } else {
+                mcfcHeap[id] = new Slot(0);
+                mcfcFree.add(id);
+            }
+        }
+
+        mcfcAllocated = 0;
+        mcfcThreshold = mcfcLive + 64;
+    }
 }

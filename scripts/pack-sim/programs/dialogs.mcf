@@ -1,9 +1,12 @@
 // std.dialog shows inline dialogs; the game escapes quotes in the text.
-import std.dialog;
+import std.dialog.Button;
+import std.dialog.Dialog;
 
-void main() {
-    for (Player player : Selector.of("@a")) {
-        dialog.notice(player, "Hi \"there\"", Component.text("line one\nline two"));
-        dialog.menu(player, "Shop", Component.text("Pick one"), List.of(new dialog.Button("Buy sword", "buy")));
+class Main {
+    public static void main() {
+        for (Player player : Selector.of("@a")) {
+            Dialog.notice(player, "Hi \"there\"", Component.text("line one\nline two"));
+            Dialog.menu(player, "Shop", Component.text("Pick one"), List.of(new Button("Buy sword", "buy")));
+        }
     }
 }

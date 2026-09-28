@@ -4,7 +4,7 @@ layout: home
 hero:
   name: MCFC
   text: A typed language that compiles to Minecraft datapacks
-  tagline: Write .mcf source with functions, types, loops and per-player state. Get a vanilla datapack for Minecraft 26.3.
+  tagline: Write Java-style classes with types, loops, events and per-player state. Get a vanilla datapack for Minecraft 26.3.
   image:
     src: /MCFC-icon.png
     alt: MCFC icon
@@ -25,28 +25,30 @@ features:
   - title: Checked before you load it
     details: Type errors, unknown methods and wrong arguments are reported with file and line, in the terminal and in VS Code.
   - title: Waiting without blocking
-    details: sleep() and Thread.start compile into scheduled functions, so a countdown is a for loop.
+    details: sleep() and Thread.start compile into scheduled commands, so a countdown is a for loop.
   - title: Optional host access
     details: With the mcfd helper, a pack can call HTTP APIs, read files, use SQLite, and get real time, each enabled per project.
 ---
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-@Every(ticks = 20)
-void payday() {
-    for (Player player : Selector.of("@a")) {
-        player.state.coins = player.state.coins + 1;
-        player.sendActionBar("Coins: $(player.state.coins)");
+    @Every(ticks = 20)
+    static void payday() {
+        for (Player player : Selector.of("@a")) {
+            player.state.coins = player.state.coins + 1;
+            player.sendActionBar("Coins: $(player.state.coins)");
+        }
     }
-}
 
-@Command("buy")
-void buy(Player player) {
-    if (player.state.coins >= 10) {
-        player.state.coins = player.state.coins - 10;
-        player.give("minecraft:diamond", 1);
+    @Command("buy")
+    static void buy(Player player) {
+        if (player.state.coins >= 10) {
+            player.state.coins = player.state.coins - 10;
+            player.give("minecraft:diamond", 1);
+        }
     }
 }
 ```

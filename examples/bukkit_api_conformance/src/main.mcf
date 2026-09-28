@@ -1,178 +1,186 @@
 // Vanilla Bukkit-style API conformance pack.
 // Run `/function bukkit_api_conformance:run_all`, then use
 // `/trigger status` as a player to exercise the command bridge.
+class Main implements Listener {
+    @PlayerState("coins") static int coins;
 
-@PlayerState("coins") int coins;
-@PlayerState("completed") boolean completed;
-@PlayerState("tests_passed") int tests_passed;
-@PlayerState("arcade_score") int arcade_score;
-@PlayerState("arcade_blocks") int arcade_blocks;
-@PlayerState("arcade_hits") int arcade_hits;
-@PlayerState("arcade_events") int arcade_events;
-@PlayerState("arcade_slot") int arcade_slot;
+    @PlayerState("completed") static boolean completed;
 
-@EventHandler
-void onPlayerConnect(PlayerConnectEvent event) {
-    var player = event.player();
-    player.sendMessage("Hello");
-    player.state.coins = player.state.coins + 1;
-    player.sendActionBar("MCFC Event Arcade ready — use /arcade");
-}
+    @PlayerState("tests_passed") static int tests_passed;
 
-@EventHandler
-void onBlockBreak(BlockBreakEvent event) {
-    event.cancel();
-}
+    @PlayerState("arcade_score") static int arcade_score;
 
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player();
-    player.sendMessage("you dead.");
-    player.state.arcade_hits = 0;
-}
+    @PlayerState("arcade_blocks") static int arcade_blocks;
 
-// Event Arcade: packet callbacks are quiet by default and instead change the
-// player's score, combo, hotbar state, or action bar.
-@EventHandler
-void onChat(ChatEvent event) {
-    var player = Selector.of("@s").getFirst();
-    if (event.message() == "spark") {
-        player.state.arcade_score = player.state.arcade_score + 3;
-        player.sendActionBar("Spark! +3 arcade score");
-        player.playSound("minecraft:entity.experience_orb.pickup", "master");
+    @PlayerState("arcade_hits") static int arcade_hits;
+
+    @PlayerState("arcade_events") static int arcade_events;
+
+    @PlayerState("arcade_slot") static int arcade_slot;
+
+    @EventHandler
+    void onPlayerConnect(PlayerConnectEvent event) {
+        var player = event.player();
+        player.sendMessage("Hello");
+        player.state.coins = player.state.coins + 1;
+        player.sendActionBar("MCFC Event Arcade ready — use /arcade");
     }
-}
 
-@EventHandler
-void onInventoryClick(InventoryClickEvent event) {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_slot = event.slot();
-    player.state.arcade_events = player.state.arcade_events + 1;
-}
-
-@EventHandler
-void onPlayerAction(PlayerActionEvent event) {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_events = player.state.arcade_events + 1;
-}
-
-@EventHandler
-void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
-    var player = Selector.of("@s").getFirst();
-    if (event.hand() == "MAIN_HAND") {
-        player.state.arcade_events = player.state.arcade_events + 1;
-        player.sendActionBar("Touched $(event.face()): $(event.x()), $(event.y()), $(event.z())");
+    @EventHandler
+    void onBlockBreak(BlockBreakEvent event) {
+        event.cancel();
     }
-}
 
-@EventHandler
-void onEntityInteract(EntityInteractEvent event) {
-    var player = Selector.of("@s").getFirst();
-    if (event.secondary()) {
-        player.state.arcade_score = player.state.arcade_score + 1;
-        player.sendActionBar("Sneak-interact bonus +1");
-    }
-}
-
-@EventHandler
-void onEntityAttack(EntityAttackEvent event) {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_hits = player.state.arcade_hits + 1;
-    player.state.arcade_score = player.state.arcade_score + 2;
-    if (player.state.arcade_hits >= 3) {
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        Player player = event.player();
+        player.sendMessage("you dead.");
         player.state.arcade_hits = 0;
-        player.give("minecraft:cookie", 1);
-        player.sendActionBar("3-hit combo! Cookie reward");
-        player.playSound("minecraft:entity.arrow.hit_player", "master");
     }
-}
 
-@EventHandler
-void onItemHeldChange(ItemHeldChangeEvent event) {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_slot = event.slot();
-}
-
-@EventHandler
-void onInventoryClose(InventoryCloseEvent event) {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_events = player.state.arcade_events + 1;
-}
-
-@Command("status")
-void status() {
-    var player = Selector.of("@s").getFirst();
-    player.sendMessage("Arcade score=$(player.state.arcade_score), blocks=$(player.state.arcade_blocks), hits=$(player.state.arcade_hits), slot=$(player.state.arcade_slot), events=$(player.state.arcade_events)");
-}
-
-@Command("arcade")
-void arcade() {
-    var player = Selector.of("@s").getFirst();
-    player.state.arcade_score = 0;
-    player.state.arcade_blocks = 0;
-    player.state.arcade_hits = 0;
-    player.state.arcade_events = 0;
-    player.sendActionBar("Event Arcade started: break blocks, attack, sneak-interact, or say spark");
-    player.playSound("minecraft:block.note_block.pling", "master");
-}
-
-@After(ticks = 40)
-void delayedNotice() {
-    debug("bukkit_api_conformance delayed task fired");
-}
-
-void runAll() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        player.state.tests_passed = 0;
-        player.state.coins = 7;
-        player.state.completed = true;
-        player.state.tests_passed = player.state.tests_passed + 1;
-        player.sendMessage("data API: coins=7, completed=true");
-        player.sendActionBar("MCFC Bukkit-style API conformance running");
-        player.playSound("minecraft:entity.experience_orb.pickup", "master");
-
-        var bar = new BossBar("bukkit_api_conformance:status", "MCFC API conformance");
-        bar.setMax(4);
-        bar.setValue(4);
-        bar.setPlayers(player);
-        bar.setVisible(true);
-        player.state.tests_passed = player.state.tests_passed + 1;
-
-        Execute.at(player, () -> {
-            Block.of("~ ~-1 ~").spawnParticle("minecraft:happy_villager", 8, player);
-        });
-        player.state.tests_passed = player.state.tests_passed + 1;
-
-        var now = time.now();
-        var roll = rand.int(1, 6);
-        if (now.ok() && roll.ok()) {
-            player.sendMessage("mcfd services: unix=$(now.unix()), roll=$(roll.value())");
-            player.state.tests_passed = player.state.tests_passed + 1;
+    // Event Arcade: packet callbacks are quiet by default and instead change the
+    // player's score, combo, hotbar state, or action bar.
+    @EventHandler
+    void onChat(ChatEvent event) {
+        var player = Selector.of("@s").getFirst();
+        if (event.message() == "spark") {
+            player.state.arcade_score = player.state.arcade_score + 3;
+            player.sendActionBar("Spark! +3 arcade score");
+            player.playSound("minecraft:entity.experience_orb.pickup", "master");
         }
+    }
 
-        var saved = kv.set("conformance", "pass");
-        var stored = kv.get("conformance");
-        if (saved.ok() && stored.ok()) {
-            player.sendMessage("mcfd KV: $(stored.value())");
-            player.state.tests_passed = player.state.tests_passed + 1;
+    @EventHandler
+    void onInventoryClick(InventoryClickEvent event) {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_slot = event.slot();
+        player.state.arcade_events = player.state.arcade_events + 1;
+    }
+
+    @EventHandler
+    void onPlayerAction(PlayerActionEvent event) {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_events = player.state.arcade_events + 1;
+    }
+
+    @EventHandler
+    void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
+        var player = Selector.of("@s").getFirst();
+        if (event.hand() == "MAIN_HAND") {
+            player.state.arcade_events = player.state.arcade_events + 1;
+            player.sendActionBar("Touched $(event.face()): $(event.x()), $(event.y()), $(event.z())");
         }
-
-        player.sendMessage("Use /trigger status for the command test, then chat, click an inventory slot, and break a block for agent callbacks.");
     }
-}
 
-void report() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        player.sendMessage("Conformance pass count=$(player.state.tests_passed); mcfd checks add two when available.");
+    @EventHandler
+    void onEntityInteract(EntityInteractEvent event) {
+        var player = Selector.of("@s").getFirst();
+        if (event.secondary()) {
+            player.state.arcade_score = player.state.arcade_score + 1;
+            player.sendActionBar("Sneak-interact bonus +1");
+        }
     }
-}
 
-void cleanup() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        player.stopSound("master", "minecraft:entity.experience_orb.pickup");
-        player.sendMessage("Conformance cleanup complete");
+    @EventHandler
+    void onEntityAttack(EntityAttackEvent event) {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_hits = player.state.arcade_hits + 1;
+        player.state.arcade_score = player.state.arcade_score + 2;
+        if (player.state.arcade_hits >= 3) {
+            player.state.arcade_hits = 0;
+            player.give("minecraft:cookie", 1);
+            player.sendActionBar("3-hit combo! Cookie reward");
+            player.playSound("minecraft:entity.arrow.hit_player", "master");
+        }
+    }
+
+    @EventHandler
+    void onItemHeldChange(ItemHeldChangeEvent event) {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_slot = event.slot();
+    }
+
+    @EventHandler
+    void onInventoryClose(InventoryCloseEvent event) {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_events = player.state.arcade_events + 1;
+    }
+
+    @Command("status")
+    static void status() {
+        var player = Selector.of("@s").getFirst();
+        player.sendMessage("Arcade score=$(player.state.arcade_score), blocks=$(player.state.arcade_blocks), hits=$(player.state.arcade_hits), slot=$(player.state.arcade_slot), events=$(player.state.arcade_events)");
+    }
+
+    @Command("arcade")
+    static void arcade() {
+        var player = Selector.of("@s").getFirst();
+        player.state.arcade_score = 0;
+        player.state.arcade_blocks = 0;
+        player.state.arcade_hits = 0;
+        player.state.arcade_events = 0;
+        player.sendActionBar("Event Arcade started: break blocks, attack, sneak-interact, or say spark");
+        player.playSound("minecraft:block.note_block.pling", "master");
+    }
+
+    @After(ticks = 40)
+    static void delayedNotice() {
+        debug("bukkit_api_conformance delayed task fired");
+    }
+
+    static void runAll() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            player.state.tests_passed = 0;
+            player.state.coins = 7;
+            player.state.completed = true;
+            player.state.tests_passed = player.state.tests_passed + 1;
+            player.sendMessage("data API: coins=7, completed=true");
+            player.sendActionBar("MCFC Bukkit-style API conformance running");
+            player.playSound("minecraft:entity.experience_orb.pickup", "master");
+
+            var bar = new BossBar("bukkit_api_conformance:status", "MCFC API conformance");
+            bar.setMax(4);
+            bar.setValue(4);
+            bar.setPlayers(player);
+            bar.setVisible(true);
+            player.state.tests_passed = player.state.tests_passed + 1;
+
+            Execute.at(player, () -> {
+                Block.of("~ ~-1 ~").spawnParticle("minecraft:happy_villager", 8, player);
+            });
+            player.state.tests_passed = player.state.tests_passed + 1;
+
+            var now = time.now();
+            var roll = rand.int(1, 6);
+            if (now.ok() && roll.ok()) {
+                player.sendMessage("mcfd services: unix=$(now.unix()), roll=$(roll.value())");
+                player.state.tests_passed = player.state.tests_passed + 1;
+            }
+
+            var saved = kv.set("conformance", "pass");
+            var stored = kv.get("conformance");
+            if (saved.ok() && stored.ok()) {
+                player.sendMessage("mcfd KV: $(stored.value())");
+                player.state.tests_passed = player.state.tests_passed + 1;
+            }
+
+            player.sendMessage("Use /trigger status for the command test, then chat, click an inventory slot, and break a block for agent callbacks.");
+        }
+    }
+
+    static void report() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            player.sendMessage("Conformance pass count=$(player.state.tests_passed); mcfd checks add two when available.");
+        }
+    }
+
+    static void cleanup() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            player.stopSound("master", "minecraft:entity.experience_orb.pickup");
+            player.sendMessage("Conformance cleanup complete");
+        }
     }
 }

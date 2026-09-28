@@ -1,6 +1,6 @@
 # Builtins
 
-These functions are always in scope. Library functions such as `clamp` or `startsWith` live in [`std`](./std).
+These are always in scope, with no import. Library classes such as `Timer` or `Strings` live in [`std`](./std).
 
 ## Selecting entities
 
@@ -11,10 +11,13 @@ These functions are always in scope. Library functions such as `clamp` or `start
 Use `selector.getFirst()` or `selector.findFirst()` to select one entity, and `entity.isValid()` to check a reference. See [Entities and Players](./methods#selecting-and-checking-entities).
 
 ```mcfc
-void tick() {
-    var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
-    if (pig.isPresent()) {
-        pig.orElse(Selector.of("@s").getFirst()).addTag("found");
+class Main {
+    @Tick
+    static void tick() {
+        var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
+        if (pig.isPresent()) {
+            pig.orElse(Selector.of("@s").getFirst()).addTag("found");
+        }
     }
 }
 ```
@@ -24,10 +27,13 @@ void tick() {
 `Execute.as(executor, () -> target)` and `Execute.at(origin, () -> target)` build a selector, entity or block position relative to another entity:
 
 ```mcfc
-void tick() {
-    var player = Selector.of("@p").getFirst();
-    var nearest_pig = Execute.at(player, () -> Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")).getFirst();
-    nearest_pig.addTag("nearest");
+class Main {
+    @Tick
+    static void tick() {
+        var player = Selector.of("@p").getFirst();
+        var nearest_pig = Execute.at(player, () -> Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")).getFirst();
+        nearest_pig.addTag("nearest");
+    }
 }
 ```
 
@@ -52,7 +58,7 @@ To run a block of code as or at an entity, pass a block lambda. See [`Execute.as
 | `sleep(seconds: int)` | Pauses the current function. |
 | `sleepTicks(ticks: int)` | Pauses the current function. |
 
-Both have to be used as statements. A function that sleeps also pauses its callers. See [Functions that pause](./statements#functions-that-pause). To wait without holding up the caller, put the sleep inside [`Thread.start`](./statements#thread-start).
+Both have to be used as statements. A method that sleeps also pauses its callers. See [Methods that pause](./statements#methods-that-pause). To wait without holding up the caller, put the sleep inside [`Thread.start`](./statements#thread-start).
 
 Under the hood, the rest of the function becomes a separate generated function that runs later through `schedule function`.
 
@@ -88,12 +94,14 @@ Conversions are [casts](./types#casts): `(int) x`, `(float) x`, `(boolean) x`, `
 | `hasData(path)` | `boolean`, whether a path inside a storage value (list, map, record) exists. It doesn't work on entity NBT. |
 
 ```mcfc
-void inspect(Entity pig) {
-    var hp = (int) pig.nbt.Health;
-    var glowing = (boolean) pig.nbt.Glowing;
-    var counts = Map.of("wood", 2);
-    if (hasData(counts["stone"])) {
-        debug("$(hp) hp");
+class Main {
+    static void inspect(Entity pig) {
+        var hp = (int) pig.nbt.Health;
+        var glowing = (boolean) pig.nbt.Glowing;
+        var counts = Map.of("wood", 2);
+        if (hasData(counts["stone"])) {
+            debug("$(hp) hp");
+        }
     }
 }
 ```
@@ -107,12 +115,14 @@ void inspect(Entity pig) {
 `Log` sends leveled messages to players who opt in with `/tag @s add mcfc.log`, so a pack can keep its logging in place without spamming everyone.
 
 ```mcfc
-void main() {
-    Log.setLevel("debug");
-    Log.info("arena loaded");
-    var alive = 3;
-    Log.dump(alive);
-    Log.warn("only $(alive) players left");
+class Main {
+    public static void main() {
+        Log.setLevel("debug");
+        Log.info("arena loaded");
+        var alive = 3;
+        Log.dump(alive);
+        Log.warn("only $(alive) players left");
+    }
 }
 ```
 

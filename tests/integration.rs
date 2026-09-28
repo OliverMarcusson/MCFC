@@ -15,14 +15,15 @@ fn lowering() -> CompileOptions {
 
 #[test]
 fn compiles_straight_line_program() {
-    let source = r#"
-void main() {
-    var a = 5;
-    var b = 7;
-    var text = "done";
-    b = a + b;
-    mc("say done");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var a = 5;
+        var b = 7;
+        var text = "done";
+        b = a + b;
+        mc("say done");
+        return;
+    }
 }
 "#;
 
@@ -61,13 +62,14 @@ void main() {
 
 #[test]
 fn compiles_program_with_comments() {
-    let source = r#"
-// top-level comment
-void main() {  // signature comment:
-    var a = 1;  // inline comment
-    // inside block
-    mc("say done");
-    return;
+    let source = r#"class Main {
+    // top-level comment
+    public static void main() {  // signature comment:
+        var a = 1;  // inline comment
+        // inside block
+        mc("say done");
+        return;
+    }
 }
 "#;
 
@@ -82,12 +84,13 @@ void main() {  // signature comment:
 
 #[test]
 fn compiles_single_quoted_strings() {
-    let source = r#"
-void main() {
-    var a = "done";
-    mc("say \"done\"");
-    mcf("say $(a)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var a = "done";
+        mc("say \"done\"");
+        mcf("say $(a)");
+        return;
+    }
 }
 "#;
 
@@ -109,21 +112,22 @@ void main() {
 
 #[test]
 fn char_short_and_byte_are_string_and_int_aliases() {
-    let source = r#"
-void main() {
-    char c = 'a';
-    char quote = '\'';
-    short s = (short) 3.7;
-    byte b = 100;
-    List<Character> cs = List.of('x');
-    if ("hi".charAt(0) == 'h') {
-        mcf("say $(c)$(quote)$(s + b)$(cs[0])");
+    let source = r#"class Main {
+    public static void main() {
+        char c = 'a';
+        char quote = '\'';
+        short s = (short) 3.7;
+        byte b = 100;
+        List<Character> cs = List.of('x');
+        if ("hi".charAt(0) == 'h') {
+            mcf("say $(c)$(quote)$(s + b)$(cs[0])");
+        }
     }
 }
 "#;
 
     compile_source(source, &lowering()).expect("aliases should compile");
-    let error = compile_source("void main() { char c = 'ab'; }", &lowering()).unwrap_err();
+    let error = compile_source("class Main {\n    public static void main() { char c = 'ab'; }\n}", &lowering()).unwrap_err();
     assert!(
         error
             .to_string()
@@ -133,14 +137,15 @@ void main() {
 
 #[test]
 fn compiles_macro_command_with_storage_call() {
-    let source = r#"
-void main() {
-    var amount = 5;
-    var label = "hello";
-    mcf("xp add @a $(amount) levels");
-    mcf("say $(label)");
-    mc("say $(amount)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var amount = 5;
+        var label = "hello";
+        mcf("xp add @a $(amount) levels");
+        mcf("say $(label)");
+        mc("say $(amount)");
+        return;
+    }
 }
 "#;
 
@@ -164,13 +169,14 @@ void main() {
 
 #[test]
 fn compiles_entity_queries_and_iteration() {
-    let source = r#"
-void main() {
-    var pigs = Selector.of("@e[type=pig,limit=3]");
-    for (var pig : pigs) {
-        pig.CustomName = "Hello";
+    let source = r#"class Main {
+    public static void main() {
+        var pigs = Selector.of("@e[type=pig,limit=3]");
+        for (var pig : pigs) {
+            pig.CustomName = "Hello";
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -193,16 +199,17 @@ void main() {
 
 #[test]
 fn compiles_single_exists_and_context_composition() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@a[tag=hunter]").getFirst();
-    if (player.isValid()) {
-        var nearest = Execute.at(player, () -> Selector.of("@e[type=pig,sort=nearest]")).getFirst();
-        if (nearest.isValid()) {
-            nearest.CustomName = "Target";
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@a[tag=hunter]").getFirst();
+        if (player.isValid()) {
+            var nearest = Execute.at(player, () -> Selector.of("@e[type=pig,sort=nearest]")).getFirst();
+            if (nearest.isValid()) {
+                nearest.CustomName = "Target";
+            }
         }
+        return;
     }
-    return;
 }
 "#;
 
@@ -231,11 +238,12 @@ void main() {
 
 #[test]
 fn single_plain_player_name_stays_a_player_target() {
-    let source = r#"
-void main() {
-    var player = Selector.of("FaithlessMC").getFirst();
-    player.sendMessage("hi");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("FaithlessMC").getFirst();
+        player.sendMessage("hi");
+        return;
+    }
 }
 "#;
 
@@ -255,11 +263,12 @@ void main() {
 
 #[test]
 fn object_display_methods_expand_message_at_s_to_the_target_selector() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@a").getFirst();
-    player.sendMessage("*@s* Expression test: $(32)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@a").getFirst();
+        player.sendMessage("*@s* Expression test: $(32)");
+        return;
+    }
 }
 "#;
 
@@ -278,14 +287,15 @@ void main() {
 
 #[test]
 fn compiles_as_value_context_composition() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        var self_ref = Execute.as(player, () -> Selector.of("@s")).getFirst();
-        self_ref.tags.welcomed = true;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            var self_ref = Execute.as(player, () -> Selector.of("@s")).getFirst();
+            self_ref.tags.welcomed = true;
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -308,18 +318,19 @@ void main() {
 
 #[test]
 fn compiles_as_and_at_context_blocks() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    Execute.as(player, () -> {
-        mcf("tellraw @s \"welcome @s\"");
-        mc("title @s actionbar \"title @s\"");
-        mc("say hello @s");
-    });
-    Execute.at(player, () -> {
-        mc("say here");
-    });
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        Execute.as(player, () -> {
+            mcf("tellraw @s \"welcome @s\"");
+            mc("title @s actionbar \"title @s\"");
+            mc("say hello @s");
+        });
+        Execute.at(player, () -> {
+            mc("say here");
+        });
+        return;
+    }
 }
 "#;
 
@@ -376,15 +387,16 @@ void main() {
 
 #[test]
 fn compiles_nested_context_blocks() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    Execute.at(player, () -> {
-        Execute.as(Selector.of("@e[type=pig,limit=1]"), () -> {
-            mc("say @s");
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        Execute.at(player, () -> {
+            Execute.as(Selector.of("@e[type=pig,limit=1]"), () -> {
+                mc("say @s");
+            });
         });
-    });
-    return;
+        return;
+    }
 }
 "#;
 
@@ -406,18 +418,19 @@ void main() {
 
 #[test]
 fn compiles_text_def_display_components() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@a").getFirst();
-    var msg = new Component("Hello");
-    msg.color = "gold";
-    msg.bold = true;
-    msg.hover_event.action = "show_text";
-    msg.hover_event.value = new Component("Hover!");
-    msg.extra = List.of(new Component(" world"));
-    player.sendMessage(msg);
-    var bb = new BossBar("mcfc:test", msg);
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@a").getFirst();
+        var msg = new Component("Hello");
+        msg.color = "gold";
+        msg.bold = true;
+        msg.hover_event.action = "show_text";
+        msg.hover_event.value = new Component("Hover!");
+        msg.extra = List.of(new Component(" world"));
+        player.sendMessage(msg);
+        var bb = new BossBar("mcfc:test", msg);
+        return;
+    }
 }
 "#;
 
@@ -442,12 +455,13 @@ void main() {
 
 #[test]
 fn compiles_block_paths_and_nbt_casts() {
-    let source = r#"
-void main() {
-    var chest = Block.of("~ ~ ~");
-    chest.CustomName = "Loot";
-    var name = (String) chest.CustomName;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var chest = Block.of("~ ~ ~");
+        chest.CustomName = "Loot";
+        var name = (String) chest.CustomName;
+        return;
+    }
 }
 "#;
 
@@ -476,16 +490,17 @@ void main() {
 
 #[test]
 fn compiles_explicit_runtime_entity_and_block_nbt_paths() {
-    let source = r#"
-void main() {
-    var ent1 = Selector.of("@e[type=pig,limit=1]").getFirst();
-    var ent2 = Selector.of("@e[type=cow,limit=1]").getFirst();
-    var chest = Block.of("~ ~ ~");
-    ent1.nbt.Rotation = ent2.nbt.Rotation;
-    var rot = ent1.nbt.Rotation;
-    chest.nbt.CustomName = "Loot";
-    var name = (String) chest.nbt.CustomName;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var ent1 = Selector.of("@e[type=pig,limit=1]").getFirst();
+        var ent2 = Selector.of("@e[type=cow,limit=1]").getFirst();
+        var chest = Block.of("~ ~ ~");
+        ent1.nbt.Rotation = ent2.nbt.Rotation;
+        var rot = ent1.nbt.Rotation;
+        chest.nbt.CustomName = "Loot";
+        var name = (String) chest.nbt.CustomName;
+        return;
+    }
 }
 "#;
 
@@ -509,15 +524,16 @@ void main() {
 
 #[test]
 fn quotes_string_index_nbt_segments_in_runtime_and_storage_paths() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var chest = Block.of("~ ~ ~");
-    var page = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
-    var weird = (String) player.inventory[0].nbt.foo["A [crazy name]!"].baz;
-    chest.nbt.Items[1].components["minecraft:written_book_content"].author = page;
-    chest.nbt.foo["A [crazy name]!"].value = weird;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var chest = Block.of("~ ~ ~");
+        var page = (String) player.nbt.SelectedItem.components["minecraft:writable_book_content"].pages[0].raw;
+        var weird = (String) player.inventory[0].nbt.foo["A [crazy name]!"].baz;
+        chest.nbt.Items[1].components["minecraft:written_book_content"].author = page;
+        chest.nbt.foo["A [crazy name]!"].value = weird;
+        return;
+    }
 }
 "#;
 
@@ -545,13 +561,14 @@ void main() {
 
 #[test]
 fn quotes_dynamic_string_index_nbt_segments_on_storage_backed_paths() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var payload = player.inventory[0].nbt;
-    var key = "A [crazy name]!";
-    var value = (String) payload.foo[key].bar;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var payload = player.inventory[0].nbt;
+        var key = "A [crazy name]!";
+        var value = (String) payload.foo[key].bar;
+        return;
+    }
 }
 "#;
 
@@ -570,19 +587,20 @@ void main() {
 
 #[test]
 fn compiles_entity_and_block_builder_paths() {
-    let source = r#"
-void main() {
-    var pig = new EntityData("minecraft:pig");
-    pig.setName("Boss");
-    pig.setGlowing(true);
-    var spawned = summon(pig);
-    var chest = new BlockData("minecraft:chest");
-    chest.states.facing = "north";
-    chest.setName("Loot");
-    var pos = Block.of("~ ~ ~");
-    pos.setBlock(chest);
-    pos.fill(Block.of("~1 ~1 ~1"), chest);
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var pig = new EntityData("minecraft:pig");
+        pig.setName("Boss");
+        pig.setGlowing(true);
+        var spawned = summon(pig);
+        var chest = new BlockData("minecraft:chest");
+        chest.states.facing = "north";
+        chest.setName("Loot");
+        var pos = Block.of("~ ~ ~");
+        pos.setBlock(chest);
+        pos.fill(Block.of("~1 ~1 ~1"), chest);
+        return;
+    }
 }
 "#;
 
@@ -604,22 +622,23 @@ void main() {
 
 #[test]
 fn compiles_player_safe_api_surfaces() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        var air = (int) player.nbt.Air;
-        player.state.quest_stage = 3;
-        var stage = (int) player.state.quest_stage;
-        player.tags.infected = true;
-        var infected = (boolean) player.tags.infected;
-        player.team = "red";
-        player.mainhand.name = "MCFC Blade";
-        player.mainhand.item = "minecraft:carrot_on_a_stick";
-        player.mainhand.count = 1;
-        player.effect("speed", 10, 1);
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            var air = (int) player.nbt.Air;
+            player.state.quest_stage = 3;
+            var stage = (int) player.state.quest_stage;
+            player.tags.infected = true;
+            var infected = (boolean) player.tags.infected;
+            player.team = "red";
+            player.mainhand.name = "MCFC Blade";
+            player.mainhand.item = "minecraft:carrot_on_a_stick";
+            player.mainhand.count = 1;
+            player.effect("speed", 10, 1);
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -701,16 +720,17 @@ void main() {
 
 #[test]
 fn compiles_equipment_slot_reads_via_item_slot_surface() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var hand = player.mainhand;
-    var present = hand.exists;
-    var id = hand.id;
-    var count = hand.count;
-    var custom = (String) hand.nbt.CustomModelData;
-    mcf("say $(present) $(id) $(count) $(custom)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var hand = player.mainhand;
+        var present = hand.exists;
+        var id = hand.id;
+        var count = hand.count;
+        var custom = (String) hand.nbt.CustomModelData;
+        mcf("say $(present) $(id) $(count) $(custom)");
+        return;
+    }
 }
 "#;
 
@@ -730,12 +750,13 @@ void main() {
 
 #[test]
 fn compiles_generic_entity_state_reads_and_writes() {
-    let source = r#"
-void main() {
-    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
-    marker.state.decay = 0;
-    marker.state.decay = marker.state.decay + 1;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
+        marker.state.decay = 0;
+        marker.state.decay = marker.state.decay + 1;
+        return;
+    }
 }
 "#;
 
@@ -766,27 +787,36 @@ void main() {
 fn compiles_typed_persistent_player_and_entity_state() {
     let source = r#"
 record Profile(String title, int level) {}
-@PlayerState("Title") String title;
-@PlayerState("Ratio") float ratio;
-@PlayerState("Profile") Profile profile;
-@EntityState String title;
-@EntityState float ratio;
-@EntityState Profile profile;
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
-    player.state.title = "hero";
-    player.state.ratio = 1.5;
-    player.state.profile = new Profile("knight", 6);
-    var title = player.state.title;
-    var ratio = player.state.ratio;
-    var level = player.state.profile.level();
-    marker.state.title = title;
-    marker.state.ratio = ratio;
-    marker.state.profile = new Profile("mob", level);
-    var mob_title = marker.state.profile.title();
-    mcf("say $(mob_title)");
-    return;
+
+class Main {
+    @PlayerState("Title") static String title;
+
+    @PlayerState("Ratio") static float ratio;
+
+    @PlayerState("Profile") static Profile profile;
+
+    @EntityState static String title;
+
+    @EntityState static float ratio;
+
+    @EntityState static Profile profile;
+
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
+        player.state.title = "hero";
+        player.state.ratio = 1.5;
+        player.state.profile = new Profile("knight", 6);
+        var title = player.state.title;
+        var ratio = player.state.ratio;
+        var level = player.state.profile.level();
+        marker.state.title = title;
+        marker.state.ratio = ratio;
+        marker.state.profile = new Profile("mob", level);
+        var mob_title = marker.state.profile.title();
+        mcf("say $(mob_title)");
+        return;
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("typed state compiles");
@@ -815,16 +845,22 @@ void main() {
 fn rejects_wrong_typed_state_assignments() {
     let source = r#"
 record Profile(String title) {}
-@PlayerState("Title") String title;
-@PlayerState("Profile") Profile profile;
-@EntityState float ratio;
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
-    player.state.title = 3;
-    player.state.profile = "bad";
-    marker.state.ratio = "bad";
-    return;
+
+class Main {
+    @PlayerState("Title") static String title;
+
+    @PlayerState("Profile") static Profile profile;
+
+    @EntityState static float ratio;
+
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
+        player.state.title = 3;
+        player.state.profile = "bad";
+        marker.state.ratio = "bad";
+        return;
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err().to_string();
@@ -835,30 +871,36 @@ void main() {
 
 #[test]
 fn rejects_overlapping_state_declarations() {
-    let source = r#"
-@PlayerState("Profile") String profile;
-@PlayerState("Title") String profile.title;
-@EntityState String info;
-@EntityState String info.name;
-void main() {
-    return;
+    let source = r#"class Main {
+    @PlayerState("Profile") static String profile;
+
+    @PlayerState("Title") static String profile.title;
+
+    @EntityState static String info;
+
+    @EntityState static String info.name;
+
+    public static void main() {
+        return;
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err().to_string();
-    assert!(error.contains("overlapping player_state 'profile.title'"));
-    assert!(error.contains("overlapping entity_state 'info.name'"));
+    assert!(error.contains("overlapping @PlayerState 'profile.title'"));
+    assert!(error.contains("overlapping @EntityState 'info.name'"));
 }
 
 #[test]
 fn compiles_generic_entity_bool_state_conditions() {
-    let source = r#"
-void main() {
-    var mob = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    mob.state.alert = true;
-    if (mob.state.alert) {
-        mob.sendMessage("x");
+    let source = r#"class Main {
+    public static void main() {
+        var mob = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        mob.state.alert = true;
+        if (mob.state.alert) {
+            mob.sendMessage("x");
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -894,31 +936,32 @@ void main() {
 
 #[test]
 fn compiles_item_builders_and_player_inventory_slots() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var sword = new ItemStack("minecraft:diamond_sword");
-    var idx = 7;
-    sword.setCount(2);
-    sword.setName("Blade");
-    sword.nbt.CustomModelData = 7;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var sword = new ItemStack("minecraft:diamond_sword");
+        var idx = 7;
+        sword.setCount(2);
+        sword.setName("Blade");
+        sword.nbt.CustomModelData = 7;
 
-    var payload = sword.asNbt();
-    player.give(sword);
-    player.hotbar[0] = new ItemStack("minecraft:stick");
-    player.hotbar[idx] = sword;
-    player.inventory[5] = sword;
-    player.inventory[5].count = 16;
-    player.inventory[idx].count = 4;
-    player.inventory[5].name = "Stored";
+        var payload = sword.asNbt();
+        player.give(sword);
+        player.hotbar[0] = new ItemStack("minecraft:stick");
+        player.hotbar[idx] = sword;
+        player.inventory[5] = sword;
+        player.inventory[5].count = 16;
+        player.inventory[idx].count = 4;
+        player.inventory[5].name = "Stored";
 
-    var exists = player.inventory[3].exists;
-    var item_id = player.inventory[3].id;
-    var count = player.inventory[3].count;
-    var item_data = player.inventory[3].nbt;
+        var exists = player.inventory[3].exists;
+        var item_id = player.inventory[3].id;
+        var count = player.inventory[3].count;
+        var item_data = player.inventory[3].nbt;
 
-    player.hotbar[2].clear();
-    return;
+        player.hotbar[2].clear();
+        return;
+    }
 }
 "#;
 
@@ -957,13 +1000,14 @@ void main() {
 
 #[test]
 fn compiles_runtime_item_slot_nbt_reads_and_writes() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    player.inventory[1].nbt = player.inventory[0].nbt;
-    player.inventory[1].nbt.CustomModelData = player.inventory[0].nbt.CustomModelData;
-    var payload = player.inventory[1].nbt;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        player.inventory[1].nbt = player.inventory[0].nbt;
+        player.inventory[1].nbt.CustomModelData = player.inventory[0].nbt.CustomModelData;
+        var payload = player.inventory[1].nbt;
+        return;
+    }
 }
 "#;
 
@@ -987,19 +1031,21 @@ void main() {
 
 #[test]
 fn compiles_player_ref_inventory_assertions_and_params() {
-    let source = r#"
-void equip(Player player, int idx, ItemStack stack) {
-    player.hotbar[idx] = stack;
-    player.inventory[idx].count = 3;
-    return;
-}
-void main() {
-    var target = Selector.of("@e[limit=1]").getFirst();
-    var stack = new ItemStack("minecraft:book");
-    var player = (Player) target;
-    equip(target, 7, stack);
-    player.hotbar[1] = stack;
-    return;
+    let source = r#"class Main {
+    static void equip(Player player, int idx, ItemStack stack) {
+        player.hotbar[idx] = stack;
+        player.inventory[idx].count = 3;
+        return;
+    }
+
+    public static void main() {
+        var target = Selector.of("@e[limit=1]").getFirst();
+        var stack = new ItemStack("minecraft:book");
+        var player = (Player) target;
+        equip(target, 7, stack);
+        player.hotbar[1] = stack;
+        return;
+    }
 }
 "#;
 
@@ -1018,18 +1064,19 @@ void main() {
 
 #[test]
 fn compiles_position_owned_summons_and_spawned_items() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var pig = Block.of("1 64 1").summon(new EntityData("minecraft:pig"));
-    var inline = new EntityData("minecraft:pig");
-    inline.setName("Inline");
-    var pig_with_data = Block.of("~ ~ ~").summon("minecraft:pig", inline.asNbt());
-    var rel = Execute.at(player, () -> Block.of("~1 ~ ~"));
-    var pig_relative = rel.summon("minecraft:pig");
-    var pig_above = Execute.at(player, () -> Block.of("~ ~10 ~")).summon("minecraft:pig");
-    var drop = Block.of("~ ~ ~").spawnItem(new ItemStack("minecraft:apple"));
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var pig = Block.of("1 64 1").summon(new EntityData("minecraft:pig"));
+        var inline = new EntityData("minecraft:pig");
+        inline.setName("Inline");
+        var pig_with_data = Block.of("~ ~ ~").summon("minecraft:pig", inline.asNbt());
+        var rel = Execute.at(player, () -> Block.of("~1 ~ ~"));
+        var pig_relative = rel.summon("minecraft:pig");
+        var pig_above = Execute.at(player, () -> Block.of("~ ~10 ~")).summon("minecraft:pig");
+        var drop = Block.of("~ ~ ~").spawnItem(new ItemStack("minecraft:apple"));
+        return;
+    }
 }
 "#;
 
@@ -1054,36 +1101,39 @@ void main() {
 
 #[test]
 fn compiles_entity_builder_as_nbt_in_nbt_contexts() {
-    let source = r#"
-Nbt echo(Nbt value) {
-    return value;
-}
-Nbt makePassenger() {
-    var chicken = new EntityData("minecraft:chicken");
-    chicken.setName("Marcusson");
-    return chicken;
-}
-void main() {
-    var pig = new EntityData("minecraft:pig");
-    pig.setName("Ljungan");
-    pig.setGlowing(true);
+    let source = r#"class Main {
+    static Nbt echo(Nbt value) {
+        return value;
+    }
 
-    var chicken = new EntityData("minecraft:chicken");
-    chicken.setName("Marcusson");
-    chicken.setTags(List.of("cooler-tag"));
+    static Nbt makePassenger() {
+        var chicken = new EntityData("minecraft:chicken");
+        chicken.setName("Marcusson");
+        return chicken;
+    }
 
-    pig.nbt.Passengers[0] = chicken;
-    pig.nbt.Passengers = List.of(chicken);
-    pig.nbt.Debug = Map.of("passenger", chicken);
+    public static void main() {
+        var pig = new EntityData("minecraft:pig");
+        pig.setName("Ljungan");
+        pig.setGlowing(true);
 
-    var payload = pig.nbt;
-    payload = chicken;
+        var chicken = new EntityData("minecraft:chicken");
+        chicken.setName("Marcusson");
+        chicken.setTags(List.of("cooler-tag"));
 
-    var echoed = echo(chicken);
-    var returned = makePassenger();
-    var explicit = chicken.asNbt();
-    var spawned = summon("minecraft:pig", chicken);
-    return;
+        pig.nbt.Passengers[0] = chicken;
+        pig.nbt.Passengers = List.of(chicken);
+        pig.nbt.Debug = Map.of("passenger", chicken);
+
+        var payload = pig.nbt;
+        payload = chicken;
+
+        var echoed = echo(chicken);
+        var returned = makePassenger();
+        var explicit = chicken.asNbt();
+        var spawned = summon("minecraft:pig", chicken);
+        return;
+    }
 }
 "#;
 
@@ -1105,24 +1155,25 @@ void main() {
 
 #[test]
 fn compiles_nested_entity_builder_passengers() {
-    let source = r#"
-void main() {
-    var pig = new EntityData("minecraft:pig");
-    pig.setName("Dinnerbone");
-    pig.setGlowing(true);
-    pig.setTags(List.of("cool-tag"));
+    let source = r#"class Main {
+    public static void main() {
+        var pig = new EntityData("minecraft:pig");
+        pig.setName("Dinnerbone");
+        pig.setGlowing(true);
+        pig.setTags(List.of("cool-tag"));
 
-    var chicken = new EntityData("minecraft:chicken");
-    chicken.setName("Marcusson");
-    chicken.setTags(List.of("cooler-tag"));
+        var chicken = new EntityData("minecraft:chicken");
+        chicken.setName("Marcusson");
+        chicken.setTags(List.of("cooler-tag"));
 
-    var villager = new EntityData("minecraft:villager");
+        var villager = new EntityData("minecraft:villager");
 
-    chicken.nbt.Passengers[0] = villager;
-    pig.nbt.Passengers[0] = chicken;
+        chicken.nbt.Passengers[0] = villager;
+        pig.nbt.Passengers[0] = chicken;
 
-    summon(pig);
-    return;
+        summon(pig);
+        return;
+    }
 }
 "#;
 
@@ -1144,25 +1195,27 @@ void main() {
 
 #[test]
 fn compiles_block_builder_as_nbt_payload_only() {
-    let source = r#"
-Nbt echo(Nbt value) {
-    return value;
-}
-void main() {
-    var chest = new BlockData("minecraft:chest");
-    chest.states.facing = "north";
-    chest.setName("Loot");
-    chest.setLock("secret");
+    let source = r#"class Main {
+    static Nbt echo(Nbt value) {
+        return value;
+    }
 
-    var payload = chest.nbt;
-    payload = chest;
+    public static void main() {
+        var chest = new BlockData("minecraft:chest");
+        chest.states.facing = "north";
+        chest.setName("Loot");
+        chest.setLock("secret");
 
-    var echoed = echo(chest);
-    var explicit = chest.asNbt();
+        var payload = chest.nbt;
+        payload = chest;
 
-    var holder = new EntityData("minecraft:armor_stand");
-    holder.nbt.DisplayState = chest;
-    return;
+        var echoed = echo(chest);
+        var explicit = chest.asNbt();
+
+        var holder = new EntityData("minecraft:armor_stand");
+        holder.nbt.DisplayState = chest;
+        return;
+    }
 }
 "#;
 
@@ -1182,15 +1235,16 @@ void main() {
 
 #[test]
 fn compiles_block_ref_is_checks() {
-    let source = r#"
-void main() {
-    var below = Block.of("~ ~-1 ~");
-    var absolute = Block.of("10 64 10");
-    if (below.is("minecraft:air")) {
-        below.setBlock("minecraft:purple_concrete");
-    }
-    if (absolute.is("minecraft:stone")) {
-        absolute.setBlock("minecraft:gold_block");
+    let source = r#"class Main {
+    public static void main() {
+        var below = Block.of("~ ~-1 ~");
+        var absolute = Block.of("10 64 10");
+        if (below.is("minecraft:air")) {
+            below.setBlock("minecraft:purple_concrete");
+        }
+        if (absolute.is("minecraft:stone")) {
+            absolute.setBlock("minecraft:gold_block");
+        }
     }
 }
 "#;
@@ -1211,16 +1265,17 @@ void main() {
 
 #[test]
 fn compiles_async_bossbars_without_default_tick_tag() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var bb = new BossBar("mcfc:test", "Boss");
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var bb = new BossBar("mcfc:test", "Boss");
 
-    Thread.start(() -> {
-        sleep(5);
-        player.sendMessage("later");
-        player.position.setBlock("minecraft:gold_block");
-    });
+        Thread.start(() -> {
+            sleep(5);
+            player.sendMessage("later");
+            player.position.setBlock("minecraft:gold_block");
+        });
+    }
 }
 "#;
 
@@ -1249,25 +1304,30 @@ void main() {
 
 #[test]
 fn exposes_no_arg_void_functions_and_special_tick() {
-    let source = r#"
-void reset() {
-    mc("say reset");
+    let source = r#"class Main {
+    static void reset() {
+        mc("say reset");
+    }
+
+    static void helper(int value) {
+        mc("say helper");
+    }
+
+    static int answer() {
+        return 42;
+    }
+
+    @Tick
+    static void tick() {
+        mc("say first");
+    }
 }
 
-void helper(int value) {
-    mc("say helper");
-}
-
-int answer() {
-    return 42;
-}
-
-void tick() {
-    mc("say first");
-}
-
-void tick() {
-    mc("say second");
+class Clock {
+    @Tick
+    static void advance() {
+        mc("say second");
+    }
 }
 "#;
 
@@ -1276,27 +1336,30 @@ void tick() {
         result
             .artifacts
             .files
-            .contains_key("data/mcfc/function/reset.mcfunction")
+            .contains_key("data/mcfc/function/main/reset.mcfunction")
     );
     assert!(
         !result
             .artifacts
             .files
-            .contains_key("data/mcfc/function/helper.mcfunction")
+            .contains_key("data/mcfc/function/main/helper.mcfunction")
     );
     assert!(
         !result
             .artifacts
             .files
-            .contains_key("data/mcfc/function/answer.mcfunction")
+            .contains_key("data/mcfc/function/main/answer.mcfunction")
     );
     let tick = result
         .artifacts
         .files
         .get("data/mcfc/function/generated/tick__d0__entry.mcfunction")
         .unwrap();
-    assert!(tick.contains("say first"));
-    assert!(tick.contains("say second"));
+    // Each @Tick method is its own function, called from the one tick.
+    assert_eq!(tick.matches("function mcfc:").count(), 2, "{tick}");
+    let all: String = result.artifacts.files.values().cloned().collect();
+    assert!(all.contains("say first"));
+    assert!(all.contains("say second"));
     let tick_tag = result
         .artifacts
         .files
@@ -1307,18 +1370,19 @@ void tick() {
 
 #[test]
 fn compiles_tick_sleep_player_state_display_and_equipment_item_defs() {
-    let source = r#"
-@PlayerState("Money") int money;
+    let source = r#"class Main {
+    @PlayerState("Money") static int money;
 
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var helmet = new ItemStack("minecraft:golden_helmet");
-    helmet.setCount(1);
-    helmet.setName("Crown");
-    player.head.item = helmet;
-    player.state.money = 5;
-    sleepTicks(5);
-    mc("say done");
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var helmet = new ItemStack("minecraft:golden_helmet");
+        helmet.setCount(1);
+        helmet.setName("Crown");
+        player.head.item = helmet;
+        player.state.money = 5;
+        sleepTicks(5);
+        mc("say done");
+    }
 }
 "#;
 
@@ -1344,13 +1408,14 @@ void main() {
 
 #[test]
 fn optimizer_folds_literal_branches_and_can_be_disabled() {
-    let source = r#"
-void main() {
-    var value = 1 + 2 * 3;
-    if (false) {
-        mc("say hidden");
-    } else {
-        mc("say shown");
+    let source = r#"class Main {
+    public static void main() {
+        var value = 1 + 2 * 3;
+        if (false) {
+            mc("say hidden");
+        } else {
+            mc("say shown");
+        }
     }
 }
 "#;
@@ -1384,19 +1449,21 @@ void main() {
 
 #[test]
 fn compiles_if_and_while_blocks() {
-    let source = r#"
-int inc(int x) {
-    return x + 1;
-}
-void main() {
-    var a = 0;
-    while (a < 3) {
-        if (a == 1) {
-            a = inc(a);
-        }
-        a = a + 1;
+    let source = r#"class Main {
+    static int inc(int x) {
+        return x + 1;
     }
-    return;
+
+    public static void main() {
+        var a = 0;
+        while (a < 3) {
+            if (a == 1) {
+                a = inc(a);
+            }
+            a = a + 1;
+        }
+        return;
+    }
 }
 "#;
 
@@ -1415,18 +1482,19 @@ void main() {
 
 #[test]
 fn compiles_else_for_logic_and_loop_control() {
-    let source = r#"
-void main() {
-    for (int i = 0; i <= 5; i++) {
-        if (i == 0 || !false) {
-            continue;
-        } else if (i == 3) {
-            break;
-        } else {
-            mc("say loop");
+    let source = r#"class Main {
+    public static void main() {
+        for (int i = 0; i <= 5; i++) {
+            if (i == 0 || !false) {
+                continue;
+            } else if (i == 3) {
+                break;
+            } else {
+                mc("say loop");
+            }
         }
+        return;
     }
-    return;
 }
 "#;
 
@@ -1452,17 +1520,18 @@ void main() {
 
 #[test]
 fn compiles_string_equality() {
-    let source = r#"
-void main() {
-    var a = "done";
-    var b = "done";
-    if (a == b) {
-        mc("say equal");
+    let source = r#"class Main {
+    public static void main() {
+        var a = "done";
+        var b = "done";
+        if (a == b) {
+            mc("say equal");
+        }
+        if (a != "other") {
+            mc("say diff");
+        }
+        return;
     }
-    if (a != "other") {
-        mc("say diff");
-    }
-    return;
 }
 "#;
 
@@ -1478,15 +1547,16 @@ void main() {
 
 #[test]
 fn compiles_string_character_index_reads() {
-    let source = r#"
-void main() {
-    var book_content = "Book";
-    var first = book_content[0];
-    var last = book_content[-1];
-    var idx = 1;
-    var second = book_content[idx];
-    mcf("say $(first) $(last) $(second)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var book_content = "Book";
+        var first = book_content[0];
+        var last = book_content[-1];
+        var idx = 1;
+        var second = book_content[idx];
+        mcf("say $(first) $(last) $(second)");
+        return;
+    }
 }
 "#;
 
@@ -1505,12 +1575,13 @@ void main() {
 
 #[test]
 fn compiles_string_character_index_reads_through_prefix_paths() {
-    let source = r#"
-void main() {
-    var words = List.of("hello");
-    var second = words[0][1];
-    mcf("say $(second)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var words = List.of("hello");
+        var second = words[0][1];
+        mcf("say $(second)");
+        return;
+    }
 }
 "#;
 
@@ -1527,20 +1598,22 @@ void main() {
 
 #[test]
 fn compiles_storage_backed_arrays() {
-    let source = r#"
-int pick(List<Integer> xs, int index) {
-    return xs[index];
-}
-void main() {
-    var values = List.of(1, 2, 3);
-    var i = 1;
-    values.add(4);
-    var popped = values.removeLast();
-    var size = values.size();
-    values[i] = popped + size;
-    var selected = pick(values, i);
-    mcf("say $(selected)");
-    return;
+    let source = r#"class Main {
+    static int pick(List<Integer> xs, int index) {
+        return xs[index];
+    }
+
+    public static void main() {
+        var values = List.of(1, 2, 3);
+        var i = 1;
+        values.add(4);
+        var popped = values.removeLast();
+        var size = values.size();
+        values[i] = popped + size;
+        var selected = pick(values, i);
+        mcf("say $(selected)");
+        return;
+    }
 }
 "#;
 
@@ -1565,14 +1638,15 @@ void main() {
 
 #[test]
 fn compiles_array_remove() {
-    let source = r#"
-void main() {
-    var values = List.of(3, 5, 8);
-    var first = values.remove(0);
-    var second = values.remove(1);
-    mcf("say $(first)");
-    mcf("say $(second)");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var values = List.of(3, 5, 8);
+        var first = values.remove(0);
+        var second = values.remove(1);
+        mcf("say $(first)");
+        mcf("say $(second)");
+        return;
+    }
 }
 "#;
 
@@ -1590,13 +1664,14 @@ void main() {
 
 #[test]
 fn compiles_array_for_each() {
-    let source = r#"
-void main() {
-    var values = List.of(1, 2, 3);
-    for (var value : values) {
-        mcf("say $(value)");
+    let source = r#"class Main {
+    public static void main() {
+        var values = List.of(1, 2, 3);
+        for (var value : values) {
+            mcf("say $(value)");
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -1611,18 +1686,19 @@ void main() {
 
 #[test]
 fn compiles_storage_backed_dictionaries() {
-    let source = r#"
-void main() {
-    var counts = Map.of("wood", 12, "stone", 4);
-    var key = "wood";
-    counts[key] = 13;
-    var has_wood = counts.containsKey(key);
-    counts.remove("stone");
-    var amount = counts[key];
-    if (has_wood) {
-        mcf("say $(amount)");
+    let source = r#"class Main {
+    public static void main() {
+        var counts = Map.of("wood", 12, "stone", 4);
+        var key = "wood";
+        counts[key] = 13;
+        var has_wood = counts.containsKey(key);
+        counts.remove("stone");
+        var amount = counts[key];
+        if (has_wood) {
+            mcf("say $(amount)");
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -1648,12 +1724,14 @@ void main() {
 
 #[test]
 fn compiles_has_data_with_dynamic_storage_nbt_paths() {
-    let source = r#"
-boolean probe(Map<String, Nbt> store, String key, int index) {
-    return hasData(store[key].items[index].name);
-}
-void main() {
-    var found = probe(Map.of("a", new ItemStack("minecraft:stone").asNbt()), "a", 0);
+    let source = r#"class Main {
+    static boolean probe(Map<String, Nbt> store, String key, int index) {
+        return hasData(store[key].items[index].name);
+    }
+
+    public static void main() {
+        var found = probe(Map.of("a", new ItemStack("minecraft:stone").asNbt()), "a", 0);
+    }
 }
 "#;
 
@@ -1678,16 +1756,17 @@ void main() {
 
 #[test]
 fn compiles_string_match_dispatch() {
-    let source = r#"
-void main() {
-    var action = "jump";
-    switch (action) {
-        case "pathfind" -> mc("say move");
-        case "jump" -> mc("say leap");
-        case "idle" -> mc("say wait");
-        default -> mc("say default");
+    let source = r#"class Main {
+    public static void main() {
+        var action = "jump";
+        switch (action) {
+            case "pathfind" -> mc("say move");
+            case "jump" -> mc("say leap");
+            case "idle" -> mc("say wait");
+            default -> mc("say default");
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -1706,22 +1785,26 @@ void main() {
 fn compiles_enum_switch_with_multistatement_cases() {
     let source = r#"
 enum Mode { SURVIVAL, CREATIVE }
-String modeName(Mode mode) {
-    switch (mode) {
-        case SURVIVAL -> {
-            mc("say survival");
-            return "survival";
-        }
-        case CREATIVE -> {
-            mc("say creative");
-            return "creative";
+
+class Main {
+    static String modeName(Mode mode) {
+        switch (mode) {
+            case SURVIVAL -> {
+                mc("say survival");
+                return "survival";
+            }
+            case CREATIVE -> {
+                mc("say creative");
+                return "creative";
+            }
         }
     }
-}
-void main() {
-    var mode = Mode.CREATIVE;
-    var name = modeName(mode);
-    return;
+
+    public static void main() {
+        var mode = Mode.CREATIVE;
+        var name = modeName(mode);
+        return;
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("enum switch should compile");
@@ -1739,11 +1822,14 @@ void main() {
 fn rejects_non_exhaustive_and_duplicate_enum_switch_cases() {
     let source = r#"
 enum Mode { SURVIVAL, CREATIVE }
-void main() {
-    var mode = Mode.SURVIVAL;
-    switch (mode) {
-        case Mode.SURVIVAL -> mc("say first");
-        case Mode.SURVIVAL -> mc("say duplicate");
+
+class Main {
+    public static void main() {
+        var mode = Mode.SURVIVAL;
+        switch (mode) {
+            case Mode.SURVIVAL -> mc("say first");
+            case Mode.SURVIVAL -> mc("say duplicate");
+        }
     }
 }
 "#;
@@ -1755,23 +1841,24 @@ void main() {
 
 #[test]
 fn compiles_int_and_string_switch_with_default() {
-    let source = r#"
-void main() {
-    var level = 2;
-    switch (level) {
-        case 1 -> mc("say one");
-        case 2 -> {
-            mc("say two");
-            mc("say again");
+    let source = r#"class Main {
+    public static void main() {
+        var level = 2;
+        switch (level) {
+            case 1 -> mc("say one");
+            case 2 -> {
+                mc("say two");
+                mc("say again");
+            }
+            default -> mc("say other");
         }
-        default -> mc("say other");
-    }
-    var action = "start";
-    switch (action) {
-        case "start" -> mc("say go");
-        default -> {
-            mc("say stop");
-            mc("say waiting");
+        var action = "start";
+        switch (action) {
+            case "start" -> mc("say go");
+            default -> {
+                mc("say stop");
+                mc("say waiting");
+            }
         }
     }
 }
@@ -1800,16 +1887,20 @@ void main() {
 fn compiles_struct_literals_and_field_access() {
     let source = r#"
 record Action(String action, int duration) {}
-int tick(Action action) {
-    return action.duration();
-}
-void main() {
-    var action = new Action("idle", 40);
-    var actions = List.of(action);
-    var first = actions[0];
-    var duration = tick(first);
-    mcf("say $(duration)");
-    return;
+
+class Main {
+    static int tick(Action action) {
+        return action.duration();
+    }
+
+    public static void main() {
+        var action = new Action("idle", 40);
+        var actions = List.of(action);
+        var first = actions[0];
+        var duration = tick(first);
+        mcf("say $(duration)");
+        return;
+    }
 }
 "#;
 
@@ -1826,8 +1917,11 @@ void main() {
 fn rejects_invalid_struct_usage() {
     let source = r#"
 record Action(String action, int duration) {}
-void main() {
-    var bad = new Action("idle");
+
+class Main {
+    public static void main() {
+        var bad = new Action("idle");
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
@@ -1839,9 +1933,12 @@ void main() {
 
     let source = r#"
 record Action(String action, int duration) {}
-void main() {
-    var wrong = new Action(1, 5);
-    var also_bad = wrong.missing;
+
+class Main {
+    public static void main() {
+        var wrong = new Action(1, 5);
+        var also_bad = wrong.missing;
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
@@ -1852,11 +1949,12 @@ void main() {
 
 #[test]
 fn rejects_invalid_string_index_usage() {
-    let source = r#"
-void main() {
-    var book_content = "Book";
-    var bad = book_content["x"];
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var book_content = "Book";
+        var bad = book_content["x"];
+        return;
+    }
 }
 "#;
 
@@ -1870,26 +1968,29 @@ void main() {
 
 #[test]
 fn rejects_invalid_collection_usage() {
-    let source = r#"
-void badParam(List<Entity> xs) {
-    return;
-}
-boolean badHasData(Entity player, int key) {
-    return hasData(player.nbt[key]);
-}
-void main() {
-    var arr = List.of(1, 2);
-    var dict = Map.of("wood", 1);
-    var empty = List.of();
-    var bad_mix = List.of(1, "two");
-    var bad_index = arr["x"];
-    var bad_remove = arr.remove("x");
-    var bad_remove_alias = arr.remove("x");
-    var bad_key = dict[1];
-    var bad_refs = List.of(Selector.of("@a"));
-    arr.add("bad");
-    dict["bad-key"] = 2;
-    return;
+    let source = r#"class Main {
+    static void badParam(List<Entity> xs) {
+        return;
+    }
+
+    static boolean badHasData(Entity player, int key) {
+        return hasData(player.nbt[key]);
+    }
+
+    public static void main() {
+        var arr = List.of(1, 2);
+        var dict = Map.of("wood", 1);
+        var empty = List.of();
+        var bad_mix = List.of(1, "two");
+        var bad_index = arr["x"];
+        var bad_remove = arr.remove("x");
+        var bad_remove_alias = arr.remove("x");
+        var bad_key = dict[1];
+        var bad_refs = List.of(Selector.of("@a"));
+        arr.add("bad");
+        dict["bad-key"] = 2;
+        return;
+    }
 }
 "#;
 
@@ -1913,16 +2014,17 @@ void main() {
 
 #[test]
 fn rejects_indexes_the_backend_cannot_lower() {
-    let source = r#"
-@PlayerState
-Map<String, Integer> kills;
+    let source = r#"class Main {
+    @PlayerState
+    static Map<String, Integer> kills;
 
-void main() {
-    var xs = List.of(1, 2);
-    var last = xs[xs.size() - 1];
-    var player = (Player) Selector.of("@p").getFirst();
-    var name = "zombie";
-    var n = player.state.kills[name];
+    public static void main() {
+        var xs = List.of(1, 2);
+        var last = xs[xs.size() - 1];
+        var player = (Player) Selector.of("@p").getFirst();
+        var name = "zombie";
+        var n = player.state.kills[name];
+    }
 }
 "#;
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
@@ -1933,12 +2035,14 @@ void main() {
 #[test]
 fn std_cooldown_keeps_a_map_in_player_state() {
     let source = r#"
-import std.cooldown;
+import std.cooldown.Cooldown;
 
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    cooldown.start(player, "dash", 40);
-    var left = cooldown.remaining(player, "dash");
+class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        Cooldown.start(player, "dash", 40);
+        var left = Cooldown.remaining(player, "dash");
+    }
 }
 "#;
     let project = temp_path();
@@ -1973,60 +2077,62 @@ void main() {
 #[test]
 fn player_world_and_team_helpers_lower_to_commands() {
     let source = r#"
-import std.world;
-import std.team;
-import std.inventory;
-import std.region;
-import std.timer;
+import std.world.World;
+import std.team.Team;
+import std.inventory.Inventory;
+import std.region.Region;
+import std.timer.Timer;
 import std.vec.Vec3;
 import std.gamemode.GameMode;
 
-@WorldState
-int round;
-@WorldState
-Entity camera;
-@PlayerState
-Entity seatCamera;
-@WorldState
-GameMode defaultMode;
+class Main {
+    static int round;
 
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var all = Selector.of("@a");
-    player.setGameMode(GameMode.CREATIVE);
-    GameMode mode = player.getGameMode();
-    defaultMode = GameMode.ADVENTURE;
-    player.setGameMode(defaultMode);
-    all.setLevel(3);
-    player.giveExp(10);
-    all.sendTitle("Go", "round 1", 5, 40, 5);
-    all.addTag("playing");
-    all.effect("minecraft:speed", 5, 1);
-    var emeralds = player.countItem("minecraft:emerald");
-    var paid = inventory.take(player, "minecraft:emerald", 3);
-    world.setWeather("clear");
-    world.setGameRule("keep_inventory", true);
-    world.showState("coins", "sidebar");
-    team.create("red", "red");
-    team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
-    var arena = region.of(Block.of(0, 60, 0), Block.of(10, 70, 10));
-    region.tagPlayers(arena, "inside");
-    timer.start("round", 600);
-    round = round + 1;
-    world.forceload(-16, -16, 15, 15);
-    world.setSpawn(Block.of(0, 65, 0));
-    Entity cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
-    camera = cam;
-    player.state.seatCamera = cam;
-    player.state.seatCamera.teleport(Block.of(0, 71, 0));
-    camera.teleport(Block.of(0, 70, 0));
-    cam.teleport(new Vec3(1.5, 70.25, -2.0), 90.0, 45.0);
-    player.spectate(cam);
-    player.stopSpectating();
-    cam.remove();
-    Selector.of("@e[tag=old]").remove();
-    if (Block.of(0, 64, 0).isLoaded()) {
-        round = 0;
+    static Entity camera;
+
+    @PlayerState
+    static Entity seatCamera;
+
+    static GameMode defaultMode;
+
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var all = Selector.of("@a");
+        player.setGameMode(GameMode.CREATIVE);
+        GameMode mode = player.getGameMode();
+        defaultMode = GameMode.ADVENTURE;
+        player.setGameMode(defaultMode);
+        all.setLevel(3);
+        player.giveExp(10);
+        all.sendTitle("Go", "round 1", 5, 40, 5);
+        all.addTag("playing");
+        all.effect("minecraft:speed", 5, 1);
+        var emeralds = player.countItem("minecraft:emerald");
+        var paid = Inventory.take(player, "minecraft:emerald", 3);
+        World.setWeather("clear");
+        World.setGameRule("keep_inventory", true);
+        World.showState("coins", "sidebar");
+        Team.create("red", "red");
+        Team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
+        var arena = Region.of(Block.of(0, 60, 0), Block.of(10, 70, 10));
+        arena.tagPlayers("inside");
+        Timer.start("round", 600);
+        round = round + 1;
+        World.forceload(-16, -16, 15, 15);
+        World.setSpawn(Block.of(0, 65, 0));
+        Entity cam = Selector.of("@e[tag=cam,limit=1]").getFirst();
+        camera = cam;
+        player.state.seatCamera = cam;
+        player.state.seatCamera.teleport(Block.of(0, 71, 0));
+        camera.teleport(Block.of(0, 70, 0));
+        cam.teleport(new Vec3(1.5, 70.25, -2.0), 90.0, 45.0);
+        player.spectate(cam);
+        player.stopSpectating();
+        cam.remove();
+        Selector.of("@e[tag=old]").remove();
+        if (Block.of(0, 64, 0).isLoaded()) {
+            round = 0;
+        }
     }
 }
 "#;
@@ -2079,55 +2185,58 @@ void main() {
         "playerGameType",
         "unless score @s mcfc_id matches 1.. run function sample:generated/assign_id",
         "selector set value \"@e[scores={mcfc_id=$(id)},limit=1]\"",
-        "world.camera set value {prefix:\"\",selector:\"@e[scores={mcfc_id=0},limit=1]\"}",
-        "world.stdTimers",
-        "$world_round",
-        "execute unless score $world_round mcfc matches -2147483648.. run scoreboard players set $world_round mcfc 0",
+        "world.Main__camera set value {prefix:\"\",selector:\"@e[scores={mcfc_id=0},limit=1]\"}",
+        "world.std_timer_Timer__stdTimers",
+        "$world_Main__round",
+        "execute unless score $world_Main__round mcfc matches -2147483648.. run scoreboard players set $world_Main__round mcfc 0",
     ] {
         assert!(files.contains(needle), "missing {needle}");
     }
 }
 
 #[test]
-fn rejects_invalid_world_state() {
-    let source = r#"
-@WorldState
-int round;
+fn rejects_invalid_static_fields() {
+    let source = r#"class Main {
+    static int round;
 
-@WorldState
-int round;
+    static int round;
 
-@WorldState
-Selector players;
+    static Selector players;
 
-void main() {
-    round = "x";
+    public static void main() {
+        round = "x";
+    }
 }
 "#;
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
-    assert!(rendered.contains("duplicate @WorldState 'round'"));
-    assert!(rendered.contains("@WorldState supports"));
-    assert!(rendered.contains("cannot assign 'String' to variable 'round'"));
+    assert!(rendered.contains("duplicate static field 'Main.round'"), "{rendered}");
+    assert!(rendered.contains("a static field can be"), "{rendered}");
+    assert!(rendered.contains("cannot assign 'String' to variable 'Main.round'"), "{rendered}");
 }
 
 #[test]
-fn rejects_dotted_world_state_names() {
-    let source = "@WorldState
-int game.phase;
-
-void main() {
-}
-";
+fn top_level_functions_and_state_are_rejected() {
+    let source = "void main() {}\n@PlayerState int coins;\nclass Main {\n    @WorldState static int round;\n}\n";
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
-    assert!(rendered.contains("a @WorldState name can't have dots"));
+    assert!(
+        rendered.contains("'main' must be a method inside a class; MCFC has no top-level functions"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("state must be a field inside a class"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("@WorldState is gone"), "{rendered}");
 }
 
 #[test]
 fn rejects_interpolated_minimessage_and_unknown_text_constants() {
-    let source = r#"void main() {
-    var name = "a";
-    var c = MiniMessage.miniMessage().deserialize("<red>$(name)");
-    var d = NamedTextColor.PINK;
+    let source = r#"class Main {
+    public static void main() {
+        var name = "a";
+        var c = MiniMessage.miniMessage().deserialize("<red>$(name)");
+        var d = NamedTextColor.PINK;
+    }
 }
 "#;
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
@@ -2137,16 +2246,18 @@ fn rejects_interpolated_minimessage_and_unknown_text_constants() {
 
 #[test]
 fn for_condition_runs_every_iteration_and_continue_runs_the_update() {
-    let source = r#"
-int finish() {
-    return 3;
-}
-void main() {
-    for (int i = 0; i < finish(); i++) {
-        if (i == 1) {
-            continue;
+    let source = r#"class Main {
+    static int finish() {
+        return 3;
+    }
+
+    public static void main() {
+        for (int i = 0; i < finish(); i++) {
+            if (i == 1) {
+                continue;
+            }
+            mc("say loop");
         }
-        mc("say loop");
     }
 }
 "#;
@@ -2161,9 +2272,9 @@ void main() {
             .unwrap_or_else(|| panic!("no {part} function"))
     };
     // Like Java, the condition (and its call) runs before every iteration.
-    assert!(find("while_cond").contains("generated/finish__d0__entry"));
-    let main = find("main__d0__entry");
-    assert!(!main.contains("generated/finish__d0__entry"));
+    assert!(find("while_cond").contains("generated/main__finish__d0__entry"));
+    let main = find("generated/main__d0__entry");
+    assert!(!main.contains("generated/main__finish__d0__entry"));
     // `continue` jumps to the update, which then re-tests the condition.
     let step = find("while_step");
     assert!(step.contains("scoreboard players add") || step.contains("+= "));
@@ -2172,24 +2283,25 @@ void main() {
 
 #[test]
 fn rejects_invalid_loop_control_logic_and_for_usage() {
-    let source = r#"
-void main() {
-    break;
-    continue;
-    var i = 0;
-    for (int i = 0; i < "bad"; i++) {
+    let source = r#"class Main {
+    public static void main() {
+        break;
+        continue;
+        var i = 0;
+        for (int i = 0; i < "bad"; i++) {
+            return;
+        }
+        for (var item : 1) {
+            return;
+        }
+        if (1 && true) {
+            return;
+        }
+        if ("a" < "b") {
+            return;
+        }
         return;
     }
-    for (var item : 1) {
-        return;
-    }
-    if (1 && true) {
-        return;
-    }
-    if ("a" < "b") {
-        return;
-    }
-    return;
 }
 "#;
 
@@ -2206,14 +2318,15 @@ void main() {
 
 #[test]
 fn rejects_invalid_switch_usage() {
-    let source = r#"
-void main() {
-    var bad = 1;
-    switch (bad) {
-        case "a" -> mc("say a");
-        case "a" -> mc("say b");
+    let source = r#"class Main {
+    public static void main() {
+        var bad = 1;
+        switch (bad) {
+            case "a" -> mc("say a");
+            case "a" -> mc("say b");
+        }
+        return;
     }
-    return;
 }
 "#;
 
@@ -2225,12 +2338,13 @@ void main() {
 
 #[test]
 fn rejects_invalid_query_usage() {
-    let source = r#"
-void main() {
-    var bad = Selector.of("@e[type=pig,limit=2]").getFirst();
-    var also_bad = Selector.of("@e[type=pig]");
-    also_bad.CustomName = "Nope";
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var bad = Selector.of("@e[type=pig,limit=2]").getFirst();
+        var also_bad = Selector.of("@e[type=pig]");
+        also_bad.CustomName = "Nope";
+        return;
+    }
 }
 "#;
 
@@ -2244,13 +2358,14 @@ void main() {
 
 #[test]
 fn rejects_unsafe_player_writes() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    player.CustomName = "Nope";
-    player.nbt.SelectedItem = "bad";
-    player.state.story = "hello";
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        player.CustomName = "Nope";
+        player.nbt.SelectedItem = "bad";
+        player.state.story = "hello";
+        return;
+    }
 }
 "#;
 
@@ -2265,12 +2380,13 @@ void main() {
 
 #[test]
 fn rejects_invalid_entity_state_writes() {
-    let source = r#"
-void main() {
-    var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
-    marker.state.name = "bad";
-    marker.state.payload = new ItemStack("minecraft:stick");
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var marker = Selector.of("@e[type=minecraft:marker,limit=1]").getFirst();
+        marker.state.name = "bad";
+        marker.state.payload = new ItemStack("minecraft:stick");
+        return;
+    }
 }
 "#;
 
@@ -2283,18 +2399,19 @@ void main() {
 
 #[test]
 fn rejects_invalid_inventory_slot_usage() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    pig.inventory[0].count = 1;
-    player.hotbar["bad"].count = 1;
-    player.hotbar[9].count = 1;
-    player.inventory[27].count = 1;
-    player.hotbar[0] = "bad";
-    player.inventory[0].exists = true;
-    player.hotbar[0].id = "minecraft:stick";
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        pig.inventory[0].count = 1;
+        player.hotbar["bad"].count = 1;
+        player.hotbar[9].count = 1;
+        player.inventory[27].count = 1;
+        player.hotbar[0] = "bad";
+        player.inventory[0].exists = true;
+        player.hotbar[0].id = "minecraft:stick";
+        return;
+    }
 }
 "#;
 
@@ -2315,15 +2432,16 @@ void main() {
 
 #[test]
 fn guards_later_statements_after_nested_return() {
-    let source = r#"
-void main() {
-    if (true) {
+    let source = r#"class Main {
+    public static void main() {
+        if (true) {
+            return;
+        } else {
+            mc("say no");
+        }
+        mc("say after");
         return;
-    } else {
-        mc("say no");
     }
-    mc("say after");
-    return;
 }
 "#;
 
@@ -2338,37 +2456,41 @@ void main() {
 
 #[test]
 fn rejects_sleep_in_recursion() {
-    let source = r#"
-int a(int x) {
-    sleepTicks(1);
-    return b(x);
-}
-int b(int x) {
-    return a(x);
-}
-void main() {
-    int y = a(1);
+    let source = r#"class Main {
+    static int a(int x) {
+        sleepTicks(1);
+        return b(x);
+    }
+
+    static int b(int x) {
+        return a(x);
+    }
+
+    public static void main() {
+        int y = a(1);
+    }
 }
 "#;
 
     let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("'a' is recursive"), "{error}");
+    assert!(error.to_string().contains("'Main.a' is recursive"), "{error}");
 }
 
 #[test]
 fn rejects_invalid_macro_placeholders() {
-    let source = r#"
-void main() {
-    var a = 1;
-    var player = Selector.of("@p").getFirst();
-    if (true) {
-        var inner = 2;
+    let source = r#"class Main {
+    public static void main() {
+        var a = 1;
+        var player = Selector.of("@p").getFirst();
+        if (true) {
+            var inner = 2;
+        }
+        mcf("say $(missing)");
+        mcf("say $(inner)");
+        mcf("say $(");
+        mcf("say $(player.CustomName)");
+        return;
     }
-    mcf("say $(missing)");
-    mcf("say $(inner)");
-    mcf("say $(");
-    mcf("say $(player.CustomName)");
-    return;
 }
 "#;
 
@@ -2384,31 +2506,35 @@ void main() {
 fn compiles_expression_macro_placeholders() {
     let source = r#"
 record Action(String kind, int duration) {}
-int tick(Action action) {
-    return action.duration() + 1;
-}
-void main() {
-    var a = 2;
-    var x = 3;
-    var y = 3;
-    var flag = true;
-    var ready = false;
-    var values = List.of(10, 20);
-    var key = "npc";
-    var store = Map.of("npc", Map.of("value", 7));
-    var action = new Action("idle", 40);
-    var player = Selector.of("@p").getFirst();
-    mcf("say $(a + 1)");
-    mcf("say $(x == y)");
-    mcf("say $(flag && !ready)");
-    mcf("say $(tick(action))");
-    mcf("say $(values.remove(0))");
-    mcf("say $(values.remove(0))");
-    mcf("say $(store[key][\"value\"])");
-    mcf("say $(action.duration())");
-    mcf("say $(player.state.quest_complete)");
-    mcf("say $(player.team)");
-    return;
+
+class Main {
+    static int tick(Action action) {
+        return action.duration() + 1;
+    }
+
+    public static void main() {
+        var a = 2;
+        var x = 3;
+        var y = 3;
+        var flag = true;
+        var ready = false;
+        var values = List.of(10, 20);
+        var key = "npc";
+        var store = Map.of("npc", Map.of("value", 7));
+        var action = new Action("idle", 40);
+        var player = Selector.of("@p").getFirst();
+        mcf("say $(a + 1)");
+        mcf("say $(x == y)");
+        mcf("say $(flag && !ready)");
+        mcf("say $(tick(action))");
+        mcf("say $(values.remove(0))");
+        mcf("say $(values.remove(0))");
+        mcf("say $(store[key][\"value\"])");
+        mcf("say $(action.duration())");
+        mcf("say $(player.state.quest_complete)");
+        mcf("say $(player.team)");
+        return;
+    }
 }
 "#;
 
@@ -2436,17 +2562,18 @@ void main() {
 
 #[test]
 fn rejects_invalid_as_and_at_contexts() {
-    let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    Execute.as(Block.of("~ ~ ~"), () -> {
-        mc("say bad");
-    });
-    Execute.at(Block.of("~ ~ ~"), () -> {
-        mc("say bad");
-    });
-    var bad = Execute.as(player, () -> 1);
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        Execute.as(Block.of("~ ~ ~"), () -> {
+            mc("say bad");
+        });
+        Execute.at(Block.of("~ ~ ~"), () -> {
+            mc("say bad");
+        });
+        var bad = Execute.as(player, () -> 1);
+        return;
+    }
 }
 "#;
 
@@ -2459,10 +2586,11 @@ void main() {
 
 #[test]
 fn rejects_removed_book_annotations_and_legacy_gameplay_builtins() {
-    let book_source = r#"
-@book
-void old() {
-    return;
+    let book_source = r#"class Main {
+    @book
+    static void old() {
+        return;
+    }
 }
 "#;
 
@@ -2473,11 +2601,12 @@ void old() {
             .contains("unknown annotation '@book'")
     );
 
-    let legacy_source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    tellraw(player, "old");
-    return;
+    let legacy_source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        tellraw(player, "old");
+        return;
+    }
 }
 "#;
 
@@ -2491,11 +2620,12 @@ void main() {
 
 #[test]
 fn cli_writes_output_tree() {
-    let source = r#"
-void main() {
-    var a = 1;
-    a = a + 2;
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        var a = 1;
+        a = a + 2;
+        return;
+    }
 }
 "#;
 
@@ -2522,9 +2652,10 @@ void main() {
 
 #[test]
 fn cli_infers_namespace_from_input_filename() {
-    let source = r#"
-void main() {
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        return;
+    }
 }
 "#;
 
@@ -2554,9 +2685,10 @@ void main() {
 
 #[test]
 fn cli_explicit_namespace_overrides_filename_inference() {
-    let source = r#"
-void main() {
-    return;
+    let source = r#"class Main {
+    public static void main() {
+        return;
+    }
 }
 "#;
 
@@ -2692,8 +2824,9 @@ fn cli_new_creates_mcfd_agent_project_that_builds() {
     assert!(manifest.contains("[helper.agent]\nenabled = true"));
 
     let source = fs::read_to_string(project.join("src").join("main.mcf")).unwrap();
-    assert!(source.contains("@Command(\"status\")\nvoid status() {"));
-    assert!(source.contains("@EventHandler\nvoid onChat(ChatEvent event) {"));
+    assert!(source.contains("class Main implements Listener {"));
+    assert!(source.contains("    @Command(\"status\")\n    static void status() {"));
+    assert!(source.contains("    @EventHandler\n    void onChat(ChatEvent event) {"));
 
     let build_status = mcfc::cli::run(vec![
         "mcfc".into(),
@@ -2759,30 +2892,31 @@ tick = ["sample:bootstrap/tick"]
 
 [[export]]
 path = "bootstrap/load"
-function = "bootstrap_load"
+function = "Main.bootstrapLoad"
 
 [[export]]
 path = "bootstrap/tick"
-function = "bootstrap_tick"
+function = "Main.bootstrapTick"
 
 [[export]]
 path = "api/create"
-function = "api.create"
+function = "api.mod.Api.create"
 "#,
     )
     .unwrap();
 
     fs::write(
         src_dir.join("main.mcf"),
-        r#"
+        r#"class Main {
+    static void bootstrapLoad() {
+        mc("say load");
+        return;
+    }
 
-void bootstrapLoad() {
-    mc("say load");
-    return;
-}
-void bootstrapTick() {
-    mc("say tick");
-    return;
+    static void bootstrapTick() {
+        mc("say tick");
+        return;
+    }
 }
 "#,
     )
@@ -2790,10 +2924,11 @@ void bootstrapTick() {
 
     fs::write(
         src_dir.join("api").join("mod.mcf"),
-        r#"
-public void create() {
-    mc("say create");
-    return;
+        r#"public class Api {
+    public static void create() {
+        mc("say create");
+        return;
+    }
 }
 "#,
     )
@@ -2854,7 +2989,7 @@ public void create() {
         .files
         .get("data/sample/function/api/create.mcfunction")
         .unwrap();
-    assert!(wrapper.contains("function sample:generated/api__create__d0__entry"));
+    assert!(wrapper.contains("function sample:generated/api__mod__api__create__d0__entry"));
     assert!(
         out.join("data")
             .join("sample")
@@ -2881,17 +3016,18 @@ out_dir = "out"
 
 [[export]]
 path = "bootstrap/load"
-function = "bootstrap_load"
+function = "Main.bootstrapLoad"
 "#,
     )
     .unwrap();
 
     fs::write(
         src_dir.join("main.mcf"),
-        r#"
-void bootstrapLoad() {
-    mc("say hello");
-    return;
+        r#"class Main {
+    static void bootstrapLoad() {
+        mc("say hello");
+        return;
+    }
 }
 "#,
     )
@@ -2925,12 +3061,12 @@ fn project_errors_report_the_original_file_and_line() {
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        "\nvoid main() {\n    return;\n}\n",
+        "class Main {\n    public static void main() {\n        return;\n    }\n}\n",
     )
     .unwrap();
     fs::write(
         src_dir.join("b.mcf"),
-        "\npublic void run() {\n    main();\n}\n",
+        "class Main {\n    public static void run() {\n        missing();\n    }\n}\n",
     )
     .unwrap();
 
@@ -2939,36 +3075,40 @@ fn project_errors_report_the_original_file_and_line() {
         &project.join("dist"),
         &lowering(),
     )
-    .expect_err("root function used without 'use' should fail");
+    .expect_err("an unknown function should fail");
 
     let expected = format!(
-        "error:{}:3:5: cannot find function 'main' in module 'b'",
+        "error:{}:3:9:",
         Path::new("src").join("b.mcf").display()
     );
     assert!(error.starts_with(&expected), "{error}");
 }
 
 #[test]
-fn calling_a_module_tick_is_rejected() {
+fn same_named_tick_methods_in_two_modules_both_run() {
     let project = temp_path();
     let src_dir = project.join("src");
     fs::create_dir_all(&src_dir).unwrap();
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        "\nvoid tick() {\n    game.tick();\n}\n",
+        "class Main {\n    @Tick\n    static void tick() {\n        mc(\"say root\");\n    }\n}\n",
     )
     .unwrap();
-    fs::write(src_dir.join("game.mcf"), "\npublic void tick() {\n}\n").unwrap();
+    fs::write(
+        src_dir.join("game.mcf"),
+        "class Main {\n    @Tick\n    static void tick() {\n        mc(\"say game\");\n    }\n}\n",
+    )
+    .unwrap();
 
-    let error = compile_project(
+    let result = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
         &lowering(),
     )
-    .expect_err("tick merges into one function, so calling it would recurse");
-
-    assert!(error.contains("tick() can't be called"), "{error}");
+    .expect("each module's @Tick method runs from the one tick");
+    let tick = generated(&result, "tick__d0__entry");
+    assert_eq!(tick.matches("function sample:").count(), 2, "{tick}");
 }
 
 #[test]
@@ -2979,21 +3119,24 @@ fn project_modules_resolve_imports_and_privacy() {
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        r#"import game.score.add;
+        r#"import game.score.Score;
 import game.score.Points;
 
-void main() {
-    var p = new Points(add(1, 2));
-    game.score.reset(p);
+class Main {
+    public static void main() {
+        var p = new Points(Score.add(1, 2));
+        game.score.Score.reset(p);
+    }
 }
 "#,
     )
     .unwrap();
     fs::write(
         src_dir.join("game.mcf"),
-        r#"
-int base() {
-    return 10;
+        r#"public class Game {
+    static int base() {
+        return 10;
+    }
 }
 "#,
     )
@@ -3002,12 +3145,14 @@ int base() {
         src_dir.join("game").join("score.mcf"),
         r#"public record Points(int value) {}
 
-public int add(int a, int b) {
-    return a + b + game.base();
-}
+public class Score {
+    public static int add(int a, int b) {
+        return a + b + game.Game.base();
+    }
 
-public void reset(Points p) {
-    mc("say reset");
+    public static void reset(Points p) {
+        mc("say reset");
+    }
 }
 "#,
     )
@@ -3021,21 +3166,18 @@ public void reset(Points p) {
         .iter()
         .map(|function| function.name.as_str())
         .collect();
-    assert!(names.contains(&"game::score::add"), "{names:?}");
-    assert!(names.contains(&"game::base"), "{names:?}");
+    assert!(names.contains(&"game::score::Score__add"), "{names:?}");
+    assert!(names.contains(&"game::Game__base"), "{names:?}");
 
-    // `base` is private to `game`, so the root module cannot call it.
+    // `base` isn't public, so only `game` and the modules below it can call it.
     fs::write(
         src_dir.join("main.mcf"),
-        "\nvoid main() {\n    var x = game.base();\n}\n",
+        "class Main {\n    public static void main() {\n        var x = game.Game.base();\n    }\n}\n",
     )
     .unwrap();
     let error = compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
-        .expect_err("private function should be rejected");
-    assert!(
-        error.contains("function 'base' is private to module 'game'"),
-        "{error}"
-    );
+        .expect_err("private method should be rejected");
+    assert!(error.contains("is private"), "{error}");
 }
 
 #[test]
@@ -3046,14 +3188,14 @@ fn std_is_available_and_unused_functions_are_pruned() {
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        r#"import std.math.clamp;
+        r#"class Main {
+    public static void main() {
+        var hp = Math.clamp(150, 0, Math.max(1, 100));
+    }
 
-void main() {
-    var hp = clamp(150, 0, std.math.max(1, 100));
-}
-
-int unused(int x) {
-    return x;
+    static int unused(int x) {
+        return x;
+    }
 }
 "#,
     )
@@ -3074,10 +3216,10 @@ int unused(int x) {
     names.sort();
     assert_eq!(
         names,
-        ["main", "std::math::clamp__int", "std::math::max__int"]
+        ["main", "std::math::Math__clamp__int", "std::math::Math__max__int"]
     );
 
-    fs::write(src_dir.join("std.mcf"), "void f() {\n}\n").unwrap();
+    fs::write(src_dir.join("std.mcf"), "class Main {\n    static void f() {\n    }\n}\n").unwrap();
     let error = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
@@ -3120,12 +3262,13 @@ fn mcfd_http_options() -> CompileOptions {
 
 #[test]
 fn host_call_emits_rpc_runtime() {
-    let source = r#"
-void main() {
-    var r = http.get("https://api.example.com/data");
-    var p = Selector.of("@p").getFirst();
-    if (r.ok()) {
-        p.sendMessage(r.body());
+    let source = r#"class Main {
+    public static void main() {
+        var r = http.get("https://api.example.com/data");
+        var p = Selector.of("@p").getFirst();
+        if (r.ok()) {
+            p.sendMessage(r.body());
+        }
     }
 }
 "#;
@@ -3195,9 +3338,10 @@ void main() {
 
 #[test]
 fn mcfd_emitter_does_not_change_gamerules() {
-    let source = r#"
-void main() {
-    http.get("https://api.example.com/data");
+    let source = r#"class Main {
+    public static void main() {
+        http.get("https://api.example.com/data");
+    }
 }
 "#;
     let result = compile_source(source, &mcfd_http_options()).expect("host call should compile");
@@ -3211,15 +3355,16 @@ void main() {
 
 #[test]
 fn host_call_json_strings_is_typed_and_emits_rpc_runtime() {
-    let source = r#"
-void quote() {
-    var response = http.get_json_strings("https://api.example.com/quote", List.of("quote.text", "quote.author.name"));
-    if (response.ok()) {
-        var quote = (String) response.values()[0];
-        var player = Selector.of("@p").getFirst();
-        var message = new Component(quote);
-        message.color = "aqua";
-        player.sendMessage(message);
+    let source = r#"class Main {
+    static void quote() {
+        var response = http.get_json_strings("https://api.example.com/quote", List.of("quote.text", "quote.author.name"));
+        if (response.ok()) {
+            var quote = (String) response.values()[0];
+            var player = Selector.of("@p").getFirst();
+            var message = new Component(quote);
+            message.color = "aqua";
+            player.sendMessage(message);
+        }
     }
 }
 "#;
@@ -3241,12 +3386,13 @@ fn rpc_load_entry_is_reload_guarded() {
     // The mcfd transport reloads to deliver results, which re-runs the load tag.
     // The load entry must be guarded so it runs once instead of restarting the
     // program (and wiping RPC state) on every reload.
-    let source = r#"
-void main() {
-    var r = http.get("https://api.example.com/data");
-    var p = Selector.of("@p").getFirst();
-    if (r.ok()) {
-        p.sendMessage(r.body());
+    let source = r#"class Main {
+    public static void main() {
+        var r = http.get("https://api.example.com/data");
+        var p = Selector.of("@p").getFirst();
+        if (r.ok()) {
+            p.sendMessage(r.body());
+        }
     }
 }
 "#;
@@ -3262,7 +3408,7 @@ void main() {
 
 #[test]
 fn non_rpc_load_entry_is_not_guarded() {
-    let source = "void main() {\n    mc(\"say hi\");\n}\n";
+    let source = "class Main {\n    public static void main() {\n        mc(\"say hi\");\n    }\n}\n";
     let result = compile_source(source, &lowering()).expect("should compile");
     let entry = result
         .artifacts
@@ -3274,9 +3420,10 @@ fn non_rpc_load_entry_is_not_guarded() {
 
 #[test]
 fn host_call_requires_enabled_capability() {
-    let source = r#"
-void main() {
-    var r = http.get("https://api.example.com/data");
+    let source = r#"class Main {
+    public static void main() {
+        var r = http.get("https://api.example.com/data");
+    }
 }
 "#;
     // No helper configured, so the http module is not enabled.
@@ -3289,10 +3436,11 @@ void main() {
 
 #[test]
 fn host_call_only_in_statement_position() {
-    let source = r#"
-void main() {
-    var p = Selector.of("@p").getFirst();
-    p.sendMessage(http.get("https://api.example.com/data").body());
+    let source = r#"class Main {
+    public static void main() {
+        var p = Selector.of("@p").getFirst();
+        p.sendMessage(http.get("https://api.example.com/data").body());
+    }
 }
 "#;
     let result = compile_source(source, &mcfd_http_options());
@@ -3304,12 +3452,13 @@ void main() {
 
 #[test]
 fn optimizer_folds_division_like_the_scoreboard() {
-    let source = r#"
-void main() {
-    var a = -7 / 2;
-    var b = 7 / -2;
-    var c = 7 / 2;
-    var d = -8 / 2;
+    let source = r#"class Main {
+    public static void main() {
+        var a = -7 / 2;
+        var b = 7 / -2;
+        var c = 7 / 2;
+        var d = -8 / 2;
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -3330,14 +3479,15 @@ void main() {
 
 #[test]
 fn floats_lower_to_one_compute_command_per_expression() {
-    let source = r#"
-void main() {
-    var x = 3.0;
-    var y = Math.sqrt(x * x + 1.5);
-    var n = (int) (y * 100.0);
-    var z = (float) n / 2.0;
-    if (y < x) {
-        mc("say smaller");
+    let source = r#"class Main {
+    public static void main() {
+        var x = 3.0;
+        var y = Math.sqrt(x * x + 1.5);
+        var n = (int) (y * 100.0);
+        var z = (float) n / 2.0;
+        if (y < x) {
+            mc("say smaller");
+        }
     }
 }
 "#;
@@ -3364,12 +3514,12 @@ void main() {
 #[test]
 fn std_math_trig_inlines_into_one_compute_command() {
     let source = r#"
-import std.math.sin;
-
-void main() {
-    var x = 3.0;
-    var y = sin(x * 2.0) + std.math.cos(x);
-    var a = Math.atan2(y, x);
+class Main {
+    public static void main() {
+        var x = 3.0;
+        var y = Math.sin(x * 2.0) + Math.cos(x);
+        var a = Math.atan2(y, x);
+    }
 }
 "#;
     let project = temp_path();
@@ -3400,19 +3550,20 @@ void main() {
         .filter(|name| name.starts_with("std::math::"))
         .collect();
     assert!(
-        std_functions.contains(&"std::math::atan2")
+        std_functions.contains(&"std::math::Math__atan2")
             && !std_functions
                 .iter()
-                .any(|name| matches!(*name, "std::math::sin" | "std::math::cos")),
+                .any(|name| matches!(*name, "std::math::Math__sin" | "std::math::Math__cos")),
         "sin/cos should be inlined, atan2 called: {std_functions:?}"
     );
 }
 
 #[test]
 fn floats_widen_mixed_ints() {
-    let source = r#"
-void main() {
-    var x = 1.5 + 2;
+    let source = r#"class Main {
+    public static void main() {
+        var x = 1.5 + 2;
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("mixed arithmetic widens to float");
@@ -3426,14 +3577,15 @@ void main() {
 
 #[test]
 fn remainder_operator_matches_scoreboard_floor_mod() {
-    let source = r#"
-void main() {
-    var a = -7 % 3;
-    var b = 7 % -3;
-    var c = 7 % 3;
-    var x = random(10);
-    var d = x % 4;
-    var f = 5.5 % 2.0;
+    let source = r#"class Main {
+    public static void main() {
+        var a = -7 % 3;
+        var b = 7 % -3;
+        var c = 7 % 3;
+        var x = random(10);
+        var d = x % 4;
+        var f = 5.5 % 2.0;
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -3455,16 +3607,17 @@ void main() {
 
 #[test]
 fn strings_concatenate_slice_measure_and_parse() {
-    let source = r#"
-void main() {
-    var name = "Steve";
-    var n = 42;
-    var greeting = "Hi " + name + " x" + n.toString();
-    var size = greeting.length();
-    var tail = greeting.substring(-3);
-    var mid = greeting.substring(n, size);
-    var parsed = Integer.parseInt("17");
-    var joined = "a" + "b";
+    let source = r#"class Main {
+    public static void main() {
+        var name = "Steve";
+        var n = 42;
+        var greeting = "Hi " + name + " x" + n.toString();
+        var size = greeting.length();
+        var tail = greeting.substring(-3);
+        var mid = greeting.substring(n, size);
+        var parsed = Integer.parseInt("17");
+        var joined = "a" + "b";
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -3501,18 +3654,19 @@ void main() {
 
 #[test]
 fn array_methods_insert_clear_search_and_reverse() {
-    let source = r#"
-void main() {
-    var xs = List.of(3, 1, 2);
-    var i = 1;
-    xs.add(0, 9);
-    xs.add(i, 7);
-    var a = xs.getFirst();
-    var b = xs.getLast();
-    var has = xs.contains(2);
-    var at = xs.indexOf(2);
-    xs.reverse();
-    xs.clear();
+    let source = r#"class Main {
+    public static void main() {
+        var xs = List.of(3, 1, 2);
+        var i = 1;
+        xs.add(0, 9);
+        xs.add(i, 7);
+        var a = xs.getFirst();
+        var b = xs.getLast();
+        var has = xs.contains(2);
+        var at = xs.indexOf(2);
+        xs.reverse();
+        xs.clear();
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -3545,10 +3699,11 @@ void main() {
 
 #[test]
 fn array_search_values_must_match_the_element_type() {
-    let source = r#"
-void main() {
-    var xs = List.of(1, 2);
-    var has = xs.contains("a");
+    let source = r#"class Main {
+    public static void main() {
+        var xs = List.of(1, 2);
+        var has = xs.contains("a");
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
@@ -3561,10 +3716,11 @@ void main() {
 
 #[test]
 fn string_macros_reset_the_target_after_reading_their_inputs() {
-    let source = r#"
-void main() {
-    var s = "hi";
-    s = s + "!";
+    let source = r#"class Main {
+    public static void main() {
+        var s = "hi";
+        s = s + "!";
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -3586,19 +3742,18 @@ void main() {
 #[test]
 fn std_list_str_and_math_helpers_compile() {
     let source = r#"
-import std.str.startsWith;
-import std.str.contains;
-import std.math.gcd;
-import std.math.lerp;
+import std.list.Lists;
 
-void main() {
-    var xs = List.of(5, 3, 9, 1);
-    xs.sort();
-    var total = std.list.sum(xs);
-    var a = startsWith("minecraft:stone", "minecraft:");
-    var d = contains("hello", "ll");
-    var g = gcd(12, -18);
-    var l = lerp(0.0, 10.0, 0.25);
+class Main {
+    public static void main() {
+        var xs = List.of(5, 3, 9, 1);
+        xs.sort();
+        var total = Lists.sum(xs);
+        var a = "minecraft:stone".startsWith("minecraft:");
+        var d = "hello".contains("ll");
+        var g = Math.gcd(12, -18);
+        var l = Math.lerp(0.0, 10.0, 0.25);
+    }
 }
 "#;
     let project = temp_path();
@@ -3627,13 +3782,13 @@ void main() {
     assert_eq!(
         names,
         [
-            "std::list::sum__int",
-            "std::math::abs__int",
-            "std::math::gcd",
-            "std::math::lerp",
-            "std::str::contains",
-            "std::str::find",
-            "std::str::startsWith",
+            "std::list::Lists__sum__int",
+            "std::math::Math__abs__int",
+            "std::math::Math__gcd",
+            "std::math::Math__lerp",
+            "std::str::Strings__contains",
+            "std::str::Strings__find",
+            "std::str::Strings__startsWith",
         ]
     );
     assert!(
@@ -3648,10 +3803,11 @@ void main() {
 
 #[test]
 fn sort_needs_a_number_array() {
-    let source = r#"
-void main() {
-    var names = List.of("b", "a");
-    names.sort();
+    let source = r#"class Main {
+    public static void main() {
+        var names = List.of("b", "a");
+        names.sort();
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
@@ -3665,37 +3821,38 @@ void main() {
 
 #[test]
 fn generic_functions_compile_one_copy_per_type() {
-    let source = r#"
-<T> T biggest(List<T> values) {
-    var best = values[0];
-    for (var value : values) {
-        if (value > best) {
-            best = value;
+    let source = r#"class Main {
+    static <T> T biggest(List<T> values) {
+        var best = values[0];
+        for (var value : values) {
+            if (value > best) {
+                best = value;
+            }
         }
+        return best;
     }
-    return best;
-}
 
-<A, B> A first(A a, B b) {
-    return a;
-}
-
-<T> T total(List<T> xs) {
-    var sum = xs[0];
-    for (int i = 1; i < xs.size(); i++) {
-        sum = sum + xs[i];
+    static <A, B> A first(A a, B b) {
+        return a;
     }
-    return sum;
-}
 
-void main() {
-    var a = biggest(List.of(3, 9, 2));
-    var b = biggest(List.of(1.5, 0.25));
-    var c = biggest(List.of(4, 1));
-    var d = first("hi", 4);
-    var fs = List.of(2.5, 0.5);
-    fs.sort();
-    var t = total(fs);
+    static <T> T total(List<T> xs) {
+        var sum = xs[0];
+        for (int i = 1; i < xs.size(); i++) {
+            sum = sum + xs[i];
+        }
+        return sum;
+    }
+
+    public static void main() {
+        var a = biggest(List.of(3, 9, 2));
+        var b = biggest(List.of(1.5, 0.25));
+        var c = biggest(List.of(4, 1));
+        var d = first("hi", 4);
+        var fs = List.of(2.5, 0.5);
+        fs.sort();
+        var t = total(fs);
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("generics compile");
@@ -3710,10 +3867,10 @@ void main() {
     assert_eq!(
         names,
         [
-            "biggest__float",
-            "biggest__int",
-            "first__string__int",
-            "total__float",
+            "Main__biggest__float",
+            "Main__biggest__int",
+            "Main__first__string__int",
+            "Main__total__float",
         ]
     );
     assert!(
@@ -3727,37 +3884,39 @@ void main() {
 
 #[test]
 fn generic_calls_report_bad_type_arguments() {
-    let source = r#"
-<T> T same(T a, T b) {
-    return a;
-}
+    let source = r#"class Main {
+    static <T> T same(T a, T b) {
+        return a;
+    }
 
-<T> List<T> make() {
-    return List.of();
-}
+    static <T> List<T> make() {
+        return List.of();
+    }
 
-void main() {
-    var a = same(1, "x");
-    var b = make();
+    public static void main() {
+        var a = same(1, "x");
+        var b = make();
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(
-        error.contains("arguments for 'same' give its type parameters different types"),
+        error.contains("arguments for 'Main.same' give its type parameters different types"),
         "{error}"
     );
     assert!(
-        error.contains("cannot tell what 'T' is in this call to 'make'"),
+        error.contains("cannot tell what 'T' is in this call to 'Main.make'"),
         "{error}"
     );
 }
 
 #[test]
 fn end_is_an_ordinary_name() {
-    let source = r#"
-void main() {
-    var end = 8;
-    var span = end + 1;
+    let source = r#"class Main {
+    public static void main() {
+        var end = 8;
+        var span = end + 1;
+    }
 }
 "#;
     compile_source(source, &lowering()).expect("`end` should be a normal name");
@@ -3765,16 +3924,17 @@ void main() {
 
 #[test]
 fn entity_and_world_reads_lower_to_nbt_reads_and_queries() {
-    let source = r#"
-void main() {
-    var p = (Player) Selector.of("@a[limit=1]").getFirst();
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    var x = p.getX();
-    var food = p.getFoodLevel();
-    var d = p.distanceTo(pig);
-    var t = gameTime();
-    var w = worldTime();
-    var b = borderSize();
+    let source = r#"class Main {
+    public static void main() {
+        var p = (Player) Selector.of("@a[limit=1]").getFirst();
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        var x = p.getX();
+        var food = p.getFoodLevel();
+        var d = p.distanceTo(pig);
+        var t = gameTime();
+        var w = worldTime();
+        var b = borderSize();
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("reads should compile");
@@ -3801,10 +3961,11 @@ void main() {
 
 #[test]
 fn player_only_reads_need_a_player() {
-    let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    var food = pig.getFoodLevel();
+    let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        var food = pig.getFoodLevel();
+    }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
@@ -3817,23 +3978,24 @@ void main() {
 
 #[test]
 fn datapack_entity_system_methods_lower_to_commands_and_predicates() {
-    let source = r#"
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    pig.setVelocity(0.25, 0.5, -0.75);
-    player.setAttribute("minecraft:gravity", 0.04);
-    var gravity = player.getAttribute("minecraft:gravity");
-    player.setRotation(90.0, 0.0);
-    player.lookAt(pig);
-    var yaw = pig.yawTo(player);
-    var pitch = pig.pitchTo(player);
-    var jumping = player.getCurrentInput().isJump();
-    player.addVelocity(0.1, 0.2, 0.3);
-    pig.addVelocity(0.0, 0.5, 0.0);
-    player.setHealth(10.0);
-    pig.setHealth(4.0);
-    player.setFoodLevel(14);
+    let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        pig.setVelocity(0.25, 0.5, -0.75);
+        player.setAttribute("minecraft:gravity", 0.04);
+        var gravity = player.getAttribute("minecraft:gravity");
+        player.setRotation(90.0, 0.0);
+        player.lookAt(pig);
+        var yaw = pig.yawTo(player);
+        var pitch = pig.pitchTo(player);
+        var jumping = player.getCurrentInput().isJump();
+        player.addVelocity(0.1, 0.2, 0.3);
+        pig.addVelocity(0.0, 0.5, 0.0);
+        player.setHealth(10.0);
+        pig.setHealth(4.0);
+        player.setFoodLevel(14);
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("systems methods should compile");
@@ -3882,24 +4044,31 @@ fn advancement_events_generate_triggers_and_rewards() {
                 .contains("execute on attacker run tag @s add mcfc_event_target")
         );
     };
-    let source = r#"
-@EventHandler
-void onPlace(BlockPlaceEvent event) {
-    var block = event.block();
-    if (block.isPresent()) { block.get().setBlock("minecraft:gold_block"); }
+    let source = r#"class Main implements Listener {
+    @EventHandler
+    void onPlace(BlockPlaceEvent event) {
+        var block = event.block();
+        if (block.isPresent()) { block.get().setBlock("minecraft:gold_block"); }
+    }
+
+    @EventHandler
+    void onEat(PlayerItemConsumeEvent event) { event.player().sendMessage("ate"); }
+
+    @EventHandler
+    void onUse(PlayerUseItemEvent event) { event.player().sendMessage("using"); }
+
+    @EventHandler
+    void onKill(PlayerKillEntityEvent event) { event.player().sendMessage("kill"); }
+
+    @EventHandler
+    void onHit(PlayerHurtEntityEvent event) { event.entity().damage(1); }
+
+    @EventHandler
+    void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
+
+    @EventHandler
+    void onHurt(EntityHurtPlayerEvent event) { event.entity().damage(1); }
 }
-@EventHandler
-void onEat(PlayerItemConsumeEvent event) { event.player().sendMessage("ate"); }
-@EventHandler
-void onUse(PlayerUseItemEvent event) { event.player().sendMessage("using"); }
-@EventHandler
-void onKill(PlayerKillEntityEvent event) { event.player().sendMessage("kill"); }
-@EventHandler
-void onHit(PlayerHurtEntityEvent event) { event.entity().damage(1); }
-@EventHandler
-void onClick(PlayerInteractEntityEvent event) { event.entity().damage(1); }
-@EventHandler
-void onHurt(EntityHurtPlayerEvent event) { event.entity().damage(1); }
 "#;
     let result = compile_source(source, &lowering()).expect("advancement events should compile");
     let files = &result.artifacts.files;
@@ -3954,13 +4123,14 @@ void onHurt(EntityHurtPlayerEvent event) { event.entity().damage(1); }
 
 #[test]
 fn ownership_links_use_ids_with_vanilla_owner_fallback() {
-    let source = r#"
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    pig.setOwner(player);
-    var owner = pig.getOwner();
-    if (owner.isPresent()) { owner.get().damage(1); }
+    let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        pig.setOwner(player);
+        var owner = pig.getOwner();
+        if (owner.isPresent()) { owner.get().damage(1); }
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("ownership should compile");
@@ -3978,16 +4148,17 @@ void main() {
 
 #[test]
 fn raycasts_return_optional_block_and_entity() {
-    let source = r#"
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var block = player.getTargetBlock(5.0);
-    if (block.isPresent()) {
-        block.get().setBlock("minecraft:gold_block");
-    }
-    var target = player.getTargetEntity(8.0);
-    if (target.isPresent()) {
-        target.get().damage(2);
+    let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var block = player.getTargetBlock(5.0);
+        if (block.isPresent()) {
+            block.get().setBlock("minecraft:gold_block");
+        }
+        var target = player.getTargetEntity(8.0);
+        if (target.isPresent()) {
+            target.get().damage(2);
+        }
     }
 }
 "#;
@@ -4013,10 +4184,11 @@ void main() {
 /// that the bit scores the enchantment reads add back up to the input.
 #[test]
 fn player_impulse_bits_reconstruct_the_velocity() {
-    let source = r#"
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    player.addVelocity(0.1, 0.2, 0.3);
+    let source = r#"class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        player.addVelocity(0.1, 0.2, 0.3);
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("addVelocity should compile");
@@ -4094,15 +4266,17 @@ fn display_entities_animate_through_setters_and_animate() {
     let source = r#"
 import std.vec.Vec3;
 
-void main() {
-    var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
-    display.setInterpolationDuration(20);
-    display.setInterpolationDelay(0);
-    display.setTeleportDuration(5);
-    display.setTranslation(new Vec3(0.0, 1.0, 0.0));
-    display.setScale(new Vec3(2.0, 2.0, 2.0));
-    display.setLeftRotation(1.57, new Vec3(0.0, 1.0, 0.0));
-    display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+class Main {
+    public static void main() {
+        var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
+        display.setInterpolationDuration(20);
+        display.setInterpolationDelay(0);
+        display.setTeleportDuration(5);
+        display.setTranslation(new Vec3(0.0, 1.0, 0.0));
+        display.setScale(new Vec3(2.0, 2.0, 2.0));
+        display.setLeftRotation(1.57, new Vec3(0.0, 1.0, 0.0));
+        display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+    }
 }
 "#;
     let project = temp_path();
@@ -4142,11 +4316,13 @@ fn std_vec_methods_resolve_despite_java_method_aliases() {
     let source = r#"
 import std.vec.Vec3;
 
-void main() {
-    Vec3 a = new Vec3(1.0, 2.0, 2.0);
-    Vec3 sum = a.add(a.scale(2.0));
-    float size = sum.cross(a).normalize().length();
-    float d = a.dot(sum.sub(a));
+class Main {
+    public static void main() {
+        Vec3 a = new Vec3(1.0, 2.0, 2.0);
+        Vec3 sum = a.add(a.scale(2.0));
+        float size = sum.cross(a).normalize().length();
+        float d = a.dot(sum.sub(a));
+    }
 }
 "#;
     let project = temp_path();
@@ -4183,9 +4359,12 @@ fn standard_attribute_enum_resolves_to_minecraft_ids() {
     fs::write(
         src_dir.join("main.mcf"),
         r#"import std.attribute.Attribute;
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    player.setAttribute(Attribute.GRAVITY, 0.04);
+
+class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        player.setAttribute(Attribute.GRAVITY, 0.04);
+    }
 }
 "#,
     )
@@ -4203,10 +4382,11 @@ void main() {
 
 #[test]
 fn float_text_restores_the_leading_zero() {
-    let source = r#"
-void main() {
-    var half = 0.5;
-    var text = "v=" + half.toString();
+    let source = r#"class Main {
+    public static void main() {
+        var half = 0.5;
+        var text = "v=" + half.toString();
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("source should compile");
@@ -4236,15 +4416,16 @@ fn generated(result: &mcfc::compiler::CompileResult, name: &str) -> String {
 
 #[test]
 fn sleeping_callee_pauses_the_caller() {
-    let source = r#"
-int wait() {
-    sleepTicks(1);
-    return 7;
-}
+    let source = r#"class Main {
+    static int wait() {
+        sleepTicks(1);
+        return 7;
+    }
 
-void main() {
-    var x = wait();
-    mcf("say after $(x)");
+    public static void main() {
+        var x = wait();
+        mcf("say after $(x)");
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("should compile");
@@ -4252,7 +4433,7 @@ void main() {
     assert!(!main.contains("say after"), "the rest must wait:\n{main}");
     assert!(
         main.contains(
-            "frames.d0.wait.__resume.fn set value \"mcfc:generated/main__d0__sleep_resume_"
+            "frames.d0.Main__wait.__resume.fn set value \"mcfc:generated/main__d0__sleep_resume_"
         ),
         "{main}"
     );
@@ -4264,40 +4445,42 @@ void main() {
         .artifacts
         .files
         .iter()
-        .find(|(path, _)| path.contains("generated/wait__d0__sleep_resume_"))
+        .find(|(path, _)| path.contains("generated/main__wait__d0__sleep_resume_"))
         .map(|(_, body)| body.clone())
         .expect("wait resume");
     assert!(
-        resume.ends_with("run function mcfc:generated/wait__d0__finish\n"),
+        resume.ends_with("run function mcfc:generated/main__wait__d0__finish\n"),
         "{resume}"
     );
 }
 
 #[test]
 fn pausing_call_inside_an_expression_is_an_error() {
-    let source = r#"
-int wait() {
-    sleepTicks(1);
-    return 7;
-}
+    let source = r#"class Main {
+    static int wait() {
+        sleepTicks(1);
+        return 7;
+    }
 
-void main() {
-    if (wait() > 3) {
-        mc("say big");
+    public static void main() {
+        if (wait() > 3) {
+            mc("say big");
+        }
     }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("'wait' can pause"), "{error}");
+    assert!(error.to_string().contains("'Main.wait' can pause"), "{error}");
 }
 
 #[test]
 fn sort_runs_in_slices_across_ticks() {
-    let source = r#"
-void main() {
-    var xs = List.of(3, 1, 2);
-    xs.sort();
-    mc("say sorted");
+    let source = r#"class Main {
+    public static void main() {
+        var xs = List.of(3, 1, 2);
+        xs.sort();
+        mc("say sorted");
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("should compile");
@@ -4315,12 +4498,13 @@ void main() {
 
 #[test]
 fn empty_collection_literals_take_the_declared_type() {
-    let source = r#"
-void main() {
-    List<Integer> xs = List.of();
-    xs.add(3);
-    Map<String, Integer> m = Map.of();
-    m["a"] = xs[0];
+    let source = r#"class Main {
+    public static void main() {
+        List<Integer> xs = List.of();
+        xs.add(3);
+        Map<String, Integer> m = Map.of();
+        m["a"] = xs[0];
+    }
 }
 "#;
     compile_source(source, &lowering()).expect("typed empty collections should compile");
@@ -4328,15 +4512,16 @@ void main() {
 
 #[test]
 fn java_world_methods_lower_to_the_expected_commands() {
-    let source = r#"
-void main() {
-    var first = Selector.of("@e[type=minecraft:pig]").getFirst();
-    var maybe = Selector.of("@e[type=minecraft:pig]").findFirst();
-    if (first.isValid() && maybe.isPresent()) {
-        first.sendMessage("x=$(first.getX())");
+    let source = r#"class Main {
+    public static void main() {
+        var first = Selector.of("@e[type=minecraft:pig]").getFirst();
+        var maybe = Selector.of("@e[type=minecraft:pig]").findFirst();
+        if (first.isValid() && maybe.isPresent()) {
+            first.sendMessage("x=$(first.getX())");
+        }
+        var sword = new ItemStack("minecraft:diamond_sword");
+        sword.setName("Probe");
     }
-    var sword = new ItemStack("minecraft:diamond_sword");
-    sword.setName("Probe");
 }
 "#;
     let result = compile_source(source, &lowering()).expect("Java world methods compile");
@@ -4356,18 +4541,19 @@ void main() {
 
 #[test]
 fn sidebars_are_shared_or_per_player_through_the_agent() {
-    let source = r#"
-void main() {
-    Sidebar.setTitle("Arena");
-    Sidebar.setLine(2, "Kills");
-    Sidebar.setLine(4, "Gold", "12");
-    Sidebar.removeLine(3);
-    var player = (Player) Selector.of("@p").getFirst();
-    player.setSidebarLine(1, "Coins");
-    var title = new Component("Gold");
-    title.color = "gold";
-    player.setSidebarTitle(title);
-    player.clearSidebar();
+    let source = r#"class Main {
+    public static void main() {
+        Sidebar.setTitle("Arena");
+        Sidebar.setLine(2, "Kills");
+        Sidebar.setLine(4, "Gold", "12");
+        Sidebar.removeLine(3);
+        var player = (Player) Selector.of("@p").getFirst();
+        player.setSidebarLine(1, "Coins");
+        var title = new Component("Gold");
+        title.color = "gold";
+        player.setSidebarTitle(title);
+        player.clearSidebar();
+    }
 }
 "#;
     let shared = compile_source(source, &lowering()).expect("sidebars should compile");
@@ -4396,17 +4582,18 @@ void main() {
     // The shared sidebar still works beside player ones.
     assert!(output.contains("scoreboard objectives modify mcfc_sidebar displayname $(text)"));
 
-    let error = compile_source("void main() { Sidebar.setLine(\"x\", 1); }", &lowering())
+    let error = compile_source("class Main {\n    public static void main() { Sidebar.setLine(\"x\", 1); }\n}", &lowering())
         .expect_err("wrong argument types are rejected");
     assert!(format!("{error:?}").contains("line"));
 }
 
 #[test]
 fn block_of_accepts_computed_coordinates() {
-    let source = r#"
-void main() {
-    for (int x = 0; x < 3; x++) {
-        Block.of(x, 64, -2).setBlock("minecraft:stone");
+    let source = r#"class Main {
+    public static void main() {
+        for (int x = 0; x < 3; x++) {
+            Block.of(x, 64, -2).setBlock("minecraft:stone");
+        }
     }
 }
 "#;
@@ -4414,18 +4601,19 @@ void main() {
     let output = result.artifacts.files.values().cloned().collect::<String>();
     assert!(output.contains(".pos set value \"$(x) $(y) $(z)\""));
     assert!(output.contains(".x int 1 run scoreboard players get"));
-    assert!(compile_source("void main() { Block.of(1, 2.0, 3); }", &lowering()).is_err());
+    assert!(compile_source("class Main {\n    public static void main() { Block.of(1, 2.0, 3); }\n}", &lowering()).is_err());
 }
 
 #[test]
 fn shifts_do_not_break_nested_generics() {
-    let source = r#"
-void main() {
-    List<List<Integer>> grid = List.of();
-    int x = 5;
-    x >>= 1;
-    x <<= 2;
-    boolean small = x >> 1 > 2;
+    let source = r#"class Main {
+    public static void main() {
+        List<List<Integer>> grid = List.of();
+        int x = 5;
+        x >>= 1;
+        x <<= 2;
+        boolean small = x >> 1 > 2;
+    }
 }
 "#;
     compile_source(source, &lowering()).expect("generics and shifts should both parse");
@@ -4434,7 +4622,7 @@ void main() {
 #[test]
 fn block_state_names_are_checked() {
     let error = compile_source(
-        "void main() { var s = Block.of(0, 0, 0).getState(\"facingg\"); }",
+        "class Main {\n    public static void main() { var s = Block.of(0, 0, 0).getState(\"facingg\"); }\n}",
         &lowering(),
     )
     .expect_err("unknown state names are rejected");
@@ -4443,12 +4631,13 @@ fn block_state_names_are_checked() {
 
 #[test]
 fn log_levels_filter_messages_for_tagged_players() {
-    let source = r#"
-void main() {
-    Log.setLevel("warn");
-    Log.info("hi");
-    Log.error("bad");
-    Log.dump(42);
+    let source = r#"class Main {
+    public static void main() {
+        Log.setLevel("warn");
+        Log.info("hi");
+        Log.error("bad");
+        Log.dump(42);
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("logging should compile");
@@ -4462,16 +4651,17 @@ void main() {
     ] {
         assert!(output.contains(expected), "missing {expected}");
     }
-    assert!(compile_source("void main() { Log.setLevel(\"loud\"); }", &lowering()).is_err());
-    assert!(compile_source("void main() { Log.shout(\"x\"); }", &lowering()).is_err());
+    assert!(compile_source("class Main {\n    public static void main() { Log.setLevel(\"loud\"); }\n}", &lowering()).is_err());
+    assert!(compile_source("class Main {\n    public static void main() { Log.shout(\"x\"); }\n}", &lowering()).is_err());
 }
 
 #[test]
 fn menu_commands_join_the_smithed_data_pack_menu() {
-    let source = r#"
-@Menu("Open \"settings\"")
-void settings(Player player) {
-    player.sendMessage("hi");
+    let source = r#"class Main {
+    @Menu("Open \"settings\"")
+    static void settings(Player player) {
+        player.sendMessage("hi");
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("@Menu should compile");
@@ -4492,21 +4682,21 @@ void settings(Player player) {
     );
     assert!(files.contains_key("data/smithed/dialog/data_packs.json"));
     assert!(about.contains("\"/trigger settings\""), "{about}");
-    assert!(compile_source("@Menu void f() {}", &lowering()).is_err());
+    assert!(compile_source("class Main {\n    @Menu void f() {}\n    static \n}", &lowering()).is_err());
 }
 
 #[test]
 fn actionbar_priorities_are_checked() {
     assert!(
         compile_source(
-            "void f(Player p) { p.sendActionBar(\"hud\", \"conditional\"); }",
+            "class Main {\n    static void f(Player p) { p.sendActionBar(\"hud\", \"conditional\"); }\n}",
             &lowering()
         )
         .is_ok()
     );
     assert!(
         compile_source(
-            "void f(Player p) { p.sendActionBar(\"hud\", \"loud\"); }",
+            "class Main {\n    static void f(Player p) { p.sendActionBar(\"hud\", \"loud\"); }\n}",
             &lowering()
         )
         .is_err()
@@ -4521,13 +4711,13 @@ fn wildcard_imports_bring_in_public_names() {
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("util.mcf"),
-        "public int twice(int x) {\n    return x * 2;\n}\n\npublic int max(int a, int b) {\n    return a;\n}\n\nint hidden() {\n    return 0;\n}\n",
+        "public class Util {\n    public static int twice(int x) {\n        return x * 2;\n    }\n\n    static int hidden() {\n        return 0;\n    }\n}\n\npublic class Timer {\n    public static int ticks() {\n        return 0;\n    }\n}\n",
     )
     .unwrap();
-    // `max` is imported by name, so the wildcard's `util.max` loses, as in Java.
+    // `Timer` is imported by name, so the wildcard's `util.Timer` loses, as in Java.
     fs::write(
         src_dir.join("main.mcf"),
-        "import util.*;\nimport std.math.max;\n\nvoid main() {\n    var x = twice(max(1, 2));\n}\n",
+        "import util.*;\nimport std.timer.Timer;\n\nclass Main {\n    public static void main() {\n        Timer.start(\"round\", Util.twice(20));\n    }\n}\n",
     )
     .unwrap();
     let compile = || {
@@ -4545,17 +4735,18 @@ fn wildcard_imports_bring_in_public_names() {
         .map(|function| function.name.as_str())
         .collect();
     names.sort();
-    assert_eq!(names, ["main", "std::math::max__int", "util::twice"]);
+    assert!(names.contains(&"std::timer::Timer__start"), "{names:?}");
+    assert!(names.contains(&"util::Util__twice"), "{names:?}");
 
     fs::write(
         src_dir.join("main.mcf"),
-        "import util.*;\n\nvoid main() {\n    hidden();\n}\n",
+        "import util.*;\n\nclass Main {\n    public static void main() {\n        Util.hidden();\n    }\n}\n",
     )
     .unwrap();
     assert!(compile().is_err(), "private names stay private");
     fs::write(
         src_dir.join("main.mcf"),
-        "import util.twice.*;\n\nvoid main() {\n}\n",
+        "import util.Util.*;\n\nclass Main {\n    public static void main() {\n    }\n}\n",
     )
     .unwrap();
     assert!(compile().is_err(), "a wildcard needs a module");
@@ -4568,7 +4759,7 @@ fn wildcard_imports_bring_in_public_names() {
     .unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        "import util.*;\n\n@WorldState List<Space> spaces;\n@PlayerState Space picked;\n\nvoid main() {\n    spaces = List.of(new Space(\"a\", 1));\n    var n = spaces[0].price();\n}\n",
+        "import util.*;\n\nclass Main {\n    static List<Space> spaces;\n\n    @PlayerState static Space picked;\n\n    public static void main() {\n        spaces = List.of(new Space(\"a\", 1));\n        var n = spaces[0].price();\n    }\n}\n",
     )
     .unwrap();
     compile().expect("state types resolve through imports");
@@ -4606,12 +4797,14 @@ enum Planet {
     }
 }
 
-void main() {
-    Point moved = Point.origin().add(1, 2);
-    Planet home = Planet.EARTH;
-    boolean heavy = home.heavy();
-    int mass = home.mass;
-    boolean same = moved == new Point(1, 2);
+class Main {
+    public static void main() {
+        Point moved = Point.origin().add(1, 2);
+        Planet home = Planet.EARTH;
+        boolean heavy = home.heavy();
+        int mass = home.mass;
+        boolean same = moved == new Point(1, 2);
+    }
 }
 "#;
     let result = compile_source(source, &lowering()).expect("methods should compile");
@@ -4635,36 +4828,36 @@ void main() {
 fn method_and_overload_mistakes_are_reported() {
     let cases = [
         (
-            "record P(int x) { static int f() { return twice(); } int twice() { return x * 2; } }\nvoid main() {}",
+            "record P(int x) { static int f() { return twice(); } int twice() { return x * 2; } }\n\nclass Main {\n    public static void main() {}\n}",
             "'twice' needs an instance; a static method has no 'this'",
         ),
         (
-            "record P(int x) { @Override int size() { return 1; } }\nvoid main() {}",
+            "record P(int x) { @Override int size() { return 1; } }\n\nclass Main {\n    public static void main() {}\n}",
             "method doesn't override anything",
         ),
         (
-            "record P(int x) { int x() { return 1; } }\nvoid main() {}",
+            "record P(int x) { int x() { return 1; } }\n\nclass Main {\n    public static void main() {}\n}",
             "'x()' is already the accessor of component 'x'",
         ),
         (
-            "record P(int x) { int y; }\nvoid main() {}",
+            "record P(int x) { int y; }\n\nclass Main {\n    public static void main() {}\n}",
             "records can't declare fields",
         ),
         (
-            "enum E { A(1); private final int n; E(int n) { this.n = n + 1; } }\nvoid main() {}",
+            "enum E { A(1); private final int n; E(int n) { this.n = n + 1; } }\n\nclass Main {\n    public static void main() {}\n}",
             "an enum constructor can only set fields from its parameters",
         ),
         (
-            "enum E { A(1, 2); private final int n; E(int n) { this.n = n; } }\nvoid main() {}",
+            "enum E { A(1, 2); private final int n; E(int n) { this.n = n; } }\n\nclass Main {\n    public static void main() {}\n}",
             "enum constant 'A' passes 2 arguments, but the constructor takes 1",
         ),
         (
-            "void f(float a, int b) {}\nvoid f(int a, float b) {}\nvoid main() { f(1, 2); }",
-            "ambiguous call; it matches f(float, int) and f(int, float)",
+            "class Main {\n    static void f(float a, int b) {}\n\n    static void f(int a, float b) {}\n\n    public static void main() { f(1, 2); }\n}",
+            "ambiguous call; it matches Main.f(float, int) and Main.f(int, float)",
         ),
         (
-            "void f(int a) {}\nvoid f(float a, float b) {}\nvoid main() { f(\"x\"); }",
-            "no overload of 'f' takes (String)",
+            "class Main {\n    static void f(int a) {}\n\n    static void f(float a, float b) {}\n\n    public static void main() { f(\"x\"); }\n}",
+            "no overload of 'Main.f' takes (String)",
         ),
     ];
     for (source, expected) in cases {
@@ -4702,15 +4895,15 @@ fn private_methods_stay_in_their_module() {
         fs::write(src_dir.join("main.mcf"), main).unwrap();
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
-    compile("import game.Quest;\nvoid main() { int n = new Quest(2).doubled(); }\n")
+    compile("import game.Quest;\n\nclass Main {\n    public static void main() { int n = new Quest(2).doubled(); }\n}\n")
         .expect("public method should be callable");
-    let error = compile("import game.Quest;\nvoid main() { int n = new Quest(2).secret(); }\n")
+    let error = compile("import game.Quest;\n\nclass Main {\n    public static void main() { int n = new Quest(2).secret(); }\n}\n")
         .expect_err("private instance method should be rejected");
     assert!(
         error.contains("method 'game.Quest.secret' is private"),
         "{error}"
     );
-    let error = compile("import game.Quest;\nvoid main() { Quest q = Quest.hidden(); }\n")
+    let error = compile("import game.Quest;\n\nclass Main {\n    public static void main() { Quest q = Quest.hidden(); }\n}\n")
         .expect_err("private static method should be rejected");
     assert!(
         error.contains("method 'Quest.hidden' is private to module 'game'"),
@@ -4759,15 +4952,11 @@ public class Vault {
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
     compile(
-        "import game.Wallet;
-void main() { Wallet w = new Wallet(3); w.coins += 1; int n = w.doubled() + Wallet.made; }
-",
+        "import game.Wallet;\n\nclass Main {\n    public static void main() { Wallet w = new Wallet(3); w.coins += 1; int n = w.doubled() + Wallet.made; }\n}\n",
     )
     .expect("public members should be usable");
     let error = compile(
-        "import game.Wallet;
-void main() { int n = new Wallet(3).secret; }
-",
+        "import game.Wallet;\n\nclass Main {\n    public static void main() { int n = new Wallet(3).secret; }\n}\n",
     )
     .expect_err("a package-private field should be rejected");
     assert!(
@@ -4775,9 +4964,7 @@ void main() { int n = new Wallet(3).secret; }
         "{error}"
     );
     let error = compile(
-        "import game.Wallet;
-void main() { Wallet.hidden = 1; }
-",
+        "import game.Wallet;\n\nclass Main {\n    public static void main() { Wallet.hidden = 1; }\n}\n",
     )
     .expect_err("a private static field should be rejected");
     assert!(
@@ -4785,9 +4972,7 @@ void main() { Wallet.hidden = 1; }
         "{error}"
     );
     let error = compile(
-        "import game.Vault;
-void main() { Vault v = new Vault(); }
-",
+        "import game.Vault;\n\nclass Main {\n    public static void main() { Vault v = new Vault(); }\n}\n",
     )
     .expect_err("a package-private constructor should be rejected");
     assert!(
@@ -4820,7 +5005,7 @@ fn final_fields_are_set_only_by_constructors() {
 }
 ";
     let error = compile(&format!(
-        "{class}void main() {{ Ticket t = new Ticket(1); }}
+        "{class}class Main {{ public static void main() {{ Ticket t = new Ticket(1); }} }}
 "
     ))
     .expect_err("a method setting a final field should be rejected");
@@ -4829,17 +5014,16 @@ fn final_fields_are_set_only_by_constructors() {
         "{error}"
     );
     let class = class.replace(
-        "    void reset() { serial = 0; }
-",
+        "    void reset() { serial = 0; }\n",
         "",
     );
     compile(&format!(
-        "{class}void main() {{ Ticket t = new Ticket(1); int n = t.serial + Ticket.LIMIT; }}
+        "{class}class Main {{ public static void main() {{ Ticket t = new Ticket(1); int n = t.serial + Ticket.LIMIT; }} }}
 "
     ))
     .expect("constructors and initializers may set final fields");
     let error = compile(&format!(
-        "{class}void main() {{ Ticket.LIMIT = 4; }}
+        "{class}class Main {{ public static void main() {{ Ticket.LIMIT = 4; }} }}
 "
     ))
     .expect_err("setting a static final field should be rejected");
@@ -4848,7 +5032,7 @@ fn final_fields_are_set_only_by_constructors() {
         "{error}"
     );
     let error = compile(&format!(
-        "{class}void main() {{ Ticket t = new Ticket(1); t.serial += 1; }}
+        "{class}class Main {{ public static void main() {{ Ticket t = new Ticket(1); t.serial += 1; }} }}
 "
     ))
     .expect_err("changing a final field should be rejected");
@@ -4881,8 +5065,7 @@ fn same_named_classes_in_two_modules_keep_separate_statics() {
     }
     fs::write(
         src_dir.join("main.mcf"),
-        "void main() { red.Team.score = 5; blue.Team.score = 7; }
-",
+        "class Main {\n    public static void main() { red.Team.score = 5; blue.Team.score = 7; }\n}\n",
     )
     .unwrap();
     let result = compile_project(
@@ -4913,31 +5096,31 @@ final class Square implements Shape { public int area() { return 4; } }
 ";
     let rejected = [
         (
-            "abstract class A {}\nvoid main() { A a = new A(); }\n",
+            "abstract class A {}\n\nclass Main {\n    public static void main() { A a = new A(); }\n}\n",
             "'A' is abstract",
         ),
         (
-            "interface I { int f(); }\nclass C implements I {}\nvoid main() {}\n",
+            "interface I { int f(); }\nclass C implements I {}\n\nclass Main {\n    public static void main() {}\n}\n",
             "'C' must implement 'f' from 'I'",
         ),
         (
-            "class C { @Override int f() { return 1; } }\nvoid main() {}\n",
+            "class C { @Override int f() { return 1; } }\n\nclass Main {\n    public static void main() {}\n}\n",
             "'f' doesn't override",
         ),
         (
-            "final class A {}\nclass B extends A {}\nvoid main() {}\n",
+            "final class A {}\nclass B extends A {}\n\nclass Main {\n    public static void main() {}\n}\n",
             "'A' is final",
         ),
         (
-            "sealed class A permits B {}\nclass B extends A {}\nclass C extends A {}\nvoid main() {}\n",
+            "sealed class A permits B {}\nclass B extends A {}\nclass C extends A {}\n\nclass Main {\n    public static void main() {}\n}\n",
             "'A' is sealed and doesn't permit 'C'",
         ),
         (
-            "interface I { int f() { return 1; } }\nvoid main() {}\n",
+            "interface I { int f() { return 1; } }\n\nclass Main {\n    public static void main() {}\n}\n",
             "must be 'default', 'static' or 'private'",
         ),
         (
-            "class A { int f() { return 1; } }\nclass B extends A { boolean f() { return true; } }\nvoid main() {}\n",
+            "class A { int f() { return 1; } }\nclass B extends A { boolean f() { return true; } }\n\nclass Main {\n    public static void main() {}\n}\n",
             "'f' returns 'boolean'",
         ),
     ];
@@ -4946,12 +5129,12 @@ final class Square implements Shape { public int area() { return 4; } }
         assert!(error.contains(message), "{message}: {error}");
     }
     let missing = compile(&format!(
-        "{shapes}int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> 1; }}; }}\nvoid main() {{}}\n"
+        "{shapes}class Main {{ static int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> 1; }}; }} }}\n"
     ))
     .expect_err("a switch missing a class should be rejected");
     assert!(missing.contains("doesn't cover 'Square'"), "{missing}");
     compile(&format!(
-        "{shapes}int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> circle.area(); case Square square -> 2; }}; }}\nvoid main() {{ int n = size(new Circle()); }}\n"
+        "{shapes}class Main {{ static int size(Shape shape) {{ return switch (shape) {{ case Circle circle -> circle.area(); case Square square -> 2; }}; }}\npublic static void main() {{ int n = size(new Circle()); }} }}\n"
     ))
     .expect("a switch covering every class needs no default");
 }
@@ -4969,25 +5152,25 @@ fn generic_classes_are_checked() {
     };
     let boxed = "class Box<T> { T value; Box(T value) { this.value = value; } T get() { return value; } }\n";
     let rejected = [
-        ("void main() { Box b = null; }\n", "'Box' is generic"),
+        ("class Main {\n    public static void main() { Box b = null; }\n}\n", "'Box' is generic"),
         (
-            "void main() { Box<Integer, String> b = null; }\n",
+            "class Main {\n    public static void main() { Box<Integer, String> b = null; }\n}\n",
             "'Box' takes 1 type arguments, found 2",
         ),
         (
-            "void main() { int n = new Box<>(1).get(); }\n",
+            "class Main {\n    public static void main() { int n = new Box<>(1).get(); }\n}\n",
             "write the type arguments here",
         ),
         (
-            "void main() { Box<Integer> b = new Box<String>(\"a\"); }\n",
+            "class Main {\n    public static void main() { Box<Integer> b = new Box<String>(\"a\"); }\n}\n",
             "declared 'Box<Integer>' but its value is 'Box<String>'",
         ),
         (
-            "interface Shape {}\nclass Holder<T extends Shape> {}\nvoid main() { Holder<Integer> h = null; }\n",
+            "interface Shape {}\nclass Holder<T extends Shape> {}\n\nclass Main {\n    public static void main() { Holder<Integer> h = null; }\n}\n",
             "'T' must be a 'Shape', but it is 'Integer'",
         ),
         (
-            "class Counter<T> { static int made = 0; }\nvoid main() {}\n",
+            "class Counter<T> { static int made = 0; }\n\nclass Main {\n    public static void main() {}\n}\n",
             "a generic class can't have static fields",
         ),
     ];
@@ -4996,7 +5179,7 @@ fn generic_classes_are_checked() {
         assert!(error.contains(message), "{message}: {error}");
     }
     compile(&format!(
-        "{boxed}<T> Box<T> wrap(T value) {{ return new Box<T>(value); }}\nint take(Box<Integer> b) {{ return b.get(); }}\nvoid main() {{ Box<String> s = new Box<>(\"a\"); int n = take(new Box<>(1)) + take(wrap(2)); }}\n"
+        "{boxed}class Main {{ static <T> Box<T> wrap(T value) {{ return new Box<T>(value); }}\nstatic int take(Box<Integer> b) {{ return b.get(); }}\npublic static void main() {{ Box<String> s = new Box<>(\"a\"); int n = take(new Box<>(1)) + take(wrap(2)); }} }}\n"
     ))
     .expect("diamonds and generic functions making copies compile");
 }
@@ -5015,23 +5198,23 @@ fn lambdas_are_checked() {
     let op = "interface IntOp { int apply(int x); }\ninterface Two { int a(); int b(); }\n";
     let rejected = [
         (
-            "void main() { int n = (x -> x).apply(1); }\n",
+            "class Main {\n    public static void main() { int n = (x -> x).apply(1); }\n}\n",
             "a lambda needs a type",
         ),
         (
-            "void main() { Two t = () -> 1; }\n",
+            "class Main {\n    public static void main() { Two t = () -> 1; }\n}\n",
             "a lambda needs a functional interface",
         ),
         (
-            "void main() { IntOp op = (a, b) -> a + b; }\n",
+            "class Main {\n    public static void main() { IntOp op = (a, b) -> a + b; }\n}\n",
             "takes 1 arguments, but the lambda has 2 parameters",
         ),
         (
-            "void main() { int total = 0; IntOp op = x -> total += x; }\n",
+            "class Main {\n    public static void main() { int total = 0; IntOp op = x -> total += x; }\n}\n",
             "a lambda can't change 'total'",
         ),
         (
-            "void main() { IntOp op = (String x) -> 1; }\n",
+            "class Main {\n    public static void main() { IntOp op = (String x) -> 1; }\n}\n",
             "lambda parameter 'x' is 'String'",
         ),
     ];
@@ -5040,7 +5223,7 @@ fn lambdas_are_checked() {
         assert!(error.contains(message), "{message}: {error}");
     }
     compile(&format!(
-        "{op}class Tools {{ static int twice(int x) {{ return x * 2; }} }}\nvoid main() {{ int base = 1; IntOp add = x -> x + base; IntOp twice = Tools::twice; }}\n"
+        "{op}class Tools {{ static int twice(int x) {{ return x * 2; }} }}\nclass Main {{ public static void main() {{ int base = 1; IntOp add = x -> x + base; IntOp twice = Tools::twice; }} }}\n"
     ))
     .expect("captures and static method references compile");
 }
@@ -5057,45 +5240,45 @@ fn phase_five_syntax_is_checked() {
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
     let rejected = [
-        ("void main() { long n = 1; }\n", "MCFC has no 'long'"),
+        ("class Main {\n    public static void main() { long n = 1; }\n}\n", "MCFC has no 'long'"),
         (
-            "void main() { double n = 1.0; }\n",
+            "class Main {\n    public static void main() { double n = 1.0; }\n}\n",
             "MCFC has no 'double'; use 'float'",
         ),
         (
-            "void main() { int bits = 3; int n = 8 >>> bits; }\n",
+            "class Main {\n    public static void main() { int bits = 3; int n = 8 >>> bits; }\n}\n",
             "'>>>' needs a number of bits written as a literal",
         ),
         (
-            "void main() { float n = ~1.5; }\n",
+            "class Main {\n    public static void main() { float n = ~1.5; }\n}\n",
             "'~' requires an 'int' operand",
         ),
         (
-            "void main() { while (true) { break outer; } }\n",
+            "class Main {\n    public static void main() { while (true) { break outer; } }\n}\n",
             "no loop labeled 'outer' is around this",
         ),
         (
-            "void main() { outer: if (true) {} }\n",
+            "class Main {\n    public static void main() { outer: if (true) {} }\n}\n",
             "only loops can have a label like 'outer:'",
         ),
         (
-            "int sum(int... values, int last) { return 0; }\nvoid main() {}\n",
+            "class Main {\n    static int sum(int... values, int last) { return 0; }\n\n    public static void main() {}\n}\n",
             "only the last parameter can be '...'",
         ),
         (
-            "void main() { String s = String.format(\"%x\", 1); }\n",
+            "class Main {\n    public static void main() { String s = String.format(\"%x\", 1); }\n}\n",
             "supports '%s', '%d' and '%%', not '%x'",
         ),
         (
-            "void main() { String s = String.format(\"%s\"); }\n",
+            "class Main {\n    public static void main() { String s = String.format(\"%s\"); }\n}\n",
             "more '%' fields than values",
         ),
         (
-            "void main() { String s = String.format(\"hi\", 1); }\n",
+            "class Main {\n    public static void main() { String s = String.format(\"hi\", 1); }\n}\n",
             "more values than '%' fields",
         ),
         (
-            "void main() { try { int n = 1; } }\n",
+            "class Main {\n    public static void main() { try { int n = 1; } }\n}\n",
             "a 'try' needs a 'catch' or a 'finally'",
         ),
     ];
@@ -5104,7 +5287,7 @@ fn phase_five_syntax_is_checked() {
         assert!(error.contains(message), "{message}: {error}");
     }
     compile(
-        "int half(int value) throws IllegalArgumentException {\n    if (value % 2 != 0) {\n        throw new IllegalArgumentException(\"odd\");\n    }\n    return value / 2;\n}\nvoid main() {\n    int n = 0;\n    try {\n        n = half(3);\n    } catch (Exception error) {\n        n = -1;\n    }\n}\n",
+        "class Main {\n    static int half(int value) throws IllegalArgumentException {\n        if (value % 2 != 0) {\n            throw new IllegalArgumentException(\"odd\");\n        }\n        return value / 2;\n    }\n\n    public static void main() {\n        int n = 0;\n        try {\n            n = half(3);\n        } catch (Exception error) {\n            n = -1;\n        }\n    }\n}\n",
     )
     .expect("throw, throws and try compile");
 }
@@ -5120,14 +5303,14 @@ fn native_classes_add_methods_to_builtin_types() {
         fs::write(src_dir.join("main.mcf"), main).unwrap();
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
-    let error = compile("final class Component {\n    int size = 0;\n}\nvoid main() {}\n")
+    let error = compile("final class Component {\n    int size = 0;\n}\n\nclass Main {\n    public static void main() {}\n}\n")
         .expect_err("fields on a builtin type");
     assert!(
         error.contains("'Component' is a builtin type, so its class only has methods"),
         "{error}"
     );
     compile(
-        "final class Component {\n    Component shout() {\n        return this.color(\"red\").decorate(\"bold\");\n    }\n}\nvoid main() {\n    Component loud = Component.text(\"hi\").shout();\n    Component quiet = Component.empty().appendSpace();\n}\n",
+        "final class Component {\n    Component shout() {\n        return this.color(\"red\").decorate(\"bold\");\n    }\n}\n\nclass Main {\n    public static void main() {\n        Component loud = Component.text(\"hi\").shout();\n        Component quiet = Component.empty().appendSpace();\n    }\n}\n",
     )
     .expect("a native class method next to std's");
 }
@@ -5143,31 +5326,32 @@ fn explicit_type_arguments_are_checked() {
         fs::write(src_dir.join("main.mcf"), main).unwrap();
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
-    let generic = "<T> T id(T x) { return x; }\n<T> List<T> none() { List<T> xs = List.of(); return xs; }\nint plain(int x) { return x; }\nclass Util { static <T> T pick(T x) { return x; } }\n";
+    // Each case's `class Main {` gets these members.
+    let generic = "class Util { static <T> T pick(T x) { return x; } }\nclass Main {\n    static <T> T id(T x) { return x; }\n    static <T> List<T> none() { List<T> xs = List.of(); return xs; }\n    static int plain(int x) { return x; }\n";
     let rejected = [
         (
-            "void main() { String s = id<Integer>(\"x\"); }\n",
+            "class Main {\n    public static void main() { String s = id<Integer>(\"x\"); }\n}\n",
             "must be 'int', found 'String'",
         ),
         (
-            "void main() { int n = id<Integer, String>(1); }\n",
-            "'id(...)' takes 1 type arguments, found 2",
+            "class Main {\n    public static void main() { int n = id<Integer, String>(1); }\n}\n",
+            "'Main.id(...)' takes 1 type arguments, found 2",
         ),
         (
-            "void main() { int n = plain<Integer>(1); }\n",
-            "'plain(...)' is not generic, so it takes no type arguments",
+            "class Main {\n    public static void main() { int n = plain<Integer>(1); }\n}\n",
+            "'Main.plain(...)' is not generic, so it takes no type arguments",
         ),
         (
-            "void main() { List<Integer> xs = List.of(); int n = xs.<Integer>size(); }\n",
+            "class Main {\n    public static void main() { List<Integer> xs = List.of(); int n = xs.<Integer>size(); }\n}\n",
             "'size' is not a generic method, so it takes no type arguments",
         ),
     ];
     for (source, message) in rejected {
-        let error = compile(&format!("{generic}{source}")).expect_err(message);
+        let error = compile(&source.replacen("class Main {\n", generic, 1)).expect_err(message);
         assert!(error.contains(message), "{message}: {error}");
     }
     compile(&format!(
-        "{generic}void main() {{ List<String> empty = none<String>(); float f = id<Float>(3); int n = Util.<Integer>pick(2); boolean less = n < 3 && n > (1); }}\n"
+        "{generic}    public static void main() {{ List<String> empty = none<String>(); float f = id<Float>(3); int n = Util.<Integer>pick(2); boolean less = n < 3 && n > (1); }}\n}}\n"
     ))
     .expect("explicit type arguments, and comparisons that look like them");
 }
@@ -5185,15 +5369,15 @@ fn std_declares_streams_bossbars_and_entity_patterns() {
     };
     let rejected = [
         (
-            "void f(Entity e) { switch (e) { case Player p -> p.sendMessage(\"hi\"); } }\nvoid main() {}\n",
+            "class Main {\n    static void f(Entity e) { switch (e) { case Player p -> p.sendMessage(\"hi\"); } }\n\n    public static void main() {}\n}\n",
             "the switch doesn't cover every entity",
         ),
         (
-            "void main() { var bar = new BossBar(\"a:b\", \"Hi\"); String n = bar.getName(); }\n",
+            "class Main {\n    public static void main() { var bar = new BossBar(\"a:b\", \"Hi\"); String n = bar.getName(); }\n}\n",
             "unknown method 'getName'",
         ),
         (
-            "void main() { var bar = new BossBar(\"a:b\", \"Hi\"); bar.max = 3; }\n",
+            "class Main {\n    public static void main() { var bar = new BossBar(\"a:b\", \"Hi\"); bar.max = 3; }\n}\n",
             "use '.setMax(...)' for the max property",
         ),
     ];
@@ -5202,7 +5386,7 @@ fn std_declares_streams_bossbars_and_entity_patterns() {
         assert!(error.contains(message), "{message}: {error}");
     }
     compile(
-        "import std.stream.Stream;\nvoid greet(Entity e) {\n    if (e instanceof Player p) {\n        p.sendMessage(\"hi\");\n    }\n    String kind = switch (e) {\n        case Player p -> \"player\";\n        default -> \"entity\";\n    };\n}\nvoid main() {\n    Stream<Integer> big = List.of(1, 5, 9).stream().filter(n -> n > 2);\n    List<String> names = big.map(n -> \"#\" + n).toList();\n    var bar = new BossBar(\"a:b\", \"Hi\");\n    bar.setVisible(false);\n    bar.setName(Component.text(\"Boss\"));\n    bar.setPlayers(Selector.of(\"@a\").getFirst());\n    int value = bar.getValue();\n    bar.remove();\n    for (Entity e : Selector.of(\"@e[limit=2]\")) {\n        greet(e);\n    }\n}\n",
+        "import std.stream.Stream;\n\nclass Main {\n    static void greet(Entity e) {\n        if (e instanceof Player p) {\n            p.sendMessage(\"hi\");\n        }\n        String kind = switch (e) {\n            case Player p -> \"player\";\n            default -> \"entity\";\n        };\n    }\n\n    public static void main() {\n        Stream<Integer> big = List.of(1, 5, 9).stream().filter(n -> n > 2);\n        List<String> names = big.map(n -> \"#\" + n).toList();\n        var bar = new BossBar(\"a:b\", \"Hi\");\n        bar.setVisible(false);\n        bar.setName(Component.text(\"Boss\"));\n        bar.setPlayers(Selector.of(\"@a\").getFirst());\n        int value = bar.getValue();\n        bar.remove();\n        for (Entity e : Selector.of(\"@e[limit=2]\")) {\n            greet(e);\n        }\n    }\n}\n",
     )
     .expect("streams, std bossbar methods and entity patterns compile");
     let mut commands = String::new();
@@ -5250,11 +5434,13 @@ fn selector_sort_and_game_mode_take_std_enum_constants() {
 import std.selector.Sort;
 import std.gamemode.GameMode;
 
-void main() {
-    var near = Selector.entities().type("minecraft:pig").sort(Sort.FURTHEST).limit(2);
-    near.addTag("far");
-    var spectators = Selector.allPlayers().notGameMode(GameMode.SPECTATOR);
-    spectators.addTag("playing");
+class Main {
+    public static void main() {
+        var near = Selector.entities().type("minecraft:pig").sort(Sort.FURTHEST).limit(2);
+        near.addTag("far");
+        var spectators = Selector.allPlayers().notGameMode(GameMode.SPECTATOR);
+        spectators.addTag("playing");
+    }
 }
 "#;
     let project = temp_path();

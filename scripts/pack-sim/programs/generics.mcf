@@ -104,41 +104,43 @@ class Holder<T extends Shape> {
     }
 }
 
-<T> Box<T> wrap(T value) {
-    return new Box<T>(value);
-}
-
-<T> T unwrap(Box<T> box) {
-    return box.get();
-}
-
-void main() {
-    Box<Integer> number = new Box<>(5);
-    number.set(number.get() + 1);
-    Box<String> word = new Box<String>("hi");
-    Box<Float> half = number.with(0.5);
-    String boxes = "boxes " + number.value + " " + word.get() + " " + half.get();
-    mcf("say $(boxes)");
-
-    Pair<String, Integer> pair = new Pair<>("a", 1);
-    Pair<Integer, String> swapped = pair.swap();
-    String pairs = "pairs " + pair + " " + swapped + " " + swapped.first;
-    mcf("say $(pairs)");
-
-    Stack<String> stack = new Stack<>();
-    stack.push("x");
-    stack.push("y");
-    stack.push("z");
-    String popped = "stack " + stack.size;
-    while (!stack.isEmpty()) {
-        popped = popped + " " + stack.pop();
+class Main {
+    static <T> Box<T> wrap(T value) {
+        return new Box<T>(value);
     }
-    mcf("say $(popped)");
 
-    Holder<Square> holder = new Holder<>();
-    holder.add(new Square(2));
-    holder.add(new Square(3));
-    Box<Box<Integer>> nested = wrap(wrap(7));
-    String rest = "rest " + holder.total() + " " + unwrap(unwrap(nested)) + " " + unwrap(word);
-    mcf("say $(rest)");
+    static <T> T unwrap(Box<T> box) {
+        return box.get();
+    }
+
+    public static void main() {
+        Box<Integer> number = new Box<>(5);
+        number.set(number.get() + 1);
+        Box<String> word = new Box<String>("hi");
+        Box<Float> half = number.with(0.5);
+        String boxes = "boxes " + number.value + " " + word.get() + " " + half.get();
+        mcf("say $(boxes)");
+
+        Pair<String, Integer> pair = new Pair<>("a", 1);
+        Pair<Integer, String> swapped = pair.swap();
+        String pairs = "pairs " + pair + " " + swapped + " " + swapped.first;
+        mcf("say $(pairs)");
+
+        Stack<String> stack = new Stack<>();
+        stack.push("x");
+        stack.push("y");
+        stack.push("z");
+        String popped = "stack " + stack.size;
+        while (!stack.isEmpty()) {
+            popped = popped + " " + stack.pop();
+        }
+        mcf("say $(popped)");
+
+        Holder<Square> holder = new Holder<>();
+        holder.add(new Square(2));
+        holder.add(new Square(3));
+        Box<Box<Integer>> nested = wrap(wrap(7));
+        String rest = "rest " + holder.total() + " " + unwrap(unwrap(nested)) + " " + unwrap(word);
+        mcf("say $(rest)");
+    }
 }

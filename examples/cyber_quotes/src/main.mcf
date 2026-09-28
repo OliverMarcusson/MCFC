@@ -5,70 +5,71 @@
 //
 // Run /function cyber_quotes:health first to confirm the mcfd daemon is reachable
 // before troubleshooting the quote fetch itself.
+class Main {
+    // Round-trips a no-op request through mcfd so you can verify the bridge end to
+    // end (datapack -> log marker -> mcfd -> inbox -> reload) without hitting Munin.
+    static void health() {
+        var probe = new Component("[Cyber Quotes] Pinging mcfd...");
+        probe.color = "gray";
+        for (var viewer : Selector.of("@a")) {
+            ((Player) viewer).sendMessage(probe);
+        }
 
-// Round-trips a no-op request through mcfd so you can verify the bridge end to
-// end (datapack -> log marker -> mcfd -> inbox -> reload) without hitting Munin.
-void health() {
-    var probe = new Component("[Cyber Quotes] Pinging mcfd...");
-    probe.color = "gray";
-    for (var viewer : Selector.of("@a")) {
-        ((Player) viewer).sendMessage(probe);
+        var pong = mcfd.ping();
+        if (pong.ok()) {
+            var connected = new Component("✦ mcfd is connected.");
+            connected.color = "green";
+            for (var viewer : Selector.of("@a")) {
+                ((Player) viewer).sendMessage(connected);
+            }
+        } else {
+            var offline = new Component("✦ mcfd did not respond — is the service running?");
+            offline.color = "red";
+            for (var viewer : Selector.of("@a")) {
+                ((Player) viewer).sendMessage(offline);
+            }
+        }
     }
 
-    var pong = mcfd.ping();
-    if (pong.ok()) {
-        var connected = new Component("✦ mcfd is connected.");
-        connected.color = "green";
+    static void quote() {
+        var requesting = new Component("[Cyber Quotes debug] Requesting a random quote from Munin...");
+        requesting.color = "yellow";
         for (var viewer : Selector.of("@a")) {
-            ((Player) viewer).sendMessage(connected);
+            ((Player) viewer).sendMessage(requesting);
         }
-    } else {
-        var offline = new Component("✦ mcfd did not respond — is the service running?");
-        offline.color = "red";
-        for (var viewer : Selector.of("@a")) {
-            ((Player) viewer).sendMessage(offline);
-        }
-    }
-}
 
-void quote() {
-    var requesting = new Component("[Cyber Quotes debug] Requesting a random quote from Munin...");
-    requesting.color = "yellow";
-    for (var viewer : Selector.of("@a")) {
-        ((Player) viewer).sendMessage(requesting);
-    }
+        var response = http.get_json_strings("https://munin-sou.se/api/v1/cyber/quotes/random", List.of("quote.text", "quote.author.name", "quote.source"));
 
-    var response = http.get_json_strings("https://munin-sou.se/api/v1/cyber/quotes/random", List.of("quote.text", "quote.author.name", "quote.source"));
+        if (response.ok() && response.status() == 200) {
+            var quote_text = (String) response.values()[0];
+            var author = (String) response.values()[1];
+            var source = (String) response.values()[2];
 
-    if (response.ok() && response.status() == 200) {
-        var quote_text = (String) response.values()[0];
-        var author = (String) response.values()[1];
-        var source = (String) response.values()[2];
+            var message = new Component("✦ CYBER QUOTE\n");
+            message.color = "aqua";
+            message.bold = true;
+            var quote_line = new Component("“$(quote_text)”");
+            quote_line.color = "light_purple";
+            quote_line.italic = true;
+            quote_line.hover_event.action = "show_text";
+            quote_line.hover_event.value = new Component("From $(source)");
+            var attribution = new Component("\n— $(author) · $(source)");
+            attribution.color = "gray";
+            message.extra = List.of(quote_line, attribution);
 
-        var message = new Component("✦ CYBER QUOTE\n");
-        message.color = "aqua";
-        message.bold = true;
-        var quote_line = new Component("“$(quote_text)”");
-        quote_line.color = "light_purple";
-        quote_line.italic = true;
-        quote_line.hover_event.action = "show_text";
-        quote_line.hover_event.value = new Component("From $(source)");
-        var attribution = new Component("\n— $(author) · $(source)");
-        attribution.color = "gray";
-        message.extra = List.of(quote_line, attribution);
-
-        for (var viewer : Selector.of("@a")) {
-            ((Player) viewer).sendMessage(message);
-        }
-    } else {
-        var unavailable = new Component("✦ Cyber quote unavailable right now.");
-        unavailable.color = "red";
-        unavailable.italic = true;
-        var diagnostic = new Component("[Cyber Quotes debug] ok=$(response.ok()), status=$(response.status()), error=$(response.err())");
-        diagnostic.color = "gold";
-        for (var viewer : Selector.of("@a")) {
-            ((Player) viewer).sendMessage(unavailable);
-            ((Player) viewer).sendMessage(diagnostic);
+            for (var viewer : Selector.of("@a")) {
+                ((Player) viewer).sendMessage(message);
+            }
+        } else {
+            var unavailable = new Component("✦ Cyber quote unavailable right now.");
+            unavailable.color = "red";
+            unavailable.italic = true;
+            var diagnostic = new Component("[Cyber Quotes debug] ok=$(response.ok()), status=$(response.status()), error=$(response.err())");
+            diagnostic.color = "gold";
+            for (var viewer : Selector.of("@a")) {
+                ((Player) viewer).sendMessage(unavailable);
+                ((Player) viewer).sendMessage(diagnostic);
+            }
         }
     }
 }

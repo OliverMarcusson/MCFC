@@ -12,24 +12,26 @@ record Action(String label, RunCommand action) {}
 record Notice(String type, String title, Message body) {}
 record Menu(String type, String title, Message body, List<Action> actions) {}
 
-public void notice(Player player, String title, Component body) {
-    var dialog = new Notice("minecraft:notice", title, message(body));
-    Execute.as(player, () -> {
-        mcf("dialog show @s $(dialog)");
-    });
-}
-
-public void menu(Player player, String title, Component body, List<Button> buttons) {
-    List<Action> actions = List.of();
-    for (Button button : buttons) {
-        actions.add(new Action(button.label(), new RunCommand("run_command", "/trigger " + button.command())));
+public final class Dialog {
+    public static void notice(Player player, String title, Component body) {
+        var dialog = new Notice("minecraft:notice", title, message(body));
+        Execute.as(player, () -> {
+            mcf("dialog show @s $(dialog)");
+        });
     }
-    var dialog = new Menu("minecraft:multi_action", title, message(body), actions);
-    Execute.as(player, () -> {
-        mcf("dialog show @s $(dialog)");
-    });
-}
 
-Message message(Component contents) {
-    return new Message("minecraft:plain_message", contents);
+    public static void menu(Player player, String title, Component body, List<Button> buttons) {
+        List<Action> actions = List.of();
+        for (Button button : buttons) {
+            actions.add(new Action(button.label(), new RunCommand("run_command", "/trigger " + button.command())));
+        }
+        var dialog = new Menu("minecraft:multi_action", title, message(body), actions);
+        Execute.as(player, () -> {
+            mcf("dialog show @s $(dialog)");
+        });
+    }
+
+    static Message message(Component contents) {
+        return new Message("minecraft:plain_message", contents);
+    }
 }

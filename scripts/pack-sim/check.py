@@ -18,7 +18,8 @@ PROGRAMS = os.path.join(HERE, "programs")
 # Realms can't take packs with thousands of files, so macro helpers take their
 # frame names and string text as arguments, about two commands a call, and
 # blocks of up to three lines behind conditions are inlined, rechecking them
-# on every line.)
+# on every line. Static fields cost a few load commands more than the old
+# @WorldState, since their class's initializer runs on load.)
 BUDGET = {
     "tests": 23,
     "recursion": 9361,
@@ -33,15 +34,15 @@ BUDGET = {
     "strtools": 1758,
     "bits": 6987,
     "control": 565,
-    "data": 438,
+    "data": 441,
     "javaapi": 441,
     "javaish": 133,
     "sleepy": 172,
     "stdlib": 1653,
-    "stdlib2": 1319,
+    "stdlib2": 1324,
     "strings": 120,
     "switchy": 69,
-    "text": 17026,
+    "text": 17029,
     "timed": 398,
     "trig": 1537,
     "nested": 79,
@@ -56,9 +57,9 @@ BUDGET = {
     "labels": 536,
     "varargs": 461,
     "exceptions": 1071,
-    "gc": 14044,
+    "gc": 14046,
     "vectors": 404,
-    "worldindex": 70,
+    "worldindex": 76,
 }
 
 

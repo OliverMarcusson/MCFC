@@ -39,52 +39,54 @@ class Tools {
     }
 }
 
-int applyTwice(IntOp op, int x) {
-    return op.apply(op.apply(x));
-}
-
-<T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper) {
-    List<R> out = List.of();
-    for (T value : values) {
-        out.add(mapper.map(value));
+class Main {
+    static int applyTwice(IntOp op, int x) {
+        return op.apply(op.apply(x));
     }
 
-    return out;
-}
+    static <T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper) {
+        List<R> out = List.of();
+        for (T value : values) {
+            out.add(mapper.map(value));
+        }
 
-String join(List<String> parts) {
-    String out = "";
-    for (String part : parts) {
-        out = out + part;
+        return out;
     }
 
-    return out;
-}
+    static String join(List<String> parts) {
+        String out = "";
+        for (String part : parts) {
+            out = out + part;
+        }
 
-void main() {
-    int offset = 10;
-    IntOp addOffset = x -> x + offset;
-    IntOp square = Tools::square;
-    IntOp block = (int x) -> {
-        int y = x * 3;
-        return y - 1;
-    };
-    String ops = "ops " + addOffset.apply(5) + " " + square.apply(4) + " " + block.apply(2) + " " + applyTwice(x -> x * 10, 3);
-    mcf("say $(ops)");
+        return out;
+    }
 
-    Counter counter = new Counter();
-    IntOp adder = counter.adder();
-    Action bump = counter.bump();
-    bump.run();
-    bump.run();
-    counter.step = 5;
-    String members = "members " + counter.count + " " + adder.apply(1) + " " + counter.doubler().apply(21);
-    mcf("say $(members)");
+    public static void main() {
+        int offset = 10;
+        IntOp addOffset = x -> x + offset;
+        IntOp square = Tools::square;
+        IntOp block = (int x) -> {
+            int y = x * 3;
+            return y - 1;
+        };
+        String ops = "ops " + addOffset.apply(5) + " " + square.apply(4) + " " + block.apply(2) + " " + applyTwice(x -> x * 10, 3);
+        mcf("say $(ops)");
 
-    List<Integer> numbers = List.of(1, 2, 3);
-    List<String> labels = mapAll(numbers, n -> "n" + n);
-    List<Integer> lengths = mapAll(labels, String::length);
-    Mapper<Integer, Integer> nested = n -> applyTwice(x -> x + n, 0);
-    String generic = "generic " + join(labels) + " " + lengths[2] + " " + nested.map(4);
-    mcf("say $(generic)");
+        Counter counter = new Counter();
+        IntOp adder = counter.adder();
+        Action bump = counter.bump();
+        bump.run();
+        bump.run();
+        counter.step = 5;
+        String members = "members " + counter.count + " " + adder.apply(1) + " " + counter.doubler().apply(21);
+        mcf("say $(members)");
+
+        List<Integer> numbers = List.of(1, 2, 3);
+        List<String> labels = mapAll(numbers, n -> "n" + n);
+        List<Integer> lengths = mapAll(labels, String::length);
+        Mapper<Integer, Integer> nested = n -> applyTwice(x -> x + n, 0);
+        String generic = "generic " + join(labels) + " " + lengths[2] + " " + nested.map(4);
+        mcf("say $(generic)");
+    }
 }

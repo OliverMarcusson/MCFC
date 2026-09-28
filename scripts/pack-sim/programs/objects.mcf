@@ -51,45 +51,47 @@ enum Planet {
     }
 }
 
-int area(int side) {
-    return side * side;
-}
-
-float area(float width, float height) {
-    return width * height;
-}
-
-String area(String label) {
-    return "area " + label;
-}
-
-void main() {
-    Point start = Point.origin();
-    Point moved = start.add(3, -4).add(new Point(1, 1));
-    int distance = moved.manhattan();
-    boolean same = moved == new Point(4, -3);
-    boolean different = moved != new Point(4, 3);
-    boolean equal = moved.equals(new Point(4, -3));
-    String summary = "$(moved) $(distance) $(same) $(different) $(equal)";
-    mcf("say $(summary)");
-
-    Line line = new Line(start, moved);
-    String text = "line " + line;
-    mcf("say $(text)");
-
-    String tag = "tag " + new Tagged("x");
-    mcf("say $(tag)");
-
-    for (Planet planet : Planet.values()) {
-        int density = planet.density();
-        int mass = planet.mass;
-        boolean home = planet.isHome();
-        String row = "$(planet) $(density) $(mass) $(home) " + planet.name();
-        mcf("say $(row)");
+class Main {
+    static int area(int side) {
+        return side * side;
     }
 
-    int square = area(3);
-    float rect = area(2, 1.5);
-    String named = area("x");
-    mcf("say $(square) $(rect) $(named)");
+    static float area(float width, float height) {
+        return width * height;
+    }
+
+    static String area(String label) {
+        return "area " + label;
+    }
+
+    public static void main() {
+        Point start = Point.origin();
+        Point moved = start.add(3, -4).add(new Point(1, 1));
+        int distance = moved.manhattan();
+        boolean same = moved == new Point(4, -3);
+        boolean different = moved != new Point(4, 3);
+        boolean equal = moved.equals(new Point(4, -3));
+        String summary = "$(moved) $(distance) $(same) $(different) $(equal)";
+        mcf("say $(summary)");
+
+        Line line = new Line(start, moved);
+        String text = "line " + line;
+        mcf("say $(text)");
+
+        String tag = "tag " + new Tagged("x");
+        mcf("say $(tag)");
+
+        for (Planet planet : Planet.values()) {
+            int density = planet.density();
+            int mass = planet.mass;
+            boolean home = planet.isHome();
+            String row = "$(planet) $(density) $(mass) $(home) " + planet.name();
+            mcf("say $(row)");
+        }
+
+        int square = area(3);
+        float rect = area(2, 1.5);
+        String named = area("x");
+        mcf("say $(square) $(rect) $(named)");
+    }
 }

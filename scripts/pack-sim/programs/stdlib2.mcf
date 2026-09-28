@@ -1,25 +1,25 @@
 // std.str formatting, @WorldState and std.timer; the world is empty, so no players.
-import std.str;
-import std.timer;
+import std.str.Strings;
+import std.timer.Timer;
 
-@WorldState
-int round;
+class Main {
+    static int round;
 
-@WorldState
-List<String> log;
+    static List<String> log;
 
-void main() {
-    mcf("say f $(str.formatFloat(3.14159, 2)) $(str.formatFloat(-1.26, 1)) $(str.formatFloat(2.0, 1)) $(str.formatFloat(7.6, 0))");
-    mcf("say c $(str.withCommas(1234567)) $(str.withCommas(-1000)) $(str.withCommas(999)) $(str.withCommas(0))");
-    round += 1;
-    log.add("r" + round);
-    mcf("say world $(round) $(log.size())");
-    timer.start("round", 20);
-    mcf("say timer $(timer.running(\"round\")) $(timer.remaining(\"round\")) $(timer.running(\"other\"))");
-}
+    public static void main() {
+        mcf("say f $(Strings.formatFloat(3.14159, 2)) $(Strings.formatFloat(-1.26, 1)) $(Strings.formatFloat(2.0, 1)) $(Strings.formatFloat(7.6, 0))");
+        mcf("say c $(Strings.withCommas(1234567)) $(Strings.withCommas(-1000)) $(Strings.withCommas(999)) $(Strings.withCommas(0))");
+        round += 1;
+        log.add("r" + round);
+        mcf("say world $(round) $(log.size())");
+        Timer.start("round", 20);
+        mcf("say timer $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(Timer.running(\"other\"))");
+    }
 
-@Every(ticks = 30)
-void later() {
-    mcf("say later $(timer.running(\"round\")) $(timer.remaining(\"round\")) $(round)");
-    timer.stop("round");
+    @Every(ticks = 30)
+    static void later() {
+        mcf("say later $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(round)");
+        Timer.stop("round");
+    }
 }

@@ -1088,7 +1088,7 @@ fn gc_mark_stmts(
     match ty {
         Type::Class(_) => vec![stmt(StmtKind::Expr(at(ExprKind::Call {
             type_args: Vec::new(),
-            function: "std::heap::mark".to_string(),
+            function: "std::heap::Heap__mark".to_string(),
             args: vec![at(ExprKind::Call {
                 type_args: Vec::new(),
                 function: "__mcfc_id".to_string(),
@@ -1237,7 +1237,7 @@ fn gc_functions(
     let mut dispatch = vec![stmt(StmtKind::Let {
         name: "classId".to_string(),
         ty: Some(Type::Int),
-        value: call("std::heap::classOf", vec![id()]),
+        value: call("std::heap::Heap__classOf", vec![id()]),
     })];
     for class in &program.classes {
         let Some(def) = struct_defs.get(&class.name) else {
@@ -1348,12 +1348,12 @@ fn gc_functions(
         stmt(StmtKind::If {
             condition: at(ExprKind::Unary {
                 op: UnaryOp::Not,
-                expr: Box::new(call("std::heap::due", Vec::new())),
+                expr: Box::new(call("std::heap::Heap__due", Vec::new())),
             }),
             then_body: vec![stmt(StmtKind::Return(None))],
             else_body: Vec::new(),
         }),
-        stmt(StmtKind::Expr(call("std::heap::begin", Vec::new()))),
+        stmt(StmtKind::Expr(call("std::heap::Heap__begin", Vec::new()))),
     ];
     // World state (static fields included) roots everything it points to.
     for state in world_states.iter() {
@@ -1365,14 +1365,14 @@ fn gc_functions(
     }
     collect.push(stmt(StmtKind::Expr(call(GC_LOCALS, Vec::new()))));
     collect.push(stmt(StmtKind::While {
-        condition: call("std::heap::hasGray", Vec::new()),
+        condition: call("std::heap::Heap__hasGray", Vec::new()),
         body: vec![stmt(StmtKind::Expr(call(
             "__mcfc_gc_trace",
-            vec![call("std::heap::nextGray", Vec::new())],
+            vec![call("std::heap::Heap__nextGray", Vec::new())],
         )))],
         step: Vec::new(),
     }));
-    collect.push(stmt(StmtKind::Expr(call("std::heap::sweep", Vec::new()))));
+    collect.push(stmt(StmtKind::Expr(call("std::heap::Heap__sweep", Vec::new()))));
     out.push(function("__mcfc_gc", false, collect));
     out
 }
@@ -1608,8 +1608,16 @@ fn qualify_world_state(
 ) {
     match &mut expr.kind {
         ExprKind::Variable(name) => {
-            if !env.contains_key(name.as_str()) && world_state_type(struct_defs, name).is_some() {
+            if env.contains_key(name.as_str()) {
+                return;
+            }
+            if world_state_type(struct_defs, name).is_some() {
                 *name = format!("{WORLD_STATE_PREFIX}{name}");
+            } else if let Some(owner) = env_tag(env, OWNER_TAG)
+                && let Some(state) = static_field_state(struct_defs, owner, name)
+            {
+                // A static field of the class the code is in.
+                *name = format!("{WORLD_STATE_PREFIX}{state}");
             }
         }
         ExprKind::Unary { expr, .. } => qualify_world_state(expr, env, struct_defs),
@@ -2427,13 +2435,13 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
             (
                 &mut player_state_names,
                 &mut player_state_types,
-                "player_state",
+                "@PlayerState",
             )
         } else {
             (
                 &mut entity_state_names,
                 &mut entity_state_types,
-                "entity_state",
+                "@EntityState",
             )
         };
         let path_name = state.path.join(".");
@@ -2471,7 +2479,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                 | Type::PlayerRef
         ) {
             diagnostics.push(Diagnostic::new(
-                "@WorldState supports 'int', 'boolean', 'String', 'float', 'Entity', 'Player', records, lists and maps",
+                "a static field can be 'int', 'boolean', 'String', 'float', 'Entity', 'Player', records, lists and maps",
                 state.span.clone(),
             ));
         }
@@ -2487,7 +2495,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
             .is_some()
         {
             diagnostics.push(Diagnostic::new(
-                format!("duplicate @WorldState '{name}'"),
+                format!("duplicate static field '{name}'"),
                 state.span.clone(),
             ));
         }
@@ -2708,7 +2716,16 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
     }
 
     let mut world_states = program.world_states.clone();
-    if !program.classes.is_empty() && signatures.contains_key("std::heap::mark") {
+    // Every pack has classes, but only one that makes objects needs collecting.
+    let is_factory = |name: &str| name.ends_with("__new") || name.contains("__new__");
+    let allocates = functions.iter().any(|function| {
+        !is_factory(&function.name)
+            && function
+                .called_functions
+                .iter()
+                .any(|callee| is_factory(callee) || callee == "std::heap::Heap__alloc")
+    });
+    if allocates && signatures.contains_key("std::heap::Heap__mark") {
         let gc = gc_functions(program, &mut struct_defs, &mut world_states, &functions);
         for function in &gc {
             signatures.insert(
@@ -2735,7 +2752,7 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                 type_check_function(function, &struct_defs, &signatures, host, &mut diagnostics);
             // The backend's marking code calls these; say so for pruning and depths.
             if typed.name == GC_LOCALS {
-                typed.called_functions.insert("std::heap::mark".to_string());
+                typed.called_functions.insert("std::heap::Heap__mark".to_string());
                 typed.called_functions.extend(
                     gc.iter()
                         .filter(|scan| scan.name.starts_with("__mcfc_gc_scan_"))
@@ -4061,7 +4078,7 @@ fn type_check_block(
                 let call = Expr {
                     kind: ExprKind::Call {
                         type_args: Vec::new(),
-                        function: format!("std::list::{helper}"),
+                        function: format!("std::list::Lists__{helper}"),
                         args: vec![(**receiver).clone(), args[0].clone()],
                     },
                     span: statement.span.clone(),
@@ -4639,7 +4656,7 @@ fn type_check_expr(
             },
             // The heap, seen as a list of `class`'s slots; see `class_heap_path`.
             None if name.starts_with(HEAP) => TypedExpr {
-                kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}mcfcHeap")),
+                kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}std_heap_Heap__mcfcHeap")),
                 ty: Type::Array(Box::new(Type::Struct(format!(
                     "{HEAP_SLOT}{}",
                     &name[HEAP.len()..]
@@ -4973,7 +4990,7 @@ fn type_check_expr(
                     &Expr {
                         kind: ExprKind::Call {
                             type_args: Vec::new(),
-                            function: "std::player::isPlayer".to_string(),
+                            function: "std::player::Players__isPlayer".to_string(),
                             args: vec![(**object).clone()],
                         },
                         span: expr.span.clone(),
@@ -5010,7 +5027,7 @@ fn type_check_expr(
                 span: expr.span.clone(),
             };
             let class_id = call(
-                "std::heap::classOf",
+                "std::heap::Heap__classOf",
                 vec![call("__mcfc_id", vec![(**object).clone()])],
             );
             type_check_expr(
@@ -5249,10 +5266,10 @@ fn type_check_expr(
                 .and_then(|def| def.class.as_ref())
                 .map_or(0, |info| info.id);
             let _ = args;
-            called_functions.insert("std::heap::alloc".to_string());
+            called_functions.insert("std::heap::Heap__alloc".to_string());
             TypedExpr {
                 kind: TypedExprKind::Call {
-                    function: "std::heap::alloc".to_string(),
+                    function: "std::heap::Heap__alloc".to_string(),
                     args: vec![TypedExpr {
                         kind: TypedExprKind::Int(id as i64),
                         ty: Type::Int,
@@ -5570,7 +5587,7 @@ fn type_check_expr(
 
             // `std.math.sin/cos/tan` are `/compute` providers: inline them so they
             // fuse into the surrounding float expression instead of costing a call.
-            if let Some(name) = function.strip_prefix("std::math::")
+            if let Some(name) = function.strip_prefix("std::math::Math__")
                 && matches!(name, "sin" | "cos" | "tan")
                 && let [arg] = args.as_slice()
             {
@@ -7502,7 +7519,7 @@ fn type_check_method_call(
         return Some(recheck(
             ExprKind::Call {
                 type_args: Vec::new(),
-                function: "std::stream::fromList".to_string(),
+                function: "std::stream::Streams__fromList".to_string(),
                 args: vec![receiver_expr.clone()],
             },
             called_functions,
@@ -7729,10 +7746,10 @@ fn type_check_method_call(
                 ));
             }
             let (function, ty) = match method {
-                "contains" => ("std::str::contains", Type::Bool),
-                "startsWith" => ("std::str::startsWith", Type::Bool),
-                "endsWith" => ("std::str::endsWith", Type::Bool),
-                _ => ("std::str::find", Type::Int),
+                "contains" => ("std::str::Strings__contains", Type::Bool),
+                "startsWith" => ("std::str::Strings__startsWith", Type::Bool),
+                "endsWith" => ("std::str::Strings__endsWith", Type::Bool),
+                _ => ("std::str::Strings__find", Type::Int),
             };
             called_functions.insert(function.to_string());
             let mut call_args = vec![receiver];
@@ -7759,7 +7776,7 @@ fn type_check_method_call(
                     expr.span.clone(),
                 ));
             }
-            let function = format!("std::str::{method}");
+            let function = format!("std::str::Strings__{method}");
             called_functions.insert(function.clone());
             let mut call_args = vec![receiver];
             call_args.extend(args);
@@ -10103,10 +10120,10 @@ fn string_operand(
                 ty: Type::Int,
                 ..operand
             };
-            called_functions.insert("std::heap::describe".to_string());
+            called_functions.insert("std::heap::Heap__describe".to_string());
             TypedExpr {
                 kind: TypedExprKind::Call {
-                    function: "std::heap::describe".to_string(),
+                    function: "std::heap::Heap__describe".to_string(),
                     args: vec![text(short), id],
                 },
                 ty: Type::String,
@@ -12245,7 +12262,7 @@ fn class_functions(
                 ty: Some(Type::Int),
                 value: at(ExprKind::Call {
                     type_args: Vec::new(),
-                    function: "std::heap::classOf".to_string(),
+                    function: "std::heap::Heap__classOf".to_string(),
                     args: vec![at(ExprKind::Call {
                         type_args: Vec::new(),
                         function: "__mcfc_id".to_string(),

@@ -19,17 +19,19 @@ Create an `EntityData` with `new EntityData(id)`.
 | `asNbt()` | `Nbt` | Flattened entity compound for passengers and summon payloads. |
 
 ```mcfc
-void spawnPet() {
-    var pig = new EntityData("minecraft:pig");
-    pig.setName("MCFC");
-    pig.setNoAi(true);
-    pig.nbt.Health = 20;
+class Main {
+    static void spawnPet() {
+        var pig = new EntityData("minecraft:pig");
+        pig.setName("MCFC");
+        pig.setNoAi(true);
+        pig.nbt.Health = 20;
 
-    var chicken = new EntityData("minecraft:chicken");
-    chicken.setName("Passenger");
-    pig.nbt.Passengers[0] = chicken;
+        var chicken = new EntityData("minecraft:chicken");
+        chicken.setName("Passenger");
+        pig.nbt.Passengers[0] = chicken;
 
-    summon(pig);
+        summon(pig);
+    }
 }
 ```
 
@@ -51,13 +53,15 @@ Create a `BlockData` with `new BlockData(id)`.
 `setBlock(BlockData)` places the block id and states, then merges `BlockData.nbt`. `fill(..., BlockData)` uses only the block id and states.
 
 ```mcfc
-void placeChest() {
-    var chest = new BlockData("minecraft:chest");
-    chest.states.facing = "north";
-    chest.setName("Loot");
-    chest.setLootTable("minecraft:chests/simple_dungeon");
+class Main {
+    static void placeChest() {
+        var chest = new BlockData("minecraft:chest");
+        chest.states.facing = "north";
+        chest.setName("Loot");
+        chest.setLootTable("minecraft:chests/simple_dungeon");
 
-    Block.of("~ ~ ~").setBlock(chest);
+        Block.of("~ ~ ~").setBlock(chest);
+    }
 }
 ```
 
@@ -74,13 +78,15 @@ Create an `ItemStack` with `new ItemStack(id)`.
 | `asNbt()` | `Nbt` | Item-stack payload compound. |
 
 ```mcfc
-void reward(Player player) {
-    var sword = new ItemStack("minecraft:diamond_sword");
-    sword.setCount(1);
-    sword.setName("Quest Blade");
-    sword.nbt.CustomModelData = 7;
+class Main {
+    static void reward(Player player) {
+        var sword = new ItemStack("minecraft:diamond_sword");
+        sword.setCount(1);
+        sword.setName("Quest Blade");
+        sword.nbt.CustomModelData = 7;
 
-    player.give(sword);
+        player.give(sword);
+    }
 }
 ```
 
@@ -91,16 +97,18 @@ Create a `Component` with `new Component()` or `new Component("...")`.
 `Component.*` supports arbitrary nested text-component content, formatting, interactivity, and child fields such as `.color`, `.bold`, `.extra`, `.hover_event.*`, `.click_event.*`, `.with`, `.score.*`, `.separator`, and `.nbt` source fields.
 
 ```mcfc
-void sendPrompt(Player player) {
-    var prompt = new Component("Open chest");
-    prompt.color = "gold";
-    prompt.bold = true;
-    prompt.hover_event.action = "show_text";
-    prompt.hover_event.value = new Component("Contains loot");
-    prompt.click_event.action = "run_command";
-    prompt.click_event.command = "/trigger status";
+class Main {
+    static void sendPrompt(Player player) {
+        var prompt = new Component("Open chest");
+        prompt.color = "gold";
+        prompt.bold = true;
+        prompt.hover_event.action = "show_text";
+        prompt.hover_event.value = new Component("Contains loot");
+        prompt.click_event.action = "run_command";
+        prompt.click_event.command = "/trigger status";
 
-    player.sendMessage(prompt);
+        player.sendMessage(prompt);
+    }
 }
 ```
 
@@ -111,12 +119,14 @@ Assigning a `Component` into a nested text-component field stores the nested com
 Paper's Adventure calls work too. Each method returns a changed copy and leaves the component it's called on alone, as in Adventure.
 
 ```mcfc
-void greet(Player player, String name) {
-    var message = Component.text("Welcome, ", NamedTextColor.GOLD)
-        .append(Component.text(name).decorate(TextDecoration.BOLD))
-        .clickEvent(ClickEvent.suggestCommand("/msg " + name))
-        .hoverEvent(HoverEvent.showText(Component.text("Click to message")));
-    player.sendMessage(message);
+class Main {
+    static void greet(Player player, String name) {
+        var message = Component.text("Welcome, ", NamedTextColor.GOLD)
+            .append(Component.text(name).decorate(TextDecoration.BOLD))
+            .clickEvent(ClickEvent.suggestCommand("/msg " + name))
+            .hoverEvent(HoverEvent.showText(Component.text("Click to message")));
+        player.sendMessage(message);
+    }
 }
 ```
 
@@ -141,26 +151,30 @@ Serializers (`LegacyComponentSerializer`, `PlainTextComponentSerializer`, Gson),
 `MiniMessage.miniMessage().deserialize(text)` turns [MiniMessage](https://docs.advntr.dev/minimessage/format.html) markup into a `Component`.
 
 ```mcfc
-void announce(Player player) {
-    player.sendMessage(MiniMessage.miniMessage().deserialize(
-        "<gradient:gold:red>Arena open</gradient> <click:run_command:'/trigger join'><u>join</u>"));
+class Main {
+    static void announce(Player player) {
+        player.sendMessage(MiniMessage.miniMessage().deserialize(
+            "<gradient:gold:red>Arena open</gradient> <click:run_command:'/trigger join'><u>join</u>"));
+    }
 }
 ```
 
 A string literal is parsed by the compiler into one constant component, so it costs one command. It supports colors (`<red>`, `<#ff8800>`, `<color:red>`), decorations and `<!bold>`, `<reset>`, `<newline>`/`<br>`, `<click:...>`, `<hover:show_text:'...'>`, `<gradient:...>`, `<rainbow>`, `<lang:key:args...>`, `<key:...>`, `<insert:...>` and `<font:...>`. `"\\<red>"` writes a literal `<red>`. Unknown tags stay as text. A literal can't use `$(...)`; append the value with `.append(Component.text(x))`.
 
-Any other string, such as text a player typed, is parsed while the pack runs by `std.text.parseMiniMessage`. It only applies colors, decorations, `<reset>` and `<newline>`. Every other tag, including `<click>` and `<hover>`, stays as plain text, so a player's message can't make someone else run a command. It costs a few hundred commands per tag and a few per character, so keep it to chat-length text.
+Any other string, such as text a player typed, is parsed while the pack runs by `MiniMessage.miniMessage().deserialize(...)`. It only applies colors, decorations, `<reset>` and `<newline>`. Every other tag, including `<click>` and `<hover>`, stays as plain text, so a player's message can't make someone else run a command. It costs a few hundred commands per tag and a few per character, so keep it to chat-length text.
 
 ## Builder-to-NBT Coercion
 
 When an `Nbt` value is expected, assigning an `EntityData`, `BlockData`, or `ItemStack` is shorthand for calling `.asNbt()`.
 
 ```mcfc
-void payloads() {
-    var pig = new EntityData("minecraft:pig");
-    var payload = pig.asNbt();
+class Main {
+    static void payloads() {
+        var pig = new EntityData("minecraft:pig");
+        var payload = pig.asNbt();
 
-    summon("minecraft:pig", payload);
+        summon("minecraft:pig", payload);
+    }
 }
 ```
 

@@ -73,8 +73,12 @@ const MATH_METHODS: &[&str] = &[
     "pow", "sqrt", "hypot", "sin", "cos", "tan", "floor", "ceil", "round", "trunc",
 ];
 
-/// `Math` methods with no `/compute` provider. They call the `std.math` function.
-const MATH_STD_FUNCTIONS: &[&str] = &["atan", "atan2", "asin", "acos"];
+/// `Math` methods with no `/compute` provider. They call the static method of
+/// `std.math.Math`.
+const MATH_STD_FUNCTIONS: &[&str] = &[
+    "atan", "atan2", "asin", "acos", "min", "max", "abs", "sign", "clamp", "rem", "gcd", "lerp",
+    "isqrt",
+];
 
 /// `Selector.of("@a")` and `Block.of("~ ~ ~")` lower to these builtin calls.
 const TEXT_DECORATIONS: &[&str] = &[
@@ -144,8 +148,13 @@ enum TypeMember {
     Field(ClassField),
     /// A constructor, named after its type, and whether it is `public`.
     Constructor(Function, bool),
+    /// `@PlayerState static int coins;`: per-player or per-entity state.
+    State(PlayerStateDef),
     Skipped,
 }
+
+/// The static field holding the one instance of a `Listener` class.
+const LISTENER_FIELD: &str = "mcfcListener";
 
 struct Parser {
     tokens: Vec<Token>,
@@ -155,6 +164,8 @@ struct Parser {
     final_scopes: Vec<Vec<String>>,
     /// Set while parsing a class (`Some(false)`) or interface (`Some(true)`) body.
     class_body: Option<bool>,
+    /// Set while parsing the body of a class that `implements Listener`.
+    listener: bool,
     /// Set while parsing a `case` label, whose `->` isn't a lambda's.
     in_case_label: bool,
     /// The loops around the statement being parsed, innermost last.
@@ -181,6 +192,7 @@ impl Parser {
             diagnostics: Diagnostics::new(),
             final_scopes: Vec::new(),
             class_body: None,
+            listener: false,
             in_case_label: false,
             loops: Vec::new(),
         }
@@ -332,6 +344,10 @@ impl Parser {
                     "records can't declare constructors; 'new' takes one argument per component",
                     ctor.span,
                 )),
+                TypeMember::State(def) => self.diagnostics.push(Diagnostic::new(
+                    "state belongs in a class, not a record",
+                    def.span,
+                )),
                 TypeMember::Skipped => {}
             }
             if self.index == start {
@@ -398,6 +414,9 @@ impl Parser {
                         if constructor.replace(ctor).is_some() {
                             self.error_at("an enum can have only one constructor", span);
                         }
+                    }
+                    TypeMember::State(def) => {
+                        self.error_at("state belongs in a class, not an enum", def.span)
                     }
                     TypeMember::Skipped => {}
                 }
@@ -589,6 +608,10 @@ impl Parser {
         }
         self.expect(TokenKind::LeftBrace, "expected '{' after class name");
         let saved_body = self.class_body.replace(is_interface);
+        // `Listener` is a marker the compiler knows, not a type.
+        let before = interfaces.len();
+        interfaces.retain(|interface| interface != "Listener");
+        let saved_listener = std::mem::replace(&mut self.listener, interfaces.len() < before);
         let mut fields: Vec<ClassField> = Vec::new();
         let mut constructors = Vec::new();
         while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
@@ -610,6 +633,7 @@ impl Parser {
                     }
                     constructors.push((function, ctor_pub))
                 }
+                TypeMember::State(def) => program.player_states.push(def),
                 TypeMember::Skipped => {}
             }
             if self.index == start {
@@ -617,6 +641,26 @@ impl Parser {
             }
         }
         self.class_body = saved_body;
+        let is_listener = std::mem::replace(&mut self.listener, saved_listener);
+        // A listener keeps one instance, made once per world, for its handlers.
+        if is_listener {
+            fields.push(ClassField {
+                name: LISTENER_FIELD.to_string(),
+                ty: Type::Struct(name.clone()),
+                is_pub: false,
+                is_static: true,
+                is_final: true,
+                init: Some(Expr {
+                    kind: ExprKind::New {
+                        name: name.clone(),
+                        args: Vec::new(),
+                        type_args: None,
+                    },
+                    span: span.clone(),
+                }),
+                span: span.clone(),
+            });
+        }
         self.expect(TokenKind::RightBrace, "expected '}' after class body");
         if let Some(this_type) = native_this(&name) {
             self.native_class(&name, &fields, &constructors, &span);
@@ -872,6 +916,23 @@ impl Parser {
         let ty = self.parse_type();
         let span = self.current_span();
         let name = self.expect_identifier("expected a name after the type");
+        let is_state = annotations.first().is_some_and(|annotation| {
+            matches!(
+                annotation.name.as_str(),
+                "PlayerState" | "EntityState" | "WorldState"
+            )
+        });
+        if is_state && !self.at(&TokenKind::LeftParen) {
+            let mut path = vec![name];
+            while self.eat(&TokenKind::Dot) {
+                path.push(self.expect_identifier("expected state path segment"));
+            }
+            self.expect_semicolon("state declaration");
+            return match self.state_def(&annotations, path, ty, span) {
+                Some(def) => TypeMember::State(def),
+                None => TypeMember::Skipped,
+            };
+        }
         if !self.at(&TokenKind::LeftParen) {
             self.reject_annotations(&annotations, "a field");
             let init = self.eat(&TokenKind::Assign).then(|| self.parse_expr());
@@ -906,6 +967,86 @@ impl Parser {
         }
         // Methods of a private type are only reachable where the type is.
         function.is_pub = is_pub && owner_is_pub;
+        let mut hooks = Vec::new();
+        for annotation in annotations {
+            match annotation.name.as_str() {
+                "Override" => {
+                    let overridable = matches!(
+                        (name.as_str(), function.params.len() + usize::from(!is_static)),
+                        ("toString", 1) | ("equals", 2)
+                    );
+                    if self.class_body.is_some() {
+                        // The type checker checks that a class method overrides something.
+                        function.is_override = true;
+                        if is_static {
+                            self.error_at(
+                                "a static method doesn't override anything",
+                                annotation.span.clone(),
+                            );
+                        }
+                    } else if is_static || !overridable {
+                        self.error_at(
+                            "method doesn't override anything; only 'toString()' and 'equals(other)' can be overridden",
+                            annotation.span.clone(),
+                        );
+                    }
+                }
+                "EventHandler" if is_static || !self.listener => {
+                    self.error_at(
+                        "@EventHandler methods are instance methods of a class that implements Listener",
+                        annotation.span.clone(),
+                    );
+                }
+                "Command" | "Menu" | "Every" | "After" | "Test" | "Tick" if !is_static => {
+                    self.error_at(
+                        &format!("@{} methods must be static", annotation.name),
+                        annotation.span.clone(),
+                    );
+                }
+                "EventHandler" | "Command" | "Menu" | "Every" | "After" | "Test" | "Tick" => {
+                    hooks.push(annotation)
+                }
+                "PlayerState" | "EntityState" | "WorldState" => self.error_at(
+                    &format!("@{} can't be used on a method", annotation.name),
+                    annotation.span.clone(),
+                ),
+                other => self.error_at(
+                    &format!("unknown annotation '@{other}'"),
+                    annotation.span.clone(),
+                ),
+            }
+        }
+        if !hooks.is_empty() {
+            // A handler is a hook, named by its annotation, not a callable method.
+            function.name = name.clone();
+            self.apply_function_annotations(&hooks, &mut function);
+            if !is_static {
+                // A listener's handlers run on the one instance the class keeps.
+                function.body.insert(
+                    0,
+                    Stmt {
+                        kind: StmtKind::Let {
+                            name: "this".to_string(),
+                            ty: Some(Type::Struct(owner.to_string())),
+                            value: Expr {
+                                kind: ExprKind::Variable(LISTENER_FIELD.to_string()),
+                                span: span.clone(),
+                            },
+                        },
+                        span: span.clone(),
+                    },
+                );
+            }
+            return TypeMember::Method(function);
+        }
+        if is_static
+            && name == "main"
+            && function.params.is_empty()
+            && function.return_type == Type::Void
+        {
+            // `static void main()` runs on load, like Java's entry point.
+            function.name = "main".to_string();
+        }
         if !is_static {
             function.params.insert(
                 0,
@@ -916,51 +1057,29 @@ impl Parser {
                 },
             );
         }
-        for annotation in &annotations {
-            let overridable = matches!(
-                (name.as_str(), function.params.len()),
-                ("toString", 1) | ("equals", 2)
-            );
-            if annotation.name != "Override" {
-                self.error_at(
-                    &format!("@{} can't be used on a method", annotation.name),
-                    annotation.span.clone(),
-                );
-            } else if self.class_body.is_some() {
-                // The type checker checks that a class method overrides something.
-                function.is_override = true;
-                if is_static {
-                    self.error_at(
-                        "a static method doesn't override anything",
-                        annotation.span.clone(),
-                    );
-                }
-            } else if is_static || !overridable {
-                self.error_at(
-                    "method doesn't override anything; only 'toString()' and 'equals(other)' can be overridden",
-                    annotation.span.clone(),
-                );
-            }
-        }
         TypeMember::Method(function)
     }
 
-    /// A function (`<T> R name(...) { }`) or an annotated state field (`@PlayerState int coins;`).
+    /// Something at the top level that isn't a type or import. Functions and
+    /// state live in classes, as in Java; a stray one is parsed so the rest of
+    /// the file still checks, and reported.
     fn parse_member(&mut self, annotations: Vec<Annotation>, is_pub: bool, program: &mut Program) {
         let (type_params, bounds) = self.parse_type_params();
         if !matches!(self.peek().kind, TokenKind::Identifier(_)) {
-            self.error_here("expected a function, record, enum, or import declaration");
+            self.error_here("expected a class, interface, record, enum, or import declaration");
             return;
         }
         let ty = self.parse_type();
         let span = self.current_span();
         let mut path = vec![self.expect_identifier("expected a name after the type")];
         if self.at(&TokenKind::LeftParen) {
-            let mut function = self.parse_function_rest(path.remove(0), span, type_params, ty);
+            let name = path.remove(0);
+            self.error_at(
+                &format!("'{name}' must be a method inside a class; MCFC has no top-level functions"),
+                span.clone(),
+            );
+            let mut function = self.parse_function_rest(name, span, type_params, ty);
             function.bounds = bounds;
-            if function.is_abstract {
-                self.error_at("a function needs a body", function.span.clone());
-            }
             function.is_pub = is_pub;
             self.apply_function_annotations(&annotations, &mut function);
             program.functions.push(function);
@@ -970,16 +1089,30 @@ impl Parser {
             path.push(self.expect_identifier("expected state path segment"));
         }
         self.expect_semicolon("state declaration");
-        let owner = match annotations.first().map(|a| a.name.as_str()) {
-            Some("PlayerState") => StateOwner::Player,
-            Some("EntityState") => StateOwner::Entity,
-            Some("WorldState") => StateOwner::World,
+        self.error_at(
+            "state must be a field inside a class, like '@PlayerState static int coins;'",
+            span,
+        );
+    }
+
+    /// `@PlayerState("Coins") static int coins;` or `@EntityState static Info info;`
+    /// in a class. `annotations[0]` is the state annotation.
+    fn state_def(
+        &mut self,
+        annotations: &[Annotation],
+        path: Vec<String>,
+        ty: Type,
+        span: Span,
+    ) -> Option<PlayerStateDef> {
+        let owner = match annotations[0].name.as_str() {
+            "PlayerState" => StateOwner::Player,
+            "EntityState" => StateOwner::Entity,
             _ => {
-                self.diagnostics.push(Diagnostic::new(
-                    "top-level variables need @PlayerState, @EntityState or @WorldState",
-                    span,
-                ));
-                return;
+                self.error_at(
+                    "@WorldState is gone: a static field is already one value for the whole world",
+                    annotations[0].span.clone(),
+                );
+                return None;
             }
         };
         let display_name = match annotations[0].args.as_slice() {
@@ -997,8 +1130,7 @@ impl Parser {
                 self.diagnostics.push(Diagnostic::new(
                     match owner {
                         StateOwner::Player => "@PlayerState takes an optional display name string",
-                        StateOwner::Entity => "@EntityState takes no arguments",
-                        StateOwner::World => "@WorldState takes no arguments",
+                        _ => "@EntityState takes no arguments",
                     },
                     annotations[0].span.clone(),
                 ));
@@ -1006,29 +1138,13 @@ impl Parser {
             }
         };
         self.reject_annotations(&annotations[1..], "a state declaration");
-        if owner == StateOwner::World {
-            if path.len() > 1 {
-                self.diagnostics.push(Diagnostic::new(
-                    "a @WorldState name can't have dots",
-                    span.clone(),
-                ));
-            }
-            program.world_states.push(PlayerStateDef {
-                owner,
-                path,
-                ty,
-                display_name,
-                span,
-            });
-            return;
-        }
-        program.player_states.push(PlayerStateDef {
+        Some(PlayerStateDef {
             owner,
             path,
             ty,
             display_name,
             span,
-        });
+        })
     }
 
     fn parse_function_rest(
@@ -1283,6 +1399,13 @@ impl Parser {
                     "__mcfc_task_{}_{schedule}_ticks_{ticks}",
                     resource_name(&function.name)
                 );
+            }
+            "Tick" => {
+                if !annotation.args.is_empty() || !function.params.is_empty() {
+                    self.error_at("@Tick methods take no arguments or parameters", span);
+                }
+                let owner = function.owner.clone().unwrap_or_default();
+                function.name = format!("{}{owner}__{}", crate::compiler::TICK_PREFIX, function.name);
             }
             "Test" => {
                 if !annotation.args.is_empty() || !function.params.is_empty() {
@@ -2986,7 +3109,7 @@ impl Parser {
             return Expr {
                 kind: ExprKind::Call {
                     type_args: Vec::new(),
-                    function: "std::str::join".to_string(),
+                    function: "std::str::Strings__join".to_string(),
                     args,
                 },
                 span,
@@ -2996,7 +3119,7 @@ impl Parser {
             return Expr {
                 kind: ExprKind::Call {
                     type_args: Vec::new(),
-                    function: format!("std::math::{method}"),
+                    function: format!("std::math::Math__{method}"),
                     args,
                 },
                 span,
@@ -3102,7 +3225,7 @@ impl Parser {
         Some(Expr {
             kind: ExprKind::Call {
                 type_args: Vec::new(),
-                function: format!("std::text::{function}"),
+                function: format!("std::text::MiniMessage__{function}"),
                 args: std::mem::take(args),
             },
             span: span.clone(),
@@ -3582,7 +3705,7 @@ mod tests {
 
     #[test]
     fn parses_precedence_like_java() {
-        let program = parse("void main() { var v = 1 + 2 * 3 < 10 && !false; }").unwrap();
+        let program = parse("class Main {\n    public static void main() { var v = 1 + 2 * 3 < 10 && !false; }\n}").unwrap();
         let StmtKind::Let {
             value, ty: None, ..
         } = &program.functions[0].body[0].kind
@@ -3616,7 +3739,7 @@ mod tests {
     #[test]
     fn desugars_c_style_for_into_block_with_step() {
         let program =
-            parse("void main() { for (int i = 0; i < 3; i++) { if (i == 1) continue; } }").unwrap();
+            parse("class Main {\n    public static void main() { for (int i = 0; i < 3; i++) { if (i == 1) continue; } }\n}").unwrap();
         let StmtKind::Block(block) = &program.functions[0].body[0].kind else {
             panic!("expected block");
         };
@@ -3636,14 +3759,15 @@ mod tests {
     #[test]
     fn parses_for_each_switch_and_casts() {
         let program = parse(
-            r#"
-void main() {
-    for (Player p : Selector.of("@a")) { p.sendMessage("hi"); }
-    switch (mode) {
-        case A, B -> debug("ab");
-        default -> { debug("other"); }
+            r#"class Main {
+    public static void main() {
+        for (Player p : Selector.of("@a")) { p.sendMessage("hi"); }
+        switch (mode) {
+            case A, B -> debug("ab");
+            default -> { debug("other"); }
+        }
+        float f = (float) 3 * 2.0;
     }
-    float f = (float) 3 * 2.0;
 }
 "#,
         )
@@ -3676,34 +3800,42 @@ void main() {
     #[test]
     fn annotations_rename_handlers_and_bind_player() {
         let program = parse(
-            r#"
-@PlayerState("Coins") int coins;
-@EventHandler void onJoin(PlayerJoinEvent event) { Player player = event.player(); player.sendMessage("hi"); }
-@Command("spawn") void spawn() {}
-@Every(seconds = 2) void heartBeat() {}
+            r#"class Main implements Listener {
+    @PlayerState("Coins") static int coins;
+
+    @EventHandler void onJoin(PlayerJoinEvent event) { Player player = event.player(); player.sendMessage("hi"); }
+    @Command("spawn") static void spawn() {}
+    @Every(seconds = 2) static void heartBeat() {}
+}
 "#,
         )
         .unwrap();
         assert_eq!(program.player_states[0].display_name, "Coins");
         let names: Vec<_> = program.functions.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
-            names,
+            names[..3],
             [
                 "__mcfc_event_player_join",
                 "__mcfc_command_spawn",
                 "__mcfc_task_heart_beat_every_ticks_40"
             ]
         );
+        // The handler runs on the listener's one instance, with the event built from `@s`.
         assert!(program.functions[0].params.is_empty());
         assert!(matches!(
-            program.functions[0].body[0].kind,
-            StmtKind::Let { .. }
+            &program.functions[0].body[0].kind,
+            StmtKind::Let { name, .. } if name == "this"
         ));
+        assert!(matches!(
+            &program.functions[0].body[1].kind,
+            StmtKind::Let { name, .. } if name == "event"
+        ));
+        assert_eq!(program.classes[0].fields[0].name, super::LISTENER_FIELD);
     }
 
     #[test]
     fn rejects_old_syntax_with_useful_errors() {
-        let error = parse("void main() { var x = int(2.5); var s = item(\"a\") }").unwrap_err();
+        let error = parse("class Main {\n    public static void main() { var x = int(2.5); var s = item(\"a\") }\n}").unwrap_err();
         let rendered = error.to_string();
         assert!(rendered.contains("use a cast: '(int) value'"));
         assert!(rendered.contains("use 'new ItemStack(...)'"));

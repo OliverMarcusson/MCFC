@@ -1,19 +1,21 @@
-void main() {
-    var s = "a,b,,c,,";
-    var parts = s.split(",");
-    mcf("say n $(parts.size())");
-    for (var p : parts) { mcf("say part [$(p)]"); }
-    var sep = ",,";
-    var r = s.replace(sep, ";");
-    mcf("say r $(r)");
-    var ab = "ab";
-    var e = ab.replace("", "-");
-    mcf("say e $(e)");
-    var hw = "Hello World";
-    var u = hw.toUpperCase();
-    var l = hw.toLowerCase();
-    mcf("say u $(u) l $(l)");
-    var xyz = "xyz";
-    var chars = xyz.split("");
-    mcf("say c $(chars.size())");
+class Main {
+    public static void main() {
+        var s = "a,b,,c,,";
+        var parts = s.split(",");
+        mcf("say n $(parts.size())");
+        for (var p : parts) { mcf("say part [$(p)]"); }
+        var sep = ",,";
+        var r = s.replace(sep, ";");
+        mcf("say r $(r)");
+        var ab = "ab";
+        var e = ab.replace("", "-");
+        mcf("say e $(e)");
+        var hw = "Hello World";
+        var u = hw.toUpperCase();
+        var l = hw.toLowerCase();
+        mcf("say u $(u) l $(l)");
+        var xyz = "xyz";
+        var chars = xyz.split("");
+        mcf("say c $(chars.size())");
+    }
 }

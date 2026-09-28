@@ -1,45 +1,47 @@
 // Scoreboard teams. Select a team's players with `Selector.of("@a[team=red]")`.
 
-// Creates `name` if it doesn't exist and sets its color, such as "red" or "blue".
-public void create(String name, String color) {
-    mcf("team add $(name)");
-    mcf("team modify $(name) color $(color)");
-}
-
-// Removes the team; its players are left without one.
-public void remove(String name) {
-    mcf("team remove $(name)");
-}
-
-// `target` is a `Player` or a `Selector`.
-public <T> void join(T target, String team) {
-    Execute.as(target, () -> {
-        mcf("team join $(team) @s");
-    });
-}
-
-public <T> void leave(T target) {
-    Execute.as(target, () -> {
-        mc("team leave @s");
-    });
-}
-
-public void setFriendlyFire(String team, boolean allowed) {
-    var text = "false";
-    if (allowed) {
-        text = "true";
+public final class Team {
+    // Creates `name` if it doesn't exist and sets its color, such as "red" or "blue".
+    public static void create(String name, String color) {
+        mcf("team add $(name)");
+        mcf("team modify $(name) color $(color)");
     }
-    mcf("team modify $(team) friendlyFire $(text)");
-}
 
-// Deals `players` into `teams` in turn, so sizes differ by at most one.
-// Pass `Selector.of("@a[sort=random]")` for random teams.
-public void split(Selector players, List<String> teams) {
-    var i = 0;
-    var n = teams.size();
-    for (var player : players) {
-        var k = i % n;
-        join(player, teams[k]);
-        i += 1;
+    // Removes the team; its players are left without one.
+    public static void remove(String name) {
+        mcf("team remove $(name)");
+    }
+
+    // `target` is a `Player` or a `Selector`.
+    public static <T> void join(T target, String team) {
+        Execute.as(target, () -> {
+            mcf("team join $(team) @s");
+        });
+    }
+
+    public static <T> void leave(T target) {
+        Execute.as(target, () -> {
+            mc("team leave @s");
+        });
+    }
+
+    public static void setFriendlyFire(String team, boolean allowed) {
+        var text = "false";
+        if (allowed) {
+            text = "true";
+        }
+        mcf("team modify $(team) friendlyFire $(text)");
+    }
+
+    // Deals `players` into `teams` in turn, so sizes differ by at most one.
+    // Pass `Selector.of("@a[sort=random]")` for random teams.
+    public static void split(Selector players, List<String> teams) {
+        var i = 0;
+        var n = teams.size();
+        for (var player : players) {
+            var k = i % n;
+            join(player, teams[k]);
+            i += 1;
+        }
     }
 }

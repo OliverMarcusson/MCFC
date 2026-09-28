@@ -85,57 +85,59 @@ final class Cat extends Animal {
     }
 }
 
-int total(List<Animal> animals) {
-    int sum = 0;
-    for (Animal animal : animals) {
-        sum += animal.speed();
-    }
-
-    return sum;
-}
-
-String describe(Animal animal) {
-    return switch (animal) {
-        case Puppy puppy -> "small " + puppy.tricks;
-        case Dog dog -> "dog " + dog.tricks;
-        case Cat cat -> "cat " + cat.weight();
-    };
-}
-
-void main() {
-    Dog dog = new Dog(2);
-    Animal cat = new Cat();
-    Animal puppy = new Puppy();
-    List<Animal> animals = List.of();
-    animals.add(dog);
-    animals.add(cat);
-    animals.add(puppy);
-
-    String speeds = "speeds " + dog.speed() + " " + cat.speed() + " " + puppy.speed() + " total " + total(animals);
-    mcf("say $(speeds)");
-
-    String weights = "weights " + dog.weight() + " " + cat.weight() + " " + puppy.weight() + " sound " + puppy.sound;
-    mcf("say $(weights)");
-
-    Named named = cat;
-    String greetings = named.greet() + " " + puppy.greet() + " " + dog.greet() + " " + puppy;
-    mcf("say $(greetings)");
-
-    boolean dogIsAnimal = dog instanceof Animal;
-    boolean catIsDog = cat instanceof Dog;
-    boolean puppyIsDog = puppy instanceof Dog;
-    Animal nothing = null;
-    String checks = "checks " + dogIsAnimal + " " + catIsDog + " " + puppyIsDog + " " + (nothing instanceof Animal);
-    mcf("say $(checks)");
-
-    int found = 0;
-    for (Animal animal : animals) {
-        if (animal instanceof Dog someDog && someDog.tricks > 0) {
-            found += someDog.tricks;
+class Main {
+    static int total(List<Animal> animals) {
+        int sum = 0;
+        for (Animal animal : animals) {
+            sum += animal.speed();
         }
+
+        return sum;
     }
 
-    Dog back = (Dog) puppy;
-    String patterns = "patterns " + found + " " + back.tricks + " " + describe(puppy) + ", " + describe(dog) + ", " + describe(cat);
-    mcf("say $(patterns)");
+    static String describe(Animal animal) {
+        return switch (animal) {
+            case Puppy puppy -> "small " + puppy.tricks;
+            case Dog dog -> "dog " + dog.tricks;
+            case Cat cat -> "cat " + cat.weight();
+        };
+    }
+
+    public static void main() {
+        Dog dog = new Dog(2);
+        Animal cat = new Cat();
+        Animal puppy = new Puppy();
+        List<Animal> animals = List.of();
+        animals.add(dog);
+        animals.add(cat);
+        animals.add(puppy);
+
+        String speeds = "speeds " + dog.speed() + " " + cat.speed() + " " + puppy.speed() + " total " + total(animals);
+        mcf("say $(speeds)");
+
+        String weights = "weights " + dog.weight() + " " + cat.weight() + " " + puppy.weight() + " sound " + puppy.sound;
+        mcf("say $(weights)");
+
+        Named named = cat;
+        String greetings = named.greet() + " " + puppy.greet() + " " + dog.greet() + " " + puppy;
+        mcf("say $(greetings)");
+
+        boolean dogIsAnimal = dog instanceof Animal;
+        boolean catIsDog = cat instanceof Dog;
+        boolean puppyIsDog = puppy instanceof Dog;
+        Animal nothing = null;
+        String checks = "checks " + dogIsAnimal + " " + catIsDog + " " + puppyIsDog + " " + (nothing instanceof Animal);
+        mcf("say $(checks)");
+
+        int found = 0;
+        for (Animal animal : animals) {
+            if (animal instanceof Dog someDog && someDog.tricks > 0) {
+                found += someDog.tricks;
+            }
+        }
+
+        Dog back = (Dog) puppy;
+        String patterns = "patterns " + found + " " + back.tricks + " " + describe(puppy) + ", " + describe(dog) + ", " + describe(cat);
+        mcf("say $(patterns)");
+    }
 }

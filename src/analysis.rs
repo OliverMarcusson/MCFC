@@ -15,6 +15,8 @@ pub struct AnalysisResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionInfo {
     pub name: String,
+    /// The class that declares it, for methods and handlers.
+    pub owner: Option<String>,
     pub type_params: Vec<String>,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
@@ -23,10 +25,17 @@ pub struct FunctionInfo {
 }
 
 impl FunctionInfo {
+    /// As declared: `int add(int a)`, for a method too.
     pub fn signature(&self) -> String {
+        let local = self.name.rsplit("::").next().unwrap_or(&self.name);
+        let name = match (&self.owner, local.split_once("__")) {
+            (Some(_), Some((_, method))) => method,
+            _ => self.name.as_str(),
+        };
         let params = self
             .params
             .iter()
+            .filter(|(name, _)| name != "this")
             .map(|(name, ty)| format!("{} {}", ty.as_str(), name))
             .collect::<Vec<_>>()
             .join(", ");
@@ -39,7 +48,7 @@ impl FunctionInfo {
             "{}{} {}({})",
             generics,
             self.return_type.as_str(),
-            self.name,
+            name,
             params
         )
     }
@@ -92,6 +101,7 @@ pub fn analyze_modules(
             // resolved `module::name` so they line up with typed locals.
             for (info, function) in functions.iter_mut().zip(&program.functions) {
                 info.name = function.name.clone();
+                info.owner = function.owner.clone();
             }
             // Every module's `tick()` merges into one, as in a build.
             let checked = match crate::compiler::normalize_special_functions(program.clone()) {
@@ -165,6 +175,7 @@ fn collect_functions(program: &Program) -> Vec<FunctionInfo> {
         .iter()
         .map(|function| FunctionInfo {
             name: function.name.clone(),
+            owner: function.owner.clone(),
             type_params: function.type_params.clone(),
             params: function
                 .params
@@ -271,10 +282,7 @@ mod tests {
     #[test]
     fn reports_parser_diagnostics() {
         let analysis = analyze_source(
-            "void main() {
-    var x =
-}
-",
+            "class Main {\n    public static void main() {\n        var x =\n    }\n}\n",
         );
 
         assert!(
@@ -289,9 +297,10 @@ mod tests {
     #[test]
     fn reports_type_diagnostics_and_keeps_symbols() {
         let analysis = analyze_source(
-            r#"
-void main() {
-    missing();
+            r#"class Main {
+    public static void main() {
+        missing();
+    }
 }
 "#,
         );
@@ -302,22 +311,23 @@ void main() {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("unknown function"))
         );
-        assert_eq!(analysis.functions.len(), 1);
+        assert!(analysis.functions.iter().any(|function| function.name == "main"));
     }
 
     #[test]
     fn collects_functions_and_locals_for_valid_source() {
-        let source = r#"
-void launch(int level) {
-    var amount = level;
-    return;
+        let source = r#"class Main {
+    static void launch(int level) {
+        var amount = level;
+        return;
+    }
 }
 "#;
 
         let analysis = analyze_source(source);
 
         assert!(analysis.diagnostics.is_empty());
-        assert_eq!(analysis.functions[0].name, "launch");
+        assert_eq!(analysis.functions[0].name, "Main__launch");
         assert!(
             analysis
                 .locals
@@ -327,22 +337,26 @@ void launch(int level) {
         let offset = source.find("amount").unwrap();
         assert_eq!(
             function_at_offset(&analysis, offset).unwrap().name,
-            "launch"
+            "Main__launch"
         );
     }
 
     #[test]
     fn analyzes_bukkit_style_declarations_with_the_compiler_frontend() {
         let analysis = analyze_source(
-            r#"@PlayerState("Coins") int coins;
-@EventHandler
-void onChat(ChatEvent event) {
-    event.player().sendMessage(event.message());
-}
-@Command("status")
-void status() {
-    var player = Selector.of("@s").getFirst();
-    player.sendMessage("ok");
+            r#"class Main implements Listener {
+    @PlayerState("Coins") static int coins;
+
+    @EventHandler
+    void onChat(ChatEvent event) {
+        event.player().sendMessage(event.message());
+    }
+
+    @Command("status")
+    static void status() {
+        var player = Selector.of("@s").getFirst();
+        player.sendMessage("ok");
+    }
 }
 "#,
         );
@@ -368,14 +382,15 @@ var value = 1;
     #[test]
     fn collects_switch_arm_let_names() {
         let program = crate::parser::parse(
-            r#"
-void main() {
-    switch ("idle") {
-        case "idle" -> {
-            var inner = 1;
-        }
-        default -> {
-            var fallback = 2;
+            r#"class Main {
+    public static void main() {
+        switch ("idle") {
+            case "idle" -> {
+                var inner = 1;
+            }
+            default -> {
+                var fallback = 2;
+            }
         }
     }
 }

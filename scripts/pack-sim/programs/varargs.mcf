@@ -1,46 +1,48 @@
 // Varargs parameters and String.format.
-int sum(int... values) {
-    int total = 0;
-    for (int value : values) {
-        total += value;
-    }
-
-    return total;
-}
-
-String join(String separator, String... parts) {
-    String out = "";
-    for (int index = 0; index < parts.size(); index++) {
-        if (index > 0) {
-            out = out + separator;
+class Main {
+    static int sum(int... values) {
+        int total = 0;
+        for (int value : values) {
+            total += value;
         }
-        out = out + parts[index];
+
+        return total;
     }
 
-    return out;
-}
+    static String join(String separator, String... parts) {
+        String out = "";
+        for (int index = 0; index < parts.size(); index++) {
+            if (index > 0) {
+                out = out + separator;
+            }
+            out = out + parts[index];
+        }
 
-<T> int count(T... items) {
-    return items.size();
+        return out;
+    }
+
+    static <T> int count(T... items) {
+        return items.size();
+    }
+
+    public static void main() {
+        List<Integer> numbers = List.of(4, 5);
+        String sums = "sums " + sum() + " " + sum(1) + " " + sum(1, 2, 3) + " " + sum(numbers);
+        mcf("say $(sums)");
+        String joined = "joined " + join("-", "a", "b", "c") + " [" + join("-") + "] " + count("x", "y") + " " + count(1, 2, 3);
+        mcf("say $(joined)");
+        Logger logger = new Logger();
+        String logged = logger.line("hello", "world");
+        mcf("say $(logged)");
+        String line = String.format("%s has %d kills (100%%)", "alex", 7);
+        mcf("say $(line)");
+    }
 }
 
 class Logger {
     String prefix = "log";
 
     String line(String... words) {
-        return prefix + ": " + join(" ", words);
+        return prefix + ": " + Main.join(" ", words);
     }
-}
-
-void main() {
-    List<Integer> numbers = List.of(4, 5);
-    String sums = "sums " + sum() + " " + sum(1) + " " + sum(1, 2, 3) + " " + sum(numbers);
-    mcf("say $(sums)");
-    String joined = "joined " + join("-", "a", "b", "c") + " [" + join("-") + "] " + count("x", "y") + " " + count(1, 2, 3);
-    mcf("say $(joined)");
-    Logger logger = new Logger();
-    String logged = logger.line("hello", "world");
-    mcf("say $(logged)");
-    String line = String.format("%s has %d kills (100%%)", "alex", 7);
-    mcf("say $(line)");
 }

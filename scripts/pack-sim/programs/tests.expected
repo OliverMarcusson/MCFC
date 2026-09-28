@@ -1,4 +1,4 @@
-tellraw @a [tests TEST] assertion failed at line 16: expected 7, got 6
+tellraw @a [tests TEST] assertion failed at line 17: expected 7, got 6
 tellraw @a [tests TEST] FAIL catches_wrong_answers
 tellraw @a [tests TEST] 1 passed, 1 failed
 say one passed one failed

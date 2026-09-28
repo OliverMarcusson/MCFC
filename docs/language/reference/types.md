@@ -54,20 +54,22 @@ Integer `/` rounds down, and `%` takes the sign of the divisor, the same as Mine
 ## `float`
 
 ```mcfc
-float distance(float x, float z) {
-    return Math.sqrt(x * x + z * z);
+class Main {
+    static float distance(float x, float z) {
+        return Math.sqrt(x * x + z * z);
+    }
 }
 ```
 
 Literals need a digit on both sides of the point: `1.0`, `0.5`, `-2.5`. A trailing `f` is accepted (`1.5f`, `2f`), and underscores can separate digits (`1_000`, `0xFF`). Floats are 32-bit, which gives about 7 significant digits.
 
-Numeric functions are called through `Math`. `int` arguments widen to `float` when the function needs a float. For `min`, `max`, `abs`, `clamp` and `sign`, use [`std.math`](./std#std-math).
+Numeric methods are static methods of `Math`, which needs no import. `int` arguments widen to `float` when the method needs a float. `Math.min`, `max`, `abs`, `clamp`, `sign`, `rem`, `gcd`, `lerp` and `isqrt` are listed in [`std.math`](./std#std-math).
 
 | Call | Returns / notes |
 | --- | --- |
 | `Math.sqrt(x)`, `Math.pow(x, e)`, `Math.hypot(x, y)` | `float`; `pow` stops the command when both inputs are `0.0`. |
-| `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. Same as [`std.math`](./std#std-math) `sin`/`cos`/`tan`. |
-| `Math.atan(x)`, `Math.atan2(y, x)`, `Math.asin(x)`, `Math.acos(x)` | `float` radians, accurate to about `1e-6`. They call [`std.math`](./std#std-math), since `/compute` has no inverse trig, so they cost a function call and don't fuse into the expression. |
+| `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)` | `float`, taking radians. Entity yaw and pitch are degrees; multiply by `0.017453292`. |
+| `Math.atan(x)`, `Math.atan2(y, x)`, `Math.asin(x)`, `Math.acos(x)` | `float` radians, accurate to about `1e-6`. They are MCFC code in [`std.math`](./std#std-math), since `/compute` has no inverse trig, so they cost a function call and don't fuse into the expression. |
 | `Math.floor(x)`, `Math.ceil(x)`, `Math.trunc(x)` | Rounded `float`. |
 | `Math.round(x)` | `int`. |
 | `x.toString()` | `"0.5"`, `"-0.25"`, or `"4"` for a whole number. Also available on `int`. |
@@ -83,11 +85,13 @@ Each float expression, however long, compiles to one `/compute` command. Compari
 Literals use `"..."`. `$(expr)` inside a literal inserts a value.
 
 ```mcfc
-void main() {
-    var name = "Steve";
-    var score = 42;
-    var line = "Hi " + name + ", you have " + score.toString() + " points";
-    var same = "Hi $(name), you have $(score) points";
+class Main {
+    public static void main() {
+        var name = "Steve";
+        var score = 42;
+        var line = "Hi " + name + ", you have " + score.toString() + " points";
+        var same = "Hi $(name), you have $(score) points";
+    }
 }
 ```
 
@@ -116,12 +120,14 @@ void main() {
 ## `List<T>` {#list}
 
 ```mcfc
-void main() {
-    var values = List.of(3, 5);
-    values.add(9);
-    var third = values.get(2).orElse(0);
-    for (var v : values) {
-        debug("$(v)");
+class Main {
+    public static void main() {
+        var values = List.of(3, 5);
+        values.add(9);
+        var third = values.get(2).orElse(0);
+        for (var v : values) {
+            debug("$(v)");
+        }
     }
 }
 ```
@@ -144,17 +150,19 @@ void main() {
 
 `sort(order)` is an insertion sort, about `n²` calls of `order` for `n` elements, fine for a server's players. `removeIf` returns nothing, unlike Java.
 
-`contains`, `indexOf` and `reverse` loop over every element. `sort` is a merge sort that does at most 1,000 steps per tick. Small lists finish immediately. Larger ones [pause](./statements#functions-that-pause) the function: 5,000 elements take about 3 seconds.
+`contains`, `indexOf` and `reverse` loop over every element. `sort` is a merge sort that does at most 1,000 steps per tick. Small lists finish immediately. Larger ones [pause](./statements#methods-that-pause) the function: 5,000 elements take about 3 seconds.
 
 ## `Map<String, T>` {#map}
 
 ```mcfc
-void main() {
-    var counts = Map.of("wood", 2, "stone", 4);
-    counts["iron"] = 1;
-    var gold = counts.get("gold").orElse(0);
-    for (var key : counts.keySet()) {
-        debug("$(key)=$(counts[key])");
+class Main {
+    public static void main() {
+        var counts = Map.of("wood", 2, "stone", 4);
+        counts["iron"] = 1;
+        var gold = counts.get("gold").orElse(0);
+        for (var key : counts.keySet()) {
+            debug("$(key)=$(counts[key])");
+        }
     }
 }
 ```
@@ -180,12 +188,14 @@ Keys may only use letters, digits and `_`, and can't start with a digit.
 This is what `List.get`, `Map.get` and [`Selector.findFirst`](./methods#selecting-and-checking-entities) return.
 
 ```mcfc
-void main() {
-    var maybe = List.of(4, 8).get(3);
-    if (maybe.isPresent()) {
-        debug("found");
+class Main {
+    public static void main() {
+        var maybe = List.of(4, 8).get(3);
+        if (maybe.isPresent()) {
+            debug("found");
+        }
+        var count = maybe.orElse(0);
     }
-    var count = maybe.orElse(0);
 }
 ```
 
@@ -212,13 +222,15 @@ Write a selector as text with `Selector.of("@e[type=minecraft:pig,limit=1]")`, o
 ```mcfc
 import std.selector.Sort;
 
-void main() {
-    String hunted = "prey";
-    var bosses = Selector.entities()
-        .type("minecraft:zombie").tag("boss").notTag(hunted)
-        .distance(0, 16).score("hp", 1, 20)
-        .sort(Sort.NEAREST).limit(3);
-    bosses.addTag("seen");
+class Main {
+    public static void main() {
+        String hunted = "prey";
+        var bosses = Selector.entities()
+            .type("minecraft:zombie").tag("boss").notTag(hunted)
+            .distance(0, 16).score("hp", 1, 20)
+            .sort(Sort.NEAREST).limit(3);
+        bosses.addTag("seen");
+    }
 }
 ```
 
@@ -276,18 +288,20 @@ A `Selector<Player>` parameter, field or variable takes any selector known to ma
 `(Player) e` asserts that `e` is a player, and `for (Player p : Selector.of(...))` does the same for a loop. To check first, use `instanceof`, which also works as a type pattern:
 
 ```mcfc
-void greet(Entity e) {
-    if (e instanceof Player p) {
-        p.sendMessage("hi");
+class Main {
+    static void greet(Entity e) {
+        if (e instanceof Player p) {
+            p.sendMessage("hi");
+        }
+        String kind = switch (e) {
+            case Player p -> "player";
+            default -> "entity";
+        };
     }
-    String kind = switch (e) {
-        case Player p -> "player";
-        default -> "entity";
-    };
 }
 ```
 
-When the selector already tells, `instanceof Player` is a constant. Otherwise it runs one `execute if entity @s[type=minecraft:player]` check through `std.player.isPlayer`. A `switch` on an entity needs a `default` or a `case Entity`. All entity methods and fields are listed in [Entities and Players](./methods).
+When the selector already tells, `instanceof Player` is a constant. Otherwise it runs one `execute if entity @s[type=minecraft:player]` check through `std.player.Players.isPlayer`. A `switch` on an entity needs a `default` or a `case Entity`. All entity methods and fields are listed in [Entities and Players](./methods).
 
 ## `Block`
 
@@ -314,10 +328,12 @@ A block position, created with `Block.of("~ ~ ~")` or read from `entity.position
 | `getEnvironment(attribute) -> float` | A numeric environment attribute, such as `"gameplay/sky_light_level"`. The id must be a literal. |
 
 ```mcfc
-void markGround() {
-    var below = Block.of("~ ~-1 ~");
-    if (below.is("minecraft:grass_block") && below.getLightLevel() < 8) {
-        below.setBlock("minecraft:glowstone");
+class Main {
+    static void markGround() {
+        var below = Block.of("~ ~-1 ~");
+        if (below.is("minecraft:grass_block") && below.getLightLevel() < 8) {
+            below.setBlock("minecraft:glowstone");
+        }
     }
 }
 ```
@@ -337,15 +353,17 @@ Environment attributes: `visual/cloud_height`, `visual/fog_start_distance`, `vis
 | `Nbt` | `Nbt` |
 
 ```mcfc
-void equip(Player player) {
-    var sword = new ItemStack("minecraft:diamond_sword");
-    sword.setName("Quest Blade");
-    player.hotbar[0] = sword;
-    player.head.item = "minecraft:golden_helmet";
-    if (player.inventory[3].exists) {
-        player.sendMessage(player.inventory[3].id);
+class Main {
+    static void equip(Player player) {
+        var sword = new ItemStack("minecraft:diamond_sword");
+        sword.setName("Quest Blade");
+        player.hotbar[0] = sword;
+        player.head.item = "minecraft:golden_helmet";
+        if (player.inventory[3].exists) {
+            player.sendMessage(player.inventory[3].id);
+        }
+        player.inventory[4].clear();
     }
-    player.inventory[4].clear();
 }
 ```
 
@@ -354,12 +372,14 @@ Assign an `ItemStack` to an inventory or hotbar slot to set it. The slot index c
 ## `BossBar`
 
 ```mcfc
-void show() {
-    var bb = new BossBar("mypack:progress", "Progress");
-    bb.setMax(10);
-    bb.setValue(5);
-    bb.setPlayers(Selector.of("@a"));
-    bb.setVisible(true);
+class Main {
+    static void show() {
+        var bb = new BossBar("mypack:progress", "Progress");
+        bb.setMax(10);
+        bb.setValue(5);
+        bb.setPlayers(Selector.of("@a"));
+        bb.setVisible(true);
+    }
 }
 ```
 

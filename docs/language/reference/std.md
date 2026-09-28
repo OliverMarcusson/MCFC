@@ -1,37 +1,38 @@
 # Standard Library: `std`
 
-Every file and project build can use the `std` module without declaring it. Import from it with [`import`](./statements#import) or call it by path:
+`std` is a set of classes that every project can use without declaring them. Each module holds one class of `static` methods named after it, such as `Timer` in `std.timer`. Import the class with [`import`](./statements#import), or write its full path, as in `std.timer.Timer.start(...)`. `Math` needs no import.
 
 ```mcfc
-import std.math.clamp;
+import std.timer.Timer;
 
-void main() {
-    var hp = clamp(150, 0, 100);
-    var bits = std.math.pow(2, 10);
+class Main {
+    public static void main() {
+        var hp = Math.clamp(150, 0, 100);
+        Timer.start("round", 200);
+    }
 }
 ```
 
-Only the `std` functions a pack calls are compiled into it. The name `std` is reserved, so a `src/std.mcf` file is an error.
+Only the `std` methods a pack calls are compiled into it. The name `std` is reserved, so a `src/std.mcf` file is an error.
 
 ## `std.math`
 
-`min`, `max`, `abs`, `sign` and `clamp` are [generic](./statements#generic-functions): they take `int` or `float`, and mixing the two gives `float`, so `math.min(1.5, 2)` is `1.5`. `Math` has no versions of these.
+`min`, `max`, `abs`, `sign` and `clamp` are [generic](./statements#generic-methods): they take `int` or `float`, and mixing the two gives `float`, so `Math.min(1.5, 2)` is `1.5`. They are methods of `Math`, next to the [builtin ones](./types#float) such as `Math.sqrt` and `Math.pow`.
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `<T> T min(T a, T b)` | The smaller of `a` and `b`. |
 | `<T> T max(T a, T b)` | The larger of `a` and `b`. |
 | `<T> T abs(T x)` | `x` without its sign. |
 | `<T> T sign(T x)` | `1`, `0`, or `-1`. |
 | `<T> T clamp(T x, T low, T high)` | `x` limited to `low` through `high`. |
-| `int rem(int a, int b)` | The remainder of `a / b`, with the sign of `b`. For example, `rem(-7, 3)` is `2`. Same as `a % b`. |
-| `int pow(int base, int exponent)` | `base` multiplied by itself `exponent` times. Negative exponents return `0`. |
-| `int gcd(int a, int b)` | The greatest common divisor, never negative. `gcd(12, -18)` is `6`. |
+| `int rem(int a, int b)` | The remainder of `a / b`, with the sign of `b`. For example, `Math.rem(-7, 3)` is `2`. Same as `a % b`. |
+| `int gcd(int a, int b)` | The greatest common divisor, never negative. `Math.gcd(12, -18)` is `6`. |
 | `float lerp(float a, float b, float t)` | The point `t` of the way from `a` to `b`. `0.0` gives `a` and `1.0` gives `b`. |
 | `int isqrt(int n)` | The whole-number square root, rounded down. Negative `n` gives `0`. |
-| `float sin(float x)`, `cos`, `tan` | Trig in radians. The compiler inlines these as `/compute` providers, so `sin(x) * 2.0` is still one command. `Math.sin` is the same function. |
+| `float sin(float x)`, `cos`, `tan` | Trig in radians. The compiler inlines these as `/compute` providers, so `Math.sin(x) * 2.0` is still one command. |
 | `float atan(float x)` | Arctangent in `(-pi/2, pi/2)`. |
-| `float atan2(float y, float x)` | The angle of the point `(x, y)` in `(-pi, pi]`. `atan2(0, 0)` is `0`. |
+| `float atan2(float y, float x)` | The angle of the point `(x, y)` in `(-pi, pi]`. `Math.atan2(0, 0)` is `0`. |
 | `float asin(float x)`, `float acos(float x)` | Arcsine in `[-pi/2, pi/2]` and arccosine in `[0, pi]`. `x` is clamped to `[-1, 1]`. |
 
 `/compute` has no inverse trig, so `atan`, `atan2`, `asin` and `acos` are MCFC code (range reduction and a series), accurate to about `1e-6` radians. Each call costs a few dozen commands.
@@ -40,9 +41,9 @@ Integer arithmetic is 32-bit scoreboard math, so results wrap on overflow.
 
 ## `std.list`
 
-These are [generic](./statements#generic-functions), so they work on `List<Integer>` and `List<Float>`.
+`Lists` holds these. They are [generic](./statements#generic-methods), so they work on `List<Integer>` and `List<Float>`.
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `<T> T sum(List<T> xs)` | The total of all elements, or `0` for an empty list. |
 | `<T> T min(List<T> xs)` | The smallest element, or `0` for an empty list. |
@@ -51,15 +52,17 @@ These are [generic](./statements#generic-functions), so they work on `List<Integ
 `sortBy` and `top` order a list of anything by a second list of `int` keys, where `keys[i]` belongs to `items[i]`, for example player names and their scores:
 
 ```mcfc
-import std.list;
+import std.list.Lists;
 
-void leaderboard(List<String> names, List<Integer> kills) {
-    var best = list.top(names, kills, 3);
-    Sidebar.setLine(0, "Top: " + String.join(", ", best));
+class Main {
+    static void leaderboard(List<String> names, List<Integer> kills) {
+        var best = Lists.top(names, kills, 3);
+        Sidebar.setLine(0, "Top: " + String.join(", ", best));
+    }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `<T> List<T> sortBy(List<T> items, List<Integer> keys)` | A copy of `items` ordered by `keys`, smallest first. Equal keys keep their order. |
 | `<T> List<T> top(List<T> items, List<Integer> keys, int n)` | The `n` items with the largest keys, largest first. Equal keys keep their order. |
@@ -75,13 +78,15 @@ import std.function.*;
 
 record Fighter(String name, int kills, int deaths) {}
 
-void main() {
-    Predicate<Integer> even = number -> number % 2 == 0;
-    Comparator<Fighter> ranking = Comparator.comparing(Fighter::kills).reversed()
-        .thenComparing(Comparator.comparing(Fighter::deaths));
-    List<Fighter> fighters = List.of(new Fighter("alex", 3, 1), new Fighter("sam", 5, 2));
-    fighters.sort(ranking);
-    fighters.removeIf(fighter -> even.test(fighter.kills()));
+class Main {
+    public static void main() {
+        Predicate<Integer> even = number -> number % 2 == 0;
+        Comparator<Fighter> ranking = Comparator.comparing(Fighter::kills).reversed()
+            .thenComparing(Comparator.comparing(Fighter::deaths));
+        List<Fighter> fighters = List.of(new Fighter("alex", 3, 1), new Fighter("sam", 5, 2));
+        fighters.sort(ranking);
+        fighters.removeIf(fighter -> even.test(fighter.kills()));
+    }
 }
 ```
 
@@ -107,12 +112,14 @@ A small `java.util.stream`. `xs.stream()` on any `List` gives a `Stream`; import
 ```mcfc
 import std.stream.Stream;
 
-void main() {
-    List<Integer> kills = List.of(5, 2, 8, 1);
-    List<String> labels = kills.stream().filter(k -> k > 1).map(k -> "#" + k).toList();
-    Stream<Integer> ranked = kills.stream().sorted((a, b) -> b - a).limit(3);
-    int best = ranked.findFirst().orElse(0);
-    int total = kills.stream().reduce(0, (a, b) -> a + b);
+class Main {
+    public static void main() {
+        List<Integer> kills = List.of(5, 2, 8, 1);
+        List<String> labels = kills.stream().filter(k -> k > 1).map(k -> "#" + k).toList();
+        Stream<Integer> ranked = kills.stream().sorted((a, b) -> b - a).limit(3);
+        int best = ranked.findFirst().orElse(0);
+        int total = kills.stream().reduce(0, (a, b) -> a + b);
+    }
 }
 ```
 
@@ -133,33 +140,35 @@ Unlike Java, each step runs straight away and builds a new list, so a stream isn
 Per-player cooldowns, each with a name, so one player can have several.
 
 ```mcfc
-import std.cooldown;
+import std.cooldown.Cooldown;
 
-@Command("dash")
-void dash(Player player) {
-    if (!cooldown.ready(player, "dash")) {
-        player.sendMessage("Dash is ready in " + cooldown.remaining(player, "dash") / 20 + "s");
-        return;
+class Main {
+    @Command("dash")
+    static void dash(Player player) {
+        if (!Cooldown.ready(player, "dash")) {
+            player.sendMessage("Dash is ready in " + Cooldown.remaining(player, "dash") / 20 + "s");
+            return;
+        }
+        Cooldown.start(player, "dash", 60);
+        player.addVelocity(player.getLookX(), 0.3, player.getLookZ());
     }
-    cooldown.start(player, "dash", 60);
-    player.addVelocity(player.getLookX(), 0.3, player.getLookZ());
 }
 ```
 
-| Function | Does |
+| Method | Does |
 | --- | --- |
 | `void start(Player player, String name, int ticks)` | Starts or restarts `name`, lasting `ticks`. |
 | `boolean ready(Player player, String name)` | `true` once `name` has run out, or if it was never started. |
 | `int remaining(Player player, String name)` | Ticks left, or `0` when ready. |
 | `void clear(Player player, String name)` | Ends `name` early. |
 
-Each cooldown stores the [`gameTime()`](./builtins) it ends at, in the `std.cooldowns` [player state](./statements#playerstate), so cooldowns keep running while the player is offline and across restarts. Names follow the [map key rules](./types#map).
+Each cooldown stores the [`gameTime()`](./builtins) it ends at, in the `std.cooldowns` [`@PlayerState`](./statements#playerstate), so cooldowns keep running while the player is offline and across restarts. Names follow the [map key rules](./types#map).
 
 ## `std.random`
 
-Built on the [`random(min, max)`](./builtins#random) builtin.
+`Random`, built on the [`random(min, max)`](./builtins#random) builtin: `Random.chance(0.25)`.
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `boolean chance(float p)` | `true` with chance `p`: `0.25` is `true` about one time in four. |
 | `float nextFloat()` | A float from `0.0` up to, but not including, `1.0`. |
@@ -169,15 +178,17 @@ Built on the [`random(min, max)`](./builtins#random) builtin.
 ## `std.time`
 
 ```mcfc
-import std.time;
+import std.time.Time;
 
-@Every(ticks = 20)
-void showUptime() {
-    Sidebar.setLine(0, "Uptime " + time.formatTicks(gameTime()));
+class Main {
+    @Every(ticks = 20)
+    static void showUptime() {
+        Sidebar.setLine(0, "Uptime " + Time.formatTicks(gameTime()));
+    }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `String formatTicks(int ticks)` | `"m:ss"`, or `"h:mm:ss"` from one hour up, in whole seconds rounded down. `1300` is `"1:05"`. Negative ticks count as `0`. |
 | `String padLeft(int value, int width)` | `value` with zeros in front up to `width` characters: `padLeft(5, 2)` is `"05"`. |
@@ -187,54 +198,58 @@ void showUptime() {
 Named timers for the whole world, such as the time left in a round. For one timer per player, use [`std.cooldown`](#std-cooldown).
 
 ```mcfc
-import std.timer;
-import std.time;
+import std.timer.Timer;
+import std.time.Time;
 
-void startRound() {
-    timer.start("round", 6000);
-}
+class Main {
+    static void startRound() {
+        Timer.start("round", 6000);
+    }
 
-@Every(ticks = 20)
-void showClock() {
-    if (timer.running("round")) {
-        Sidebar.setLine(0, "Time " + time.formatTicks(timer.remaining("round")));
+    @Every(ticks = 20)
+    static void showClock() {
+        if (Timer.running("round")) {
+            Sidebar.setLine(0, "Time " + Time.formatTicks(Timer.remaining("round")));
+        }
     }
 }
 ```
 
-| Function | Does |
+| Method | Does |
 | --- | --- |
 | `void start(String name, int ticks)` | Starts or restarts `name`. |
 | `int remaining(String name)` | Ticks left, or `0` once it ran out or if it never started. |
 | `boolean running(String name)` | `true` while ticks remain. |
 | `void stop(String name)` | Ends `name` now. |
 
-Timers store the [`gameTime()`](./builtins) they end at in the [`@WorldState`](./statements#worldstate) `stdTimers`, so they keep counting across reloads.
+Timers store the [`gameTime()`](./builtins) they end at in the [static field](./statements#static-fields) `Timer.stdTimers`, so they keep counting across reloads.
 
 ## `std.region`
 
 Box-shaped areas such as an arena, given by two opposite corner blocks. Both corners are inside.
 
 ```mcfc
-import std.region;
+import std.region.Region;
 
-void round() {
-    var arena = region.of(Block.of(0, 60, 0), Block.of(40, 80, 40));
-    region.tagPlayers(arena, "in_arena");
-    Selector.of("@a[tag=!in_arena]").sendActionBar("Get back to the arena");
-    Selector.of("@a[tag=in_arena]").teleport(region.randomBlock(arena));
+class Main {
+    static void round() {
+        var arena = Region.of(Block.of(0, 60, 0), Block.of(40, 80, 40));
+        arena.tagPlayers("in_arena");
+        Selector.of("@a[tag=!in_arena]").sendActionBar("Get back to the arena");
+        Selector.of("@a[tag=in_arena]").teleport(arena.randomBlock());
+    }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
-| `Region of(Block a, Block b)` | The region between two corners, in any order. `Region` is a record of `minX`, `minY`, `minZ`, `maxX`, `maxY` and `maxZ`, so `new Region(...)` works too after `import std.region.Region;`. |
-| `boolean contains(Region r, Entity entity)` | `true` when the entity's feet are in one of the region's blocks. |
-| `int countPlayers(Region r)` | How many players are inside. |
-| `void tagPlayers(Region r, String tag)` | Gives `tag` to the players inside and removes it from everyone else. Select them afterwards with `Selector.allPlayers().tag(tag)`. |
-| `Block randomBlock(Region r)` | A random block inside. |
-| `Block center(Region r)` | The middle block, rounded down. |
-| `void fill(Region r, String block)` | Fills the region, within `fill`'s 32768-block limit. |
+| `static Region of(Block a, Block b)` | The region between two corners, in any order. `Region` is a record of `minX`, `minY`, `minZ`, `maxX`, `maxY` and `maxZ`, so `new Region(...)` works too. |
+| `boolean contains(Entity entity)` | `true` when the entity's feet are in one of the region's blocks. |
+| `int countPlayers()` | How many players are inside. |
+| `void tagPlayers(String tag)` | Gives `tag` to the players inside and removes it from everyone else. Select them afterwards with `Selector.allPlayers().tag(tag)`. |
+| `Block randomBlock()` | A random block inside. |
+| `Block center()` | The middle block, rounded down. |
+| `void fill(String block)` | Fills the region, within `fill`'s 32768-block limit. |
 
 `countPlayers` and `tagPlayers` check every online player, a few commands each.
 
@@ -243,18 +258,20 @@ void round() {
 Scoreboard teams. Select a team's players with `Selector.of("@a[team=red]")`.
 
 ```mcfc
-import std.team;
+import std.team.Team;
 
-void setupTeams() {
-    team.create("red", "red");
-    team.create("blue", "blue");
-    team.setFriendlyFire("red", false);
-    team.setFriendlyFire("blue", false);
-    team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
+class Main {
+    static void setupTeams() {
+        Team.create("red", "red");
+        Team.create("blue", "blue");
+        Team.setFriendlyFire("red", false);
+        Team.setFriendlyFire("blue", false);
+        Team.split(Selector.of("@a[sort=random]"), List.of("red", "blue"));
+    }
 }
 ```
 
-| Function | Does |
+| Method | Does |
 | --- | --- |
 | `void create(String name, String color)` | Creates the team if it's missing and sets its color, such as `"red"`. |
 | `void remove(String name)` | Removes the team. |
@@ -267,9 +284,11 @@ void setupTeams() {
 ```mcfc
 import std.gamemode.GameMode;
 
-void watch(Player player) {
-    if (player.getGameMode() != GameMode.SPECTATOR) {
-        player.setGameMode(GameMode.SPECTATOR);
+class Main {
+    static void watch(Player player) {
+        if (player.getGameMode() != GameMode.SPECTATOR) {
+            player.setGameMode(GameMode.SPECTATOR);
+        }
     }
 }
 ```
@@ -281,9 +300,11 @@ void watch(Player player) {
 ```mcfc
 import std.selector.Sort;
 
-void main() {
-    var nearest = Selector.entities().type("minecraft:pig").sort(Sort.NEAREST).limit(1);
-    nearest.addTag("picked");
+class Main {
+    public static void main() {
+        var nearest = Selector.entities().type("minecraft:pig").sort(Sort.NEAREST).limit(1);
+        nearest.addTag("picked");
+    }
 }
 ```
 
@@ -294,19 +315,21 @@ void main() {
 Costs for shops. `item` is an ID such as `"minecraft:emerald"`. To count items, use [`player.countItem(id)`](./methods).
 
 ```mcfc
-import std.inventory;
+import std.inventory.Inventory;
 
-@Command("buy")
-void buy(Player player) {
-    if (inventory.take(player, "minecraft:emerald", 5)) {
-        player.give("minecraft:diamond_sword", 1);
-    } else {
-        player.sendMessage("A sword costs 5 emeralds");
+class Main {
+    @Command("buy")
+    static void buy(Player player) {
+        if (Inventory.take(player, "minecraft:emerald", 5)) {
+            player.give("minecraft:diamond_sword", 1);
+        } else {
+            player.sendMessage("A sword costs 5 emeralds");
+        }
     }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `boolean has(Player player, String item, int count)` | `true` when the player carries at least `count`. |
 | `boolean take(Player player, String item, int count)` | Removes `count` and returns `true`, or removes nothing and returns `false` when the player has fewer. |
@@ -316,21 +339,23 @@ void buy(Player player) {
 World settings and chunk loading, each one command.
 
 ```mcfc
-import std.world;
+import std.world.World;
 
-@PlayerState("Kills")
-int kills;
+class Main {
+    @PlayerState("Kills")
+    static int kills;
 
-void startGame() {
-    world.setWeather("clear");
-    world.setTimeOfDay(6000);
-    world.setDifficulty("hard");
-    world.setGameRule("keep_inventory", true);
-    world.showState("kills", "sidebar");
+    static void startGame() {
+        World.setWeather("clear");
+        World.setTimeOfDay(6000);
+        World.setDifficulty("hard");
+        World.setGameRule("keep_inventory", true);
+        World.showState("kills", "sidebar");
+    }
 }
 ```
 
-| Function | Does |
+| Method | Does |
 | --- | --- |
 | `void setWeather(String weather)` | `"clear"`, `"rain"` or `"thunder"`. |
 | `void setTimeOfDay(int ticks)` | `0` sunrise, `6000` noon, `13000` night, `18000` midnight. |
@@ -349,14 +374,16 @@ To read a game rule, use the [`gamerule(name)`](./builtins) builtin.
 Perlin noise: smooth random-looking values for terrain, particle paths and motion. The same inputs always give the same value.
 
 ```mcfc
-import std.noise;
+import std.noise.Noise;
 
-void main() {
-    var height = 64 + (int) (noise.fractal(10 * 0.05, 20 * 0.05, 4) * 12.0);
+class Main {
+    public static void main() {
+        var height = 64 + (int) (Noise.fractal(10 * 0.05, 20 * 0.05, 4) * 12.0);
+    }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `float perlin(float x, float y)` | 2D Perlin noise, about -1 to 1, and 0 at whole-number points. Multiply the inputs by a small number such as `0.05` for larger features, and add an offset for a different pattern. |
 | `float fractal(float x, float y, int octaves)` | `octaves` layers of `perlin` added up, each twice as detailed and half as strong, scaled back to about -1 to 1. |
@@ -368,16 +395,18 @@ Each `perlin` call costs a few hundred commands, so sample it once per block or 
 Filled shapes, one `fill` per column, so even large shapes cost a few hundred commands.
 
 ```mcfc
-import std.shape;
+import std.shape.Shapes;
 
-void build() {
-    shape.sphere(Block.of(0, 80, 0), 6, "minecraft:glass");
-    shape.cylinder(Block.of(20, 64, 0), 3, 10, "minecraft:stone_bricks");
-    shape.heightmap(Block.of(40, 60, 0), 16, 16, 8, 0.05, "minecraft:grass_block");
+class Main {
+    static void build() {
+        Shapes.sphere(Block.of(0, 80, 0), 6, "minecraft:glass");
+        Shapes.cylinder(Block.of(20, 64, 0), 3, 10, "minecraft:stone_bricks");
+        Shapes.heightmap(Block.of(40, 60, 0), 16, 16, 8, 0.05, "minecraft:grass_block");
+    }
 }
 ```
 
-| Function | Fills |
+| Method | Fills |
 | --- | --- |
 | `sphere(Block center, int radius, String block)` | Every block within `radius` of `center`. |
 | `cylinder(Block base, int radius, int height, String block)` | An upright cylinder standing on `base`. |
@@ -387,7 +416,9 @@ Shapes replace what's there, like `fill`.
 
 ## `std.str`
 
-| Function | Returns |
+`Strings`, as in `Strings.withCommas(1234567)`.
+
+| Method | Returns |
 | --- | --- |
 | `boolean startsWith(String s, String prefix)` | `true` when `s` begins with `prefix`. |
 | `boolean endsWith(String s, String suffix)` | `true` when `s` ends with `suffix`. |
@@ -396,15 +427,15 @@ Shapes replace what's there, like `fill`.
 | `String replace(String s, String target, String replacement)` | `s` with every `target` replaced. |
 | `List<String> split(String s, String separator)` | The parts between each `separator`, without trailing empty parts. |
 | `String join(String separator, List<String> parts)` | `parts` with `separator` between each. `String.join` calls this. |
-| `String formatFloat(float x, int decimals)` | `x` rounded to `decimals` places, always showing them: `formatFloat(3.14159, 2)` is `"3.14"`, `formatFloat(2.0, 1)` is `"2.0"`. |
-| `String withCommas(int n)` | `n` with commas between groups of three digits: `withCommas(1234567)` is `"1,234,567"`. |
+| `String formatFloat(float x, int decimals)` | `x` rounded to `decimals` places, always showing them: `Strings.formatFloat(3.14159, 2)` is `"3.14"`, `Strings.formatFloat(2.0, 1)` is `"2.0"`. |
+| `String withCommas(int n)` | `n` with commas between groups of three digits: `Strings.withCommas(1234567)` is `"1,234,567"`. |
 | `String toUpperCase(String s)`, `String toLowerCase(String s)` | `s` with ASCII letters changed. |
 
-The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`, `split`, `toUpperCase` and `toLowerCase` call these helpers. Import `std.str` functions only when you need the free-function form. They compare substrings of `s`, so they cost a few commands per character. `startsWith`, `endsWith`, `find` and `contains` never paste the text into a command, so `"` and `\` are safe. The others build new strings by joining, which has the [joining limits](./types#string).
+The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`, `split`, `toUpperCase` and `toLowerCase` call these helpers. Call `Strings` yourself for `find`, `formatFloat` and `withCommas`, which have no `String` method. They compare substrings of `s`, so they cost a few commands per character. `startsWith`, `endsWith`, `find` and `contains` never paste the text into a command, so `"` and `\` are safe. The others build new strings by joining, which has the [joining limits](./types#string).
 
 ## `std.text`
 
-Where the [Adventure API](./builders#adventure-api) is written: `final class Component { ... }` gives the builtin `Component` its methods (`Component.text(...)`, `c.append(...)`), and `ClickEvent`, `HoverEvent` and `TextColor` hold the static ones. A `final class` named after a builtin type (`Component`, `Entity`, `Player`, `Selector`, `BossBar` or `ItemStack`) only adds methods, whose `this` is the builtin value. `text.parseMiniMessage(s)` is the runtime [MiniMessage](./builders#minimessage) parser for text players type. It applies style tags only.
+Where the [Adventure API](./builders#adventure-api) is written: `final class Component { ... }` gives the builtin `Component` its methods (`Component.text(...)`, `c.append(...)`), and `ClickEvent`, `HoverEvent` and `TextColor` hold the static ones. A `final class` named after a builtin type (`Component`, `Entity`, `Player`, `Selector`, `BossBar` or `ItemStack`) only adds methods, whose `this` is the builtin value. `MiniMessage.miniMessage().deserialize(s)` runs the [MiniMessage](./builders#minimessage) parser at run time, for text players type. It applies style tags only.
 
 ## `std.vec`
 
@@ -413,11 +444,13 @@ Where the [Adventure API](./builders#adventure-api) is written: `final class Com
 ```mcfc
 import std.vec.Vec3;
 
-void main() {
-    Player player = (Player) Selector.of("@p").getFirst();
-    Vec3 look = new Vec3(player.getLookX(), player.getLookY(), player.getLookZ());
-    Vec3 push = look.add(new Vec3(0.0, 1.0, 0.0)).normalize().scale(0.8);
-    player.addVelocity(push.x(), push.y(), push.z());
+class Main {
+    public static void main() {
+        Player player = (Player) Selector.of("@p").getFirst();
+        Vec3 look = new Vec3(player.getLookX(), player.getLookY(), player.getLookZ());
+        Vec3 push = look.add(new Vec3(0.0, 1.0, 0.0)).normalize().scale(0.8);
+        player.addVelocity(push.x(), push.y(), push.z());
+    }
 }
 ```
 
@@ -432,7 +465,7 @@ void main() {
 
 ## `std.bossbar`
 
-Where the [`BossBar`](./types#bossbar) methods are written, as `final class BossBar`. The getters run `bossbar get` and read the result from the `$world_mcfcBossBarRead` score.
+Where the [`BossBar`](./types#bossbar) methods are written, as `final class BossBar`. The getters run `bossbar get` and read the result from the `$world_std_bossbar_BossBarRead__value` score.
 
 ## `std.item`
 
@@ -440,7 +473,7 @@ Where the `ItemStack` getters (`getCount()`, `getName()`, `getId()`) are written
 
 ## `std.player`
 
-`isPlayer(Entity)` is what [`e instanceof Player`](./types#entities) calls when the selector doesn't tell.
+`Players.isPlayer(Entity)` is what [`e instanceof Player`](./types#entities) calls when the selector doesn't tell.
 
 Where [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `remove`, `spectate`, `stopSpectating`, the facing `teleport` and the longer `sendTitle` forms](./methods) are written, as `final class Entity` and `final class Player`. An `Entity` method also runs on a `Player` and on a `Selector`, where it applies to every match. Call the methods; there's nothing to import.
 
@@ -453,16 +486,18 @@ Where [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `re
 Colors are `0xRRGGBB` ints, the form text components, particles and display entities use.
 
 ```mcfc
-import std.color;
+import std.color.Color;
 
-void main() {
-    var orange = color.rgb(255, 128, 0);
-    var hex = color.toHex(orange);
-    var back = color.fromHex("#FF8000");
+class Main {
+    public static void main() {
+        var orange = Color.rgb(255, 128, 0);
+        var hex = Color.toHex(orange);
+        var back = Color.fromHex("#FF8000");
+    }
 }
 ```
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
 | `int rgb(int red, int green, int blue)` | The color. Each channel is clamped to 0–255. |
 | `int red(int color)`, `green`, `blue` | One channel, 0–255. |
@@ -474,19 +509,22 @@ void main() {
 Shows a vanilla dialog to one player. Each button runs `/trigger <command>`, so it reaches the [`@Command`](./statements#command) handler of that name and needs no operator permissions.
 
 ```mcfc
-import std.dialog;
+import std.dialog.Button;
+import std.dialog.Dialog;
 
-@Command("buy")
-void buy(Player player) {
-    player.sendMessage("Bought a sword");
-}
+class Main {
+    @Command("buy")
+    static void buy(Player player) {
+        player.sendMessage("Bought a sword");
+    }
 
-void openShop(Player player) {
-    dialog.menu(player, "Shop", Component.text("Pick something"), List.of(new dialog.Button("Buy sword", "buy")));
+    static void openShop(Player player) {
+        Dialog.menu(player, "Shop", Component.text("Pick something"), List.of(new Button("Buy sword", "buy")));
+    }
 }
 ```
 
-| Function | Shows |
+| Method | Shows |
 | --- | --- |
 | `void notice(Player player, String title, Component body)` | A message with an OK button. |
 | `void menu(Player player, String title, Component body, List<Button> buttons)` | A message with one button per `Button(label, command)`. Needs at least one button. |
@@ -495,6 +533,5 @@ Dialogs are sent inline with `/dialog show`, so they need no registry entries an
 
 ## Under The Hood
 
-`std` is ordinary MCFC source compiled into the `mcfc` binary. Its functions lower like any other module function, for example `generated/std__math__clamp__d0__entry`. Unlike your own zero-argument `void` functions, `std` functions never get public `/function` wrappers.
+`std` is ordinary MCFC source compiled into the `mcfc` binary. Its methods lower like any other module's, for example `generated/std__math__math__clamp__float__d0__entry`. Unlike your own zero-argument `static void` methods, `std` methods never get public `/function` wrappers.
 
-`pow` runs a `while` loop, so its cost grows with `exponent`.

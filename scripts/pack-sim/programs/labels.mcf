@@ -1,44 +1,46 @@
 // Labeled break and continue across nested loops, and the ~ and >>> operators.
-void main() {
-    String found = "";
-    outer:
-    for (int row = 0; row < 4; row++) {
-        for (int column = 0; column < 4; column++) {
-            if (column > row) {
-                continue outer;
+class Main {
+    public static void main() {
+        String found = "";
+        outer:
+        for (int row = 0; row < 4; row++) {
+            for (int column = 0; column < 4; column++) {
+                if (column > row) {
+                    continue outer;
+                }
+                if (row * column == 6) {
+                    break outer;
+                }
+                found = found + row + column + " ";
             }
-            if (row * column == 6) {
-                break outer;
-            }
-            found = found + row + column + " ";
         }
-    }
-    mcf("say labels $(found)");
+        mcf("say labels $(found)");
 
-    int count = 0;
-    scan:
-    while (count < 100) {
-        count++;
-        int inner = 0;
-        while (true) {
-            inner++;
-            for (int step = 0; step < 3; step++) {
-                if (count == 5) {
-                    break scan;
-                }
-                if (inner == 2) {
-                    continue scan;
+        int count = 0;
+        scan:
+        while (count < 100) {
+            count++;
+            int inner = 0;
+            while (true) {
+                inner++;
+                for (int step = 0; step < 3; step++) {
+                    if (count == 5) {
+                        break scan;
+                    }
+                    if (inner == 2) {
+                        continue scan;
+                    }
                 }
             }
         }
+        mcf("say count $(count)");
+        int value = -16;
+        int five = 5;
+        int shifted = value >>> 28;
+        int kept = 1024 >>> 3;
+        int flipped = ~five;
+        int twice = ~~five;
+        int literal = ~0;
+        mcf("say bits $(shifted) $(kept) $(flipped) $(twice) $(literal)");
     }
-    mcf("say count $(count)");
-    int value = -16;
-    int five = 5;
-    int shifted = value >>> 28;
-    int kept = 1024 >>> 3;
-    int flipped = ~five;
-    int twice = ~~five;
-    int literal = ~0;
-    mcf("say bits $(shifted) $(kept) $(flipped) $(twice) $(literal)");
 }

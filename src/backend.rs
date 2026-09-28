@@ -384,8 +384,7 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
         // Static field initializers run before the pack's own load functions.
         for function in &program.functions {
             if function.name.ends_with("__clinit") {
-                let path = crate::parser::resource_name(&function.name).replace("::", "/");
-                values.push(format!("{ns}:{path}"));
+                values.push(format!("{ns}:{}", public_path(&function.name)));
             }
         }
         values.extend(
@@ -480,8 +479,8 @@ scoreboard players operation @s mcfc_id = #next mcfc_id
                 format!(
                     "execute if score {} mcfc > {} mcfc run function {ns}:generated/gc_run
 ",
-                    numeric_slot(0, "", "@world.mcfcAllocated"),
-                    numeric_slot(0, "", "@world.mcfcThreshold"),
+                    numeric_slot(0, "", "@world.std_heap_Heap__mcfcAllocated"),
+                    numeric_slot(0, "", "@world.std_heap_Heap__mcfcThreshold"),
                 ),
             );
             self.files.insert(
@@ -1193,14 +1192,14 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 || function.name == "main"
                 || function.name == "tick"
                 || function.name.starts_with("std::")
+                || function.name.contains("__mcfc_")
                 || is_bukkit_generated_function(&function.name)
                 || !function.params.is_empty()
                 || function.return_type != Type::Void
             {
                 continue;
             }
-            // Module functions (`util::greet`) get nested paths (`util/greet`).
-            let public_path = crate::parser::resource_name(&function.name).replace("::", "/");
+            let public_path = public_path(&function.name);
             let relative = format!(
                 "data/{}/function/{}.mcfunction",
                 self.namespace, public_path
@@ -1603,10 +1602,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 if is_object {
                     lines.push(format!(
                         "scoreboard players operation {} mcfc = {} mcfc",
-                        numeric_slot(0, "std::heap::mark", "id"),
+                        numeric_slot(0, "std::heap::Heap__mark", "id"),
                         slot.numeric_name()
                     ));
-                    lines.extend(call("std::heap::mark"));
+                    lines.extend(call("std::heap::Heap__mark"));
                 } else {
                     let world = format!("{}{scratch}", crate::types::WORLD_STATE_PREFIX);
                     lines.push(format!(
@@ -12142,6 +12141,14 @@ pub(crate) fn ir_function_contains_cancel(function: &IrFunction) -> bool {
         })
     }
     contains_statements(&function.body)
+}
+
+/// Where a zero-argument function is exported: static methods
+/// (`util::Tools__greet`) get nested paths (`util/tools/greet`).
+fn public_path(name: &str) -> String {
+    crate::parser::resource_name(name)
+        .replace("::", "/")
+        .replace("__", "/")
 }
 
 fn is_bukkit_generated_function(name: &str) -> bool {

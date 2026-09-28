@@ -5,27 +5,29 @@
 <h1 align="center">MCFC</h1>
 
 <p align="center">
-  A statically typed language that compiles <code>.mcf</code> source into
+  A statically typed, Java-style language that compiles <code>.mcf</code> classes into
   vanilla Minecraft 26.3 datapacks, with a language server for VS Code.
 </p>
 
 ```mcfc
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-@Every(ticks = 20)
-void payday() {
-    for (Player player : Selector.of("@a")) {
-        player.state.coins = player.state.coins + 1;
-        player.sendActionBar("Coins: $(player.state.coins)");
+    @Every(ticks = 20)
+    static void payday() {
+        for (Player player : Selector.of("@a")) {
+            player.state.coins = player.state.coins + 1;
+            player.sendActionBar("Coins: $(player.state.coins)");
+        }
     }
-}
 
-@Command("buy")
-void buy(Player player) {
-    if (player.state.coins >= 10) {
-        player.state.coins = player.state.coins - 10;
-        player.give("minecraft:diamond", 1);
+    @Command("buy")
+    static void buy(Player player) {
+        if (player.state.coins >= 10) {
+            player.state.coins = player.state.coins - 10;
+            player.give("minecraft:diamond", 1);
+        }
     }
 }
 ```

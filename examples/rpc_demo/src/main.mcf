@@ -1,9 +1,11 @@
-void main() {
-    var r = http.get("https://api.example.com/data");
-    var p = Selector.of("@p").getFirst();
-    if (r.ok()) {
-        p.sendMessage(r.body());
-    } else {
-        p.sendMessage("request failed");
+class Main {
+    public static void main() {
+        var r = http.get("https://api.example.com/data");
+        var p = Selector.of("@p").getFirst();
+        if (r.ok()) {
+            p.sendMessage(r.body());
+        } else {
+            p.sendMessage("request failed");
+        }
     }
 }

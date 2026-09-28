@@ -1,184 +1,186 @@
 // String search helpers. Each comparison slices the string, so these cost a
 // few commands per character; fine for names, ids, and short messages.
 
-public boolean startsWith(String s, String prefix) {
-    if (prefix.length() > s.length()) {
-        return false;
-    }
-    return s.substring(0, prefix.length()) == prefix;
-}
-
-public boolean endsWith(String s, String suffix) {
-    if (suffix.length() > s.length()) {
-        return false;
-    }
-    return s.substring(s.length() - suffix.length()) == suffix;
-}
-
-// Index of the first `needle` in `s`, or -1.
-public int find(String s, String needle) {
-    var width = needle.length();
-    var last = s.length() - width;
-    var i = 0;
-    while (i <= last) {
-        if (s.substring(i, i + width) == needle) {
-            return i;
+public final class Strings {
+    public static boolean startsWith(String s, String prefix) {
+        if (prefix.length() > s.length()) {
+            return false;
         }
-        i = i + 1;
+        return s.substring(0, prefix.length()) == prefix;
     }
-    return -1;
-}
 
-public boolean contains(String s, String needle) {
-    return find(s, needle) != -1;
-}
+    public static boolean endsWith(String s, String suffix) {
+        if (suffix.length() > s.length()) {
+            return false;
+        }
+        return s.substring(s.length() - suffix.length()) == suffix;
+    }
 
-// Every `target` replaced, left to right. Like Java, an empty target puts
-// `replacement` before each character and at the end.
-public String replace(String s, String target, String replacement) {
-    var width = target.length();
-    var out = "";
-    if (width == 0) {
+    // Index of the first `needle` in `s`, or -1.
+    public static int find(String s, String needle) {
+        var width = needle.length();
+        var last = s.length() - width;
         var i = 0;
-        while (i < s.length()) {
-            out = out + replacement + s.charAt(i);
+        while (i <= last) {
+            if (s.substring(i, i + width) == needle) {
+                return i;
+            }
             i = i + 1;
         }
-        return out + replacement;
+        return -1;
     }
-    var last = s.length() - width;
-    var start = 0;
-    var i = 0;
-    while (i <= last) {
-        if (s.substring(i, i + width) == target) {
-            out = out + s.substring(start, i) + replacement;
-            i = i + width;
-            start = i;
-        } else {
-            i = i + 1;
-        }
-    }
-    return out + s.substring(start);
-}
 
-// Splits on plain text, not a regex. Like Java, trailing empty parts are
-// dropped and an empty separator splits into characters.
-public List<String> split(String s, String separator) {
-    List<String> parts = List.of();
-    var width = separator.length();
-    var start = 0;
-    var i = 0;
-    if (width == 0) {
-        while (i < s.length()) {
-            parts.add(s.charAt(i));
-            i = i + 1;
+    public static boolean contains(String s, String needle) {
+        return find(s, needle) != -1;
+    }
+
+    // Every `target` replaced, left to right. Like Java, an empty target puts
+    // `replacement` before each character and at the end.
+    public static String replace(String s, String target, String replacement) {
+        var width = target.length();
+        var out = "";
+        if (width == 0) {
+            var i = 0;
+            while (i < s.length()) {
+                out = out + replacement + s.charAt(i);
+                i = i + 1;
+            }
+            return out + replacement;
+        }
+        var last = s.length() - width;
+        var start = 0;
+        var i = 0;
+        while (i <= last) {
+            if (s.substring(i, i + width) == target) {
+                out = out + s.substring(start, i) + replacement;
+                i = i + width;
+                start = i;
+            } else {
+                i = i + 1;
+            }
+        }
+        return out + s.substring(start);
+    }
+
+    // Splits on plain text, not a regex. Like Java, trailing empty parts are
+    // dropped and an empty separator splits into characters.
+    public static List<String> split(String s, String separator) {
+        List<String> parts = List.of();
+        var width = separator.length();
+        var start = 0;
+        var i = 0;
+        if (width == 0) {
+            while (i < s.length()) {
+                parts.add(s.charAt(i));
+                i = i + 1;
+            }
+            return parts;
+        }
+        var last = s.length() - width;
+        while (i <= last) {
+            if (s.substring(i, i + width) == separator) {
+                parts.add(s.substring(start, i));
+                i = i + width;
+                start = i;
+            } else {
+                i = i + 1;
+            }
+        }
+        parts.add(s.substring(start));
+        while (parts.size() > 0 && parts.get(parts.size() - 1).orElse("x") == "") {
+            parts.remove(parts.size() - 1);
         }
         return parts;
     }
-    var last = s.length() - width;
-    while (i <= last) {
-        if (s.substring(i, i + width) == separator) {
-            parts.add(s.substring(start, i));
-            i = i + width;
-            start = i;
-        } else {
+
+    // `parts` with `separator` between each, like Java's `String.join`.
+    public static String join(String separator, List<String> parts) {
+        var out = "";
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) {
+                out = out + separator;
+            }
+            out = out + parts[i];
+        }
+        return out;
+    }
+
+    // ASCII letters only, one map lookup per character.
+    public static String toUpperCase(String s) {
+        var upper = Map.of(
+            "a", "A", "b", "B", "c", "C", "d", "D", "e", "E", "f", "F", "g", "G",
+            "h", "H", "i", "I", "j", "J", "k", "K", "l", "L", "m", "M", "n", "N",
+            "o", "O", "p", "P", "q", "Q", "r", "R", "s", "S", "t", "T", "u", "U",
+            "v", "V", "w", "W", "x", "X", "y", "Y", "z", "Z"
+        );
+        return mapChars(s, upper);
+    }
+
+    public static String toLowerCase(String s) {
+        var lower = Map.of(
+            "A", "a", "B", "b", "C", "c", "D", "d", "E", "e", "F", "f", "G", "g",
+            "H", "h", "I", "i", "J", "j", "K", "k", "L", "l", "M", "m", "N", "n",
+            "O", "o", "P", "p", "Q", "q", "R", "r", "S", "s", "T", "t", "U", "u",
+            "V", "v", "W", "w", "X", "x", "Y", "y", "Z", "z"
+        );
+        return mapChars(s, lower);
+    }
+
+    static String mapChars(String s, Map<String, String> table) {
+        var out = "";
+        var i = 0;
+        while (i < s.length()) {
+            var c = s.charAt(i);
+            out = out + table.get(c).orElse(c);
             i = i + 1;
         }
+        return out;
     }
-    parts.add(s.substring(start));
-    while (parts.size() > 0 && parts.get(parts.size() - 1).orElse("x") == "") {
-        parts.remove(parts.size() - 1);
-    }
-    return parts;
-}
 
-// `parts` with `separator` between each, like Java's `String.join`.
-public String join(String separator, List<String> parts) {
-    var out = "";
-    for (int i = 0; i < parts.size(); i++) {
-        if (i > 0) {
-            out = out + separator;
+    // `x` rounded to `decimals` places, always showing them: formatFloat(3.14159, 2)
+    // is "3.14" and formatFloat(2.0, 1) is "2.0". Keep `x` times 10^decimals within
+    // int range; 7 significant digits is all a float holds anyway.
+    public static String formatFloat(float x, int decimals) {
+        var scale = 1;
+        for (int i = 0; i < decimals; i++) {
+            scale = scale * 10;
         }
-        out = out + parts[i];
-    }
-    return out;
-}
-
-// ASCII letters only, one map lookup per character.
-public String toUpperCase(String s) {
-    var upper = Map.of(
-        "a", "A", "b", "B", "c", "C", "d", "D", "e", "E", "f", "F", "g", "G",
-        "h", "H", "i", "I", "j", "J", "k", "K", "l", "L", "m", "M", "n", "N",
-        "o", "O", "p", "P", "q", "Q", "r", "R", "s", "S", "t", "T", "u", "U",
-        "v", "V", "w", "W", "x", "X", "y", "Y", "z", "Z"
-    );
-    return mapChars(s, upper);
-}
-
-public String toLowerCase(String s) {
-    var lower = Map.of(
-        "A", "a", "B", "b", "C", "c", "D", "d", "E", "e", "F", "f", "G", "g",
-        "H", "h", "I", "i", "J", "j", "K", "k", "L", "l", "M", "m", "N", "n",
-        "O", "o", "P", "p", "Q", "q", "R", "r", "S", "s", "T", "t", "U", "u",
-        "V", "v", "W", "w", "X", "x", "Y", "y", "Z", "z"
-    );
-    return mapChars(s, lower);
-}
-
-String mapChars(String s, Map<String, String> table) {
-    var out = "";
-    var i = 0;
-    while (i < s.length()) {
-        var c = s.charAt(i);
-        out = out + table.get(c).orElse(c);
-        i = i + 1;
-    }
-    return out;
-}
-
-// `x` rounded to `decimals` places, always showing them: formatFloat(3.14159, 2)
-// is "3.14" and formatFloat(2.0, 1) is "2.0". Keep `x` times 10^decimals within
-// int range; 7 significant digits is all a float holds anyway.
-public String formatFloat(float x, int decimals) {
-    var scale = 1;
-    for (int i = 0; i < decimals; i++) {
-        scale = scale * 10;
-    }
-    var scaled = Math.round(x * scale);
-    var sign = "";
-    if (scaled < 0) {
-        sign = "-";
-        scaled = -scaled;
-    }
-    var whole = (scaled / scale).toString();
-    if (decimals <= 0) {
-        return sign + whole;
-    }
-    var fraction = (scaled % scale).toString();
-    while (fraction.length() < decimals) {
-        fraction = "0" + fraction;
-    }
-    return sign + whole + "." + fraction;
-}
-
-// `n` with a comma between each group of three digits: 1234567 is "1,234,567".
-public String withCommas(int n) {
-    var digits = n.toString();
-    var sign = "";
-    if (digits.startsWith("-")) {
-        sign = "-";
-        digits = digits.substring(1);
-    }
-    var out = "";
-    var count = 0;
-    var i = digits.length() - 1;
-    while (i >= 0) {
-        if (count > 0 && count % 3 == 0) {
-            out = "," + out;
+        var scaled = Math.round(x * scale);
+        var sign = "";
+        if (scaled < 0) {
+            sign = "-";
+            scaled = -scaled;
         }
-        out = digits.charAt(i) + out;
-        count += 1;
-        i -= 1;
+        var whole = (scaled / scale).toString();
+        if (decimals <= 0) {
+            return sign + whole;
+        }
+        var fraction = (scaled % scale).toString();
+        while (fraction.length() < decimals) {
+            fraction = "0" + fraction;
+        }
+        return sign + whole + "." + fraction;
     }
-    return sign + out;
+
+    // `n` with a comma between each group of three digits: 1234567 is "1,234,567".
+    public static String withCommas(int n) {
+        var digits = n.toString();
+        var sign = "";
+        if (digits.startsWith("-")) {
+            sign = "-";
+            digits = digits.substring(1);
+        }
+        var out = "";
+        var count = 0;
+        var i = digits.length() - 1;
+        while (i >= 0) {
+            if (count > 0 && count % 3 == 0) {
+                out = "," + out;
+            }
+            out = digits.charAt(i) + out;
+            count += 1;
+            i -= 1;
+        }
+        return sign + out;
+    }
 }

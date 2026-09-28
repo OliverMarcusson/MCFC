@@ -1,31 +1,33 @@
 // A call whose argument calls the same function: `f(x, f(y))`.
-float wrap(float degrees) {
-    var d = degrees;
-    while (d > 180.0) {
-        d = d - 360.0;
+class Main {
+    static float wrap(float degrees) {
+        var d = degrees;
+        while (d > 180.0) {
+            d = d - 360.0;
+        }
+        return d;
     }
-    return d;
-}
 
-int pick(int a, int b) {
-    if (a > b) {
-        return a;
+    static int pick(int a, int b) {
+        if (a > b) {
+            return a;
+        }
+        return b;
     }
-    return b;
-}
 
-String join(String a, String b) {
-    return a + "-" + b;
-}
+    static String join(String a, String b) {
+        return a + "-" + b;
+    }
 
-void main() {
-    var camYaw = 180.0;
-    // The inner call's early return used to make the outer call return at once.
-    var w = wrap(camYaw + wrap(0.0) * 0.5);
-    mcf("say wrap $(w)");
-    // The inner call used to overwrite the outer call's first argument.
-    var p = pick(1, pick(3, 2));
-    mcf("say pick $(p)");
-    var j = join("a", join("b", "c"));
-    mcf("say join $(j)");
+    public static void main() {
+        var camYaw = 180.0;
+        // The inner call's early return used to make the outer call return at once.
+        var w = wrap(camYaw + wrap(0.0) * 0.5);
+        mcf("say wrap $(w)");
+        // The inner call used to overwrite the outer call's first argument.
+        var p = pick(1, pick(3, 2));
+        mcf("say pick $(p)");
+        var j = join("a", join("b", "c"));
+        mcf("say join $(j)");
+    }
 }

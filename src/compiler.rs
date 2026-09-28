@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{Function, Program, Type};
+use crate::ast::{Expr, ExprKind, Function, Program, Stmt, StmtKind, Type};
+
+/// `@Tick` methods are renamed `__mcfc_tick_<Class>__<method>`.
+pub(crate) const TICK_PREFIX: &str = "__mcfc_tick_";
 use crate::backend::{self, BackendOptions, BuildArtifacts, ExportedFunction};
 use crate::diagnostics::Diagnostics;
 use crate::diagnostics::{Diagnostic, Span};
@@ -82,8 +85,24 @@ pub fn compile_source(
     let ast = modules::resolve(ast, &options.modules)?;
     let ast = normalize_special_functions(ast)?;
     let host_modules = HostModules::from_helper(options.helper.as_ref());
-    let typed_program =
-        prune_unreachable(types::type_check(&ast, &host_modules)?, &options.exports);
+    let typed_program = types::type_check(&ast, &host_modules)?;
+    if let Some(export) = options.exports.iter().find(|export| {
+        !typed_program
+            .functions
+            .iter()
+            .any(|function| function.name == export.function)
+    }) {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.push(Diagnostic::new(
+            format!(
+                "[[export]] '{}' names no method; write it as 'Class.method' or 'module.Class.method'",
+                export.path
+            ),
+            Span::new(1, 1),
+        ));
+        return Err(diagnostics);
+    }
+    let typed_program = prune_unreachable(typed_program, &options.exports);
     let ir_program = ir::lower(&typed_program);
     validate_decision_handlers(&ir_program)?;
     validate_suspending_calls(&ir_program)?;
@@ -110,6 +129,15 @@ pub fn compile_source(
         ir_program,
         artifacts,
     })
+}
+
+/// `util.Util.announce` in the manifest names the method `util::Util__announce`,
+/// and `Main.reset` names `Main__reset`.
+fn manifest_function(name: &str) -> String {
+    match name.rsplit_once('.') {
+        Some((owner, method)) => format!("{}__{method}", owner.replace('.', "::")),
+        None => name.to_string(),
+    }
 }
 
 /// Drops functions nothing can reach, so unused helpers (and unused `std`
@@ -298,81 +326,51 @@ fn is_mcfc_identifier(value: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
+/// Every `@Tick` method, from any class or module, runs from one `tick`
+/// function, in module order.
 pub(crate) fn normalize_special_functions(mut program: Program) -> Result<Program, Diagnostics> {
-    let mut diagnostics = Diagnostics::new();
-    let tick_indices = program
+    let ticks: Vec<&Function> = program
         .functions
         .iter()
-        .enumerate()
-        .filter_map(|(index, function)| {
-            if function.name == "tick" {
-                Some(index)
-            } else {
-                None
-            }
+        .filter(|function| {
+            let name = function.name.rsplit("::").next().unwrap_or_default();
+            name.starts_with(TICK_PREFIX)
         })
-        .collect::<Vec<_>>();
-
-    let tick_void_indices = tick_indices
-        .iter()
-        .copied()
-        .filter(|index| {
-            let function = &program.functions[*index];
-            function.params.is_empty() && function.return_type == Type::Void
-        })
-        .collect::<Vec<_>>();
-
-    if !tick_void_indices.is_empty() {
-        for index in tick_indices.iter().copied() {
-            if !tick_void_indices.contains(&index) {
-                diagnostics.push(Diagnostic::new(
-                    "tick() is reserved for the datapack tick function when a zero-argument tick function is present",
-                    program.functions[index].span.clone(),
-                ));
-            }
-        }
-        let first_index = tick_void_indices[0];
-        let mut merged = Function {
+        .collect();
+    if let Some(first) = ticks.first() {
+        let span = first.span.clone();
+        let body = ticks
+            .iter()
+            .map(|function| Stmt {
+                kind: StmtKind::Expr(Expr {
+                    kind: ExprKind::Call {
+                        type_args: Vec::new(),
+                        function: function.name.clone(),
+                        args: Vec::new(),
+                    },
+                    span: span.clone(),
+                }),
+                span: span.clone(),
+            })
+            .collect();
+        program.functions.push(Function {
             name: "tick".to_string(),
             is_pub: false,
             type_params: Vec::new(),
             bounds: Vec::new(),
             params: Vec::new(),
             return_type: Type::Void,
-            body: Vec::new(),
-            span: program.functions[first_index].span.clone(),
-            end: program.functions[first_index].end,
+            body,
+            span,
+            end: first.end,
             owner: None,
             module: String::new(),
             is_abstract: false,
             is_override: false,
             varargs: false,
-        };
-        for index in &tick_void_indices {
-            merged.body.extend(program.functions[*index].body.clone());
-        }
-        let mut next_functions = Vec::with_capacity(program.functions.len());
-        for (index, function) in program.functions.into_iter().enumerate() {
-            if index == first_index {
-                next_functions.push(merged.clone());
-            } else if !tick_void_indices.contains(&index) {
-                next_functions.push(function);
-            }
-        }
-        program.functions = next_functions;
-    } else {
-        for index in tick_indices {
-            let function = &program.functions[index];
-            if function.params.is_empty() && function.return_type != Type::Void {
-                diagnostics.push(Diagnostic::new(
-                    "tick() must return 'void'",
-                    function.span.clone(),
-                ));
-            }
-        }
+        });
     }
-
-    diagnostics.into_result(program)
+    Ok(program)
 }
 
 pub fn compile_file(
@@ -421,8 +419,7 @@ pub fn compile_project(
         .iter()
         .map(|item| ExportedFunction {
             path: item.path.clone(),
-            // `util.announce` in the manifest names the function `util::announce`.
-            function: item.function.replace('.', "::"),
+            function: manifest_function(&item.function),
         })
         .collect();
     if manifest.helper.is_some() {
@@ -566,25 +563,26 @@ mod tests {
 
     #[test]
     fn compiles_gameplay_entity_and_inventory_builtins() {
-        let source = r#"
-void main() {
-    var pig = summon("minecraft:pig");
-    pig.addTag("elite");
-    var tagged = pig.hasTag("elite");
-    pig.removeTag("elite");
-    pig.team = "red";
-    pig.mainhand.item = "minecraft:carrot_on_a_stick";
-    pig.offhand.item = "minecraft:shield";
-    pig.head.name = "Captain";
-    pig.chest.count = 1;
-    pig.effect("speed", 10, 1);
-    pig.teleport(Block.of("~ ~1 ~"));
-    pig.damage(2);
-    pig.heal(1);
-    pig.give("minecraft:apple", 2);
-    pig.clear("minecraft:apple", 1);
-    pig.lootGive("minecraft:chests/simple_dungeon");
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = summon("minecraft:pig");
+        pig.addTag("elite");
+        var tagged = pig.hasTag("elite");
+        pig.removeTag("elite");
+        pig.team = "red";
+        pig.mainhand.item = "minecraft:carrot_on_a_stick";
+        pig.offhand.item = "minecraft:shield";
+        pig.head.name = "Captain";
+        pig.chest.count = 1;
+        pig.effect("speed", 10, 1);
+        pig.teleport(Block.of("~ ~1 ~"));
+        pig.damage(2);
+        pig.heal(1);
+        pig.give("minecraft:apple", 2);
+        pig.clear("minecraft:apple", 1);
+        pig.lootGive("minecraft:chests/simple_dungeon");
+        return;
+    }
 }
 "#;
 
@@ -622,23 +620,24 @@ void main() {
 
     #[test]
     fn compiles_ui_audio_particle_and_world_builtins() {
-        let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    var pos = Block.of("~ ~ ~");
-    pig.sendMessage("hello @s");
-    pig.sendTitle("Danger");
-    pig.sendActionBar("Run");
-    var bb = new BossBar("mcfc:test", "Boss @s");
-    pig.playSound("minecraft:entity.experience_orb.pickup", "master");
-    pig.stopSound("master", "minecraft:entity.experience_orb.pickup");
-    pos.spawnParticle("minecraft:flame");
-    pos.spawnParticle("minecraft:smoke", 4, pig);
-    pos.lootInsert("minecraft:chests/simple_dungeon");
-    pos.lootSpawn("minecraft:chests/simple_dungeon");
-    pos.setBlock("minecraft:stone");
-    pos.fill(Block.of("~1 ~1 ~1"), "minecraft:glass");
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        var pos = Block.of("~ ~ ~");
+        pig.sendMessage("hello @s");
+        pig.sendTitle("Danger");
+        pig.sendActionBar("Run");
+        var bb = new BossBar("mcfc:test", "Boss @s");
+        pig.playSound("minecraft:entity.experience_orb.pickup", "master");
+        pig.stopSound("master", "minecraft:entity.experience_orb.pickup");
+        pos.spawnParticle("minecraft:flame");
+        pos.spawnParticle("minecraft:smoke", 4, pig);
+        pos.lootInsert("minecraft:chests/simple_dungeon");
+        pos.lootSpawn("minecraft:chests/simple_dungeon");
+        pos.setBlock("minecraft:stone");
+        pos.fill(Block.of("~1 ~1 ~1"), "minecraft:glass");
+        return;
+    }
 }
 "#;
 
@@ -667,19 +666,20 @@ void main() {
 
     #[test]
     fn compiles_entity_and_block_builders() {
-        let source = r#"
-void main() {
-    var pig = new EntityData("minecraft:pig");
-    pig.setName("Builder Pig");
-    pig.setNoAi(true);
-    var spawned = summon(pig);
-    var chest = new BlockData("minecraft:chest");
-    chest.states.facing = "north";
-    chest.setName("Loot");
-    var pos = Block.of("~ ~ ~");
-    pos.setBlock(chest);
-    pos.fill(Block.of("~1 ~1 ~1"), chest);
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = new EntityData("minecraft:pig");
+        pig.setName("Builder Pig");
+        pig.setNoAi(true);
+        var spawned = summon(pig);
+        var chest = new BlockData("minecraft:chest");
+        chest.states.facing = "north";
+        chest.setName("Loot");
+        var pos = Block.of("~ ~ ~");
+        pos.setBlock(chest);
+        pos.fill(Block.of("~1 ~1 ~1"), chest);
+        return;
+    }
 }
 "#;
 
@@ -703,18 +703,20 @@ void main() {
 
     #[test]
     fn compiles_random_builtin_forms() {
-        let source = r#"
-int roll() {
-    return random();
-}
-void main() {
-    var any = random();
-    var bounded = random(6);
-    var between = random(1, 20);
-    bounded = random(between);
-    var combined = random() + roll();
-    mcf("say $(random(1, 3))");
-    return;
+        let source = r#"class Main {
+    static int roll() {
+        return random();
+    }
+
+    public static void main() {
+        var any = random();
+        var bounded = random(6);
+        var between = random(1, 20);
+        bounded = random(between);
+        var combined = random() + roll();
+        mcf("say $(random(1, 3))");
+        return;
+    }
 }
 "#;
 
@@ -735,12 +737,13 @@ void main() {
 
     #[test]
     fn compiles_interpolated_string_literals() {
-        let source = r#"
-void main() {
-    var demo_title = "MCFC Demo $(random(100))";
-    var player = Selector.of("@p").getFirst();
-    player.sendMessage(demo_title);
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var demo_title = "MCFC Demo $(random(100))";
+        var player = Selector.of("@p").getFirst();
+        player.sendMessage(demo_title);
+        return;
+    }
 }
 "#;
 
@@ -762,15 +765,7 @@ void main() {
     fn interpolated_string_preserves_multibyte_literals() {
         // Multi-byte literal text around a placeholder must survive intact;
         // a byte-wise rewrite would corrupt “ ” into mojibake.
-        let source = "
-void main() {
-    var q = \"hi\";
-    var line = \"\u{201c}$(q)\u{201d} \u{2014} done\";
-    var player = Selector.of(\"@p\").getFirst();
-    player.sendMessage(line);
-    return;
-}
-";
+        let source = "class Main {\n    public static void main() {\n        var q = \"hi\";\n        var line = \"\u{201c}$(q)\u{201d} \u{2014} done\";\n        var player = Selector.of(\"@p\").getFirst();\n        player.sendMessage(line);\n        return;\n    }\n}\n";
         let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
@@ -795,15 +790,7 @@ void main() {
         // text("...$(x)...") must build a component that reads the runtime value
         // by NBT path, never splicing it into a quoted string (which a value
         // containing a quote could break).
-        let source = "
-void main() {
-    var who = \"world\";
-    var line = new Component(\"hi $(who)!\");
-    var player = Selector.of(\"@p\").getFirst();
-    player.sendMessage(line);
-    return;
-}
-";
+        let source = "class Main {\n    public static void main() {\n        var who = \"world\";\n        var line = new Component(\"hi $(who)!\");\n        var player = Selector.of(\"@p\").getFirst();\n        player.sendMessage(line);\n        return;\n    }\n}\n";
         let result = compile_source(source, &lowering()).expect("source should compile");
         let files = result
             .artifacts
@@ -827,35 +814,36 @@ void main() {
 
     #[test]
     fn compiles_sleep_continuations() {
-        let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var flag = true;
+        let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var flag = true;
 
-    sleep(1);
-    mc("say after straight sleep");
+        sleep(1);
+        mc("say after straight sleep");
 
-    if (flag) {
-        sleep(1);
-        mc("say after if sleep");
-    }
-    mc("say after if");
+        if (flag) {
+            sleep(1);
+            mc("say after if sleep");
+        }
+        mc("say after if");
 
-    Execute.at(player, () -> {
-        sleep(1);
-        mc("say after context sleep");
-    });
-    var i = 0;
-    while (i < 2) {
-        sleep(1);
-        i = i + 1;
+        Execute.at(player, () -> {
+            sleep(1);
+            mc("say after context sleep");
+        });
+        var i = 0;
+        while (i < 2) {
+            sleep(1);
+            i = i + 1;
+        }
+        for (int n = 0; n < 2; n++) {
+            sleep(1);
+            mc("say after for sleep");
+        }
+        mc("say done");
+        return;
     }
-    for (int n = 0; n < 2; n++) {
-        sleep(1);
-        mc("say after for sleep");
-    }
-    mc("say done");
-    return;
 }
 "#;
 
@@ -882,20 +870,21 @@ void main() {
 
     #[test]
     fn compiles_async_blocks_and_entity_position() {
-        let source = r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
-    var count = 5;
-    player.position.spawnParticle("minecraft:happy_villager", 20, player);
-    Thread.start(() -> {
-        sleep(5);
-        player.sendMessage("later");
-        player.position.setBlock("minecraft:gold_block");
-    });
-    count = 7;
-    player.sendMessage("caller continues");
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
+        var count = 5;
+        player.position.spawnParticle("minecraft:happy_villager", 20, player);
+        Thread.start(() -> {
+            sleep(5);
+            player.sendMessage("later");
+            player.position.setBlock("minecraft:gold_block");
+        });
+        count = 7;
+        player.sendMessage("caller continues");
+        return;
+    }
 }
 "#;
 
@@ -921,11 +910,12 @@ void main() {
     #[test]
     fn rejects_async_return_old_builtins_and_book_annotation() {
         let async_error = compile_source(
-            r#"
-void main() {
-    Thread.start(() -> {
-        return;
-    });
+            r#"class Main {
+    public static void main() {
+        Thread.start(() -> {
+            return;
+        });
+    }
 }
 "#,
             &lowering(),
@@ -938,10 +928,11 @@ void main() {
         );
 
         let legacy_error = compile_source(
-            r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    tellraw(player, "old");
+            r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        tellraw(player, "old");
+    }
 }
 "#,
             &lowering(),
@@ -951,10 +942,11 @@ void main() {
         assert!(legacy_error.contains("target.sendMessage(message)"));
 
         let book_error = compile_source(
-            r#"
-@book
-void main() {
-    return;
+            r#"class Main {
+    @book
+    public static void main() {
+        return;
+    }
 }
 "#,
             &lowering(),
@@ -966,16 +958,17 @@ void main() {
 
     #[test]
     fn rejects_invalid_random_and_sleep_usage() {
-        let source = r#"
-void main() {
-    var bad_sleep = sleep(1);
-    random(sleep(1));
-    mcf("say $(sleep(1))");
-    sleep(0);
-    sleep("bad");
-    var bad_random = random("bad");
-    var too_many = random(1, 2, 3);
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var bad_sleep = sleep(1);
+        random(sleep(1));
+        mcf("say $(sleep(1))");
+        sleep(0);
+        sleep("bad");
+        var bad_random = random("bad");
+        var too_many = random(1, 2, 3);
+        return;
+    }
 }
 "#;
 
@@ -988,10 +981,11 @@ void main() {
         assert!(rendered.contains("wrong arity for 'random': expected 0, 1, or 2, found 3"));
 
         let string_error = compile_source(
-            r#"
-void main() {
-    var bad = "value $(sleep(1))";
-    return;
+            r#"class Main {
+    public static void main() {
+        var bad = "value $(sleep(1))";
+        return;
+    }
 }
 "#,
             &lowering(),
@@ -1003,15 +997,16 @@ void main() {
 
     #[test]
     fn compiles_debug_builtins() {
-        let source = r#"
-void main() {
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    var pos = Block.of("~ ~1 ~");
-    debug("checkpoint");
-    pos.debugMarker("marker");
-    pos.debugMarker("block marker", "minecraft:gold_block");
-    pig.debugEntity("nearest pig");
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        var pos = Block.of("~ ~1 ~");
+        debug("checkpoint");
+        pos.debugMarker("marker");
+        pos.debugMarker("block marker", "minecraft:gold_block");
+        pig.debugEntity("nearest pig");
+        return;
+    }
 }
 "#;
 
@@ -1035,10 +1030,11 @@ void main() {
     #[test]
     fn heal_rejects_player_and_ambiguous_targets() {
         let player_error = compile_source(
-            r#"
-void main() {
-    var player = Selector.of("@p").getFirst();
-    player.heal(1);
+            r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        player.heal(1);
+    }
 }
 "#,
             &lowering(),
@@ -1048,10 +1044,11 @@ void main() {
         assert!(player_error.contains("known non-player"));
 
         let ambiguous_error = compile_source(
-            r#"
-void main() {
-    var target = Selector.of("@e").getFirst();
-    target.heal(1);
+            r#"class Main {
+    public static void main() {
+        var target = Selector.of("@e").getFirst();
+        target.heal(1);
+    }
 }
 "#,
             &lowering(),
@@ -1064,32 +1061,33 @@ void main() {
     #[test]
     fn async_and_sleep_in_handlers_do_not_register_extra_commands() {
         let result = compile_source(
-            r#"
-@Command("buy")
-void buy() {
-    var player = Selector.of("@s").getFirst();
-    Thread.start(() -> {
-        sleep(3);
-        player.sendMessage("later");
-    });
-    sleepTicks(5);
-    player.sendMessage("done");
-}
+            r#"class Main implements Listener {
+    @Command("buy")
+    static void buy() {
+        var player = Selector.of("@s").getFirst();
+        Thread.start(() -> {
+            sleep(3);
+            player.sendMessage("later");
+        });
+        sleepTicks(5);
+        player.sendMessage("done");
+    }
 
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Thread.start(() -> {
-        sleep(1);
-        debug("joined");
-    });
-}
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Thread.start(() -> {
+            sleep(1);
+            debug("joined");
+        });
+    }
 
-@Every(ticks = 20)
-void pulse() {
-    Thread.start(() -> {
-        sleep(1);
-        debug("pulse");
-    });
+    @Every(ticks = 20)
+    static void pulse() {
+        Thread.start(() -> {
+            sleep(1);
+            debug("pulse");
+        });
+    }
 }
 "#,
             &lowering(),
@@ -1116,33 +1114,34 @@ void pulse() {
     #[test]
     fn compiles_vanilla_bukkit_declarations() {
         let result = compile_source(
-            r#"
-@PlayerState("Coins") int coins;
+            r#"class Main implements Listener {
+    @PlayerState("Coins") static int coins;
 
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player();
-    player.state.coins = player.state.coins + 1;
-}
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.player();
+        player.state.coins = player.state.coins + 1;
+    }
 
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    debug("dead");
-}
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        debug("dead");
+    }
 
-@Command("status")
-void status() {
-    debug("status");
-}
+    @Command("status")
+    static void status() {
+        debug("status");
+    }
 
-@Every(ticks = 20)
-void pulse() {
-    debug("pulse");
-}
+    @Every(ticks = 20)
+    static void pulse() {
+        debug("pulse");
+    }
 
-@After(ticks = 5)
-void later() {
-    debug("later");
+    @After(ticks = 5)
+    static void later() {
+        debug("later");
+    }
 }
 "#,
             &lowering(),
@@ -1170,15 +1169,16 @@ void later() {
     #[test]
     fn bukkit_command_objectives_use_the_full_command_name() {
         let result = compile_source(
-            r#"
-@Command("abcdefghij_one")
-void abcdefghijOne() {
-    debug("one");
-}
+            r#"class Main {
+    @Command("abcdefghij_one")
+    static void abcdefghijOne() {
+        debug("one");
+    }
 
-@Command("abcdefghij_two")
-void abcdefghijTwo() {
-    debug("two");
+    @Command("abcdefghij_two")
+    static void abcdefghijTwo() {
+        debug("two");
+    }
 }
 "#,
             &lowering(),
@@ -1212,10 +1212,11 @@ void abcdefghijTwo() {
             ..lowering()
         };
         let result = compile_source(
-            r#"
-@EventHandler
-void onChat(ChatEvent event) {
-    event.player().sendMessage(event.message());
+            r#"class Main implements Listener {
+    @EventHandler
+    void onChat(ChatEvent event) {
+        event.player().sendMessage(event.message());
+    }
 }
 "#,
             &options,
@@ -1246,7 +1247,7 @@ void onChat(ChatEvent event) {
             ..lowering()
         };
         let result = compile_source(
-            "@EventHandler\nvoid onChat(ChatEvent event) {\n    event.cancel();\n}\n",
+            "class Main implements Listener {\n    @EventHandler\n    void onChat(ChatEvent event) {\n        event.cancel();\n    }\n}\n",
             &options,
         )
         .expect("cancellable packet event should compile");
@@ -1280,7 +1281,7 @@ void onChat(ChatEvent event) {
             ..lowering()
         };
         let error = compile_source(
-            "@EventHandler\nvoid onPlayerConnect(PlayerConnectEvent event) {\n    event.cancel();\n}\n",
+            "class Main implements Listener {\n    @EventHandler\n    void onPlayerConnect(PlayerConnectEvent event) {\n        event.cancel();\n    }\n}\n",
             &options,
         )
         .expect_err("lifecycle event cancellation must fail");
@@ -1290,7 +1291,7 @@ void onChat(ChatEvent event) {
     #[test]
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
-            "@EventHandler\nvoid onChat(ChatEvent event) {\n    debug(event.message());\n}\n",
+            "class Main implements Listener {\n    @EventHandler\n    void onChat(ChatEvent event) {\n        debug(event.message());\n    }\n}\n",
             &lowering(),
         )
         .unwrap_err()
@@ -1313,10 +1314,11 @@ void onChat(ChatEvent event) {
             ..lowering()
         };
         let result = compile_source(
-            r#"
-@EventHandler
-void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
-    event.player().sendMessage(event.face());
+            r#"class Main implements Listener {
+    @EventHandler
+    void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
+        event.player().sendMessage(event.face());
+    }
 }
 "#,
             &options,
@@ -1350,7 +1352,7 @@ void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
             }),
             ..lowering()
         };
-        let error = compile_source("void main() {\n    return;\n}\n", &options)
+        let error = compile_source("class Main {\n    public static void main() {\n        return;\n    }\n}\n", &options)
             .unwrap_err()
             .to_string();
         assert!(error.contains("observation-only"));
@@ -1358,22 +1360,23 @@ void onPlayerInteractBlock(PlayerInteractBlockEvent event) {
 
     #[test]
     fn compiles_world_reads_random_distributions_and_dict_keys() {
-        let source = r#"
-void main() {
-    var spot = Block.of("~ ~ ~");
-    var light = spot.getLightLevel();
-    var biome = spot.getBiome();
-    var plains = spot.inBiome("plains");
-    var sky = spot.getEnvironment("gameplay/sky_light_level");
-    var rule = gamerule("max_entity_cramming");
-    var pick = randomWeighted(List.of(3, 1));
-    var hits = randomBinomial(10, 0.5);
-    var player = Selector.of("@p").getFirst();
-    var dx = player.getLookX();
-    var d = Map.of("wood", 2);
-    var ks = d.keySet();
-    var n = d.size();
-    return;
+        let source = r#"class Main {
+    public static void main() {
+        var spot = Block.of("~ ~ ~");
+        var light = spot.getLightLevel();
+        var biome = spot.getBiome();
+        var plains = spot.inBiome("plains");
+        var sky = spot.getEnvironment("gameplay/sky_light_level");
+        var rule = gamerule("max_entity_cramming");
+        var pick = randomWeighted(List.of(3, 1));
+        var hits = randomBinomial(10, 0.5);
+        var player = Selector.of("@p").getFirst();
+        var dx = player.getLookX();
+        var d = Map.of("wood", 2);
+        var ks = d.keySet();
+        var n = d.size();
+        return;
+    }
 }
 "#;
         let result = compile_source(source, &lowering()).expect("source should compile");
@@ -1399,15 +1402,16 @@ void main() {
     #[test]
     fn rejects_unknown_world_ids_and_bad_weights() {
         let error = compile_source(
-            r#"
-void main() {
-    var spot = Block.of("~ ~ ~");
-    var a = spot.inBiome("moon");
-    var b = spot.getEnvironment("visual/fog_color");
-    var c = gamerule("no_such_rule");
-    var d = randomWeighted(List.of(1, -2));
-    var e = randomBinomial(3, 4);
-    return;
+            r#"class Main {
+    public static void main() {
+        var spot = Block.of("~ ~ ~");
+        var a = spot.inBiome("moon");
+        var b = spot.getEnvironment("visual/fog_color");
+        var c = gamerule("no_such_rule");
+        var d = randomWeighted(List.of(1, -2));
+        var e = randomBinomial(3, 4);
+        return;
+    }
 }
 "#,
             &lowering(),
@@ -1435,31 +1439,32 @@ void main() {
     #[test]
     fn builds_selectors_from_methods() {
         let files = compiled_files(
-            r#"
-void greet(Selector<Player> players) {
-    for (var p : players) {
-        p.sendActionBar("hi");
+            r#"class Main {
+    static void greet(Selector<Player> players) {
+        for (var p : players) {
+            p.sendActionBar("hi");
+        }
     }
-}
 
-void main() {
-    String role = "boss";
-    int most = 3;
-    var bosses = Selector.entities()
-        .type("minecraft:zombie").tag("elite").notTag(role)
-        .distance(0.5, 16).score("hp", 1, 20).score("kills", "5..")
-        .sort("nearest").limit(most);
-    bosses.addTag("seen");
-    int n = bosses.count();
-    boolean none = Selector.allPlayers().gameMode("creative").isEmpty();
-    greet(Selector.allPlayers().team("red"));
-    greet(Selector.entities().tag("x").players());
-    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
-    boolean elite = pig.matches(Selector.entities().tag("elite"));
-    var named = Selector.of("@e[tag=$(role)]");
-    named.addTag("marked");
-    var nearest = Selector.nearestPlayer().getFirst();
-    return;
+    public static void main() {
+        String role = "boss";
+        int most = 3;
+        var bosses = Selector.entities()
+            .type("minecraft:zombie").tag("elite").notTag(role)
+            .distance(0.5, 16).score("hp", 1, 20).score("kills", "5..")
+            .sort("nearest").limit(most);
+        bosses.addTag("seen");
+        int n = bosses.count();
+        boolean none = Selector.allPlayers().gameMode("creative").isEmpty();
+        greet(Selector.allPlayers().team("red"));
+        greet(Selector.entities().tag("x").players());
+        var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+        boolean elite = pig.matches(Selector.entities().tag("elite"));
+        var named = Selector.of("@e[tag=$(role)]");
+        named.addTag("marked");
+        var nearest = Selector.nearestPlayer().getFirst();
+        return;
+    }
 }
 "#,
         );
@@ -1479,20 +1484,21 @@ void main() {
     #[test]
     fn rejects_bad_selectors() {
         let error = compile_source(
-            r#"
-void takesPlayers(Selector<Player> players) {}
+            r#"class Main {
+    static void takesPlayers(Selector<Player> players) {}
 
-void main() {
-    var a = Selector.of("@e[colour=red]");
-    var b = Selector.of("@a[type=minecraft:pig]");
-    var c = Selector.of("@e[type=minecraft:chicke]");
-    var d = Selector.entities().limit(1).limit(2);
-    var e = Selector.self().sort("nearest");
-    takesPlayers(Selector.entities());
-    var f = Selector.entities();
-    var g = f.tag("x");
-    var h = Selector.of("@e[type=pig]").players();
-    return;
+    public static void main() {
+        var a = Selector.of("@e[colour=red]");
+        var b = Selector.of("@a[type=minecraft:pig]");
+        var c = Selector.of("@e[type=minecraft:chicke]");
+        var d = Selector.entities().limit(1).limit(2);
+        var e = Selector.self().sort("nearest");
+        takesPlayers(Selector.entities());
+        var f = Selector.entities();
+        var g = f.tag("x");
+        var h = Selector.of("@e[type=pig]").players();
+        return;
+    }
 }
 "#,
             &lowering(),

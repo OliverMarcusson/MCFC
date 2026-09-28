@@ -15,7 +15,7 @@ time = true
 rand = true
 ```
 
-Every call pauses the function until `mcfd` answers (see [Functions that pause](/language/reference/statements#functions-that-pause)) and returns a struct with `ok: boolean`. If `mcfd` isn't running, the call resumes after a timeout with `ok = false`.
+Every call pauses the method until `mcfd` answers (see [Methods that pause](/language/reference/statements#methods-that-pause)) and returns a struct with `ok: boolean`. If `mcfd` isn't running, the call resumes after a timeout with `ok = false`.
 
 ## Calls
 
@@ -38,11 +38,13 @@ Every call pauses the function until `mcfd` answers (see [Functions that pause](
 JSON paths are dot-separated, such as `quote.author.name`. The JSON helpers set `ok = false` for non-2xx responses, invalid JSON, missing paths and non-string values.
 
 ```mcfc
-void topPlayer(String team) {
-    var r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", List.of(team));
-    if (r.ok()) {
-        var name = (String) r.rows()[0].name;
-        Selector.of("@a").sendMessage("Top player: $(name)");
+class Main {
+    static void topPlayer(String team) {
+        var r = db.query("SELECT name FROM scores WHERE team = ? ORDER BY points DESC LIMIT 1", List.of(team));
+        if (r.ok()) {
+            var name = (String) r.rows()[0].name;
+            Selector.of("@a").sendMessage("Top player: $(name)");
+        }
     }
 }
 ```

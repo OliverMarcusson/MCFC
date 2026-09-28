@@ -1,17 +1,19 @@
 // Smithed Actionbar priorities without the library: lower-priority messages
 // wait until the shown one's 20-tick freeze runs out.
-void main() {
-    for (Player player : Selector.of("@a")) {
-        player.sendActionBar("first");
-        player.sendActionBar("blocked", "persistent");
-        player.sendActionBar("urgent", "override");
-        player.sendActionBar("also blocked");
+class Main {
+    public static void main() {
+        for (Player player : Selector.of("@a")) {
+            player.sendActionBar("first");
+            player.sendActionBar("blocked", "persistent");
+            player.sendActionBar("urgent", "override");
+            player.sendActionBar("also blocked");
+        }
     }
-}
 
-@After(ticks = 25)
-void later() {
-    for (Player player : Selector.of("@a")) {
-        player.sendActionBar("later", "persistent");
+    @After(ticks = 25)
+    static void later() {
+        for (Player player : Selector.of("@a")) {
+            player.sendActionBar("later", "persistent");
+        }
     }
 }

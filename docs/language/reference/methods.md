@@ -69,21 +69,25 @@ To build selectors with methods, such as `Selector.entities().tag("boss").limit(
 Packs share one action bar, so `sendActionBar` follows the [Smithed Actionbar](https://docs.smithed.dev/libraries/actionbar/) priorities: `"override"`, `"notification"` (the default), `"conditional"` for a HUD shown while something is true, and `"persistent"` for one that is always on. A shown message stays for 20 ticks, and until then only a message of the same or higher priority replaces it. An `"override"` can't be replaced.
 
 ```mcfc
-void hud(Player player) {
-    player.sendActionBar("Holding a compass", "conditional");
+class Main {
+    static void hud(Player player) {
+        player.sendActionBar("Holding a compass", "conditional");
+    }
 }
 ```
 
 When the Smithed Actionbar pack is installed, messages go through it. Without it, MCFC runs the same rules on the same scoreboards, so MCFC packs still coordinate with each other.
 
 ```mcfc
-void celebrate(Player player) {
-    var message = new Component("Quest complete");
-    message.color = "gold";
-    message.bold = true;
-    player.sendMessage(message);
-    player.sendTitle("Victory");
-    player.playSound("minecraft:entity.player.levelup", "master");
+class Main {
+    static void celebrate(Player player) {
+        var message = new Component("Quest complete");
+        message.color = "gold";
+        message.bold = true;
+        player.sendMessage(message);
+        player.sendTitle("Victory");
+        player.playSound("minecraft:entity.player.levelup", "master");
+    }
 }
 ```
 
@@ -92,13 +96,15 @@ void celebrate(Player player) {
 `Sidebar` is the scoreboard sidebar every player sees. Lines are numbered from 0 at the top.
 
 ```mcfc
-void showScore(Player player) {
-    Sidebar.setTitle("Arena");
-    Sidebar.setLine(0, "Red: 3");
-    Sidebar.setLine(1, "Blue: 5");
-    Sidebar.setLine(2, "Time", "4:30");
-    Sidebar.removeLine(3);
-    player.setSidebarLine(4, "Your coins: 12");
+class Main {
+    static void showScore(Player player) {
+        Sidebar.setTitle("Arena");
+        Sidebar.setLine(0, "Red: 3");
+        Sidebar.setLine(1, "Blue: 5");
+        Sidebar.setLine(2, "Time", "4:30");
+        Sidebar.removeLine(3);
+        player.setSidebarLine(4, "Your coins: 12");
+    }
 }
 ```
 
@@ -145,12 +151,14 @@ Each call reads the entity's NBT again, so store the result in a `var` if you ne
 | `getDimension()` | `String`, such as `"minecraft:overworld"`. Players only. |
 
 ```mcfc
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    if (player.distanceTo(pig) < 8.0 && player.getFoodLevel() < 6) {
-        player.sendMessage("The pig looks tasty");
-        pig.heal(2);
+class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        if (player.distanceTo(pig) < 8.0 && player.getFoodLevel() < 6) {
+            player.sendMessage("The pig looks tasty");
+            pig.heal(2);
+        }
     }
 }
 ```
@@ -162,15 +170,17 @@ Block, item and text displays are animated by changing their transformation with
 ```mcfc
 import std.vec.Vec3;
 
-void main() {
-    var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
-    display.setInterpolationDuration(20);
-    display.setInterpolationDelay(0);
-    display.setScale(new Vec3(2.0, 2.0, 2.0));
-    display.setLeftRotation(3.14159, new Vec3(0.0, 1.0, 0.0));
+class Main {
+    public static void main() {
+        var display = Selector.of("@e[type=minecraft:block_display,limit=1]").getFirst();
+        display.setInterpolationDuration(20);
+        display.setInterpolationDelay(0);
+        display.setScale(new Vec3(2.0, 2.0, 2.0));
+        display.setLeftRotation(3.14159, new Vec3(0.0, 1.0, 0.0));
 
-    // Or in one call: grow back to normal size over 40 ticks.
-    display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+        // Or in one call: grow back to normal size over 40 ticks.
+        display.animate(40, new Vec3(0.0, 0.0, 0.0), new Vec3(1.0, 1.0, 1.0));
+    }
 }
 ```
 
@@ -190,13 +200,15 @@ void main() {
 ```mcfc
 import std.attribute.Attribute;
 
-void main() {
-    var player = (Player) Selector.of("@p").getFirst();
-    var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
-    player.setAttribute(Attribute.GRAVITY, 0.04);
-    if (player.getCurrentInput().isJump()) {
-        pig.setVelocity(0.0, 0.5, 0.0);
-        player.lookAt(pig);
+class Main {
+    public static void main() {
+        var player = (Player) Selector.of("@p").getFirst();
+        var pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
+        player.setAttribute(Attribute.GRAVITY, 0.04);
+        if (player.getCurrentInput().isJump()) {
+            pig.setVelocity(0.0, 0.5, 0.0);
+            player.lookAt(pig);
+        }
     }
 }
 ```

@@ -1,175 +1,161 @@
 // Number helpers. Integer math is 32-bit and `/` rounds toward negative infinity.
 
-// `min`, `max`, `abs`, `sign` and `clamp` are generic: they work on `int` and
-// `float`, and mixing the two gives `float`, like Java.
-
-public <T> T min(T a, T b) {
-    if (a < b) {
-        return a;
-    }
-    return b;
-}
-
-public <T> T max(T a, T b) {
-    if (a > b) {
-        return a;
-    }
-    return b;
-}
-
-public <T> T abs(T x) {
-    if (x < 0) {
-        return -x;
-    }
-    return x;
-}
-
-public <T> T sign(T x) {
-    if (x > 0) {
-        return 1;
-    }
-    if (x < 0) {
-        return -1;
-    }
-    return 0;
-}
-
-public <T> T clamp(T x, T low, T high) {
-    if (x < low) {
-        return low;
-    }
-    if (x > high) {
-        return high;
-    }
-    return x;
-}
-
-// Remainder with the sign of `b`, matching Minecraft's `%=` operation.
-public int rem(int a, int b) {
-    return a % b;
-}
-
-// `base` raised to `exponent`; exponents below zero return 0.
-public int pow(int base, int exponent) {
-    if (exponent < 0) {
-        return 0;
-    }
-    var result = 1;
-    var i = 0;
-    while (i < exponent) {
-        result = result * base;
-        i = i + 1;
-    }
-    return result;
-}
-
-// Greatest common divisor of `a` and `b`, always zero or positive.
-public int gcd(int a, int b) {
-    var x = abs(a);
-    var y = abs(b);
-    while (y != 0) {
-        var r = x % y;
-        x = y;
-        y = r;
-    }
-    return x;
-}
-
-// Point `t` of the way from `a` to `b`: 0.0 gives `a`, 1.0 gives `b`.
-public float lerp(float a, float b, float t) {
-    return a + (b - a) * t;
-}
-
-// Whole-number square root, rounded down. Negative `n` gives 0.
-public int isqrt(int n) {
-    if (n <= 0) {
-        return 0;
-    }
-    var root = (int) Math.sqrt(n);
-    while (root * root > n) {
-        root = root - 1;
-    }
-    while ((root + 1) * (root + 1) <= n) {
-        root = root + 1;
-    }
-    return root;
-}
-
-// Trigonometry in radians. `sin`, `cos` and `tan` are `/compute` providers:
-// the compiler inlines calls to them so they fuse into the surrounding float
-// expression, and the bodies below keep std usable as a standalone pack.
-
-public float sin(float x) {
-    return Math.sin(x);
-}
-
-public float cos(float x) {
-    return Math.cos(x);
-}
-
-public float tan(float x) {
-    return Math.tan(x);
-}
-
-// `/compute` has no inverse trig, so these are MCFC code, accurate to about 1e-6.
-
-// Arctangent in (-pi/2, pi/2).
-public float atan(float x) {
-    var a = abs(x);
-    var inverted = a > 1.0;
-    if (inverted) {
-        a = 1.0 / a;
-    }
-    // Past tan(pi/8), atan(a) = pi/4 + atan((a - 1) / (a + 1)) keeps the series argument small.
-    var result = 0.0;
-    if (a > 0.41421356) {
-        result = 0.78539816 + atanSeries((a - 1.0) / (a + 1.0));
-    } else {
-        result = atanSeries(a);
-    }
-    if (inverted) {
-        result = 1.5707963 - result;
-    }
-    if (x < 0) {
-        return -result;
-    }
-    return result;
-}
-
-// Taylor series for |t| <= tan(pi/8), error below 1e-6.
-float atanSeries(float t) {
-    var z = t * t;
-    return t * (1.0 + z * (-0.33333333 + z * (0.2 + z * (-0.14285714 + z * (0.11111111 - z * 0.09090909)))));
-}
-
-// Angle of the point (x, y) in (-pi, pi]. `atan2(0, 0)` is 0.
-public float atan2(float y, float x) {
-    if (x > 0) {
-        return atan(y / x);
-    }
-    if (x < 0) {
-        if (y >= 0) {
-            return atan(y / x) + 3.14159265;
+public final class Math {
+    // `min`, `max`, `abs`, `sign` and `clamp` are generic: they work on `int` and
+    // `float`, and mixing the two gives `float`, like Java.
+    public static <T> T min(T a, T b) {
+        if (a < b) {
+            return a;
         }
-        return atan(y / x) - 3.14159265;
+        return b;
     }
-    if (y > 0) {
-        return 1.5707963;
-    }
-    if (y < 0) {
-        return -1.5707963;
-    }
-    return 0.0;
-}
 
-// Arcsine in [-pi/2, pi/2]. `x` is clamped to [-1, 1].
-public float asin(float x) {
-    var c = clamp(x, -1.0, 1.0);
-    return atan2(c, Math.sqrt(1.0 - c * c));
-}
+    public static <T> T max(T a, T b) {
+        if (a > b) {
+            return a;
+        }
+        return b;
+    }
 
-// Arccosine in [0, pi]. `x` is clamped to [-1, 1].
-public float acos(float x) {
-    var c = clamp(x, -1.0, 1.0);
-    return atan2(Math.sqrt(1.0 - c * c), c);
+    public static <T> T abs(T x) {
+        if (x < 0) {
+            return -x;
+        }
+        return x;
+    }
+
+    public static <T> T sign(T x) {
+        if (x > 0) {
+            return 1;
+        }
+        if (x < 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    public static <T> T clamp(T x, T low, T high) {
+        if (x < low) {
+            return low;
+        }
+        if (x > high) {
+            return high;
+        }
+        return x;
+    }
+
+    // Remainder with the sign of `b`, matching Minecraft's `%=` operation.
+    public static int rem(int a, int b) {
+        return a % b;
+    }
+
+    // Greatest common divisor of `a` and `b`, always zero or positive.
+    public static int gcd(int a, int b) {
+        var x = abs(a);
+        var y = abs(b);
+        while (y != 0) {
+            var r = x % y;
+            x = y;
+            y = r;
+        }
+        return x;
+    }
+
+    // Point `t` of the way from `a` to `b`: 0.0 gives `a`, 1.0 gives `b`.
+    public static float lerp(float a, float b, float t) {
+        return a + (b - a) * t;
+    }
+
+    // Whole-number square root, rounded down. Negative `n` gives 0.
+    public static int isqrt(int n) {
+        if (n <= 0) {
+            return 0;
+        }
+        var root = (int) Math.sqrt(n);
+        while (root * root > n) {
+            root = root - 1;
+        }
+        while ((root + 1) * (root + 1) <= n) {
+            root = root + 1;
+        }
+        return root;
+    }
+
+    // Trigonometry in radians. `sin`, `cos` and `tan` are `/compute` providers:
+    // the compiler inlines calls to them so they fuse into the surrounding float
+    // expression, and the bodies below keep std usable as a standalone pack.
+    public static float sin(float x) {
+        return Math.sin(x);
+    }
+
+    public static float cos(float x) {
+        return Math.cos(x);
+    }
+
+    public static float tan(float x) {
+        return Math.tan(x);
+    }
+
+    // `/compute` has no inverse trig, so these are MCFC code, accurate to about 1e-6.
+
+    // Arctangent in (-pi/2, pi/2).
+    public static float atan(float x) {
+        var a = abs(x);
+        var inverted = a > 1.0;
+        if (inverted) {
+            a = 1.0 / a;
+        }
+        // Past tan(pi/8), atan(a) = pi/4 + atan((a - 1) / (a + 1)) keeps the series argument small.
+        var result = 0.0;
+        if (a > 0.41421356) {
+            result = 0.78539816 + atanSeries((a - 1.0) / (a + 1.0));
+        } else {
+            result = atanSeries(a);
+        }
+        if (inverted) {
+            result = 1.5707963 - result;
+        }
+        if (x < 0) {
+            return -result;
+        }
+        return result;
+    }
+
+    // Taylor series for |t| <= tan(pi/8), error below 1e-6.
+    static float atanSeries(float t) {
+        var z = t * t;
+        return t * (1.0 + z * (-0.33333333 + z * (0.2 + z * (-0.14285714 + z * (0.11111111 - z * 0.09090909)))));
+    }
+
+    // Angle of the point (x, y) in (-pi, pi]. `atan2(0, 0)` is 0.
+    public static float atan2(float y, float x) {
+        if (x > 0) {
+            return atan(y / x);
+        }
+        if (x < 0) {
+            if (y >= 0) {
+                return atan(y / x) + 3.14159265;
+            }
+            return atan(y / x) - 3.14159265;
+        }
+        if (y > 0) {
+            return 1.5707963;
+        }
+        if (y < 0) {
+            return -1.5707963;
+        }
+        return 0.0;
+    }
+
+    // Arcsine in [-pi/2, pi/2]. `x` is clamped to [-1, 1].
+    public static float asin(float x) {
+        var c = clamp(x, -1.0, 1.0);
+        return atan2(c, Math.sqrt(1.0 - c * c));
+    }
+
+    // Arccosine in [0, pi]. `x` is clamped to [-1, 1].
+    public static float acos(float x) {
+        var c = clamp(x, -1.0, 1.0);
+        return atan2(Math.sqrt(1.0 - c * c), c);
+    }
 }

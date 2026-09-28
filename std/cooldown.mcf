@@ -1,33 +1,35 @@
 // Per-player cooldowns, keyed by name so one player can have several.
 // Each stores the game tick the cooldown ends in the player's state.
 
-@PlayerState
-Map<String, Integer> std.cooldowns;
+public final class Cooldown {
+    @PlayerState
+    static Map<String, Integer> std.cooldowns;
 
-// Starts or restarts `name` for `player`, lasting `ticks`.
-public void start(Player player, String name, int ticks) {
-    var ends = player.state.std.cooldowns;
-    ends.put(name, gameTime() + ticks);
-    player.state.std.cooldowns = ends;
-}
-
-// `true` once `name` has run out, or if it was never started.
-public boolean ready(Player player, String name) {
-    return remaining(player, name) == 0;
-}
-
-// Ticks left on `name`, or 0 when it is ready.
-public int remaining(Player player, String name) {
-    var left = player.state.std.cooldowns.getOrDefault(name, 0) - gameTime();
-    if (left < 0) {
-        return 0;
+    // Starts or restarts `name` for `player`, lasting `ticks`.
+    public static void start(Player player, String name, int ticks) {
+        var ends = player.state.std.cooldowns;
+        ends.put(name, gameTime() + ticks);
+        player.state.std.cooldowns = ends;
     }
-    return left;
-}
 
-// Ends `name` early, so it is ready now.
-public void clear(Player player, String name) {
-    var ends = player.state.std.cooldowns;
-    ends.remove(name);
-    player.state.std.cooldowns = ends;
+    // `true` once `name` has run out, or if it was never started.
+    public static boolean ready(Player player, String name) {
+        return remaining(player, name) == 0;
+    }
+
+    // Ticks left on `name`, or 0 when it is ready.
+    public static int remaining(Player player, String name) {
+        var left = player.state.std.cooldowns.getOrDefault(name, 0) - gameTime();
+        if (left < 0) {
+            return 0;
+        }
+        return left;
+    }
+
+    // Ends `name` early, so it is ready now.
+    public static void clear(Player player, String name) {
+        var ends = player.state.std.cooldowns;
+        ends.remove(name);
+        player.state.std.cooldowns = ends;
+    }
 }

@@ -9,7 +9,7 @@ MCFC is a Rust workspace with the compiler, CLI, language server, helper daemon,
   -> lexer
   -> parser
   -> AST
-  -> source normalization for top-level declarations
+  -> module resolution and hook normalization (entry points, handlers, @Tick)
   -> type analysis
   -> IR lowering
   -> conservative optimization

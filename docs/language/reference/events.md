@@ -1,6 +1,6 @@
 # Events
 
-A function annotated with `@EventHandler` runs when something happens in game. Its one parameter's type picks the event, like in Bukkit: `void onJoin(PlayerJoinEvent event)` runs when a player joins. There are two kinds:
+As in Bukkit, event handlers are methods of a class that `implements Listener`, marked `@EventHandler`. The one parameter's type picks the event: `void onJoin(PlayerJoinEvent event)` runs when a player joins. Handlers are instance methods, and the pack makes one object of each listener class, so a handler can keep values in the class's fields. `Listener` needs no import. There are two kinds of events:
 
 - **Vanilla events** work in any datapack.
 - **Agent events** need the optional [`mcfd-agent`](/runtime/mcfd-agent) and `[helper.agent] enabled = true` in `mcfc.toml`. They carry a typed payload, and some can be cancelled. A pack that uses them still loads without the agent. Its agent handlers just never run.
@@ -22,16 +22,18 @@ A function annotated with `@EventHandler` runs when something happens in game. I
 Vanilla handlers run as the affected player, which is `event.player()`:
 
 ```mcfc
-@EventHandler
-void onPlayerJoin(PlayerJoinEvent event) {
-    Player player = event.player();
-    player.sendMessage("Welcome!");
-}
+class Main implements Listener {
+    @EventHandler
+    void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.player();
+        player.sendMessage("Welcome!");
+    }
 
-@EventHandler
-void onPlayerDeath(PlayerDeathEvent event) {
-    Player player = event.player();
-    player.state.deaths = player.state.deaths + 1;
+    @EventHandler
+    void onPlayerDeath(PlayerDeathEvent event) {
+        Player player = event.player();
+        player.state.deaths = player.state.deaths + 1;
+    }
 }
 ```
 
@@ -39,18 +41,20 @@ Minecraft doesn't say which entity or block was involved, so MCFC finds it after
 
 Interaction entities are invisible hitboxes. Summon one to make a clickable area, and handle clicks with `PlayerInteractEntityEvent` and `PlayerHurtEntityEvent`.
 
-For something that runs repeatedly, use [`@Every`](./statements#every-and-after) or `void tick()`. For something players run, use [`@Command`](./statements#command).
+For something that runs repeatedly, use [`@Every`](./statements#every-and-after) or a [`@Tick`](./statements#entry-points) method. For something players run, use [`@Command`](./statements#command).
 
 ## Agent events <Badge type="danger" text="Agent" title="Needs mcfd-agent running beside the server. Not available on Realms." />
 
 These take their payload type as the parameter, the same way:
 
 ```mcfc
-@EventHandler
-void onChat(ChatEvent event) {
-    if (event.message() == "spark") {
-        event.cancel();
-        event.player().sendMessage("Spark accepted");
+class Main implements Listener {
+    @EventHandler
+    void onChat(ChatEvent event) {
+        if (event.message() == "spark") {
+            event.cancel();
+            event.player().sendMessage("Spark accepted");
+        }
     }
 }
 ```
@@ -89,9 +93,11 @@ These payloads have `playerName(): String`, `source(): String` and `payload(): S
 | No | `PlayerConnectEvent`, `PlayerQuitEvent`, `PlayerRespawnEvent`, `PlayerDamageEvent`, `PlayerTeleportEvent`, `PlayerItemDropEvent`, `PlayerItemPickupEvent`, `InventoryOpenEvent`, `GameModeChangeEvent` |
 
 ```mcfc
-@EventHandler
-void onPlayerDamage(PlayerDamageEvent event) {
-    event.player().sendMessage("Damage event: $(event.payload())");
+class Main implements Listener {
+    @EventHandler
+    void onPlayerDamage(PlayerDamageEvent event) {
+        event.player().sendMessage("Damage event: $(event.payload())");
+    }
 }
 ```
 

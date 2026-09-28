@@ -1,53 +1,55 @@
 // Java expression forms: ?:, switch expressions, do-while, String +, number literals.
 enum Stage { NEW, MID, DONE }
 
-int pick(boolean flag) {
-    return flag ? 10 : 20;
-}
+class Main {
+    static int pick(boolean flag) {
+        return flag ? 10 : 20;
+    }
 
-String label(Stage stage) {
-    return switch (stage) {
-        case NEW -> "fresh";
-        case MID, DONE -> "old";
-    };
-}
+    static String label(Stage stage) {
+        return switch (stage) {
+            case NEW -> "fresh";
+            case MID, DONE -> "old";
+        };
+    }
 
-int code(String name) {
-    return switch (name) {
-        case "a" -> 1;
-        case "b" -> { yield 2; }
-        default -> 0;
-    };
-}
+    static int code(String name) {
+        return switch (name) {
+            case "a" -> 1;
+            case "b" -> { yield 2; }
+            default -> 0;
+        };
+    }
 
-void main() {
-    var a = pick(true) + pick(false);
-    mcf("say ternary $(a)");
-    var n = 7;
-    var nested = n > 5 ? n > 6 ? "big" : "mid" : "small";
-    mcf("say nested $(nested)");
-    mcf("say switch $(label(Stage.NEW)) $(label(Stage.DONE))");
-    var codes = code("a") * 100 + code("b") * 10 + code("zzz");
-    mcf("say codes $(codes)");
-    var i = 0;
-    var steps = 0;
-    do {
-        i++;
-        if (i == 2) {
-            continue;
-        }
-        steps += 10;
-    } while (i < 4);
-    mcf("say dowhile $(i) $(steps)");
-    var once = 0;
-    do {
-        once++;
-    } while (false);
-    mcf("say once $(once)");
-    var text = "n=" + n + ", ok=" + (n > 3) + ", stage=" + Stage.MID;
-    mcf("say $(text)");
-    var hex = 0xFF + 1_000;
-    mcf("say hex $(hex)");
-    final int fixed = 4;
-    mcf("say fixed $(fixed)");
+    public static void main() {
+        var a = pick(true) + pick(false);
+        mcf("say ternary $(a)");
+        var n = 7;
+        var nested = n > 5 ? n > 6 ? "big" : "mid" : "small";
+        mcf("say nested $(nested)");
+        mcf("say switch $(label(Stage.NEW)) $(label(Stage.DONE))");
+        var codes = code("a") * 100 + code("b") * 10 + code("zzz");
+        mcf("say codes $(codes)");
+        var i = 0;
+        var steps = 0;
+        do {
+            i++;
+            if (i == 2) {
+                continue;
+            }
+            steps += 10;
+        } while (i < 4);
+        mcf("say dowhile $(i) $(steps)");
+        var once = 0;
+        do {
+            once++;
+        } while (false);
+        mcf("say once $(once)");
+        var text = "n=" + n + ", ok=" + (n > 3) + ", stage=" + Stage.MID;
+        mcf("say $(text)");
+        var hex = 0xFF + 1_000;
+        mcf("say hex $(hex)");
+        final int fixed = 4;
+        mcf("say fixed $(fixed)");
+    }
 }

@@ -2,205 +2,38 @@
 
 MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` and `/* ... */` are comments. Indentation has no meaning.
 
-**Top level:** [functions](#functions) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [`class`](#class) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
+**Declarations:** [entry points](#entry-points) · [`class`](#class) · [methods](#methods) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [`import`](#import) · [modules and `public`](#modules-and-public) · [static fields](#static-fields) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after) · [`@Test`](#test-and-assert)
 
-**In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`Thread.start`](#thread-start) · [`Execute.as` / `Execute.at`](#execute-as-and-execute-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
+**In a method:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`Thread.start`](#thread-start) · [`Execute.as` / `Execute.at`](#execute-as-and-execute-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
 ## Declarations
 
-### Functions
+### Entry points
+
+A pack is a set of classes. There are no top-level functions or variables, so every method and every piece of state is declared inside a class.
 
 ```mcfc
-void greet(Player player, String message) {
-    player.sendMessage(message);
-}
-```
+class Main {
+    static int ticks;
 
-The return type comes first and every parameter has a type. Duplicate function or parameter names are errors. Functions may call themselves or each other recursively, but a recursive function can't pause (see [Functions that pause](#functions-that-pause)).
-
-Two names are special:
-
-- `void main()` in the root module runs every time the datapack loads, including on `/reload`. It's added to the Lantern Load `load:load` tag, which `minecraft:load` runs. Each load also sets the score `<namespace>` in `load.status` to 1, so other packs can check that yours loaded.
-- `void tick()` runs every game tick through the `minecraft:tick` tag. If several modules define `tick`, their bodies all run, in module order. A `tick` that takes parameters is an ordinary function.
-
-Every other zero-argument `void` function is also exported as `/function <namespace>:<name>`, so you can call it from chat. Function paths are lowercase: `resetArena` is exported as `<namespace>:reset_arena`.
-
-#### Generic functions
-
-Type parameters go in `<...>` before the return type. A call infers them from its arguments:
-
-```mcfc
-<T> T biggest(List<T> values) {
-    var best = values.getFirst();
-    for (var value : values) {
-        if (value > best) {
-            best = value;
-        }
-    }
-    return best;
-}
-
-void main() {
-    var a = biggest(List.of(3, 9, 2));
-    var b = biggest(List.of(1.5, 0.25));
-}
-```
-
-When the arguments can't tell, write the type arguments out, as in Java: `none<String>()` for `<T> List<T> none()`, or `Util.<Integer>pick(2)` for a static or instance method. Written type arguments replace inference, so each argument must then fit them. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
-
-#### Varargs
-
-```mcfc
-int sum(int... values) {
-    int total = 0;
-    for (int value : values) {
-        total += value;
-    }
-    return total;
-}
-
-void main() {
-    int none = sum();
-    int some = sum(1, 2, 3);
-    int listed = sum(List.of(4, 5));
-}
-```
-
-The last parameter can take any number of arguments, as a `List`. Passing a `List` there passes it as it is.
-
-#### Overloading
-
-Functions and methods can share a name when their parameter types differ:
-
-```mcfc
-int area(int side) {
-    return side * side;
-}
-
-float area(float width, float height) {
-    return width * height;
-}
-
-void main() {
-    int square = area(3);
-    float rect = area(2, 1.5);
-}
-```
-
-A call picks the overload whose parameters match the argument types exactly, then one the arguments convert to (`int` to `float`), then a generic one. Two matches at the same step are an ambiguous call. Each overload compiles to its own function, `area__int` and `area__float__float`. Only a zero-parameter overload keeps the plain name, so it's the one `/function` exports.
-
-#### Functions that pause
-
-A function that calls `sleep`, `sleepTicks`, `sort()` or a host call pauses, and so does any function that calls it. The caller continues once the callee is done. Because of that, a call to a pausing function has to be a statement of its own: `f();`, `var x = f();`, `x = f();` or `return f();`. Using it inside a condition or a larger expression is an error.
-
-```mcfc
-int waitThenDouble(int n) {
-    sleepTicks(20);
-    return n * 2;
-}
-
-void main() {
-    var x = waitThenDouble(4);
-    debug("one second later, x is $(x)");
-}
-```
-
-### `record`
-
-```mcfc
-record Quest(String name, int reward) {}
-
-void main() {
-    Quest quest = new Quest("Mine", 5);
-    quest = new Quest(quest.name(), quest.reward() + 1);
-    debug(quest.name());
-}
-```
-
-`new Quest(...)` takes one argument per component, in declaration order. Records are top-level. Read components with accessor calls such as `quest.reward()`. To change a value, construct a new record. Record values live in command storage and are copied when assigned or passed.
-
-A record body can declare methods:
-
-```mcfc
-record Point(int x, int y) {
-    static Point origin() {
-        return new Point(0, 0);
+    public static void main() {
+        Selector.of("@a").sendMessage("loaded");
     }
 
-    Point add(Point other) {
-        return new Point(x + other.x(), y + other.y());
+    @Tick
+    static void tick() {
+        ticks = ticks + 1;
     }
 
-    int manhattan() {
-        return abs(x) + abs(this.y);
-    }
-
-    private int abs(int value) {
-        return value < 0 ? -value : value;
-    }
-}
-
-void main() {
-    Point moved = Point.origin().add(new Point(3, -4));
-    debug("$(moved) is $(moved.manhattan()) away");
-}
-```
-
-- Inside a method, `this` is the record. A component reads as `x`, `this.x` or `x()`, and other methods can be called without `this.`.
-- A `static` method has no `this` and is called on the type: `Point.origin()`.
-- Methods follow the same visibility rule as functions: without `public`, only the record's module and the modules below it can call them. A method of a private record is private.
-- Methods can be generic and overloaded, and a method can't be named like a component, since that name is the accessor.
-- Records can't declare fields or constructors.
-
-`==`, `!=` and `equals(other)` compare every component. `toString()`, `+` and `$(...)` give Java's record text, `Point[x=3, y=-4]`. Declare `toString()` or `equals(Point other)` in the body to replace them; `@Override` is accepted on these two.
-
-### `enum`
-
-```mcfc
-enum Mode { SURVIVAL, CREATIVE }
-
-void describe(Mode mode) {
-    switch (mode) {
-        case SURVIVAL -> debug("Survival");
-        case CREATIVE -> debug("Creative");
+    static void resetArena() {
+        ticks = 0;
     }
 }
 ```
 
-An enum needs at least one constant. Outside a `case` and outside the enum's own methods, you refer to a constant as `Mode.SURVIVAL`. Constants are stored as integers starting at 0, in declaration order, so reordering them changes stored values. `mode.name()` is the constant's name, `mode.ordinal()` its index, and `Mode.values()` lists every constant.
-
-After the constants and a `;`, an enum can declare `final` fields, one constructor and methods:
-
-```mcfc
-enum Planet {
-    MERCURY(3, 2),
-    EARTH(6, 5);
-
-    private final int mass;
-    private final int radius;
-
-    Planet(int mass, int radius) {
-        this.mass = mass;
-        this.radius = radius;
-    }
-
-    int density() {
-        return mass * 10 / radius;
-    }
-
-    boolean isHome() {
-        return this == EARTH;
-    }
-}
-
-void main() {
-    for (Planet planet : Planet.values()) {
-        debug("$(planet) $(planet.density()) $(planet.mass)");
-    }
-}
-```
-
-Each constant passes one argument per constructor parameter. The constructor can only assign parameters to fields (`this.mass = mass;`), and every field must be assigned. Nothing is stored for a field: reading `planet.mass` compiles to a switch over the constants, so the arguments are best kept to literals.
+- `public static void main()` in a class of the root module runs every time the datapack loads, including on `/reload`. It's added to the Lantern Load `load:load` tag, which `minecraft:load` runs. Each load also sets the score `<namespace>` in `load.status` to 1, so other packs can check that yours loaded. Only one class may declare `main`.
+- A `static void` method marked `@Tick` runs every game tick through the `minecraft:tick` tag. Any class in any module can have one, and they all run.
+- Every other `static void` method with no parameters is exported as `/function <namespace>:<class>/<method>`, so you can call it from chat. Paths are lowercase: `Main.resetArena` is exported as `<namespace>:main/reset_arena`.
 
 ### `class`
 
@@ -234,17 +67,19 @@ class Node {
     }
 }
 
-void main() {
-    Counter hits = new Counter(5);
-    Counter same = hits;
-    same.add(1).add(2);
-    debug("$(hits.get()) $(Counter.created)");
+class Main {
+    public static void main() {
+        Counter hits = new Counter(5);
+        Counter same = hits;
+        same.add(1).add(2);
+        debug("$(hits.get()) $(Counter.created)");
 
-    Node head = new Node(1);
-    head.next = new Node(2);
-    head.next.value = 20;
-    if (head.next.next == null) {
-        debug("two nodes");
+        Node head = new Node(1);
+        head.next = new Node(2);
+        head.next.value = 20;
+        if (head.next.next == null) {
+            debug("two nodes");
+        }
     }
 }
 ```
@@ -254,9 +89,9 @@ Unlike records, class objects are shared: assigning or passing one copies a refe
 - Fields can have an initializer. A field without one starts as `0`, `false`, `""`, `0.0`, `null`, or an empty list or map. Initializers run before the constructor body.
 - A class without a constructor gets one that takes no arguments. Constructors can be overloaded like methods.
 - Inside a class, `this` is the object. A field reads and writes as `count` or `this.count`, and methods can be called without `this.`.
-- `static` fields belong to the class: `Counter.created`, or `created` inside it. They are world state, so they keep their value across reloads. Their initializers run once per world.
+- `static` fields belong to the class: `Counter.created`, or `created` inside it. They are world state, so they keep their value across reloads. Their initializers run once per world. See [static fields](#static-fields).
 - A `final` field can only be set by its initializer or a constructor, and a `static final` field only by its initializer.
-- Fields, constructors and methods follow the same visibility rule as functions: without `public`, only the class's module and the modules below it can use them.
+- Without `public`, a class, field, constructor or method can only be used by its own module and the modules below it.
 - `null` is a reference to no object, and fits any class type. The default `toString()` gives `Counter@3`, or `null`. Declare `toString()` or `equals(...)` to replace them.
 - Objects can be kept in locals, parameters, lists, maps, records, and all three kinds of state.
 
@@ -304,11 +139,13 @@ class Puppy extends Dog {
     }
 }
 
-void main() {
-    Animal pet = new Puppy();
-    debug("$(pet.speed()) $(pet.greet())");
-    if (pet instanceof Dog dog && dog.legs == 4) {
-        Dog same = (Dog) pet;
+class Main {
+    public static void main() {
+        Animal pet = new Puppy();
+        debug("$(pet.speed()) $(pet.greet())");
+        if (pet instanceof Dog dog && dog.legs == 4) {
+            Dog same = (Dog) pet;
+        }
     }
 }
 ```
@@ -358,16 +195,18 @@ class Holder<T extends Shape> {
     }
 }
 
-void main() {
-    Pair<String, Integer> pair = new Pair<>("a", 1);
-    Pair<Integer, String> swapped = pair.swap();
+class Main {
+    public static void main() {
+        Pair<String, Integer> pair = new Pair<>("a", 1);
+        Pair<Integer, String> swapped = pair.swap();
+    }
 }
 ```
 
 - Type parameters go after the class or interface name, and a bound after `extends`: `class Holder<T extends Shape>`. `Holder<Integer>` is then an error.
 - A generic class is always written with its type arguments, `Pair<String, Integer>`. `new Pair<>(...)` takes them from the declared type of a variable, a `return`, or the parameter it's passed to.
-- Classes can extend or implement generic types: `class Doubler implements Function<Integer, Integer>`, or `class Counted<T> extends Cell<T>`. A generic function takes them too, and infers `T` from a class that implements its parameter's type.
-- Like generic functions, each set of type arguments compiles its own copy of the class (`Pair__string__int`). The copies are unrelated classes: a `Pair<String, Integer>` isn't a `Pair<Integer, String>`, and there are no wildcards (`Pair<?, ?>`).
+- Classes can extend or implement generic types: `class Doubler implements Function<Integer, Integer>`, or `class Counted<T> extends Cell<T>`. A generic method takes them too, and infers `T` from a class that implements its parameter's type.
+- Like generic methods, each set of type arguments compiles its own copy of the class (`Pair__string__int`). The copies are unrelated classes: a `Pair<String, Integer>` isn't a `Pair<Integer, String>`, and there are no wildcards (`Pair<?, ?>`).
 - A generic class can't have `static` fields, since each copy would get its own. Static methods are fine.
 
 #### Lambdas and method references
@@ -389,20 +228,22 @@ class Counter {
     }
 }
 
-int applyTwice(IntOp op, int x) {
-    return op.apply(op.apply(x));
-}
+class Main {
+    static int applyTwice(IntOp op, int x) {
+        return op.apply(op.apply(x));
+    }
 
-void main() {
-    int offset = 10;
-    IntOp addOffset = x -> x + offset;
-    IntOp block = (int x) -> {
-        int tripled = x * 3;
-        return tripled - 1;
-    };
-    Counter counter = new Counter();
-    IntOp doubler = counter::twice;
-    int result = applyTwice(x -> x * 10, 3) + addOffset.apply(5) + block.apply(2) + doubler.apply(4);
+    public static void main() {
+        int offset = 10;
+        IntOp addOffset = x -> x + offset;
+        IntOp block = (int x) -> {
+            int tripled = x * 3;
+            return tripled - 1;
+        };
+        Counter counter = new Counter();
+        IntOp doubler = counter::twice;
+        int result = applyTwice(x -> x * 10, 3) + addOffset.apply(5) + block.apply(2) + doubler.apply(4);
+    }
 }
 ```
 
@@ -410,88 +251,340 @@ void main() {
 - Parameter types can be written, `(int x) -> ...`, or left out. A body is an expression, an assignment such as `() -> count += 1`, or a block.
 - A lambda captures the local variables it uses by copying them when it's made, so it can't assign to them. It can change the fields of `this`, which it keeps a reference to.
 - Method references: `Tools::square` (a static method), `String::length` (called on the first argument), `this::twice` or `counter::twice` (called on that object), and `Point::new` (a constructor).
-- A generic function infers its type arguments from a lambda's result: with `<T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper)`, `mapAll(numbers, n -> "n" + n)` is a `List<String>`.
+- A generic method infers its type arguments from a lambda's result: with `<T, R> List<R> mapAll(List<T> values, Mapper<T, R> mapper)`, `mapAll(numbers, n -> "n" + n)` is a `List<String>`.
 - Each lambda compiles to its own class implementing the interface, so calling one is a virtual call like any other.
+
+### Methods
+
+```mcfc
+class Main {
+    static void greet(Player player, String message) {
+        player.sendMessage(message);
+    }
+}
+```
+
+Methods are declared in a class, record, enum or interface. The return type comes first and every parameter has a type. A `static` method belongs to the class and is called as `Main.greet(...)`, or as `greet(...)` from inside the class. A method without `static` is called on an object and sees it as `this`. Duplicate parameter names are errors. Methods may call themselves or each other recursively, but a recursive method can't pause (see [Methods that pause](#methods-that-pause)).
+
+#### Generic methods
+
+Type parameters go in `<...>` before the return type. A call infers them from its arguments:
+
+```mcfc
+class Main {
+    static <T> T biggest(List<T> values) {
+        var best = values.getFirst();
+        for (var value : values) {
+            if (value > best) {
+                best = value;
+            }
+        }
+        return best;
+    }
+
+    public static void main() {
+        var a = biggest(List.of(3, 9, 2));
+        var b = biggest(List.of(1.5, 0.25));
+    }
+}
+```
+
+When the arguments can't tell, write the type arguments out, as in Java: `none<String>()` for `<T> List<T> none()`, or `Util.<Integer>pick(2)` for a static or instance method. Written type arguments replace inference, so each argument must then fit them. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`Main__biggest__int`, `Main__biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'Main.biggest' does not work with T = String" at the call. Records can't be generic.
+
+#### Varargs
+
+```mcfc
+class Main {
+    static int sum(int... values) {
+        int total = 0;
+        for (int value : values) {
+            total += value;
+        }
+        return total;
+    }
+
+    public static void main() {
+        int none = sum();
+        int some = sum(1, 2, 3);
+        int listed = sum(List.of(4, 5));
+    }
+}
+```
+
+The last parameter can take any number of arguments, as a `List`. Passing a `List` there passes it as it is.
+
+#### Overloading
+
+Methods can share a name when their parameter types differ:
+
+```mcfc
+class Main {
+    static int area(int side) {
+        return side * side;
+    }
+
+    static float area(float width, float height) {
+        return width * height;
+    }
+
+    public static void main() {
+        int square = area(3);
+        float rect = area(2, 1.5);
+    }
+}
+```
+
+A call picks the overload whose parameters match the argument types exactly, then one the arguments convert to (`int` to `float`), then a generic one. Two matches at the same step are an ambiguous call. Each overload compiles to its own function, `Main__area__int` and `Main__area__float__float`. Only a zero-parameter overload keeps the plain name, so it's the one `/function` exports.
+
+#### Methods that pause
+
+A method that calls `sleep`, `sleepTicks`, `sort()` or a host call pauses, and so does any method that calls it. The caller continues once the callee is done. Because of that, a call to a pausing method has to be a statement of its own: `f();`, `var x = f();`, `x = f();` or `return f();`. Using it inside a condition or a larger expression is an error.
+
+```mcfc
+class Main {
+    static int waitThenDouble(int n) {
+        sleepTicks(20);
+        return n * 2;
+    }
+
+    public static void main() {
+        var x = waitThenDouble(4);
+        debug("one second later, x is $(x)");
+    }
+}
+```
+
+### `record`
+
+```mcfc
+record Quest(String name, int reward) {}
+
+class Main {
+    public static void main() {
+        Quest quest = new Quest("Mine", 5);
+        quest = new Quest(quest.name(), quest.reward() + 1);
+        debug(quest.name());
+    }
+}
+```
+
+`new Quest(...)` takes one argument per component, in declaration order. Records are top-level. Read components with accessor calls such as `quest.reward()`. To change a value, construct a new record. Record values live in command storage and are copied when assigned or passed.
+
+A record body can declare methods:
+
+```mcfc
+record Point(int x, int y) {
+    static Point origin() {
+        return new Point(0, 0);
+    }
+
+    Point add(Point other) {
+        return new Point(x + other.x(), y + other.y());
+    }
+
+    int manhattan() {
+        return abs(x) + abs(this.y);
+    }
+
+    private int abs(int value) {
+        return value < 0 ? -value : value;
+    }
+}
+
+class Main {
+    public static void main() {
+        Point moved = Point.origin().add(new Point(3, -4));
+        debug("$(moved) is $(moved.manhattan()) away");
+    }
+}
+```
+
+- Inside a method, `this` is the record. A component reads as `x`, `this.x` or `x()`, and other methods can be called without `this.`.
+- A `static` method has no `this` and is called on the type: `Point.origin()`.
+- Without `public`, only the record's module and the modules below it can call them. A method of a private record is private.
+- Methods can be generic and overloaded, and a method can't be named like a component, since that name is the accessor.
+- Records can't declare fields or constructors.
+
+`==`, `!=` and `equals(other)` compare every component. `toString()`, `+` and `$(...)` give Java's record text, `Point[x=3, y=-4]`. Declare `toString()` or `equals(Point other)` in the body to replace them; `@Override` is accepted on these two.
+
+### `enum`
+
+```mcfc
+enum Mode { SURVIVAL, CREATIVE }
+
+class Main {
+    static void describe(Mode mode) {
+        switch (mode) {
+            case SURVIVAL -> debug("Survival");
+            case CREATIVE -> debug("Creative");
+        }
+    }
+}
+```
+
+An enum needs at least one constant. Outside a `case` and outside the enum's own methods, you refer to a constant as `Mode.SURVIVAL`. Constants are stored as integers starting at 0, in declaration order, so reordering them changes stored values. `mode.name()` is the constant's name, `mode.ordinal()` its index, and `Mode.values()` lists every constant.
+
+After the constants and a `;`, an enum can declare `final` fields, one constructor and methods:
+
+```mcfc
+enum Planet {
+    MERCURY(3, 2),
+    EARTH(6, 5);
+
+    private final int mass;
+    private final int radius;
+
+    Planet(int mass, int radius) {
+        this.mass = mass;
+        this.radius = radius;
+    }
+
+    int density() {
+        return mass * 10 / radius;
+    }
+
+    boolean isHome() {
+        return this == EARTH;
+    }
+}
+
+class Main {
+    public static void main() {
+        for (Planet planet : Planet.values()) {
+            debug("$(planet) $(planet.density()) $(planet.mass)");
+        }
+    }
+}
+```
+
+Each constant passes one argument per constructor parameter. The constructor can only assign parameters to fields (`this.mass = mass;`), and every field must be assigned. Nothing is stored for a field: reading `planet.mass` compiles to a switch over the constants, so the arguments are best kept to literals.
+
+### `import`
+
+```mcfc
+import std.timer.Timer;
+
+class Main {
+    public static void main() {
+        var hp = Math.clamp(150, 0, 100);
+        Timer.start("round", 200);
+    }
+}
+```
+
+`Math` and the other [builtin classes](./builtins) need no import.
+
+| Form | Imports |
+| --- | --- |
+| `import a.b.Name;` | the class, record, enum or interface `Name` |
+| `import a.b.*;` | every public class, record, enum and interface of `a.b` |
+
+- Imports are private to their module. There's no renaming.
+- As in Java, a name defined in the module or imported by name wins over a `*` import.
+- Calls inside `$(...)` placeholders use the same imports as calls outside them.
 
 ### Modules and `public`
 
-In a project, every `.mcf` file under the source directory is a module named by its path: `src/util.mcf` is `util`, and `src/game/score.mcf` is `game.score`. The root file (`src/main.mcf`) is the root module. There is no module declaration.
+In a project, every `.mcf` file under the source directory is a module named by its path: `src/util.mcf` is `util`, and `src/game/score.mcf` is `game.score`. The root file (`src/main.mcf`) is the root module. There is no package declaration.
 
 <!-- no-check -->
 ```mcfc
 // src/main.mcf
-void main() {
-    var n = util.twice(21);
+import util.Util;
+
+class Main {
+    public static void main() {
+        var n = Util.twice(21);
+    }
 }
 ```
 
 <!-- no-check -->
 ```mcfc
 // src/util.mcf
-public int twice(int x) {
-    return helper(x) * 2;
-}
+public class Util {
+    public static int twice(int x) {
+        return helper(x) * 2;
+    }
 
-int helper(int x) {
-    return x;
+    static int helper(int x) {
+        return x;
+    }
 }
 ```
 
-- Items are private unless marked `public`. A private item can be used by its own module and the modules below it: `game.score` can use private items of `game`, but not the other way round.
-- `public` works on functions, records and enums.
-- Every module can reach every other module by path, like Java packages. A path's first segment is looked up in the current module, then in the root module.
-- `tick`, `@EventHandler`, `@Command`, `@Every` and `@After` handlers work in any module and ignore `public`. `main` is only special in the root module.
+- Classes, records, enums, interfaces and their members are private unless marked `public`. A private one can be used by its own module and the modules below it: `game.score` can use private items of `game`, but not the other way round.
+- Every module can reach every other module by path, like Java packages: `util.Util.twice(21)` works without an import. A path's first segment is looked up in the current module, then in the root module.
+- `@Tick`, `@EventHandler`, `@Command`, `@Every` and `@After` methods work in any module and ignore `public`. `main` is only special in the root module.
 - The name `std` is reserved for the [standard library](./std).
 
-A function in a module compiles under its full path. A zero-argument `void` function `util.announce` is exported as `/function <namespace>:util/announce`.
+A method compiles under its module path and class. A zero-argument `static void` method `util.Util.announce` is exported as `/function <namespace>:util/util/announce`.
 
-### `import`
+### Static fields
+
+A `static` field is one value for the whole world, such as the current round. There is no separate world-state annotation. Inside the class, read and write it by name; elsewhere, as `Main.round`:
 
 ```mcfc
-import std.math.clamp;
-import std.math;
+class Main {
+    static int round;
 
-void main() {
-    var hp = clamp(150, 0, 100);
-    var bits = math.pow(2, 10);
+    static List<Integer> topScores;
+
+    static void endRound(int best) {
+        round = round + 1;
+        topScores.add(best);
+    }
 }
 ```
 
-| Form | Imports |
-| --- | --- |
-| `import a.b.name;` | the function, record, enum or class `name` |
-| `import a.b;` | the module `b`, so `b.name(...)` works |
-| `import a.b.*;` | every public function, record, enum and class of `a.b` |
+Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, enums, records, class objects, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. A local variable or parameter with the same name hides the field inside its method. An initializer, as in `static int lives = 3;`, runs once per world, before `main`.
 
-- Imports are private to their module. There's no renaming.
-- As in Java, a name defined in the module or imported by name wins over a `*` import.
-- Functions, records and modules have separate namespaces.
-- Calls inside `$(...)` placeholders use the same imports as calls outside them.
+`int` and `boolean` values are the scores `$world_<Class>__<name>` in the `mcfc` objective; other types are in `<namespace>:runtime` storage at `world.<Class>__<name>`. A class in a module adds the module path, as in `world.game_Arena__round`.
+
+An `Entity` or `Player` static field is a handle the pack keeps to one entity, so you summon it once and don't look it up by selector later:
+
+```mcfc
+class Main {
+    static Entity token;
+
+    static void setup() {
+        token = Block.of(0, 65, 0).summon("minecraft:armor_stand");
+    }
+
+    static void hop() {
+        token.teleport(Block.of(4, 65, 0));
+    }
+}
+```
+
+Assigning gives the entity a unique `mcfc_id` score and stores a selector for it. Before the first assignment, or after the entity is gone, `token.isValid()` is `false` and commands on it do nothing. Player and entity state can hold handles too.
 
 ### `@PlayerState`
 
-Declares a value stored per player, read and written as `player.state.<name>`:
+A `static` field marked `@PlayerState` declares a value stored per player, read and written as `player.state.<name>`:
 
 ```mcfc
 record Profile(int level, String title) {}
 
-@PlayerState("Coins")
-int coins;
+class Main {
+    @PlayerState("Coins")
+    static int coins;
 
-@PlayerState
-Profile profile;
+    @PlayerState
+    static Profile profile;
 
-void update(Player player) {
-    player.state.coins = player.state.coins + 1;
-    player.state.profile = new Profile(4, "Scout");
+    static void update(Player player) {
+        player.state.coins = player.state.coins + 1;
+        player.state.profile = new Profile(4, "Scout");
+    }
 }
 ```
 
-Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records, maps and class objects. An `Entity` is a handle, as with [`@WorldState`](#worldstate), so each player can own a camera: `player.state.camera = Block.of(0, 70, 0).summon("minecraft:item_display");`. A map in state can only be indexed by a literal key; to use a variable key, copy it, change the copy, and assign it back: `var m = player.state.kills; m.put(name, 1); player.state.kills = m;`. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
+Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, records, maps and class objects. An `Entity` is a handle, as with a [static field](#static-fields), so each player can own a camera: `player.state.camera = Block.of(0, 70, 0).summon("minecraft:item_display");`. A map in state can only be indexed by a literal key; to use a variable key, copy it, change the copy, and assign it back: `var m = player.state.kills; m.put(name, 1); player.state.kills = m;`. The field's name is the state's name, and it's shared by every class: two classes can't declare the same state. The optional string is the display name of the scoreboard objective that holds `int` and `boolean` state; it defaults to the state's name. For other types it's ignored.
 
 Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0` or an empty record.
 
-You can also use `player.state.<name>` for `int` and `boolean` without declaring it. Other types have to be declared. A name can have dots (`@PlayerState int stats.kills;`), but two declarations can't overlap, for example `a` and `a.b`.
+You can also use `player.state.<name>` for `int` and `boolean` without declaring it. Other types have to be declared. A name can have dots (`@PlayerState static int stats.kills;`), but two declarations can't overlap, for example `a` and `a.b`.
 
 `int` and `boolean` state is stored in scoreboard objectives named `mcfs_*`. Other types are stored in `<namespace>:state` storage, keyed by the player's UUID.
 
@@ -502,90 +595,60 @@ The same as `@PlayerState`, but for any `Entity` and without a display name:
 ```mcfc
 record MarkerInfo(String label, float weight) {}
 
-@EntityState
-MarkerInfo info;
+class Main {
+    @EntityState
+    static MarkerInfo info;
 
-void mark(Entity entity) {
-    entity.state.info = new MarkerInfo("Target", 1.5);
-    debug(entity.state.info.label());
+    static void mark(Entity entity) {
+        entity.state.info = new MarkerInfo("Target", 1.5);
+        debug(entity.state.info.label());
+    }
 }
 ```
 
 Scoreboard objectives are named `mcfe_*`. Stored values aren't removed when the entity despawns.
 
-### `@WorldState`
-
-One value for the whole world, such as the current round. Read and write it by name, like a variable:
-
-```mcfc
-@WorldState
-int round;
-
-@WorldState
-List<Integer> topScores;
-
-void endRound(int best) {
-    round = round + 1;
-    topScores.add(best);
-}
-```
-
-Allowed types are `int`, `boolean`, `String`, `float`, `Entity`, `Player`, enums, records, class objects, lists and maps. Values persist across reloads and restarts. A value that was never set reads as `0`, `false`, `""`, `0.0`, an empty list, map or record. Names can't have dots, and a local variable or parameter with the same name hides the world state inside its function.
-
-`int` and `boolean` values are the scores `$world_<name>` in the `mcfc` objective; other types are in `<namespace>:runtime` storage at `world.<name>`.
-
-An `Entity` or `Player` world state is a handle the pack keeps to one entity, so you summon it once and don't look it up by selector later:
-
-```mcfc
-@WorldState
-Entity token;
-
-void setup() {
-    token = Block.of(0, 65, 0).summon("minecraft:armor_stand");
-}
-
-void hop() {
-    token.teleport(Block.of(4, 65, 0));
-}
-```
-
-Assigning gives the entity a unique `mcfc_id` score and stores a selector for it. Before the first assignment, or after the entity is gone, `token.isValid()` is `false` and commands on it do nothing. Player and entity state can hold handles too.
-
 ### `@Command`
 
 ```mcfc
-@Command("status")
-void status(Player player) {
-    player.sendMessage("Ready");
+class Main {
+    @Command("status")
+    static void status(Player player) {
+        player.sendMessage("Ready");
+    }
 }
 ```
 
-Players run the command with `/trigger status`, which needs no operator permissions. The trigger objective is named after the command, so two packs with the same command name share it. The handler runs as that player, and the optional `Player` parameter is that player. Without a string, the command is named after the function. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
+Players run the command with `/trigger status`, which needs no operator permissions. The trigger objective is named after the command, so two packs with the same command name share it. The handler runs as that player, and the optional `Player` parameter is that player. Without a string, the command is named after the method. With the agent attached, `/status` also works as a real command. Commands take no arguments, and there's no tab completion.
 
 ### `@Menu`
 
 ```mcfc
-@Menu("Settings")
-void settings(Player player) {
-    player.sendMessage("Settings");
+class Main {
+    @Menu("Settings")
+    static void settings(Player player) {
+        player.sendMessage("Settings");
+    }
 }
 ```
 
-`@Menu("label")` is a `@Command` named after the function that is also a button in your pack's page of the pause-screen data pack menu. The menu follows the [Smithed Data Pack Menu](https://docs.smithed.dev/conventions/data-pack-menu/) convention, so every pack using it shares one list. The page is titled with the namespace.
+`@Menu("label")` is a `@Command` named after the method that is also a button in your pack's page of the pause-screen data pack menu. The menu follows the [Smithed Data Pack Menu](https://docs.smithed.dev/conventions/data-pack-menu/) convention, so every pack using it shares one list. The page is titled with the namespace.
 
 Data pack dialogs are registry entries, so a new or changed `@Menu` needs a world or server restart, not `/reload`. For dialogs you open from code, use [`std.dialog`](./std#std-dialog), which has neither limit.
 
 ### `@Every` and `@After`
 
 ```mcfc
-@Every(ticks = 20)
-void heartbeat() {
-    debug("heartbeat");
-}
+class Main {
+    @Every(ticks = 20)
+    static void heartbeat() {
+        debug("heartbeat");
+    }
 
-@After(seconds = 1)
-void setup() {
-    debug("setup");
+    @After(seconds = 1)
+    static void setup() {
+        debug("setup");
+    }
 }
 ```
 
@@ -594,30 +657,34 @@ void setup() {
 ### `@Test` and `assert`
 
 ```mcfc
-int triple(int x) {
-    return x * 3;
-}
+class Main {
+    static int triple(int x) {
+        return x * 3;
+    }
 
-@Test
-void triplesNumbers() {
-    assert triple(2) == 6;
-    assert triple(-1) == -3 : "negatives";
+    @Test
+    static void triplesNumbers() {
+        assert triple(2) == 6;
+        assert triple(-1) == -3 : "negatives";
+    }
 }
 ```
 
-`/function <namespace>:test` runs every `@Test` function and prints `[ns TEST] 1 passed, 0 failed`. A false `assert` prints `assertion failed at line N: message` and marks the test failed; the test keeps running. Tests take no parameters and must finish in the tick they start, so they can't `sleep`.
+`/function <namespace>:test` runs every `@Test` method and prints `[ns TEST] 1 passed, 0 failed`. A false `assert` prints `assertion failed at line N: message` and marks the test failed; the test keeps running. Tests take no parameters and must finish in the tick they start, so they can't `sleep`.
 
-`assert` works in any function. Outside a test it still prints the failure.
+`assert` works in any method. Outside a test it still prints the failure.
 
-## In a function
+## In a method
 
 ### Variables
 
 ```mcfc
-void main() {
-    var amount = 5;
-    List<String> names = List.of("a", "b");
-    final int maximum = 10;
+class Main {
+    public static void main() {
+        var amount = 5;
+        List<String> names = List.of("a", "b");
+        final int maximum = 10;
+    }
 }
 ```
 
@@ -626,14 +693,16 @@ void main() {
 ### Assignment
 
 ```mcfc
-void main() {
-    var amount = 1;
-    amount = amount + 1;
-    amount += 2;
-    amount++;
+class Main {
+    public static void main() {
+        var amount = 1;
+        amount = amount + 1;
+        amount += 2;
+        amount++;
 
-    var player = Selector.of("@p").getFirst();
-    player.state.score = amount;
+        var player = Selector.of("@p").getFirst();
+        player.state.score = amount;
+    }
 }
 ```
 
@@ -642,13 +711,15 @@ The target is a local variable or a writable path, and the new value must have t
 ### `if`
 
 ```mcfc
-void check(Player player) {
-    if (player.hasTag("ready")) {
-        player.sendMessage("Ready");
-    } else if (player.hasTag("waiting")) {
-        player.sendMessage("Waiting");
-    } else {
-        player.sendMessage("Not ready");
+class Main {
+    static void check(Player player) {
+        if (player.hasTag("ready")) {
+            player.sendMessage("Ready");
+        } else if (player.hasTag("waiting")) {
+            player.sendMessage("Waiting");
+        } else {
+            player.sendMessage("Not ready");
+        }
     }
 }
 ```
@@ -658,8 +729,10 @@ The condition must be a `boolean`. Braces are required.
 ### Conditional expressions
 
 ```mcfc
-int fee(boolean member, int price) {
-    return member ? price / 2 : price;
+class Main {
+    static int fee(boolean member, int price) {
+        return member ? price / 2 : price;
+    }
 }
 ```
 
@@ -668,14 +741,16 @@ int fee(boolean member, int price) {
 ### `switch`
 
 ```mcfc
-void describe(int level) {
-    switch (level) {
-        case 1, 2 -> debug("low");
-        case 3 -> {
-            debug("medium");
-            debug("still medium");
+class Main {
+    static void describe(int level) {
+        switch (level) {
+            case 1, 2 -> debug("low");
+            case 3 -> {
+                debug("medium");
+                debug("still medium");
+            }
+            default -> debug("high");
         }
-        default -> debug("high");
     }
 }
 ```
@@ -687,11 +762,13 @@ A switch can also produce a value. Expression arms end with `;`; a block arm ret
 ```mcfc
 enum Rank { LOW, HIGH }
 
-String label(Rank rank) {
-    return switch (rank) {
-        case LOW -> "low";
-        case HIGH -> { yield "high"; }
-    };
+class Main {
+    static String label(Rank rank) {
+        return switch (rank) {
+            case LOW -> "low";
+            case HIGH -> { yield "high"; }
+        };
+    }
 }
 ```
 
@@ -708,11 +785,13 @@ final class Square implements Shape {
     int side = 3;
 }
 
-int area(Shape shape) {
-    return switch (shape) {
-        case Circle circle -> 3 * circle.radius * circle.radius;
-        case Square square -> square.side * square.side;
-    };
+class Main {
+    static int area(Shape shape) {
+        return switch (shape) {
+            case Circle circle -> 3 * circle.radius * circle.radius;
+            case Square square -> square.side * square.side;
+        };
+    }
 }
 ```
 
@@ -721,25 +800,29 @@ A case can be a class with a variable name, and the first case whose class the o
 ### `while`
 
 ```mcfc
-void count() {
-    var i = 0;
-    while (i < 3) {
-        debug("$(i)");
-        i++;
+class Main {
+    static void count() {
+        var i = 0;
+        while (i < 3) {
+            debug("$(i)");
+            i++;
+        }
     }
 }
 ```
 
-A loop runs entirely within one tick unless its body sleeps. A long loop with no `sleep` can hit Minecraft's command limit (`maxCommandChainLength`), and the rest of the function then doesn't run.
+A loop runs entirely within one tick unless its body sleeps. A long loop with no `sleep` can hit Minecraft's command limit (`maxCommandChainLength`), and the rest of the method then doesn't run.
 
 ### `do` / `while`
 
 ```mcfc
-void retry() {
-    var attempts = 0;
-    do {
-        attempts++;
-    } while (attempts < 3);
+class Main {
+    static void retry() {
+        var attempts = 0;
+        do {
+            attempts++;
+        } while (attempts < 3);
+    }
 }
 ```
 
@@ -748,15 +831,17 @@ The body runs at least once. `continue` proceeds to the condition check.
 ### `for`
 
 ```mcfc
-void loops(List<Integer> values) {
-    for (int i = 0; i < 3; i++) {
-        debug("$(i)");
-    }
-    for (Player player : Selector.of("@a")) {
-        player.addTag("seen");
-    }
-    for (var value : values) {
-        debug("$(value)");
+class Main {
+    static void loops(List<Integer> values) {
+        for (int i = 0; i < 3; i++) {
+            debug("$(i)");
+        }
+        for (Player player : Selector.of("@a")) {
+            player.addTag("seen");
+        }
+        for (var value : values) {
+            debug("$(value)");
+        }
     }
 }
 ```
@@ -772,40 +857,44 @@ The loop variable exists only inside the loop. In a counting loop, `continue` ru
 ### `break`, `continue`, `return`
 
 ```mcfc
-void firstReady() {
-    for (Player player : Selector.of("@a")) {
-        if (!player.hasTag("ready")) {
-            continue;
+class Main {
+    static void firstReady() {
+        for (Player player : Selector.of("@a")) {
+            if (!player.hasTag("ready")) {
+                continue;
+            }
+            player.sendMessage("Ready");
+            break;
         }
-        player.sendMessage("Ready");
-        break;
     }
-}
 
-int clampZero(int value) {
-    if (value < 0) {
-        return 0;
+    static int clampZero(int value) {
+        if (value < 0) {
+            return 0;
+        }
+        return value;
     }
-    return value;
 }
 ```
 
 `break` and `continue` apply to the innermost loop, or to the loop with that label:
 
 ```mcfc
-void findPair(List<Integer> values) {
-    search:
-    for (int first : values) {
-        for (int second : values) {
-            if (first + second == 10) {
-                break search;
+class Main {
+    static void findPair(List<Integer> values) {
+        search:
+        for (int first : values) {
+            for (int second : values) {
+                if (first + second == 10) {
+                    break search;
+                }
             }
         }
     }
 }
 ```
 
-In a `void` function, use `return;` on its own. Otherwise, `return expr;` must match the declared return type.
+In a `void` method, use `return;` on its own. Otherwise, `return expr;` must match the declared return type.
 
 ### `throw`, `try`, `catch`, `finally`
 
@@ -816,26 +905,28 @@ class NotEnough extends RuntimeException {
     }
 }
 
-int spend(int coins, int amount) {
-    if (amount < 0) {
-        throw new IllegalArgumentException("negative amount");
+class Main {
+    static int spend(int coins, int amount) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("negative amount");
+        }
+        if (amount > coins) {
+            throw new NotEnough(amount - coins);
+        }
+        return coins - amount;
     }
-    if (amount > coins) {
-        throw new NotEnough(amount - coins);
-    }
-    return coins - amount;
-}
 
-void buy() {
-    int coins = 10;
-    try {
-        coins = spend(coins, 15);
-    } catch (NotEnough error) {
-        Log.warn(error.getMessage());
-    } catch (IllegalArgumentException | IllegalStateException error) {
-        Log.error("bad purchase");
-    } finally {
-        Log.info("coins left: " + coins);
+    static void buy() {
+        int coins = 10;
+        try {
+            coins = spend(coins, 15);
+        } catch (NotEnough error) {
+            Log.warn(error.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            Log.error("bad purchase");
+        } finally {
+            Log.info("coins left: " + coins);
+        }
     }
 }
 ```
@@ -843,18 +934,20 @@ void buy() {
 - Exceptions are classes that extend `Exception`. `RuntimeException`, `IllegalArgumentException`, `IllegalStateException` and `UnsupportedOperationException` come with MCFC and need no import. Each takes a message, which `getMessage()` returns.
 - The first `catch` whose type matches runs. `catch (A | B e)` catches either, and `e` is then an `Exception`. An exception no `catch` matches goes on to the caller after `finally` runs.
 - Every exception is unchecked: `throws` after the parameters is allowed but only documents.
-- An exception nothing catches is logged with [`Log.error`](./builtins#logging) where it leaves a function no code calls, such as `main`, `tick` or an event handler. In a `@Test`, it fails the test.
+- An exception nothing catches is logged with [`Log.error`](./builtins#logging) where it leaves a method no code calls, such as `main`, a `@Tick` method or an event handler. In a `@Test`, it fails the test.
 - After each call that can throw, the caller checks for an exception, so a program without `throw` pays nothing. See [limitations](../limitations) for what differs from Java.
 
 ### `Thread.start`
 
 ```mcfc
-void greetLater(Player player) {
-    Thread.start(() -> {
-        sleepTicks(20);
-        player.sendActionBar("later");
-    });
-    player.sendActionBar("now");
+class Main {
+    static void greetLater(Player player) {
+        Thread.start(() -> {
+            sleepTicks(20);
+            player.sendActionBar("later");
+        });
+        player.sendActionBar("now");
+    }
 }
 ```
 
@@ -863,14 +956,16 @@ The lambda starts running right away, and the statement after `Thread.start` run
 ### `Execute.as` and `Execute.at`
 
 ```mcfc
-void sparkle(Player player) {
-    Execute.as(player, () -> {
-        Selector.of("@s").getFirst().addTag("marked");
-    });
-    Execute.at(player, () -> {
-        Block.of("~ ~1 ~").spawnParticle("minecraft:happy_villager", 8);
-        Block.of("~ ~-1 ~").setBlock("minecraft:gold_block");
-    });
+class Main {
+    static void sparkle(Player player) {
+        Execute.as(player, () -> {
+            Selector.of("@s").getFirst().addTag("marked");
+        });
+        Execute.at(player, () -> {
+            Block.of("~ ~1 ~").spawnParticle("minecraft:happy_villager", 8);
+            Block.of("~ ~-1 ~").setBlock("minecraft:gold_block");
+        });
+    }
 }
 ```
 
@@ -881,8 +976,10 @@ void sparkle(Player player) {
 `mc` and `mcf` are for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [issues](https://github.com/OliverMarcusson/MCFC/issues).
 
 ```mcfc
-void setup() {
-    mc("weather clear");
+class Main {
+    static void setup() {
+        mc("weather clear");
+    }
 }
 ```
 
@@ -891,8 +988,10 @@ Emits a Minecraft command exactly as written. The argument must be a string lite
 ### `mcf`
 
 ```mcfc
-void reward(int amount) {
-    mcf("xp add @a $(amount) levels");
+class Main {
+    static void reward(int amount) {
+        mcf("xp add @a $(amount) levels");
+    }
 }
 ```
 
@@ -902,4 +1001,4 @@ Values are inserted without escaping. A string containing `"` breaks the command
 
 ### Calls
 
-A function or method call can be a statement on its own, such as `debug("ok");` or `player.heal(2);`. Other expressions can't: `amount + 1;` is an error.
+A method call can be a statement on its own, such as `debug("ok");` or `player.heal(2);`. Other expressions can't: `amount + 1;` is an error.

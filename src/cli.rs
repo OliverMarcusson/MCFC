@@ -335,54 +335,60 @@ rand = true
 
 fn main_template(config: &NewProjectConfig) -> String {
     match config.helper {
-        HelperRuntime::None => r#"void main() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        player.sendMessage("MCFC is live.");
-    }
-}
-"#
-        .to_string(),
-        HelperRuntime::Mcfd => r#"void main() {
-    var player = Selector.of("@p").getFirst();
-    var now = time.now();
-    var roll = rand.int(1, 6);
-    if (player.isValid()) {
-        if (now.ok() && roll.ok()) {
-            player.sendMessage("MCFC is live. unix=$(now.unix()), roll=$(roll.value())");
-        } else {
-            player.sendMessage("MCFC is live, but mcfd did not answer yet.");
+        HelperRuntime::None => r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            player.sendMessage("MCFC is live.");
         }
     }
 }
 "#
         .to_string(),
-        HelperRuntime::McfdAgent => r#"// The command has a vanilla /trigger fallback.
-// With mcfd-agent attached, it is also available as a root command.
-@Command("status")
-void status() {
-    var player = Selector.of("@s").getFirst();
-    player.sendMessage("MCFC agent project is live.");
-}
-
-// This callback runs when the optional mcfd-agent is attached.
-@EventHandler
-void onChat(ChatEvent event) {
-    var player = Selector.of("@s").getFirst();
-    if (event.message() == "roll") {
+        HelperRuntime::Mcfd => r#"class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var now = time.now();
         var roll = rand.int(1, 6);
-        if (roll.ok()) {
-            player.sendMessage("agent roll=$(roll.value())");
+        if (player.isValid()) {
+            if (now.ok() && roll.ok()) {
+                player.sendMessage("MCFC is live. unix=$(now.unix()), roll=$(roll.value())");
+            } else {
+                player.sendMessage("MCFC is live, but mcfd did not answer yet.");
+            }
         }
     }
 }
+"#
+        .to_string(),
+        HelperRuntime::McfdAgent => r#"class Main implements Listener {
+    // The command has a vanilla /trigger fallback.
+    // With mcfd-agent attached, it is also available as a root command.
+    @Command("status")
+    static void status() {
+        var player = Selector.of("@s").getFirst();
+        player.sendMessage("MCFC agent project is live.");
+    }
 
-void main() {
-    var player = Selector.of("@p").getFirst();
-    var now = time.now();
-    if (player.isValid()) {
-        if (now.ok()) {
-            player.sendMessage("MCFC is live. Try /trigger status or say roll after the agent attaches.");
+    // This callback runs when the optional mcfd-agent is attached.
+    @EventHandler
+    void onChat(ChatEvent event) {
+        var player = Selector.of("@s").getFirst();
+        if (event.message() == "roll") {
+            var roll = rand.int(1, 6);
+            if (roll.ok()) {
+                player.sendMessage("agent roll=$(roll.value())");
+            }
+        }
+    }
+
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        var now = time.now();
+        if (player.isValid()) {
+            if (now.ok()) {
+                player.sendMessage("MCFC is live. Try /trigger status or say roll after the agent attaches.");
+            }
         }
     }
 }
@@ -660,10 +666,10 @@ out_dir = "dist"
 "#,
         )
         .unwrap();
-        fs::write(src.join("main.mcf"), "void main() {\n    return;\n}\n").unwrap();
+        fs::write(src.join("main.mcf"), "class Main {\n    public static void main() {\n        return;\n    }\n}\n").unwrap();
         fs::write(
             nested.join("helper.mcf"),
-            "void helper() {\n    return;\n}\n",
+            "class Main {\n    static void helper() {\n        return;\n    }\n}\n",
         )
         .unwrap();
         fs::write(project.join("assets.json"), "{}\n").unwrap();

@@ -99,7 +99,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
-            message: message.into(),
+            message: source_names(&message.into()),
             span,
         }
     }
@@ -176,3 +176,45 @@ impl fmt::Display for Diagnostics {
 }
 
 impl std::error::Error for Diagnostics {}
+
+/// Methods compile to functions named `Class__method`, and generic copies add
+/// `__int` and the like; messages name them as written: `Class.method`.
+fn source_names(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+            .unwrap_or(rest.len());
+        let word = &rest[..end];
+        let class_start = word.rfind("::").map_or(0, |i| i + 2);
+        match word[class_start..].split_once("__") {
+            Some((class, method))
+                if class.starts_with(|c: char| c.is_ascii_uppercase()) && !method.is_empty() =>
+            {
+                let method = method.split("__").next().unwrap_or(method);
+                out.push_str(&word[..class_start].replace("::", "."));
+                out.push_str(class);
+                out.push('.');
+                out.push_str(method);
+            }
+            _ => out.push_str(word),
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod source_name_tests {
+    #[test]
+    fn methods_read_as_written() {
+        assert_eq!(
+            super::source_names("'Main__same__int' and 'std::math::Math__clamp', not __mcfc_x or a__b"),
+            "'Main.same' and 'std.math.Math.clamp', not __mcfc_x or a__b"
+        );
+    }
+}

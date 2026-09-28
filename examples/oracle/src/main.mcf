@@ -6,44 +6,45 @@
 // also run /function oracle:roll to roll a die powered by the helper's randomness.
 //
 // Capabilities used: http (www.random.org), time, rand.
+class Main {
+    @PlayerState("Prophecies") static int prophecies;
 
-@PlayerState("Prophecies") int prophecies;
-
-void main() {
-    Selector.of("@a").sendMessage("§5✦ The Oracle of Numbers awakens...");
-    Thread.start(() -> {
-        while (true) {
-            // Each of these suspends until the helper answers, then resumes here.
-            var fact = http.get("https://www.random.org/integers/?num=1&min=1&max=1000&col=1&base=10&format=plain&rnd=new");
-            var now = time.now();
-            if (fact.ok()) {
-                for (var viewer : Selector.of("@a")) {
-                    var player = (Player) viewer;
-                    player.state.prophecies = player.state.prophecies + 1;
-                    player.sendMessage("§5✦ §dThe Oracle divines §7(§f$(now.iso())§7)");
-                    player.sendMessage("§dThe sacred number is §e§l$(fact.body())");
-                    player.sendMessage("§8prophecies witnessed: §f$(player.state.prophecies)");
+    public static void main() {
+        Selector.of("@a").sendMessage("§5✦ The Oracle of Numbers awakens...");
+        Thread.start(() -> {
+            while (true) {
+                // Each of these suspends until the helper answers, then resumes here.
+                var fact = http.get("https://www.random.org/integers/?num=1&min=1&max=1000&col=1&base=10&format=plain&rnd=new");
+                var now = time.now();
+                if (fact.ok()) {
+                    for (var viewer : Selector.of("@a")) {
+                        var player = (Player) viewer;
+                        player.state.prophecies = player.state.prophecies + 1;
+                        player.sendMessage("§5✦ §dThe Oracle divines §7(§f$(now.iso())§7)");
+                        player.sendMessage("§dThe sacred number is §e§l$(fact.body())");
+                        player.sendMessage("§8prophecies witnessed: §f$(player.state.prophecies)");
+                    }
+                } else {
+                    Selector.of("@a").sendMessage("§cThe Oracle is silent — is mcfd running?");
                 }
-            } else {
-                Selector.of("@a").sendMessage("§cThe Oracle is silent — is mcfd running?");
+                sleep(15);
             }
-            sleep(15);
-        }
-    });
-}
+        });
+    }
 
-// Run with: /function oracle:roll
-void roll() {
-    var player = Selector.of("@p").getFirst();
-    var dice = rand.int(1, 6);
-    if (dice.ok()) {
-        player.sendMessage("§6You rolled a §e$(dice.value())§6!");
-        if (dice.value() == 6) {
-            player.sendMessage("§a✦ A perfect six! The Oracle smiles upon you.");
-            player.playSound("minecraft:ui.toast.challenge_complete", "player");
-            player.position.spawnParticle("minecraft:totem_of_undying", 60);
+    // Run with: /function oracle:roll
+    static void roll() {
+        var player = Selector.of("@p").getFirst();
+        var dice = rand.int(1, 6);
+        if (dice.ok()) {
+            player.sendMessage("§6You rolled a §e$(dice.value())§6!");
+            if (dice.value() == 6) {
+                player.sendMessage("§a✦ A perfect six! The Oracle smiles upon you.");
+                player.playSound("minecraft:ui.toast.challenge_complete", "player");
+                player.position.spawnParticle("minecraft:totem_of_undying", 60);
+            }
+        } else {
+            player.sendMessage("§cThe dice never landed — is mcfd running?");
         }
-    } else {
-        player.sendMessage("§cThe dice never landed — is mcfd running?");
     }
 }

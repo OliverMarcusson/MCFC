@@ -444,7 +444,11 @@ impl Resolver {
     fn function_name(&self, module: usize, name: &str) -> String {
         // `tick` and desugared event/command/task handlers are hooks, not
         // callable items: they keep their bare names in every module.
-        if module == 0 || name == "tick" || name.starts_with("__mcfc_") {
+        // `@Tick` methods are hooks too, but each module may have its own.
+        if module == 0
+            || name == "tick"
+            || name.starts_with("__mcfc_") && !name.starts_with(crate::compiler::TICK_PREFIX)
+        {
             name.to_string()
         } else {
             self.qualified(module, name)
@@ -1267,9 +1271,18 @@ impl Resolver {
                 ) {
                     continue;
                 }
-                if let Ok(Some(resolved)) =
-                    self.resolve_function(scope.module, &segments.join("::"))
-                {
+                // `Strings.pad(x)` is a static method: `std::str::Strings__pad(x)`.
+                let static_method = || {
+                    let (method, class) = segments.split_last()?;
+                    let class = self.resolve_struct(scope.module, &class.join("::")).ok()??;
+                    self.resolve_method(scope.module, &class, method).ok()?
+                };
+                let resolved = match self.resolve_function(scope.module, &segments.join("::")) {
+                    Ok(Some(resolved)) => Some(resolved),
+                    _ if segments.len() > 1 => static_method(),
+                    _ => None,
+                };
+                if let Some(resolved) = resolved {
                     edits.push((
                         start + tokens[i].range.start,
                         start + tokens[last].range.end,

@@ -1,6 +1,8 @@
-void main() {
-    var player = Selector.of("@p").getFirst();
-    if (player.isValid()) {
-        player.sendMessage("MCFC is live.");
+class Main {
+    public static void main() {
+        var player = Selector.of("@p").getFirst();
+        if (player.isValid()) {
+            player.sendMessage("MCFC is live.");
+        }
     }
 }

@@ -3,8 +3,9 @@
 // the players, so there are no getters for those.
 
 // Where `bossbar get` puts what it reads.
-@WorldState
-int mcfcBossBarRead;
+class BossBarRead {
+    static int value;
+}
 
 public final class BossBar {
     public void setName(String name) {
@@ -17,8 +18,8 @@ public final class BossBar {
 
     public int getValue() {
         String id = this.id;
-        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) value");
-        return mcfcBossBarRead;
+        mcf("execute store result score $world_std_bossbar_BossBarRead__value mcfc run bossbar get $(id) value");
+        return BossBarRead.value;
     }
 
     public void setValue(int value) {
@@ -28,8 +29,8 @@ public final class BossBar {
 
     public int getMax() {
         String id = this.id;
-        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) max");
-        return mcfcBossBarRead;
+        mcf("execute store result score $world_std_bossbar_BossBarRead__value mcfc run bossbar get $(id) max");
+        return BossBarRead.value;
     }
 
     public void setMax(int max) {
@@ -39,8 +40,8 @@ public final class BossBar {
 
     public boolean isVisible() {
         String id = this.id;
-        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) visible");
-        return mcfcBossBarRead == 1;
+        mcf("execute store result score $world_std_bossbar_BossBarRead__value mcfc run bossbar get $(id) visible");
+        return BossBarRead.value == 1;
     }
 
     public boolean getVisible() {

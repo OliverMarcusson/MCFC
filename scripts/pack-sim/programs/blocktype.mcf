@@ -1,17 +1,19 @@
-void show(Block b) {
-    var id = b.getType();
-    var facing = b.getState("facing");
-    var half = b.getState("half");
-    mcf("say $(id) facing=$(facing) half=$(half)");
-}
+class Main {
+    static void show(Block b) {
+        var id = b.getType();
+        var facing = b.getState("facing");
+        var half = b.getState("half");
+        mcf("say $(id) facing=$(facing) half=$(half)");
+    }
 
-void main() {
-    Block.of(1, 2, 3).setBlock("minecraft:stone");
-    Block.of(1, 3, 3).setBlock("minecraft:oak_stairs[facing=east,half=top]");
-    Block.of(1, 4, 3).setBlock("minecraft:zombie_head");
-    show(Block.of(1, 2, 3));
-    show(Block.of(1, 3, 3));
-    show(Block.of(1, 4, 3));
-    show(Block.of(9, 9, 9));
-    Block.of(1, 2, 3).copyTo(Block.of(5, 5, 5));
+    public static void main() {
+        Block.of(1, 2, 3).setBlock("minecraft:stone");
+        Block.of(1, 3, 3).setBlock("minecraft:oak_stairs[facing=east,half=top]");
+        Block.of(1, 4, 3).setBlock("minecraft:zombie_head");
+        show(Block.of(1, 2, 3));
+        show(Block.of(1, 3, 3));
+        show(Block.of(1, 4, 3));
+        show(Block.of(9, 9, 9));
+        Block.of(1, 2, 3).copyTo(Block.of(5, 5, 5));
+    }
 }

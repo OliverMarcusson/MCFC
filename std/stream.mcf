@@ -5,8 +5,10 @@
 
 import std.function.*;
 
-public <T> Stream<T> fromList(List<T> values) {
-    return new Stream<>(values);
+public final class Streams {
+    public static <T> Stream<T> fromList(List<T> values) {
+        return new Stream<>(values);
+    }
 }
 
 public class Stream<T> {
@@ -115,7 +117,7 @@ public class Stream<T> {
 
     // ponytail: insertion sort through std.list, O(n²) compare calls.
     public Stream<T> sorted(Comparator<T> order) {
-        return new Stream<>(std.list.sortWith(values, order));
+        return new Stream<>(std.list.Lists.sortWith(values, order));
     }
 
     // The first smallest element, or empty.

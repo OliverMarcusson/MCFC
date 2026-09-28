@@ -18,12 +18,13 @@ Generated files are deterministic and use reserved generated paths under the pac
 
 ## Entry Points
 
-- `void main()` becomes an internal generated function called by `data/<namespace>/function/main.mcfunction`.
-- `void tick()` becomes the datapack tick entrypoint.
-- Exported functions get public wrapper `.mcfunction` files so Minecraft can call them directly.
-- `@EventHandler`, `@Command`, `@Every` and `@After` handlers lower to generated dispatcher functions.
-- Functions nothing can reach are dropped after type checking. The starting points are `main`, `tick`, `@EventHandler`/`@Command`/`@Every`/`@After` handlers, `[[export]]` functions, and your zero-argument `void` functions. Unused helpers and unused `std` functions therefore add nothing to the pack, although they are still checked for errors.
-- Functions in modules compile under their full path. `util.twice` uses generated names such as `generated/util__twice__d0__entry` and scoreboard slots such as `$d0_util__twice_x`. Its public wrapper, when it has one, is `data/<namespace>/function/util/twice.mcfunction`. Function paths are lowercase, so `resetArena` becomes `reset_arena`.
+- `public static void main()` becomes an internal generated function called by `data/<namespace>/function/main.mcfunction`.
+- `@Tick` methods are called, in module order, from `data/<namespace>/function/tick.mcfunction`, the datapack tick entrypoint.
+- A class with `static` fields gets a generated `clinit` function in the load tag, which sets their initial values once per world.
+- Exported methods get public wrapper `.mcfunction` files so Minecraft can call them directly.
+- `@EventHandler`, `@Command`, `@Every` and `@After` methods lower to generated dispatcher functions. A listener class's one object is kept in a generated static field.
+- Methods nothing can reach are dropped after type checking. The starting points are `main`, `@Tick`, `@EventHandler`, `@Command`, `@Every` and `@After` methods, `[[export]]` functions, and your zero-argument `static void` methods. Unused helpers and unused `std` methods therefore add nothing to the pack, although they are still checked for errors.
+- A method compiles under its module path and class. `util.Util.twice` uses generated names such as `generated/util__util__twice__d0__entry` and scoreboard slots such as `$d0_util__Util__twice_x`. Its public wrapper, when it has one, is `data/<namespace>/function/util/util/twice.mcfunction`. Paths are lowercase, so `Main.resetArena` becomes `main/reset_arena`.
 
 ## Value Representation
 

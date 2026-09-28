@@ -1,26 +1,31 @@
 // Component methods from std.text and runtime MiniMessage, printed as SNBT.
-import std.text;
 
-void main() {
-    Component a = Component.text("a", "gold").append(Component.text("b"));
-    Component b = a.append(Component.text("c"));
-    mcf("say a $(a)");
-    mcf("say b $(b)");
-    Component e = Component.text("x").decorate("bold");
-    e = e.clickEvent(ClickEvent.runCommand("/help"));
-    e = e.hoverEvent(Component.text("tip"));
-    mcf("say e $(e)");
-    mcf("say m1 $(text.parseMiniMessage(\"<red>Hi <b>there</b>!\"))");
-    mcf("say m2 $(text.parseMiniMessage(\"<click:run_command:/op me>x</click> <#00ff00>g<reset>n<br>\"))");
-    mcf("say m3 $(text.parseMiniMessage(\"a < b <nope> <!italic>c\"))");
-    var name = "Ann";
-    var f = Component.text("Hi ", NamedTextColor.GOLD)
-        .append(Component.text(name).decorate(TextDecoration.BOLD))
-        .clickEvent(ClickEvent.openUrl("https://x.y"))
-        .color(TextColor.color(255, 0, 0))
-        .decoration(TextDecoration.ITALIC, false);
-    mcf("say f $(f)");
-    List<Component> kids = f.children();
-    mcf("say k $(kids.size()) $(Component.empty().children(kids).appendSpace())");
-    mcf("say l $(MiniMessage.miniMessage().deserialize(\"<green>a<hover:show_text:'b'>c\"))");
+class Main {
+    public static void main() {
+        Component a = Component.text("a", "gold").append(Component.text("b"));
+        Component b = a.append(Component.text("c"));
+        mcf("say a $(a)");
+        mcf("say b $(b)");
+        Component e = Component.text("x").decorate("bold");
+        e = e.clickEvent(ClickEvent.runCommand("/help"));
+        e = e.hoverEvent(Component.text("tip"));
+        mcf("say e $(e)");
+        // Variables, so these parse at run time like player input.
+        var m1 = "<red>Hi <b>there</b>!";
+        var m2 = "<click:run_command:/op me>x</click> <#00ff00>g<reset>n<br>";
+        var m3 = "a < b <nope> <!italic>c";
+        mcf("say m1 $(MiniMessage.miniMessage().deserialize(m1))");
+        mcf("say m2 $(MiniMessage.miniMessage().deserialize(m2))");
+        mcf("say m3 $(MiniMessage.miniMessage().deserialize(m3))");
+        var name = "Ann";
+        var f = Component.text("Hi ", NamedTextColor.GOLD)
+            .append(Component.text(name).decorate(TextDecoration.BOLD))
+            .clickEvent(ClickEvent.openUrl("https://x.y"))
+            .color(TextColor.color(255, 0, 0))
+            .decoration(TextDecoration.ITALIC, false);
+        mcf("say f $(f)");
+        List<Component> kids = f.children();
+        mcf("say k $(kids.size()) $(Component.empty().children(kids).appendSpace())");
+        mcf("say l $(MiniMessage.miniMessage().deserialize(\"<green>a<hover:show_text:'b'>c\"))");
+    }
 }

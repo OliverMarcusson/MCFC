@@ -22,88 +22,90 @@ class Wallet {
     }
 }
 
-int parsePositive(int value) throws IllegalArgumentException {
-    if (value <= 0) {
-        throw new IllegalArgumentException("not positive");
-    }
-
-    return value * 2;
-}
-
-int firstBad(List<Integer> values) {
-    for (int value : values) {
-        parsePositive(value);
-    }
-
-    return -1;
-}
-
-String attempt(Wallet wallet, int amount) {
-    String log = "";
-    try {
-        wallet.spend(amount);
-        log = log + "ok";
-    } catch (NotEnough error) {
-        log = log + "short" + error.missing;
-    } catch (IllegalArgumentException | IllegalStateException error) {
-        log = log + "bad(" + error.getMessage() + ")";
-    } finally {
-        log = log + "/" + wallet.coins;
-    }
-
-    return log;
-}
-
-void main() {
-    Wallet wallet = new Wallet();
-    String spends = "spends " + attempt(wallet, 4) + " " + attempt(wallet, 9) + " " + attempt(wallet, -1);
-    mcf("say $(spends)");
-
-    int result = 0;
-    try {
-        result = parsePositive(3);
-        result = result + parsePositive(0);
-        result = 99;
-    } catch (Exception error) {
-        result = result + 1000;
-    }
-    mcf("say result $(result)");
-
-    int loops = 0;
-    try {
-        for (int round = 0; round < 5; round++) {
-            loops++;
-            while (true) {
-                parsePositive(round - 2);
-                break;
-            }
+class Main {
+    static int parsePositive(int value) throws IllegalArgumentException {
+        if (value <= 0) {
+            throw new IllegalArgumentException("not positive");
         }
-    } catch (RuntimeException error) {
-        loops = loops + 100;
-    }
-    mcf("say loops $(loops)");
 
-    String nested = "";
-    try {
+        return value * 2;
+    }
+
+    static int firstBad(List<Integer> values) {
+        for (int value : values) {
+            parsePositive(value);
+        }
+
+        return -1;
+    }
+
+    static String attempt(Wallet wallet, int amount) {
+        String log = "";
         try {
-            throw new IllegalStateException("inner");
-        } catch (IllegalArgumentException error) {
-            nested = nested + "wrong";
+            wallet.spend(amount);
+            log = log + "ok";
+        } catch (NotEnough error) {
+            log = log + "short" + error.missing;
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            log = log + "bad(" + error.getMessage() + ")";
         } finally {
-            nested = nested + "f1 ";
+            log = log + "/" + wallet.coins;
         }
-    } catch (IllegalStateException error) {
-        nested = nested + "outer:" + error.getMessage();
-    }
-    mcf("say nested $(nested)");
 
-    int bad = 0;
-    try {
-        bad = firstBad(List.of(1, 2, -3, 4));
-    } catch (Exception error) {
-        bad = 7;
+        return log;
     }
-    mcf("say bad $(bad)");
-    wallet.spend(100);
-    mcf("say unreachable");
+
+    public static void main() {
+        Wallet wallet = new Wallet();
+        String spends = "spends " + attempt(wallet, 4) + " " + attempt(wallet, 9) + " " + attempt(wallet, -1);
+        mcf("say $(spends)");
+
+        int result = 0;
+        try {
+            result = parsePositive(3);
+            result = result + parsePositive(0);
+            result = 99;
+        } catch (Exception error) {
+            result = result + 1000;
+        }
+        mcf("say result $(result)");
+
+        int loops = 0;
+        try {
+            for (int round = 0; round < 5; round++) {
+                loops++;
+                while (true) {
+                    parsePositive(round - 2);
+                    break;
+                }
+            }
+        } catch (RuntimeException error) {
+            loops = loops + 100;
+        }
+        mcf("say loops $(loops)");
+
+        String nested = "";
+        try {
+            try {
+                throw new IllegalStateException("inner");
+            } catch (IllegalArgumentException error) {
+                nested = nested + "wrong";
+            } finally {
+                nested = nested + "f1 ";
+            }
+        } catch (IllegalStateException error) {
+            nested = nested + "outer:" + error.getMessage();
+        }
+        mcf("say nested $(nested)");
+
+        int bad = 0;
+        try {
+            bad = firstBad(List.of(1, 2, -3, 4));
+        } catch (Exception error) {
+            bad = 7;
+        }
+        mcf("say bad $(bad)");
+        wallet.spend(100);
+        mcf("say unreachable");
+    }
 }

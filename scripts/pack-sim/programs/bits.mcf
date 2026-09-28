@@ -9,14 +9,14 @@ class Main {
         for (int i = 0; i < 3; i++) {
             a = a * 37 + 12345;
             int b = a >> 3;
-            mcf("say and $(a & b) or $(a | b) xor $(a ^ b)");
-            mcf("say shl $(a << i + 29) shr $(a >> 31) $(b >> -1) $(a << 1)");
+            Commands.run("say and $(a & b) or $(a | b) xor $(a ^ b)");
+            Commands.run("say shl $(a << i + 29) shr $(a >> 31) $(b >> -1) $(a << 1)");
             total ^= mix(a, b);
             total <<= 1;
         }
         int n = 7;
         n |= 16;
         n &= 22;
-        mcf("say total $(total) n $(n) prec $(1 + 2 << 3 & 255 | 1)");
+        Commands.run("say total $(total) n $(n) prec $(1 + 2 << 3 & 255 | 1)");
     }
 }

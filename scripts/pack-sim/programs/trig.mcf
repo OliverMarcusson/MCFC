@@ -49,6 +49,6 @@ class Main {
     }
 
     public static void main() {
-        mc("function trig:test");
+        Commands.run("function trig:test");
     }
 }

@@ -213,7 +213,9 @@ mod source_name_tests {
     #[test]
     fn methods_read_as_written() {
         assert_eq!(
-            super::source_names("'Main__same__int' and 'std::math::Math__clamp', not __mcfc_x or a__b"),
+            super::source_names(
+                "'Main__same__int' and 'std::math::Math__clamp', not __mcfc_x or a__b"
+            ),
             "'Main.same' and 'std.math.Math.clamp', not __mcfc_x or a__b"
         );
     }

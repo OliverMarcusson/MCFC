@@ -21,7 +21,7 @@ fn compiles_straight_line_program() {
         var b = 7;
         var text = "done";
         b = a + b;
-        mc("say done");
+        Commands.run("say done");
         return;
     }
 }
@@ -67,7 +67,7 @@ fn compiles_program_with_comments() {
     public static void main() {  // signature comment:
         var a = 1;  // inline comment
         // inside block
-        mc("say done");
+        Commands.run("say done");
         return;
     }
 }
@@ -87,8 +87,8 @@ fn compiles_single_quoted_strings() {
     let source = r#"class Main {
     public static void main() {
         var a = "done";
-        mc("say \"done\"");
-        mcf("say $(a)");
+        Commands.run("say \"done\"");
+        Commands.run("say $(a)");
         return;
     }
 }
@@ -120,14 +120,18 @@ fn char_short_and_byte_are_string_and_int_aliases() {
         byte b = 100;
         List<Character> cs = List.of('x');
         if ("hi".charAt(0) == 'h') {
-            mcf("say $(c)$(quote)$(s + b)$(cs[0])");
+            Commands.run("say $(c)$(quote)$(s + b)$(cs[0])");
         }
     }
 }
 "#;
 
     compile_source(source, &lowering()).expect("aliases should compile");
-    let error = compile_source("class Main {\n    public static void main() { char c = 'ab'; }\n}", &lowering()).unwrap_err();
+    let error = compile_source(
+        "class Main {\n    public static void main() { char c = 'ab'; }\n}",
+        &lowering(),
+    )
+    .unwrap_err();
     assert!(
         error
             .to_string()
@@ -141,9 +145,9 @@ fn compiles_macro_command_with_storage_call() {
     public static void main() {
         var amount = 5;
         var label = "hello";
-        mcf("xp add @a $(amount) levels");
-        mcf("say $(label)");
-        mc("say $(amount)");
+        Commands.run("xp add @a $(amount) levels");
+        Commands.run("say $(label)");
+        Commands.run("say plain");
         return;
     }
 }
@@ -157,7 +161,7 @@ fn compiles_macro_command_with_storage_call() {
         .unwrap();
     assert!(main.contains("with storage mcfc:runtime frames.d0.main.__macro1"));
     assert!(main.contains("with storage mcfc:runtime frames.d0.main.__macro2"));
-    assert!(main.contains("say $(amount)"));
+    assert!(main.contains("say plain"));
 
     let macro_file = result
         .artifacts
@@ -322,12 +326,12 @@ fn compiles_as_and_at_context_blocks() {
     public static void main() {
         var player = Selector.of("@p").getFirst();
         Execute.as(player, () -> {
-            mcf("tellraw @s \"welcome @s\"");
-            mc("title @s actionbar \"title @s\"");
-            mc("say hello @s");
+            Commands.run("tellraw @s \"welcome @s\"");
+            Commands.run("title @s actionbar \"title @s\"");
+            Commands.run("say hello @s");
         });
         Execute.at(player, () -> {
-            mc("say here");
+            Commands.run("say here");
         });
         return;
     }
@@ -392,7 +396,7 @@ fn compiles_nested_context_blocks() {
         var player = Selector.of("@p").getFirst();
         Execute.at(player, () -> {
             Execute.as(Selector.of("@e[type=pig,limit=1]"), () -> {
-                mc("say @s");
+                Commands.run("say @s");
             });
         });
         return;
@@ -592,7 +596,7 @@ fn compiles_entity_and_block_builder_paths() {
         var pig = new EntityData("minecraft:pig");
         pig.setName("Boss");
         pig.setGlowing(true);
-        var spawned = summon(pig);
+        var spawned = World.summon(pig);
         var chest = new BlockData("minecraft:chest");
         chest.states.facing = "north";
         chest.setName("Loot");
@@ -728,7 +732,7 @@ fn compiles_equipment_slot_reads_via_item_slot_surface() {
         var id = hand.id;
         var count = hand.count;
         var custom = (String) hand.nbt.CustomModelData;
-        mcf("say $(present) $(id) $(count) $(custom)");
+        Commands.run("say $(present) $(id) $(count) $(custom)");
         return;
     }
 }
@@ -814,7 +818,7 @@ class Main {
         marker.state.ratio = ratio;
         marker.state.profile = new Profile("mob", level);
         var mob_title = marker.state.profile.title();
-        mcf("say $(mob_title)");
+        Commands.run("say $(mob_title)");
         return;
     }
 }
@@ -1131,7 +1135,7 @@ fn compiles_entity_builder_as_nbt_in_nbt_contexts() {
         var echoed = echo(chicken);
         var returned = makePassenger();
         var explicit = chicken.asNbt();
-        var spawned = summon("minecraft:pig", chicken);
+        var spawned = World.summon("minecraft:pig", chicken);
         return;
     }
 }
@@ -1171,7 +1175,7 @@ fn compiles_nested_entity_builder_passengers() {
         chicken.nbt.Passengers[0] = villager;
         pig.nbt.Passengers[0] = chicken;
 
-        summon(pig);
+        World.summon(pig);
         return;
     }
 }
@@ -1271,7 +1275,7 @@ fn compiles_async_bossbars_without_default_tick_tag() {
         var bb = new BossBar("mcfc:test", "Boss");
 
         Thread.start(() -> {
-            sleep(5);
+            Thread.sleep(5);
             player.sendMessage("later");
             player.position.setBlock("minecraft:gold_block");
         });
@@ -1306,11 +1310,11 @@ fn compiles_async_bossbars_without_default_tick_tag() {
 fn exposes_no_arg_void_functions_and_special_tick() {
     let source = r#"class Main {
     static void reset() {
-        mc("say reset");
+        Commands.run("say reset");
     }
 
     static void helper(int value) {
-        mc("say helper");
+        Commands.run("say helper");
     }
 
     static int answer() {
@@ -1319,14 +1323,14 @@ fn exposes_no_arg_void_functions_and_special_tick() {
 
     @Tick
     static void tick() {
-        mc("say first");
+        Commands.run("say first");
     }
 }
 
 class Clock {
     @Tick
     static void advance() {
-        mc("say second");
+        Commands.run("say second");
     }
 }
 "#;
@@ -1380,8 +1384,8 @@ fn compiles_tick_sleep_player_state_display_and_equipment_item_defs() {
         helmet.setName("Crown");
         player.head.item = helmet;
         player.state.money = 5;
-        sleepTicks(5);
-        mc("say done");
+        Thread.sleepTicks(5);
+        Commands.run("say done");
     }
 }
 "#;
@@ -1412,9 +1416,9 @@ fn optimizer_folds_literal_branches_and_can_be_disabled() {
     public static void main() {
         var value = 1 + 2 * 3;
         if (false) {
-            mc("say hidden");
+            Commands.run("say hidden");
         } else {
-            mc("say shown");
+            Commands.run("say shown");
         }
     }
 }
@@ -1490,7 +1494,7 @@ fn compiles_else_for_logic_and_loop_control() {
             } else if (i == 3) {
                 break;
             } else {
-                mc("say loop");
+                Commands.run("say loop");
             }
         }
         return;
@@ -1525,10 +1529,10 @@ fn compiles_string_equality() {
         var a = "done";
         var b = "done";
         if (a == b) {
-            mc("say equal");
+            Commands.run("say equal");
         }
         if (a != "other") {
-            mc("say diff");
+            Commands.run("say diff");
         }
         return;
     }
@@ -1554,7 +1558,7 @@ fn compiles_string_character_index_reads() {
         var last = book_content[-1];
         var idx = 1;
         var second = book_content[idx];
-        mcf("say $(first) $(last) $(second)");
+        Commands.run("say $(first) $(last) $(second)");
         return;
     }
 }
@@ -1579,7 +1583,7 @@ fn compiles_string_character_index_reads_through_prefix_paths() {
     public static void main() {
         var words = List.of("hello");
         var second = words[0][1];
-        mcf("say $(second)");
+        Commands.run("say $(second)");
         return;
     }
 }
@@ -1611,7 +1615,7 @@ fn compiles_storage_backed_arrays() {
         var size = values.size();
         values[i] = popped + size;
         var selected = pick(values, i);
-        mcf("say $(selected)");
+        Commands.run("say $(selected)");
         return;
     }
 }
@@ -1643,8 +1647,8 @@ fn compiles_array_remove() {
         var values = List.of(3, 5, 8);
         var first = values.remove(0);
         var second = values.remove(1);
-        mcf("say $(first)");
-        mcf("say $(second)");
+        Commands.run("say $(first)");
+        Commands.run("say $(second)");
         return;
     }
 }
@@ -1668,7 +1672,7 @@ fn compiles_array_for_each() {
     public static void main() {
         var values = List.of(1, 2, 3);
         for (var value : values) {
-            mcf("say $(value)");
+            Commands.run("say $(value)");
         }
         return;
     }
@@ -1695,7 +1699,7 @@ fn compiles_storage_backed_dictionaries() {
         counts.remove("stone");
         var amount = counts[key];
         if (has_wood) {
-            mcf("say $(amount)");
+            Commands.run("say $(amount)");
         }
         return;
     }
@@ -1726,7 +1730,7 @@ fn compiles_storage_backed_dictionaries() {
 fn compiles_has_data_with_dynamic_storage_nbt_paths() {
     let source = r#"class Main {
     static boolean probe(Map<String, Nbt> store, String key, int index) {
-        return hasData(store[key].items[index].name);
+        return Nbt.has(store[key].items[index].name);
     }
 
     public static void main() {
@@ -1760,10 +1764,10 @@ fn compiles_string_match_dispatch() {
     public static void main() {
         var action = "jump";
         switch (action) {
-            case "pathfind" -> mc("say move");
-            case "jump" -> mc("say leap");
-            case "idle" -> mc("say wait");
-            default -> mc("say default");
+            case "pathfind" -> Commands.run("say move");
+            case "jump" -> Commands.run("say leap");
+            case "idle" -> Commands.run("say wait");
+            default -> Commands.run("say default");
         }
         return;
     }
@@ -1790,11 +1794,11 @@ class Main {
     static String modeName(Mode mode) {
         switch (mode) {
             case SURVIVAL -> {
-                mc("say survival");
+                Commands.run("say survival");
                 return "survival";
             }
             case CREATIVE -> {
-                mc("say creative");
+                Commands.run("say creative");
                 return "creative";
             }
         }
@@ -1827,8 +1831,8 @@ class Main {
     public static void main() {
         var mode = Mode.SURVIVAL;
         switch (mode) {
-            case Mode.SURVIVAL -> mc("say first");
-            case Mode.SURVIVAL -> mc("say duplicate");
+            case Mode.SURVIVAL -> Commands.run("say first");
+            case Mode.SURVIVAL -> Commands.run("say duplicate");
         }
     }
 }
@@ -1845,19 +1849,19 @@ fn compiles_int_and_string_switch_with_default() {
     public static void main() {
         var level = 2;
         switch (level) {
-            case 1 -> mc("say one");
+            case 1 -> Commands.run("say one");
             case 2 -> {
-                mc("say two");
-                mc("say again");
+                Commands.run("say two");
+                Commands.run("say again");
             }
-            default -> mc("say other");
+            default -> Commands.run("say other");
         }
         var action = "start";
         switch (action) {
-            case "start" -> mc("say go");
+            case "start" -> Commands.run("say go");
             default -> {
-                mc("say stop");
-                mc("say waiting");
+                Commands.run("say stop");
+                Commands.run("say waiting");
             }
         }
     }
@@ -1898,7 +1902,7 @@ class Main {
         var actions = List.of(action);
         var first = actions[0];
         var duration = tick(first);
-        mcf("say $(duration)");
+        Commands.run("say $(duration)");
         return;
     }
 }
@@ -1974,7 +1978,7 @@ fn rejects_invalid_collection_usage() {
     }
 
     static boolean badHasData(Entity player, int key) {
-        return hasData(player.nbt[key]);
+        return Nbt.has(player.nbt[key]);
     }
 
     public static void main() {
@@ -2002,7 +2006,7 @@ fn rejects_invalid_collection_usage() {
     assert!(rendered.contains("List.of(...) values must all have one type"));
     assert!(rendered.contains("list index must have type 'int'"));
     assert!(rendered.contains("map key must have type 'String'"));
-    assert!(rendered.contains("hasData(...) requires a storage-backed variable or path"));
+    assert!(rendered.contains("Nbt.has(...) requires a storage-backed variable or path"));
     assert!(rendered.contains("add(...) value must be 'int', found 'String'"));
     assert!(rendered.contains("remove(...) index must be 'int'"));
     assert!(rendered.contains("remove(...) index must be 'int'"));
@@ -2209,9 +2213,15 @@ fn rejects_invalid_static_fields() {
 }
 "#;
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
-    assert!(rendered.contains("duplicate static field 'Main.round'"), "{rendered}");
+    assert!(
+        rendered.contains("duplicate static field 'Main.round'"),
+        "{rendered}"
+    );
     assert!(rendered.contains("a static field can be"), "{rendered}");
-    assert!(rendered.contains("cannot assign 'String' to variable 'Main.round'"), "{rendered}");
+    assert!(
+        rendered.contains("cannot assign 'String' to variable 'Main.round'"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -2219,7 +2229,8 @@ fn top_level_functions_and_state_are_rejected() {
     let source = "void main() {}\n@PlayerState int coins;\nclass Main {\n    @WorldState static int round;\n}\n";
     let rendered = compile_source(source, &lowering()).unwrap_err().to_string();
     assert!(
-        rendered.contains("'main' must be a method inside a class; MCFC has no top-level functions"),
+        rendered
+            .contains("'main' must be a method inside a class; MCFC has no top-level functions"),
         "{rendered}"
     );
     assert!(
@@ -2256,7 +2267,7 @@ fn for_condition_runs_every_iteration_and_continue_runs_the_update() {
             if (i == 1) {
                 continue;
             }
-            mc("say loop");
+            Commands.run("say loop");
         }
     }
 }
@@ -2322,8 +2333,8 @@ fn rejects_invalid_switch_usage() {
     public static void main() {
         var bad = 1;
         switch (bad) {
-            case "a" -> mc("say a");
-            case "a" -> mc("say b");
+            case "a" -> Commands.run("say a");
+            case "a" -> Commands.run("say b");
         }
         return;
     }
@@ -2437,9 +2448,9 @@ fn guards_later_statements_after_nested_return() {
         if (true) {
             return;
         } else {
-            mc("say no");
+            Commands.run("say no");
         }
-        mc("say after");
+        Commands.run("say after");
         return;
     }
 }
@@ -2458,7 +2469,7 @@ fn guards_later_statements_after_nested_return() {
 fn rejects_sleep_in_recursion() {
     let source = r#"class Main {
     static int a(int x) {
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         return b(x);
     }
 
@@ -2473,7 +2484,10 @@ fn rejects_sleep_in_recursion() {
 "#;
 
     let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("'Main.a' is recursive"), "{error}");
+    assert!(
+        error.to_string().contains("'Main.a' is recursive"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -2485,10 +2499,10 @@ fn rejects_invalid_macro_placeholders() {
         if (true) {
             var inner = 2;
         }
-        mcf("say $(missing)");
-        mcf("say $(inner)");
-        mcf("say $(");
-        mcf("say $(player.CustomName)");
+        Commands.run("say $(missing)");
+        Commands.run("say $(inner)");
+        Commands.run("say $(");
+        Commands.run("say $(player.CustomName)");
         return;
     }
 }
@@ -2523,16 +2537,16 @@ class Main {
         var store = Map.of("npc", Map.of("value", 7));
         var action = new Action("idle", 40);
         var player = Selector.of("@p").getFirst();
-        mcf("say $(a + 1)");
-        mcf("say $(x == y)");
-        mcf("say $(flag && !ready)");
-        mcf("say $(tick(action))");
-        mcf("say $(values.remove(0))");
-        mcf("say $(values.remove(0))");
-        mcf("say $(store[key][\"value\"])");
-        mcf("say $(action.duration())");
-        mcf("say $(player.state.quest_complete)");
-        mcf("say $(player.team)");
+        Commands.run("say $(a + 1)");
+        Commands.run("say $(x == y)");
+        Commands.run("say $(flag && !ready)");
+        Commands.run("say $(tick(action))");
+        Commands.run("say $(values.remove(0))");
+        Commands.run("say $(values.remove(0))");
+        Commands.run("say $(store[key][\"value\"])");
+        Commands.run("say $(action.duration())");
+        Commands.run("say $(player.state.quest_complete)");
+        Commands.run("say $(player.team)");
         return;
     }
 }
@@ -2566,10 +2580,10 @@ fn rejects_invalid_as_and_at_contexts() {
     public static void main() {
         var player = Selector.of("@p").getFirst();
         Execute.as(Block.of("~ ~ ~"), () -> {
-            mc("say bad");
+            Commands.run("say bad");
         });
         Execute.at(Block.of("~ ~ ~"), () -> {
-            mc("say bad");
+            Commands.run("say bad");
         });
         var bad = Execute.as(player, () -> 1);
         return;
@@ -2909,12 +2923,12 @@ function = "api.mod.Api.create"
         src_dir.join("main.mcf"),
         r#"class Main {
     static void bootstrapLoad() {
-        mc("say load");
+        Commands.run("say load");
         return;
     }
 
     static void bootstrapTick() {
-        mc("say tick");
+        Commands.run("say tick");
         return;
     }
 }
@@ -2926,7 +2940,7 @@ function = "api.mod.Api.create"
         src_dir.join("api").join("mod.mcf"),
         r#"public class Api {
     public static void create() {
-        mc("say create");
+        Commands.run("say create");
         return;
     }
 }
@@ -3025,7 +3039,7 @@ function = "Main.bootstrapLoad"
         src_dir.join("main.mcf"),
         r#"class Main {
     static void bootstrapLoad() {
-        mc("say hello");
+        Commands.run("say hello");
         return;
     }
 }
@@ -3077,10 +3091,7 @@ fn project_errors_report_the_original_file_and_line() {
     )
     .expect_err("an unknown function should fail");
 
-    let expected = format!(
-        "error:{}:3:9:",
-        Path::new("src").join("b.mcf").display()
-    );
+    let expected = format!("error:{}:3:9:", Path::new("src").join("b.mcf").display());
     assert!(error.starts_with(&expected), "{error}");
 }
 
@@ -3092,12 +3103,12 @@ fn same_named_tick_methods_in_two_modules_both_run() {
     fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
     fs::write(
         src_dir.join("main.mcf"),
-        "class Main {\n    @Tick\n    static void tick() {\n        mc(\"say root\");\n    }\n}\n",
+        "class Main {\n    @Tick\n    static void tick() {\n        Commands.run(\"say root\");\n    }\n}\n",
     )
     .unwrap();
     fs::write(
         src_dir.join("game.mcf"),
-        "class Main {\n    @Tick\n    static void tick() {\n        mc(\"say game\");\n    }\n}\n",
+        "class Main {\n    @Tick\n    static void tick() {\n        Commands.run(\"say game\");\n    }\n}\n",
     )
     .unwrap();
 
@@ -3151,7 +3162,7 @@ public class Score {
     }
 
     public static void reset(Points p) {
-        mc("say reset");
+        Commands.run("say reset");
     }
 }
 "#,
@@ -3216,10 +3227,18 @@ fn std_is_available_and_unused_functions_are_pruned() {
     names.sort();
     assert_eq!(
         names,
-        ["main", "std::math::Math__clamp__int", "std::math::Math__max__int"]
+        [
+            "main",
+            "std::math::Math__clamp__int",
+            "std::math::Math__max__int"
+        ]
     );
 
-    fs::write(src_dir.join("std.mcf"), "class Main {\n    static void f() {\n    }\n}\n").unwrap();
+    fs::write(
+        src_dir.join("std.mcf"),
+        "class Main {\n    static void f() {\n    }\n}\n",
+    )
+    .unwrap();
     let error = compile_project(
         &project.join("mcfc.toml"),
         &project.join("dist"),
@@ -3408,7 +3427,7 @@ fn rpc_load_entry_is_reload_guarded() {
 
 #[test]
 fn non_rpc_load_entry_is_not_guarded() {
-    let source = "class Main {\n    public static void main() {\n        mc(\"say hi\");\n    }\n}\n";
+    let source = "class Main {\n    public static void main() {\n        Commands.run(\"say hi\");\n    }\n}\n";
     let result = compile_source(source, &lowering()).expect("should compile");
     let entry = result
         .artifacts
@@ -3486,7 +3505,7 @@ fn floats_lower_to_one_compute_command_per_expression() {
         var n = (int) (y * 100.0);
         var z = (float) n / 2.0;
         if (y < x) {
-            mc("say smaller");
+            Commands.run("say smaller");
         }
     }
 }
@@ -3582,7 +3601,7 @@ fn remainder_operator_matches_scoreboard_floor_mod() {
         var a = -7 % 3;
         var b = 7 % -3;
         var c = 7 % 3;
-        var x = random(10);
+        var x = Random.nextInt(11);
         var d = x % 4;
         var f = 5.5 % 2.0;
     }
@@ -3931,9 +3950,9 @@ fn entity_and_world_reads_lower_to_nbt_reads_and_queries() {
         var x = p.getX();
         var food = p.getFoodLevel();
         var d = p.distanceTo(pig);
-        var t = gameTime();
-        var w = worldTime();
-        var b = borderSize();
+        var t = World.getGameTime();
+        var w = World.getTime();
+        var b = World.getBorderSize();
     }
 }
 "#;
@@ -4418,13 +4437,13 @@ fn generated(result: &mcfc::compiler::CompileResult, name: &str) -> String {
 fn sleeping_callee_pauses_the_caller() {
     let source = r#"class Main {
     static int wait() {
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         return 7;
     }
 
     public static void main() {
         var x = wait();
-        mcf("say after $(x)");
+        Commands.run("say after $(x)");
     }
 }
 "#;
@@ -4458,19 +4477,22 @@ fn sleeping_callee_pauses_the_caller() {
 fn pausing_call_inside_an_expression_is_an_error() {
     let source = r#"class Main {
     static int wait() {
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         return 7;
     }
 
     public static void main() {
         if (wait() > 3) {
-            mc("say big");
+            Commands.run("say big");
         }
     }
 }
 "#;
     let error = compile_source(source, &lowering()).unwrap_err();
-    assert!(error.to_string().contains("'Main.wait' can pause"), "{error}");
+    assert!(
+        error.to_string().contains("'Main.wait' can pause"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -4479,7 +4501,7 @@ fn sort_runs_in_slices_across_ticks() {
     public static void main() {
         var xs = List.of(3, 1, 2);
         xs.sort();
-        mc("say sorted");
+        Commands.run("say sorted");
     }
 }
 "#;
@@ -4582,8 +4604,11 @@ fn sidebars_are_shared_or_per_player_through_the_agent() {
     // The shared sidebar still works beside player ones.
     assert!(output.contains("scoreboard objectives modify mcfc_sidebar displayname $(text)"));
 
-    let error = compile_source("class Main {\n    public static void main() { Sidebar.setLine(\"x\", 1); }\n}", &lowering())
-        .expect_err("wrong argument types are rejected");
+    let error = compile_source(
+        "class Main {\n    public static void main() { Sidebar.setLine(\"x\", 1); }\n}",
+        &lowering(),
+    )
+    .expect_err("wrong argument types are rejected");
     assert!(format!("{error:?}").contains("line"));
 }
 
@@ -4601,7 +4626,13 @@ fn block_of_accepts_computed_coordinates() {
     let output = result.artifacts.files.values().cloned().collect::<String>();
     assert!(output.contains(".pos set value \"$(x) $(y) $(z)\""));
     assert!(output.contains(".x int 1 run scoreboard players get"));
-    assert!(compile_source("class Main {\n    public static void main() { Block.of(1, 2.0, 3); }\n}", &lowering()).is_err());
+    assert!(
+        compile_source(
+            "class Main {\n    public static void main() { Block.of(1, 2.0, 3); }\n}",
+            &lowering()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -4651,8 +4682,20 @@ fn log_levels_filter_messages_for_tagged_players() {
     ] {
         assert!(output.contains(expected), "missing {expected}");
     }
-    assert!(compile_source("class Main {\n    public static void main() { Log.setLevel(\"loud\"); }\n}", &lowering()).is_err());
-    assert!(compile_source("class Main {\n    public static void main() { Log.shout(\"x\"); }\n}", &lowering()).is_err());
+    assert!(
+        compile_source(
+            "class Main {\n    public static void main() { Log.setLevel(\"loud\"); }\n}",
+            &lowering()
+        )
+        .is_err()
+    );
+    assert!(
+        compile_source(
+            "class Main {\n    public static void main() { Log.shout(\"x\"); }\n}",
+            &lowering()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -4682,7 +4725,13 @@ fn menu_commands_join_the_smithed_data_pack_menu() {
     );
     assert!(files.contains_key("data/smithed/dialog/data_packs.json"));
     assert!(about.contains("\"/trigger settings\""), "{about}");
-    assert!(compile_source("class Main {\n    @Menu void f() {}\n    static \n}", &lowering()).is_err());
+    assert!(
+        compile_source(
+            "class Main {\n    @Menu void f() {}\n    static \n}",
+            &lowering()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -5013,10 +5062,7 @@ fn final_fields_are_set_only_by_constructors() {
         error.contains("field 'serial' of 'Ticket' is final"),
         "{error}"
     );
-    let class = class.replace(
-        "    void reset() { serial = 0; }\n",
-        "",
-    );
+    let class = class.replace("    void reset() { serial = 0; }\n", "");
     compile(&format!(
         "{class}class Main {{ public static void main() {{ Ticket t = new Ticket(1); int n = t.serial + Ticket.LIMIT; }} }}
 "
@@ -5152,7 +5198,10 @@ fn generic_classes_are_checked() {
     };
     let boxed = "class Box<T> { T value; Box(T value) { this.value = value; } T get() { return value; } }\n";
     let rejected = [
-        ("class Main {\n    public static void main() { Box b = null; }\n}\n", "'Box' is generic"),
+        (
+            "class Main {\n    public static void main() { Box b = null; }\n}\n",
+            "'Box' is generic",
+        ),
         (
             "class Main {\n    public static void main() { Box<Integer, String> b = null; }\n}\n",
             "'Box' takes 1 type arguments, found 2",
@@ -5240,7 +5289,10 @@ fn phase_five_syntax_is_checked() {
         compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
     };
     let rejected = [
-        ("class Main {\n    public static void main() { long n = 1; }\n}\n", "MCFC has no 'long'"),
+        (
+            "class Main {\n    public static void main() { long n = 1; }\n}\n",
+            "MCFC has no 'long'",
+        ),
         (
             "class Main {\n    public static void main() { double n = 1.0; }\n}\n",
             "MCFC has no 'double'; use 'float'",
@@ -5462,4 +5514,38 @@ class Main {
         .join("\n");
     assert!(files.contains("@e[type=minecraft:pig,sort=furthest,limit=2]"));
     assert!(files.contains("@a[gamemode=!spectator]"));
+}
+
+#[test]
+fn free_builtins_are_class_methods() {
+    let error = compile_source(
+        "class Main {\n    public static void main() {\n        debug(\"x\");\n        sleep(1);\n        mc(\"say x\");\n        var t = gameTime();\n        var r = random(3);\n    }\n}\n",
+        &lowering(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("'debug' is a method of a class now: use 'System.out.println(...)'"));
+    assert!(error.contains("use 'Thread.sleep(...)'"));
+    assert!(error.contains("use 'Commands.run(...)'"));
+    assert!(error.contains("use 'World.getGameTime(...)'"));
+    assert!(error.contains("use 'Random.nextInt(...)'"));
+
+    // A class's own `debug` is an ordinary method, and `System.out.println`
+    // is still the builtin next to it.
+    let files = compile_source(
+        "class Main {\n    static void debug(String s) {}\n\n    public static void main() {\n        debug(\"mine\");\n        System.out.println(\"hi\");\n        var r = Random.nextInt(10);\n        var s = Random.nextInt(5, 8);\n        Commands.run(\"say $(r)\");\n    }\n}\n",
+        &lowering(),
+    )
+    .expect("source should compile")
+    .artifacts
+    .files
+    .values()
+    .cloned()
+    .collect::<Vec<_>>()
+    .join("\n");
+    assert!(files.contains("Main__debug"));
+    assert!(files.contains("[MCFC debug] "));
+    assert!(files.contains("random value 0..9"));
+    assert!(files.contains("random value 5..7"));
+    assert!(files.contains("$say $(p1)"));
 }

@@ -41,7 +41,7 @@ class Main {
         var counter = new Counter(10);
         counter.add(5);
         rounds = rounds + 1;
-        debug("$(counter.get()) after $(rounds) rounds");
+        System.out.println("$(counter.get()) after $(rounds) rounds");
     }
 
     @Tick
@@ -106,15 +106,15 @@ class Main {
     public static void main() {
         var hp = 12;
         if (hp < 5) {
-            debug("low");
+            System.out.println("low");
         } else if (hp < 10) {
-            debug("mid");
+            System.out.println("mid");
         } else {
-            debug("ok");
+            System.out.println("ok");
         }
 
         for (int i = 0; i < 3; i++) {
-            debug("$(i)");
+            System.out.println("$(i)");
         }
 
         for (Player player : Selector.of("@a")) {
@@ -158,8 +158,8 @@ class Main {
     static void finish(Quest quest, Stage stage) {
         Quest bonus = quest.doubled();
         switch (stage) {
-            case NEW -> debug("started $(bonus.name())");
-            case DONE -> debug("$(stage.label()): reward $(bonus.reward())");
+            case NEW -> System.out.println("started $(bonus.name())");
+            case DONE -> System.out.println("$(stage.label()): reward $(bonus.reward())");
         }
     }
 }
@@ -177,7 +177,7 @@ class Main {
         var first = List.of(4, 8).get(5).orElse(0);
         var pig = Selector.of("@e[type=minecraft:pig]").findFirst();
         if (pig.isPresent()) {
-            debug("found a pig");
+            System.out.println("found a pig");
         }
     }
 }
@@ -266,7 +266,7 @@ class Main {
         Thread.start(() -> {
             for (int i = 0; i < 3; i++) {
                 player.sendTitle("$(3 - i)");
-                sleep(1);
+                Thread.sleep(1);
             }
             player.sendTitle("Go");
         });
@@ -274,7 +274,7 @@ class Main {
 }
 ```
 
-`sleep` and `sleepTicks` pause the method. `Thread.start(() -> { ... })` runs the lambda without the caller waiting for it. → [`Thread.start`](./reference/statements#thread-start), [Methods that pause](./reference/statements#methods-that-pause)
+`Thread.sleep` (seconds) and `Thread.sleepTicks` pause the method. `Thread.start(() -> { ... })` runs the lambda without the caller waiting for it. → [`Thread.start`](./reference/statements#thread-start), [Methods that pause](./reference/statements#methods-that-pause)
 
 ## Raw commands
 
@@ -282,13 +282,13 @@ class Main {
 class Main {
     public static void main() {
         var n = 5;
-        mc("weather clear");
-        mcf("xp add @a $(n) levels");
+        Commands.run("weather clear");
+        Commands.run("xp add @a $(n) levels");
     }
 }
 ```
 
-For commands MCFC has no feature for yet, `mc` emits a command exactly as written and `mcf` fills in `$(...)` values at run time. Use them only as a last resort. → [`mc`](./reference/statements#mc), [`mcf`](./reference/statements#mcf)
+For commands MCFC has no feature for yet, `Commands.run` emits a command, filling in `$(...)` values at run time. Use it only as a last resort. → [`Commands.run`](./reference/statements#commands-run)
 
 ## Modules and std
 

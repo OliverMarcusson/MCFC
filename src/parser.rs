@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::*;
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::language_catalog::{
-    VANILLA_EVENTS, event_kind_for_type, event_type_name, internal_function_name,
+    VANILLA_EVENTS, class_builtin, event_kind_for_type, event_type_name, internal_function_name,
     internal_method_name, java_name_for, vanilla_event_has_block, vanilla_event_has_entity,
 };
 use crate::lexer::{Token, TokenKind, lex};
@@ -114,7 +114,34 @@ pub(crate) const STATIC_METHODS: &[(&str, &[(&str, &str)])] = &[
             ("clear", "sidebar_clear"),
         ],
     ),
-    ("Thread", &[("start", "@thread.start")]),
+    (
+        "Thread",
+        &[
+            ("start", "@thread.start"),
+            ("sleep", "sleep"),
+            ("sleepTicks", "sleep_ticks"),
+        ],
+    ),
+    // `Random` and `World` are std classes too: other methods are theirs.
+    (
+        "Random",
+        &[
+            ("nextInt", "random"),
+            ("weighted", "random_weighted"),
+            ("binomial", "random_binomial"),
+        ],
+    ),
+    (
+        "World",
+        &[
+            ("getGameTime", "game_time"),
+            ("getTime", "world_time"),
+            ("getBorderSize", "border_size"),
+            ("getGameRule", "gamerule"),
+            ("summon", "summon"),
+        ],
+    ),
+    ("Nbt", &[("has", "has_data")]),
     ("Execute", &[("as", "@execute.as"), ("at", "@execute.at")]),
     (
         "Log",
@@ -170,6 +197,8 @@ struct Parser {
     in_case_label: bool,
     /// The loops around the statement being parsed, innermost last.
     loops: Vec<LoopFrame>,
+    /// Builtins called without their class, like `sleep(1)`: see `Program`.
+    bare_builtins: Vec<(String, Span)>,
 }
 
 /// A loop being parsed, for `break label;` and `continue label;`. A jump out
@@ -195,6 +224,7 @@ impl Parser {
             listener: false,
             in_case_label: false,
             loops: Vec::new(),
+            bare_builtins: Vec::new(),
         }
     }
 
@@ -207,6 +237,7 @@ impl Parser {
             world_states: Vec::new(),
             functions: Vec::new(),
             uses: Vec::new(),
+            bare_builtins: Vec::new(),
         };
 
         while !self.at(&TokenKind::Eof) {
@@ -241,7 +272,65 @@ impl Parser {
             }
         }
 
+        program.bare_builtins = std::mem::take(&mut self.bare_builtins);
         self.diagnostics.into_result(program)
+    }
+
+    /// `mc("...")`, `mcf("...")` or `Commands.run("...")` ahead: the tokens
+    /// before its `(`.
+    fn raw_command_ahead(&self) -> Option<usize> {
+        match self.peek_at(0) {
+            TokenKind::Identifier(word)
+                if (word == "mc" || word == "mcf")
+                    && matches!(self.peek_at(1), TokenKind::LeftParen) =>
+            {
+                Some(1)
+            }
+            TokenKind::Identifier(word)
+                if word == "Commands"
+                    && matches!(self.peek_at(1), TokenKind::Dot)
+                    && matches!(self.peek_at(2), TokenKind::Identifier(run) if run == "run")
+                    && matches!(self.peek_at(3), TokenKind::LeftParen) =>
+            {
+                Some(3)
+            }
+            _ => None,
+        }
+    }
+
+    /// A raw command. `Commands.run` is a macro when its text has `$(...)`.
+    fn parse_raw_command(&mut self, tokens: usize) -> StmtKind {
+        let first = self.peek().clone();
+        let word = match &first.kind {
+            TokenKind::Identifier(word) => word.clone(),
+            _ => String::new(),
+        };
+        if tokens == 1 {
+            self.bare_builtins.push((word.clone(), first.span.clone()));
+        }
+        for _ in 0..=tokens {
+            self.bump();
+        }
+        let written = if tokens == 1 {
+            word.as_str()
+        } else {
+            "Commands.run"
+        };
+        let command = self.expect_string(&format!("{written}(...) takes a string literal"));
+        self.expect(
+            TokenKind::RightParen,
+            &format!("expected ')' after {written}(...)"),
+        );
+        let macro_command = if tokens == 1 {
+            word == "mcf"
+        } else {
+            command.contains("$(")
+        };
+        if macro_command {
+            StmtKind::MacroCommand(command)
+        } else {
+            StmtKind::RawCommand(command)
+        }
     }
 
     fn parse_import(&mut self, uses: &mut Vec<UseDecl>) {
@@ -871,7 +960,7 @@ impl Parser {
             return_type: Type::Void,
             body: Vec::new(),
             span: span.clone(),
-            end: 0,
+            end: span.range.end,
             owner: Some(owner.to_string()),
             module: String::new(),
             is_abstract: false,
@@ -972,7 +1061,10 @@ impl Parser {
             match annotation.name.as_str() {
                 "Override" => {
                     let overridable = matches!(
-                        (name.as_str(), function.params.len() + usize::from(!is_static)),
+                        (
+                            name.as_str(),
+                            function.params.len() + usize::from(!is_static)
+                        ),
                         ("toString", 1) | ("equals", 2)
                     );
                     if self.class_body.is_some() {
@@ -1075,7 +1167,9 @@ impl Parser {
         if self.at(&TokenKind::LeftParen) {
             let name = path.remove(0);
             self.error_at(
-                &format!("'{name}' must be a method inside a class; MCFC has no top-level functions"),
+                &format!(
+                    "'{name}' must be a method inside a class; MCFC has no top-level functions"
+                ),
                 span.clone(),
             );
             let mut function = self.parse_function_rest(name, span, type_params, ty);
@@ -1405,7 +1499,8 @@ impl Parser {
                     self.error_at("@Tick methods take no arguments or parameters", span);
                 }
                 let owner = function.owner.clone().unwrap_or_default();
-                function.name = format!("{}{owner}__{}", crate::compiler::TICK_PREFIX, function.name);
+                function.name =
+                    format!("{}{owner}__{}", crate::compiler::TICK_PREFIX, function.name);
             }
             "Test" => {
                 if !annotation.args.is_empty() || !function.params.is_empty() {
@@ -1838,23 +1933,11 @@ impl Parser {
                 self.bump();
                 self.parse_switch_rest(span.clone())
             }
-            TokenKind::Identifier(word)
-                if (word == "mc" || word == "mcf")
-                    && matches!(self.peek_at(1), TokenKind::LeftParen) =>
-            {
-                self.bump();
-                self.bump();
-                let command = self.expect_string(&format!("{word}(...) takes a string literal"));
-                self.expect(
-                    TokenKind::RightParen,
-                    &format!("expected ')' after {word}(...)"),
-                );
+            TokenKind::Identifier(_) if self.raw_command_ahead().is_some() => {
+                let tokens = self.raw_command_ahead().unwrap_or(1);
+                let command = self.parse_raw_command(tokens);
                 self.expect_semicolon("command");
-                if word == "mc" {
-                    StmtKind::RawCommand(command)
-                } else {
-                    StmtKind::MacroCommand(command)
-                }
+                command
             }
             _ => {
                 let kind = self.parse_simple_stmt();
@@ -2584,9 +2667,29 @@ impl Parser {
                     self.map_literal(args, span)
                 }
             }
+            // `System.out.println(x)` prints to every player, like `debug`.
+            TokenKind::Identifier(name)
+                if name == "System"
+                    && matches!(self.peek_at(0), TokenKind::Dot)
+                    && matches!(self.peek_at(1), TokenKind::Identifier(out) if out == "out")
+                    && matches!(self.peek_at(2), TokenKind::Dot)
+                    && matches!(self.peek_at(3), TokenKind::Identifier(print) if print == "println")
+                    && matches!(self.peek_at(4), TokenKind::LeftParen) =>
+            {
+                for _ in 0..5 {
+                    self.bump();
+                }
+                let args = self.parse_call_args();
+                call(&format!("{BUILTIN}debug"), args, &span)
+            }
             TokenKind::Identifier(name)
                 if matches!(self.peek().kind, TokenKind::Dot)
-                    && STATIC_METHODS.iter().any(|(class, _)| *class == name) =>
+                    && STATIC_METHODS.iter().any(|(class, methods)| {
+                        *class == name
+                            && (!matches!(name.as_str(), "Random" | "World")
+                                || matches!(self.peek_at(1), TokenKind::Identifier(method)
+                                    if methods.iter().any(|(java, _)| java == method)))
+                    }) =>
             {
                 let (_, methods) = STATIC_METHODS
                     .iter()
@@ -2612,12 +2715,34 @@ impl Parser {
                 );
                 let args = self.parse_call_args();
                 let builtin = builtin.unwrap_or(methods[0].1);
+                // Like Java, `nextInt`'s bound is exclusive; `random`'s max isn't.
+                let args = if builtin == "random" {
+                    let mut args = args;
+                    if let Some(bound) = args.last_mut() {
+                        *bound = match bound.kind {
+                            ExprKind::Int(value) => int_expr(value - 1, &bound.span),
+                            _ => Expr {
+                                span: bound.span.clone(),
+                                kind: ExprKind::Binary {
+                                    op: BinaryOp::Sub,
+                                    left: Box::new(bound.clone()),
+                                    right: Box::new(int_expr(1, &bound.span)),
+                                },
+                            },
+                        };
+                    }
+                    args
+                } else {
+                    args
+                };
                 // `Execute.at(anchor, () -> value)` is the value, rebased.
                 if let Some(context) = builtin.strip_prefix("@execute.")
                     && let [anchor, lambda] = args.as_slice()
                     && let Some(value) = expression_lambda_value(lambda)
                 {
                     call(&format!("@{context}"), vec![anchor.clone(), value], &span)
+                } else if class_builtin(builtin).is_some() {
+                    call(&format!("{BUILTIN}{builtin}"), args, &span)
                 } else {
                     call(builtin, args, &span)
                 }
@@ -2696,8 +2821,13 @@ impl Parser {
                     {
                         self.error_at(&format!("use '{ty}.of(...)'"), span.clone());
                     }
-                    if let Some(java) = java_name_for(&name, false) {
+                    if let Some(java) = java_name_for(&name, false)
+                        && class_builtin(&name).is_none()
+                    {
                         self.error_at(&format!("use '{java}(...)'"), span.clone());
+                    }
+                    if class_builtin(&name).is_some() {
+                        self.bare_builtins.push((name.clone(), span.clone()));
                     }
                     if let Some(method) = match name.as_str() {
                         "single" => Some("selector.getFirst()"),
@@ -2847,24 +2977,10 @@ impl Parser {
         let saved = std::mem::replace(&mut self.in_case_label, false);
         let (body, expression) = if self.at(&TokenKind::LeftBrace) {
             (self.parse_block("lambda body"), false)
-        } else if let TokenKind::Identifier(word) = self.peek().kind.clone()
-            && (word == "mc" || word == "mcf")
-            && matches!(self.peek_at(1), TokenKind::LeftParen)
-        {
-            // `x -> mcf("say $(x)")` runs the command.
+        } else if let Some(tokens) = self.raw_command_ahead() {
+            // `x -> Commands.run("say $(x)")` runs the command.
             let start = self.current_span();
-            self.bump();
-            self.bump();
-            let command = self.expect_string(&format!("{word}(...) takes a string literal"));
-            self.expect(
-                TokenKind::RightParen,
-                &format!("expected ')' after {word}(...)"),
-            );
-            let kind = if word == "mc" {
-                StmtKind::RawCommand(command)
-            } else {
-                StmtKind::MacroCommand(command)
-            };
+            let kind = self.parse_raw_command(tokens);
             (vec![Stmt { kind, span: start }], false)
         } else {
             // An expression, or an assignment such as `() -> count += 1`.
@@ -3705,7 +3821,10 @@ mod tests {
 
     #[test]
     fn parses_precedence_like_java() {
-        let program = parse("class Main {\n    public static void main() { var v = 1 + 2 * 3 < 10 && !false; }\n}").unwrap();
+        let program = parse(
+            "class Main {\n    public static void main() { var v = 1 + 2 * 3 < 10 && !false; }\n}",
+        )
+        .unwrap();
         let StmtKind::Let {
             value, ty: None, ..
         } = &program.functions[0].body[0].kind
@@ -3763,8 +3882,8 @@ mod tests {
     public static void main() {
         for (Player p : Selector.of("@a")) { p.sendMessage("hi"); }
         switch (mode) {
-            case A, B -> debug("ab");
-            default -> { debug("other"); }
+            case A, B -> System.out.println("ab");
+            default -> { System.out.println("other"); }
         }
         float f = (float) 3 * 2.0;
     }

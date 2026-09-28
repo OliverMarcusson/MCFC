@@ -21,13 +21,13 @@ class Main {
 
     public static void main() {
         var a = score(Stage.NEW) + score(Stage.MID) + score(Stage.DONE);
-        mcf("say stages $(a)");
+        Commands.run("say stages $(a)");
         var b = clampish(-3, 0, 10) + clampish(4, 0, 10) * 100 + clampish(77, 0, 10) * 10000;
-        mcf("say clamp $(b)");
+        Commands.run("say clamp $(b)");
         var d = Map.of("a", 1, "b", 2);
         d["c"] = 3;
         var t = d["a"] + d["b"] + d["c"];
-        mcf("say dict $(t)");
+        Commands.run("say dict $(t)");
         var arr = List.of(5, 3, 8);
         arr.add(1);
         var m = 0;
@@ -36,6 +36,6 @@ class Main {
                 m = v;
             }
         }
-        mcf("say max $(m) len $(arr.size())");
+        Commands.run("say max $(m) len $(arr.size())");
     }
 }

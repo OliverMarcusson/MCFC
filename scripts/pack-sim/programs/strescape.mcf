@@ -7,12 +7,12 @@ class Main {
         String mixed = "it's \"both\"";
         String first = "\"x\" 'y'";
         String joined = q + " | " + b + " | " + mixed + " | " + first;
-        mcf("tellraw @a {\"text\":\"\",\"extra\":[{\"storage\":\"strescape:runtime\",\"nbt\":\"frames.d0.main.joined\"}]}");
+        Commands.run("tellraw @a {\"text\":\"\",\"extra\":[{\"storage\":\"strescape:runtime\",\"nbt\":\"frames.d0.main.joined\"}]}");
         String twice = joined + joined;
         int n = twice.length();
-        mcf("say lengths $(b.length()) $(joined.length()) $(n)");
+        Commands.run("say lengths $(b.length()) $(joined.length()) $(n)");
         String swapped = Strings.replace(mixed, "\"", "'");
-        mcf("say swapped $(swapped.length()) $(swapped == \"it's 'both'\")");
-        mcf("say empty $((\"\" + \"\").length()) $(b == \"C:\" + \"\\\\dir\\\\n\")");
+        Commands.run("say swapped $(swapped.length()) $(swapped == \"it's 'both'\")");
+        Commands.run("say empty $((\"\" + \"\").length()) $(b == \"C:\" + \"\\\\dir\\\\n\")");
     }
 }

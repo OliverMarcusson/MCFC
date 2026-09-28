@@ -133,6 +133,34 @@ pub const FUNCTION_NAMES: &[(&str, &str)] = &[
     ("lootSpawn", "loot_spawn"),
 ];
 
+/// Builtins that used to be free functions, with the internal name and the
+/// class method users write now: `sleep(1)` is `Thread.sleep(1)`. Only `std`
+/// may still call them bare.
+pub const CLASS_BUILTINS: &[(&str, &str, &str)] = &[
+    ("debug", "debug", "System.out.println"),
+    ("sleep", "sleep", "Thread.sleep"),
+    ("sleepTicks", "sleep_ticks", "Thread.sleepTicks"),
+    ("random", "random", "Random.nextInt"),
+    ("randomWeighted", "random_weighted", "Random.weighted"),
+    ("randomBinomial", "random_binomial", "Random.binomial"),
+    ("gameTime", "game_time", "World.getGameTime"),
+    ("worldTime", "world_time", "World.getTime"),
+    ("borderSize", "border_size", "World.getBorderSize"),
+    ("gamerule", "gamerule", "World.getGameRule"),
+    ("summon", "summon", "World.summon"),
+    ("hasData", "has_data", "Nbt.has"),
+    ("mc", "mc", "Commands.run"),
+    ("mcf", "mcf", "Commands.run"),
+];
+
+/// The class method a free builtin is written as now, by written or internal name.
+pub fn class_builtin(name: &str) -> Option<&'static str> {
+    CLASS_BUILTINS
+        .iter()
+        .find(|(written, internal, _)| *written == name || *internal == name)
+        .map(|(_, _, class)| *class)
+}
+
 /// Methods users write with Java names, with the name the compiler uses.
 /// `add` is `push` with one argument and `insert` with two.
 pub const METHOD_NAMES: &[(&str, &str)] = &[
@@ -298,7 +326,7 @@ pub fn java_name_for(internal: &str, is_method: bool) -> Option<&'static str> {
 }
 
 /// How a builtin or method reads in source, for messages: `bool` is `(boolean) x`,
-/// `selector` is `Selector.of(...)`, `sleep_ticks` is `sleepTicks(...)`.
+/// `selector` is `Selector.of(...)`, `sleep_ticks` is `Thread.sleepTicks(...)`.
 pub fn display_call(internal: &str) -> String {
     let cast = match internal {
         "int" => Some("int"),
@@ -310,6 +338,9 @@ pub fn display_call(internal: &str) -> String {
     };
     if let Some(ty) = cast {
         return format!("({ty}) x");
+    }
+    if let Some(class) = class_builtin(internal) {
+        return format!("{class}(...)");
     }
     let name = match internal {
         "selector" => "Selector.of",

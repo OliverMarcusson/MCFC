@@ -1115,10 +1115,10 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
                 .to_string(),
         ),
         "BlockData" => Some("new BlockData(id: String)".to_string()),
-        "sleep" => Some("sleep(seconds: int) -> void".to_string()),
-        "sleepTicks" => Some("sleepTicks(ticks: int) -> void".to_string()),
-        "random" => Some(
-            "random() -> int | random(max: int) -> int | random(min: int, max: int) -> int"
+        "sleep" => Some("Thread.sleep(seconds: int) -> void".to_string()),
+        "sleepTicks" => Some("Thread.sleepTicks(ticks: int) -> void".to_string()),
+        "nextInt" => Some(
+            "Random.nextInt() -> int | Random.nextInt(bound: int) -> int | Random.nextInt(origin: int, bound: int) -> int"
                 .to_string(),
         ),
         "BossBar" => Some("new BossBar(id: String, name: String|Component)".to_string()),
@@ -1337,7 +1337,10 @@ fn semantic_tokens(source: &str, analysis: &AnalysisResult) -> Vec<SemanticToken
         if method_body.is_none()
             && previous == Some(&TokenKind::Lt)
             && next == Some(&TokenKind::Gt)
-            && matches!(before_previous, Some("public" | "private" | "protected" | "static"))
+            && matches!(
+                before_previous,
+                Some("public" | "private" | "protected" | "static")
+            )
         {
             type_params.insert(name.clone());
         }
@@ -1762,12 +1765,14 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         ),
         "case" => Some("A `switch` arm: `case A, B -> ...`. Cases don't fall through."),
         "default" => Some("The fallback arm of a `switch` statement."),
-        "mcf" => Some("```mcfc\nmcf(\"say $(expr)\");\n```"),
-        "Thread" => Some("```mcfc\nThread.start(() -> { ... });\n```"),
-        "sleep" => Some("```mcfc\nsleep(seconds: int) -> void\n```"),
-        "sleepTicks" => Some("```mcfc\nsleepTicks(ticks: int) -> void\n```"),
-        "random" => Some(
-            "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
+        "Commands" => Some("```mcfc\nCommands.run(\"say $(expr)\");\n```"),
+        "Thread" => Some(
+            "```mcfc\nThread.start(() -> { ... });\nThread.sleep(seconds: int)\nThread.sleepTicks(ticks: int)\n```",
+        ),
+        "sleep" => Some("```mcfc\nThread.sleep(seconds: int) -> void\n```"),
+        "sleepTicks" => Some("```mcfc\nThread.sleepTicks(ticks: int) -> void\n```"),
+        "nextInt" => Some(
+            "```mcfc\nRandom.nextInt() -> int\nRandom.nextInt(bound: int) -> int\nRandom.nextInt(origin: int, bound: int) -> int\n```\nThe bound is exclusive, as in Java.",
         ),
         "Selector" => Some(
             "```mcfc\nSelector.of(value: String) -> Selector\nSelector.entities().type(id).tag(tag).limit(n) -> Selector\nSelector<Player>\n```",
@@ -1819,7 +1824,7 @@ Shown to players tagged `mcfc.log`.",
             "```mcfc\nEntityData.asNbt() -> Nbt\nBlockData.asNbt() -> Nbt\nItemStack.asNbt() -> Nbt\n```",
         ),
         "summon" => Some(
-            "```mcfc\nsummon(entityId: String) -> Entity\nsummon(entityId: String, data: Nbt) -> Entity\nsummon(spec: EntityData) -> Entity\nblock.summon(entityId: String) -> Entity\nblock.summon(entityId: String, data: Nbt) -> Entity\nblock.summon(spec: EntityData) -> Entity\n```",
+            "```mcfc\nWorld.summon(entityId: String) -> Entity\nWorld.summon(entityId: String, data: Nbt) -> Entity\nWorld.summon(spec: EntityData) -> Entity\nblock.summon(entityId: String) -> Entity\nblock.summon(entityId: String, data: Nbt) -> Entity\nblock.summon(spec: EntityData) -> Entity\n```",
         ),
         "teleport" => Some(
             "```mcfc\nentity.teleport(destination: Entity|Block) -> void\nentity.teleport(pos: Vec3, yaw: float, pitch: float) -> void\n```",
@@ -1888,7 +1893,7 @@ Shown to players tagged `mcfc.log`.",
         "sendActionBar" => Some(
             "```mcfc\nentity.sendActionBar(message: String|Component, priority?: String) -> void\n```\nPriority is \"override\", \"notification\" (default), \"conditional\" or \"persistent\", as in Smithed Actionbar.",
         ),
-        "debug" => Some("```mcfc\ndebug(message: String) -> void\n```"),
+        "println" => Some("```mcfc\nSystem.out.println(message: String) -> void\n```"),
         "debugMarker" => Some(
             "```mcfc\nblock.debugMarker(label: String) -> void\nblock.debugMarker(label: String, markerBlock: String) -> void\n```",
         ),
@@ -2566,10 +2571,35 @@ fn exact_range_from_offsets(source: &str, start: usize, end: usize) -> Range {
 fn static_completion_items() -> Vec<CompletionItem> {
     let mut items = Vec::new();
     for keyword in [
-        "var", "return", "if", "else", "switch", "case", "default", "while", "for", "break",
-        "continue", "assert", "new", "mc", "mcf", "true", "false", "record", "enum", "import",
-        "public", "final", "static", "do", "yield", "class", "interface", "extends",
-        "implements", "private", "abstract",
+        "var",
+        "return",
+        "if",
+        "else",
+        "switch",
+        "case",
+        "default",
+        "while",
+        "for",
+        "break",
+        "continue",
+        "assert",
+        "new",
+        "true",
+        "false",
+        "record",
+        "enum",
+        "import",
+        "public",
+        "final",
+        "static",
+        "do",
+        "yield",
+        "class",
+        "interface",
+        "extends",
+        "implements",
+        "private",
+        "abstract",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -2681,38 +2711,56 @@ static void ${1:test}() {
             "Selector.of(value: String) -> Selector",
             "Selector.of(${1:\"@e\"})",
         ),
-        ("sleep", "sleep(seconds: int) -> void", "sleep(${1:1})"),
         (
-            "sleepTicks",
-            "sleepTicks(ticks: int) -> void",
-            "sleepTicks(${1:20})",
-        ),
-        ("random", "random() -> int", "random()"),
-        (
-            "randomWeighted",
-            "randomWeighted(weights: List<Integer>) -> int",
-            "randomWeighted(List.of(${1:3}, ${2:1}))",
+            "Thread.sleep",
+            "Thread.sleep(seconds: int) -> void",
+            "Thread.sleep(${1:1})",
         ),
         (
-            "randomBinomial",
-            "randomBinomial(n: int, p: float) -> int",
-            "randomBinomial(${1:10}, ${2:0.5})",
+            "Thread.sleepTicks",
+            "Thread.sleepTicks(ticks: int) -> void",
+            "Thread.sleepTicks(${1:20})",
         ),
         (
-            "gamerule",
-            "gamerule(name: String) -> int",
-            "gamerule(${1:\"max_entity_cramming\"})",
-        ),
-        ("random(max)", "random(max: int) -> int", "random(${1:max})"),
-        (
-            "random(min, max)",
-            "random(min: int, max: int) -> int",
-            "random(${1:min}, ${2:max})",
+            "Random.nextInt",
+            "Random.nextInt() | Random.nextInt(bound) | Random.nextInt(origin, bound) -> int",
+            "Random.nextInt(${1:bound})",
         ),
         (
-            "hasData",
-            "hasData(value: storage_path) -> boolean",
-            "hasData(${1:value})",
+            "Random.weighted",
+            "Random.weighted(weights: List<Integer>) -> int",
+            "Random.weighted(List.of(${1:3}, ${2:1}))",
+        ),
+        (
+            "Random.binomial",
+            "Random.binomial(n: int, p: float) -> int",
+            "Random.binomial(${1:10}, ${2:0.5})",
+        ),
+        (
+            "World.getGameRule",
+            "World.getGameRule(name: String) -> int",
+            "World.getGameRule(${1:\"max_entity_cramming\"})",
+        ),
+        (
+            "World.getGameTime",
+            "World.getGameTime() -> int",
+            "World.getGameTime()",
+        ),
+        ("World.getTime", "World.getTime() -> int", "World.getTime()"),
+        (
+            "World.getBorderSize",
+            "World.getBorderSize() -> int",
+            "World.getBorderSize()",
+        ),
+        (
+            "Nbt.has",
+            "Nbt.has(value: storage_path) -> boolean",
+            "Nbt.has(${1:value})",
+        ),
+        (
+            "Commands.run",
+            "Commands.run(command: String) -> void",
+            "Commands.run(${1:\"say hi\"});",
         ),
         (
             "Block.of",
@@ -2730,9 +2778,9 @@ static void ${1:test}() {
             "Execute.as(${1:anchor}, () -> {\n\t$0\n});",
         ),
         (
-            "summon",
-            "summon(entityId: String|EntityData) -> Entity",
-            "summon(${1:\"minecraft:pig\"})",
+            "World.summon",
+            "World.summon(entityId: String|EntityData) -> Entity",
+            "World.summon(${1:\"minecraft:pig\"})",
         ),
         (
             "Thread.start(...)",
@@ -2740,9 +2788,9 @@ static void ${1:test}() {
             "Thread.start(() -> {\n\t$0\n});",
         ),
         (
-            "debug",
-            "debug(message: String) -> void",
-            "debug(${1:\"reached checkpoint\"})",
+            "System.out.println",
+            "System.out.println(message: String) -> void",
+            "System.out.println(${1:\"reached checkpoint\"})",
         ),
     ] {
         items.push(snippet_item(
@@ -5257,7 +5305,11 @@ fn syntactic_locals_at_offset(source: &str, offset: usize) -> Vec<CompletionLoca
         let code = strip_line_comment(line).trim();
         if method.is_none() && is_scope_header(code) {
             locals.clear();
-            locals.extend(parse_params(code).into_iter().map(|local| (local, depth + 1)));
+            locals.extend(
+                parse_params(code)
+                    .into_iter()
+                    .map(|local| (local, depth + 1)),
+            );
             method = Some(depth);
         } else if method.is_some_and(|method| depth > method) {
             let visible = locals
@@ -5428,12 +5480,20 @@ fn is_scope_header(line: &str) -> bool {
 /// modifiers and type parameters, as in `@Command("x") public static <T> T`.
 fn strip_method_modifiers(mut line: &str) -> &str {
     const MODIFIERS: &[&str] = &[
-        "public", "private", "protected", "static", "final", "abstract", "default",
+        "public",
+        "private",
+        "protected",
+        "static",
+        "final",
+        "abstract",
+        "default",
     ];
     loop {
         line = line.trim_start();
         if let Some(rest) = line.strip_prefix('@') {
-            let name_end = rest.find(|ch: char| !is_member_word_char(ch)).unwrap_or(rest.len());
+            let name_end = rest
+                .find(|ch: char| !is_member_word_char(ch))
+                .unwrap_or(rest.len());
             let rest = &rest[name_end..];
             line = match rest.strip_prefix('(') {
                 Some(args) => args.find(')').map_or("", |close| &args[close + 1..]),
@@ -6202,7 +6262,7 @@ class Main {
         me.hotbar[0].;
         me.hotbar[-1].;
         asserted.;
-        mcf("say $(me.mainhand.)");
+        Commands.run("say $(me.mainhand.)");
     }
 }
 "#;
@@ -6288,25 +6348,21 @@ class Main {
         let analysis = analyze_source(source);
         let top_level_items =
             completion_items(source, &analysis, source.find("void main").unwrap());
-        assert!(top_level_items.iter().any(|item| item.label == "sleep"));
-        assert!(top_level_items.iter().any(|item| item.label == "random"));
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "random(min, max)")
-        );
-        assert!(top_level_items.iter().any(|item| item.label == "summon"));
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "Thread.start(...)")
-        );
-        assert!(
-            top_level_items
-                .iter()
-                .any(|item| item.label == "sleepTicks")
-        );
-        assert!(top_level_items.iter().any(|item| item.label == "debug"));
+        for label in [
+            "Thread.sleep",
+            "Thread.sleepTicks",
+            "Thread.start(...)",
+            "Random.nextInt",
+            "World.summon",
+            "System.out.println",
+            "Commands.run",
+        ] {
+            assert!(
+                top_level_items.iter().any(|item| item.label == label),
+                "{label}"
+            );
+        }
+        assert!(!top_level_items.iter().any(|item| item.label == "sleep"));
         assert!(
             !top_level_items
                 .iter()
@@ -6326,9 +6382,9 @@ class Main {
         assert!(pig_items.iter().any(|item| item.label == "nbt"));
 
         let sleep_hover = builtin_hover("sleep").expect("sleep hover");
-        assert!(sleep_hover.contains("sleep(seconds: int) -> void"));
-        let random_hover = builtin_hover("random").expect("random hover");
-        assert!(random_hover.contains("random(min: int, max: int) -> int"));
+        assert!(sleep_hover.contains("Thread.sleep(seconds: int) -> void"));
+        let random_hover = builtin_hover("nextInt").expect("nextInt hover");
+        assert!(random_hover.contains("Random.nextInt(origin: int, bound: int) -> int"));
         let state_hover = builtin_hover("state").expect("state hover");
         assert!(state_hover.contains("entity.state.*"));
         assert!(state_hover.contains("player.state.*"));
@@ -6494,7 +6550,7 @@ class Main {
         assert!(inline_block_items.iter().any(|item| item.label == "nbt"));
 
         let summon_hover = builtin_hover("summon").expect("summon hover");
-        assert!(summon_hover.contains("summon(spec: EntityData) -> Entity"));
+        assert!(summon_hover.contains("World.summon(spec: EntityData) -> Entity"));
         let as_nbt_hover = builtin_hover("asNbt").expect("asNbt hover");
         assert!(as_nbt_hover.contains("EntityData.asNbt() -> Nbt"));
         assert!(as_nbt_hover.contains("ItemStack.asNbt() -> Nbt"));
@@ -7117,8 +7173,14 @@ void main() {
         );
         let source_file = src_dir.join("main.mcf");
         let asset_file = asset_dir.join("ignored.mcf");
-        write_file(&source_file, "class Main {\n    public static void main() {\n    }\n}\n");
-        write_file(&asset_file, "class Main {\n    static void ignored() {\n    }\n}\n");
+        write_file(
+            &source_file,
+            "class Main {\n    public static void main() {\n    }\n}\n",
+        );
+        write_file(
+            &asset_file,
+            "class Main {\n    static void ignored() {\n    }\n}\n",
+        );
 
         let source_config = resolve_project_config_for_path(&source_file)
             .unwrap()
@@ -7148,7 +7210,10 @@ void main() {
         );
         let first = src_dir.join("main.mcf");
         let second = src_dir.join("beta.mcf");
-        write_file(&first, "class Main {\n    public static void alpha() {\n    }\n}\n");
+        write_file(
+            &first,
+            "class Main {\n    public static void alpha() {\n    }\n}\n",
+        );
         write_file(
             &second,
             "import main.alpha;\n\nclass Main {\n    static void beta() {\n        alpha();\n    }\n}",
@@ -7183,8 +7248,14 @@ void main() {
         let src_dir = project.join("src");
         fs::create_dir_all(&src_dir).unwrap();
         write_file(&project.join("mcfc.toml"), "namespace = \"sample\"\n");
-        write_file(&src_dir.join("main.mcf"), "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n");
-        write_file(&src_dir.join("game.mcf"), "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n");
+        write_file(
+            &src_dir.join("main.mcf"),
+            "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n",
+        );
+        write_file(
+            &src_dir.join("game.mcf"),
+            "class Main {\n    @Tick\n    static void tick() {\n    }\n}\n",
+        );
 
         let snapshot = build_project_snapshot(
             &ProjectConfig {
@@ -7261,11 +7332,8 @@ class Main {
 
         let statement_offset =
             main_segment.local_to_merged_offset(main_text.find("Helper.greet").unwrap());
-        let top_level_items = completion_items(
-            &snapshot.merged_text,
-            &snapshot.analysis,
-            statement_offset,
-        );
+        let top_level_items =
+            completion_items(&snapshot.merged_text, &snapshot.analysis, statement_offset);
         assert!(
             top_level_items
                 .iter()
@@ -7340,9 +7408,9 @@ class Main {
             case DONE -> "done";
         };
         var stage = Stage.NEW;
-        debug(label.toString());
-        debug(code.toString());
-        debug(stage.name());
+        System.out.println(label.toString());
+        System.out.println(code.toString());
+        System.out.println(stage.name());
     }
 }
 "#;

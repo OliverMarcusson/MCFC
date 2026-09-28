@@ -71,7 +71,7 @@ class Main {
             return y - 1;
         };
         String ops = "ops " + addOffset.apply(5) + " " + square.apply(4) + " " + block.apply(2) + " " + applyTwice(x -> x * 10, 3);
-        mcf("say $(ops)");
+        Commands.run("say $(ops)");
 
         Counter counter = new Counter();
         IntOp adder = counter.adder();
@@ -80,13 +80,13 @@ class Main {
         bump.run();
         counter.step = 5;
         String members = "members " + counter.count + " " + adder.apply(1) + " " + counter.doubler().apply(21);
-        mcf("say $(members)");
+        Commands.run("say $(members)");
 
         List<Integer> numbers = List.of(1, 2, 3);
         List<String> labels = mapAll(numbers, n -> "n" + n);
         List<Integer> lengths = mapAll(labels, String::length);
         Mapper<Integer, Integer> nested = n -> applyTwice(x -> x + n, 0);
         String generic = "generic " + join(labels) + " " + lengths[2] + " " + nested.map(4);
-        mcf("say $(generic)");
+        Commands.run("say $(generic)");
     }
 }

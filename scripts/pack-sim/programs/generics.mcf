@@ -119,12 +119,12 @@ class Main {
         Box<String> word = new Box<String>("hi");
         Box<Float> half = number.with(0.5);
         String boxes = "boxes " + number.value + " " + word.get() + " " + half.get();
-        mcf("say $(boxes)");
+        Commands.run("say $(boxes)");
 
         Pair<String, Integer> pair = new Pair<>("a", 1);
         Pair<Integer, String> swapped = pair.swap();
         String pairs = "pairs " + pair + " " + swapped + " " + swapped.first;
-        mcf("say $(pairs)");
+        Commands.run("say $(pairs)");
 
         Stack<String> stack = new Stack<>();
         stack.push("x");
@@ -134,13 +134,13 @@ class Main {
         while (!stack.isEmpty()) {
             popped = popped + " " + stack.pop();
         }
-        mcf("say $(popped)");
+        Commands.run("say $(popped)");
 
         Holder<Square> holder = new Holder<>();
         holder.add(new Square(2));
         holder.add(new Square(3));
         Box<Box<Integer>> nested = wrap(wrap(7));
         String rest = "rest " + holder.total() + " " + unwrap(unwrap(nested)) + " " + unwrap(word);
-        mcf("say $(rest)");
+        Commands.run("say $(rest)");
     }
 }

@@ -8,18 +8,18 @@ class Main {
     static List<String> log;
 
     public static void main() {
-        mcf("say f $(Strings.formatFloat(3.14159, 2)) $(Strings.formatFloat(-1.26, 1)) $(Strings.formatFloat(2.0, 1)) $(Strings.formatFloat(7.6, 0))");
-        mcf("say c $(Strings.withCommas(1234567)) $(Strings.withCommas(-1000)) $(Strings.withCommas(999)) $(Strings.withCommas(0))");
+        Commands.run("say f $(Strings.formatFloat(3.14159, 2)) $(Strings.formatFloat(-1.26, 1)) $(Strings.formatFloat(2.0, 1)) $(Strings.formatFloat(7.6, 0))");
+        Commands.run("say c $(Strings.withCommas(1234567)) $(Strings.withCommas(-1000)) $(Strings.withCommas(999)) $(Strings.withCommas(0))");
         round += 1;
         log.add("r" + round);
-        mcf("say world $(round) $(log.size())");
+        Commands.run("say world $(round) $(log.size())");
         Timer.start("round", 20);
-        mcf("say timer $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(Timer.running(\"other\"))");
+        Commands.run("say timer $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(Timer.running(\"other\"))");
     }
 
     @Every(ticks = 30)
     static void later() {
-        mcf("say later $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(round)");
+        Commands.run("say later $(Timer.running(\"round\")) $(Timer.remaining(\"round\")) $(round)");
         Timer.stop("round");
     }
 }

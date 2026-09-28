@@ -23,11 +23,11 @@ class Main {
         var camYaw = 180.0;
         // The inner call's early return used to make the outer call return at once.
         var w = wrap(camYaw + wrap(0.0) * 0.5);
-        mcf("say wrap $(w)");
+        Commands.run("say wrap $(w)");
         // The inner call used to overwrite the outer call's first argument.
         var p = pick(1, pick(3, 2));
-        mcf("say pick $(p)");
+        Commands.run("say pick $(p)");
         var j = join("a", join("b", "c"));
-        mcf("say join $(j)");
+        Commands.run("say join $(j)");
     }
 }

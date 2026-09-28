@@ -8,10 +8,10 @@ class Main {
         var r = Color.red(c);
         var g = Color.green(c);
         var b = Color.blue(c);
-        mcf("say c $(c) hex $(hex) r $(r) g $(g) b $(b)");
+        Commands.run("say c $(c) hex $(hex) r $(r) g $(g) b $(b)");
         var back = Color.fromHex("#FF80fF");
         var bad = Color.fromHex("#12345g");
         var small = Color.toHex(Color.rgb(1, 2, 3));
-        mcf("say back $(back) bad $(bad) small $(small)");
+        Commands.run("say back $(back) bad $(bad) small $(small)");
     }
 }

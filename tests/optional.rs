@@ -26,7 +26,7 @@ class Main {
         var spaced_value = spaced.get(dynamic_key).orElse("missing");
         var prices = List.of(1.5);
         var price = prices.get(3).orElse(2.0);
-        mcf("say $(name) $(exists) $(count)");
+        Commands.run("say $(name) $(exists) $(count)");
     }
 }
 "#;
@@ -60,7 +60,7 @@ fn optional_values_can_be_nested_in_collections() {
         var outer = nested(values);
         var inner = outer.orElse(numbers.get(1));
         var result = inner.orElse(0);
-        mcf("say $(result)");
+        Commands.run("say $(result)");
     }
 }
 "#;

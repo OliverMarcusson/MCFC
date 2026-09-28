@@ -4,7 +4,7 @@ MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` a
 
 **Declarations:** [entry points](#entry-points) · [`class`](#class) · [methods](#methods) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [`import`](#import) · [modules and `public`](#modules-and-public) · [static fields](#static-fields) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after) · [`@Test`](#test-and-assert)
 
-**In a method:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`Thread.start`](#thread-start) · [`Execute.as` / `Execute.at`](#execute-as-and-execute-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
+**In a method:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`Thread.start`](#thread-start) · [`Execute.as` / `Execute.at`](#execute-as-and-execute-at) · [`Commands.run`](#commands-run) · [calls](#calls)
 
 ## Declarations
 
@@ -72,13 +72,13 @@ class Main {
         Counter hits = new Counter(5);
         Counter same = hits;
         same.add(1).add(2);
-        debug("$(hits.get()) $(Counter.created)");
+        System.out.println("$(hits.get()) $(Counter.created)");
 
         Node head = new Node(1);
         head.next = new Node(2);
         head.next.value = 20;
         if (head.next.next == null) {
-            debug("two nodes");
+            System.out.println("two nodes");
         }
     }
 }
@@ -142,7 +142,7 @@ class Puppy extends Dog {
 class Main {
     public static void main() {
         Animal pet = new Puppy();
-        debug("$(pet.speed()) $(pet.greet())");
+        System.out.println("$(pet.speed()) $(pet.greet())");
         if (pet instanceof Dog dog && dog.legs == 4) {
             Dog same = (Dog) pet;
         }
@@ -338,18 +338,18 @@ A call picks the overload whose parameters match the argument types exactly, the
 
 #### Methods that pause
 
-A method that calls `sleep`, `sleepTicks`, `sort()` or a host call pauses, and so does any method that calls it. The caller continues once the callee is done. Because of that, a call to a pausing method has to be a statement of its own: `f();`, `var x = f();`, `x = f();` or `return f();`. Using it inside a condition or a larger expression is an error.
+A method that calls `Thread.sleep`, `Thread.sleepTicks`, `sort()` or a host call pauses, and so does any method that calls it. The caller continues once the callee is done. Because of that, a call to a pausing method has to be a statement of its own: `f();`, `var x = f();`, `x = f();` or `return f();`. Using it inside a condition or a larger expression is an error.
 
 ```mcfc
 class Main {
     static int waitThenDouble(int n) {
-        sleepTicks(20);
+        Thread.sleepTicks(20);
         return n * 2;
     }
 
     public static void main() {
         var x = waitThenDouble(4);
-        debug("one second later, x is $(x)");
+        System.out.println("one second later, x is $(x)");
     }
 }
 ```
@@ -363,7 +363,7 @@ class Main {
     public static void main() {
         Quest quest = new Quest("Mine", 5);
         quest = new Quest(quest.name(), quest.reward() + 1);
-        debug(quest.name());
+        System.out.println(quest.name());
     }
 }
 ```
@@ -394,7 +394,7 @@ record Point(int x, int y) {
 class Main {
     public static void main() {
         Point moved = Point.origin().add(new Point(3, -4));
-        debug("$(moved) is $(moved.manhattan()) away");
+        System.out.println("$(moved) is $(moved.manhattan()) away");
     }
 }
 ```
@@ -415,8 +415,8 @@ enum Mode { SURVIVAL, CREATIVE }
 class Main {
     static void describe(Mode mode) {
         switch (mode) {
-            case SURVIVAL -> debug("Survival");
-            case CREATIVE -> debug("Creative");
+            case SURVIVAL -> System.out.println("Survival");
+            case CREATIVE -> System.out.println("Creative");
         }
     }
 }
@@ -451,7 +451,7 @@ enum Planet {
 class Main {
     public static void main() {
         for (Planet planet : Planet.values()) {
-            debug("$(planet) $(planet.density()) $(planet.mass)");
+            System.out.println("$(planet) $(planet.density()) $(planet.mass)");
         }
     }
 }
@@ -601,7 +601,7 @@ class Main {
 
     static void mark(Entity entity) {
         entity.state.info = new MarkerInfo("Target", 1.5);
-        debug(entity.state.info.label());
+        System.out.println(entity.state.info.label());
     }
 }
 ```
@@ -642,12 +642,12 @@ Data pack dialogs are registry entries, so a new or changed `@Menu` needs a worl
 class Main {
     @Every(ticks = 20)
     static void heartbeat() {
-        debug("heartbeat");
+        System.out.println("heartbeat");
     }
 
     @After(seconds = 1)
     static void setup() {
-        debug("setup");
+        System.out.println("setup");
     }
 }
 ```
@@ -670,7 +670,7 @@ class Main {
 }
 ```
 
-`/function <namespace>:test` runs every `@Test` method and prints `[ns TEST] 1 passed, 0 failed`. A false `assert` prints `assertion failed at line N: message` and marks the test failed; the test keeps running. Tests take no parameters and must finish in the tick they start, so they can't `sleep`.
+`/function <namespace>:test` runs every `@Test` method and prints `[ns TEST] 1 passed, 0 failed`. A false `assert` prints `assertion failed at line N: message` and marks the test failed; the test keeps running. Tests take no parameters and must finish in the tick they start, so they can't `Thread.sleep`.
 
 `assert` works in any method. Outside a test it still prints the failure.
 
@@ -744,12 +744,12 @@ class Main {
 class Main {
     static void describe(int level) {
         switch (level) {
-            case 1, 2 -> debug("low");
+            case 1, 2 -> System.out.println("low");
             case 3 -> {
-                debug("medium");
-                debug("still medium");
+                System.out.println("medium");
+                System.out.println("still medium");
             }
-            default -> debug("high");
+            default -> System.out.println("high");
         }
     }
 }
@@ -804,14 +804,14 @@ class Main {
     static void count() {
         var i = 0;
         while (i < 3) {
-            debug("$(i)");
+            System.out.println("$(i)");
             i++;
         }
     }
 }
 ```
 
-A loop runs entirely within one tick unless its body sleeps. A long loop with no `sleep` can hit Minecraft's command limit (`maxCommandChainLength`), and the rest of the method then doesn't run.
+A loop runs entirely within one tick unless its body sleeps. A long loop with no `Thread.sleep` can hit Minecraft's command limit (`maxCommandChainLength`), and the rest of the method then doesn't run.
 
 ### `do` / `while`
 
@@ -834,13 +834,13 @@ The body runs at least once. `continue` proceeds to the condition check.
 class Main {
     static void loops(List<Integer> values) {
         for (int i = 0; i < 3; i++) {
-            debug("$(i)");
+            System.out.println("$(i)");
         }
         for (Player player : Selector.of("@a")) {
             player.addTag("seen");
         }
         for (var value : values) {
-            debug("$(value)");
+            System.out.println("$(value)");
         }
     }
 }
@@ -943,7 +943,7 @@ class Main {
 class Main {
     static void greetLater(Player player) {
         Thread.start(() -> {
-            sleepTicks(20);
+            Thread.sleepTicks(20);
             player.sendActionBar("later");
         });
         player.sendActionBar("now");
@@ -971,34 +971,26 @@ class Main {
 
 `Execute.as` changes who `@s` is, and `Execute.at` changes where `~ ~ ~` is. The anchor can be an `Entity` or a `Selector`, in which case the lambda runs once per entity. These compile to `execute as` and `execute at`, so the lambda runs in place and `return` isn't allowed inside it. Passing `() -> value` instead of a block gives a [selector or position relative to the entity](./builtins#execute-as-and-execute-at).
 
-### `mc`
+### `Commands.run`
 
-`mc` and `mcf` are for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [issues](https://github.com/OliverMarcusson/MCFC/issues).
+`Commands.run` is for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [issues](https://github.com/OliverMarcusson/MCFC/issues).
 
 ```mcfc
 class Main {
     static void setup() {
-        mc("weather clear");
+        Commands.run("weather clear");
     }
-}
-```
 
-Emits a Minecraft command exactly as written. The argument must be a string literal. `$(...)` isn't interpreted, so `mc("say $(x)");` prints `$(x)` literally.
-
-### `mcf`
-
-```mcfc
-class Main {
     static void reward(int amount) {
-        mcf("xp add @a $(amount) levels");
+        Commands.run("xp add @a $(amount) levels");
     }
 }
 ```
 
-Emits a command with each `$(expr)` replaced by its value at run time. It compiles to a Minecraft function macro. Values are copied into storage, and then `function ... with storage ...` is called. Use `mc` when there's nothing to substitute.
+The argument must be a string literal. Without `$(...)`, the command is emitted exactly as written. With `$(expr)`, each placeholder is replaced by its value at run time: the command compiles to a Minecraft function macro, its values are copied into storage, and then `function ... with storage ...` is called.
 
 Values are inserted without escaping. A string containing `"` breaks the command, as described under [string limits](./types#string).
 
 ### Calls
 
-A method call can be a statement on its own, such as `debug("ok");` or `player.heal(2);`. Other expressions can't: `amount + 1;` is an error.
+A method call can be a statement on its own, such as `System.out.println("ok");` or `player.heal(2);`. Other expressions can't: `amount + 1;` is an error.

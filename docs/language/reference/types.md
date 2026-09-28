@@ -115,7 +115,7 @@ class Main {
 
 `Integer.parseInt(s)` returns a number or `0` for invalid text. `String.valueOf(x)`, `Integer.toString(x)` and `Float.toString(x)` convert values to text.
 
-**Limits.** Joining strings is safe for any text, including `"`, `\` and newlines. `$(...)` in `mcf(...)` pastes the value into the command as it is, so text players type (chat, item names, signs) can change what the command does. Show such values through a [`Component`](./builders) instead.
+**Limits.** Joining strings is safe for any text, including `"`, `\` and newlines. `$(...)` in `Commands.run(...)` pastes the value into the command as it is, so text players type (chat, item names, signs) can change what the command does. Show such values through a [`Component`](./builders) instead.
 
 ## `List<T>` {#list}
 
@@ -126,7 +126,7 @@ class Main {
         values.add(9);
         var third = values.get(2).orElse(0);
         for (var v : values) {
-            debug("$(v)");
+            System.out.println("$(v)");
         }
     }
 }
@@ -161,7 +161,7 @@ class Main {
         counts["iron"] = 1;
         var gold = counts.get("gold").orElse(0);
         for (var key : counts.keySet()) {
-            debug("$(key)=$(counts[key])");
+            System.out.println("$(key)=$(counts[key])");
         }
     }
 }
@@ -192,7 +192,7 @@ class Main {
     public static void main() {
         var maybe = List.of(4, 8).get(3);
         if (maybe.isPresent()) {
-            debug("found");
+            System.out.println("found");
         }
         var count = maybe.orElse(0);
     }
@@ -312,7 +312,7 @@ A block position, created with `Block.of("~ ~ ~")` or read from `entity.position
 | `setBlock(id \| BlockData)` | Places a block. Placing a `BlockData` also writes its NBT. |
 | `fill(to: Block, id \| BlockData)` | Fills the box between two positions (block id and states only) |
 | `is(id) -> boolean` | Tests the block at this position |
-| `isLoaded() -> boolean` | Whether the chunk here is loaded, for example a few ticks after `world.forceload`. |
+| `isLoaded() -> boolean` | Whether the chunk here is loaded, for example a few ticks after `World.forceload`. |
 | `summon(id)`, `summon(id, Nbt)`, `summon(EntityData) -> Entity` | Summons at this position |
 | `spawnItem(ItemStack) -> Entity` | Drops an item stack |
 | `spawnParticle(name)`, `spawnParticle(name, count)`, `spawnParticle(name, count, viewers)` | Spawns particles. |
@@ -387,4 +387,4 @@ Use `setName(String | Component)`, `getValue()`/`setValue(...)`, `getMax()`/`set
 
 ## `Nbt`
 
-A raw NBT path such as `player.nbt.Health` or `pig.nbt.Tags[0]`. Convert it with `(int)`, `(float)`, `(boolean)` or `(String)`, and check whether it exists with `hasData(...)`. Player NBT is read-only.
+A raw NBT path such as `player.nbt.Health` or `pig.nbt.Tags[0]`. Convert it with `(int)`, `(float)`, `(boolean)` or `(String)`, and check whether it exists with `Nbt.has(...)`. Player NBT is read-only.

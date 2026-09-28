@@ -1223,7 +1223,7 @@ fn gc_functions(
         return_type: Type::Void,
         body,
         span: span.clone(),
-        end: 0,
+        end: span.range.end,
         owner: None,
         module: String::new(),
         is_abstract: false,
@@ -1372,7 +1372,10 @@ fn gc_functions(
         )))],
         step: Vec::new(),
     }));
-    collect.push(stmt(StmtKind::Expr(call("std::heap::Heap__sweep", Vec::new()))));
+    collect.push(stmt(StmtKind::Expr(call(
+        "std::heap::Heap__sweep",
+        Vec::new(),
+    ))));
     out.push(function("__mcfc_gc", false, collect));
     out
 }
@@ -2752,7 +2755,9 @@ fn type_check_expanded(program: &Program, host: &HostModules) -> Result<TypedPro
                 type_check_function(function, &struct_defs, &signatures, host, &mut diagnostics);
             // The backend's marking code calls these; say so for pruning and depths.
             if typed.name == GC_LOCALS {
-                typed.called_functions.insert("std::heap::Heap__mark".to_string());
+                typed
+                    .called_functions
+                    .insert("std::heap::Heap__mark".to_string());
                 typed.called_functions.extend(
                     gc.iter()
                         .filter(|scan| scan.name.starts_with("__mcfc_gc_scan_"))
@@ -4181,7 +4186,8 @@ fn type_check_block(
                     );
                     kind
                 } else if let ExprKind::Call { function, args, .. } = &expr.kind {
-                    if matches!(function.as_str(), "sleep" | "sleep_ticks") {
+                    let function = function.trim_start_matches(BUILTIN);
+                    if matches!(function, "sleep" | "sleep_ticks") {
                         let args = type_check_args(
                             args,
                             struct_defs,
@@ -4195,17 +4201,18 @@ fn type_check_block(
                         if let Some(duration) = args.first() {
                             if duration.ty != Type::Int {
                                 let message = if function == "sleep" {
-                                    "sleep(...) seconds must have type 'int'".to_string()
+                                    "Thread.sleep(...) seconds must have type 'int'".to_string()
                                 } else {
-                                    "sleepTicks(...) duration must have type 'int'".to_string()
+                                    "Thread.sleepTicks(...) duration must have type 'int'"
+                                        .to_string()
                                 };
                                 diagnostics.push(Diagnostic::new(message, statement.span.clone()));
                             }
                             if matches!(duration.kind, TypedExprKind::Int(value) if value < 1) {
                                 let message = if function == "sleep" {
-                                    "sleep(...) seconds must be at least 1".to_string()
+                                    "Thread.sleep(...) seconds must be at least 1".to_string()
                                 } else {
-                                    "sleepTicks(...) duration must be at least 1".to_string()
+                                    "Thread.sleepTicks(...) duration must be at least 1".to_string()
                                 };
                                 diagnostics.push(Diagnostic::new(message, statement.span.clone()));
                             }
@@ -4656,7 +4663,9 @@ fn type_check_expr(
             },
             // The heap, seen as a list of `class`'s slots; see `class_heap_path`.
             None if name.starts_with(HEAP) => TypedExpr {
-                kind: TypedExprKind::Variable(format!("{WORLD_STATE_PREFIX}std_heap_Heap__mcfcHeap")),
+                kind: TypedExprKind::Variable(format!(
+                    "{WORLD_STATE_PREFIX}std_heap_Heap__mcfcHeap"
+                )),
                 ty: Type::Array(Box::new(Type::Struct(format!(
                     "{HEAP_SLOT}{}",
                     &name[HEAP.len()..]
@@ -5286,16 +5295,19 @@ fn type_check_expr(
             type_args,
         } => {
             let direct = function.starts_with(DIRECT);
+            let builtin = function.starts_with(BUILTIN);
             // `new Component(...)` and friends, which no method may take.
             let constructor = function.strip_prefix("@new:");
             let function = &native_static(signatures, function).unwrap_or_else(|| {
                 constructor
                     .unwrap_or(function)
                     .trim_start_matches(DIRECT)
+                    .trim_start_matches(BUILTIN)
                     .to_string()
             });
             // In a method, a bare `m(...)` calls another method of the same type.
             if constructor.is_none()
+                && !builtin
                 && !function.contains("::")
                 && let Some(owner) = env_tag(env, OWNER_TAG)
                 && let Some((method, instance)) = find_method(signatures, owner, function)
@@ -6398,7 +6410,7 @@ fn type_check_builtin_call(
                         None
                     }
                     TypedExprKind::String(name) => Some(format!("unknown game rule '{name}'")),
-                    _ => Some("gamerule(...) needs a literal rule name".to_string()),
+                    _ => Some("World.getGameRule(...) needs a literal rule name".to_string()),
                 },
                 ("random_weighted", [arg]) => match &arg.kind {
                     TypedExprKind::ArrayLiteral(items)
@@ -6410,12 +6422,12 @@ fn type_check_builtin_call(
                         None
                     }
                     _ => Some(
-                        "randomWeighted(...) needs a literal list of weights such as List.of(3, 1)"
+                        "Random.weighted(...) needs a literal list of weights such as List.of(3, 1)"
                             .to_string(),
                     ),
                 },
                 ("random_binomial", [n, p]) => (n.ty != Type::Int || p.ty != Type::Float)
-                    .then(|| "randomBinomial(n, p) needs an 'int' and a 'float'".to_string()),
+                    .then(|| "Random.binomial(n, p) needs an 'int' and a 'float'".to_string()),
                 _ => None,
             };
             if let Some(problem) = problem {
@@ -7122,7 +7134,7 @@ fn type_check_builtin_call(
                 });
             if !is_storage_data_expr(&arg) {
                 diagnostics.push(Diagnostic::new(
-                    "hasData(...) requires a storage-backed variable or path",
+                    "Nbt.has(...) requires a storage-backed variable or path",
                     expr.span.clone(),
                 ));
             }
@@ -9019,7 +9031,7 @@ fn type_check_summon_builtin(
     match args.first().map(|arg| &arg.ty) {
         Some(Type::String | Type::EntityDef) => {}
         _ => diagnostics.push(Diagnostic::new(
-            "summon(...) entity id must be 'String' or 'EntityData'",
+            "World.summon(...) entity id must be 'String' or 'EntityData'",
             expr.span.clone(),
         )),
     }
@@ -9189,7 +9201,7 @@ fn type_check_random_builtin(
     if args.len() > 2 {
         diagnostics.push(Diagnostic::new(
             format!(
-                "wrong arity for 'random': expected 0, 1, or 2, found {}",
+                "wrong arity for 'Random.nextInt': expected 0, 1, or 2, found {}",
                 args.len()
             ),
             expr.span.clone(),
@@ -9199,7 +9211,7 @@ fn type_check_random_builtin(
         if arg.ty != Type::Int {
             diagnostics.push(Diagnostic::new(
                 format!(
-                    "argument {} for 'random' must be 'int', found '{}'",
+                    "argument {} for 'Random.nextInt' must be 'int', found '{}'",
                     index + 1,
                     arg.ty.as_str()
                 ),
@@ -12351,7 +12363,7 @@ fn class_functions(
                 span: span.clone(),
             }],
             span: span.clone(),
-            end: 0,
+            end: span.range.end,
             owner: None,
             module: class
                 .name

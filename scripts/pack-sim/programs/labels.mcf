@@ -14,7 +14,7 @@ class Main {
                 found = found + row + column + " ";
             }
         }
-        mcf("say labels $(found)");
+        Commands.run("say labels $(found)");
 
         int count = 0;
         scan:
@@ -33,7 +33,7 @@ class Main {
                 }
             }
         }
-        mcf("say count $(count)");
+        Commands.run("say count $(count)");
         int value = -16;
         int five = 5;
         int shifted = value >>> 28;
@@ -41,6 +41,6 @@ class Main {
         int flipped = ~five;
         int twice = ~~five;
         int literal = ~0;
-        mcf("say bits $(shifted) $(kept) $(flipped) $(twice) $(literal)");
+        Commands.run("say bits $(shifted) $(kept) $(flipped) $(twice) $(literal)");
     }
 }

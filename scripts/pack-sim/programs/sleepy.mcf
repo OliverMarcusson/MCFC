@@ -1,6 +1,6 @@
 class Main {
     static int waitAndAdd(int a) {
-        sleepTicks(2);
+        Thread.sleepTicks(2);
         return a + 1;
     }
 
@@ -12,21 +12,21 @@ class Main {
             if (i == 2) {
                 continue;
             }
-            sleepTicks(1);
+            Thread.sleepTicks(1);
             acc = acc + i;
             if (acc > 6) {
                 break;
             }
         }
-        mcf("say loop $(i) $(acc)");
+        Commands.run("say loop $(i) $(acc)");
         var r = waitAndAdd(10);
-        mcf("say waited $(r)");
+        Commands.run("say waited $(r)");
         for (int k = 0; k < 3; k++) {
             if (k == 1) {
-                sleepTicks(1);
-                mcf("say resumed $(k)");
+                Thread.sleepTicks(1);
+                Commands.run("say resumed $(k)");
             }
         }
-        mcf("say done");
+        Commands.run("say done");
     }
 }

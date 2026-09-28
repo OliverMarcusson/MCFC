@@ -24,7 +24,7 @@ The bundled `mcfc-lsp` server provides:
 That includes the builder-oriented gameplay surface, such as:
 
 - `new EntityData("minecraft:pig")`, `new BlockData("minecraft:chest")`, and `new ItemStack("minecraft:apple")`
-- `summon(entityData)` plus explicit-position `Block.of("~ ~ ~").summon(...)`
+- `World.summon(entityData)` plus explicit-position `Block.of("~ ~ ~").summon(...)`
 - `.asNbt()` on `EntityData`, `BlockData`, and `ItemStack`
 - implicit builder-to-`Nbt` coercion in NBT contexts such as
   `pig.nbt.Passengers[0] = chicken`

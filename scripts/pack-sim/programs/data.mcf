@@ -15,41 +15,41 @@ class Main {
     public static void main() {
         var q = new Quest("Mine", 5);
         q = bump(q, 3);
-        mcf("say quest $(q.name()) $(q.reward())");
+        Commands.run("say quest $(q.name()) $(q.reward())");
         var xs = List.of(4, 9, 2, 7);
         xs.add(11);
         var popped = xs.removeLast();
         var total_xs = Lists.sum(xs);
         var big = largest(xs);
-        mcf("say arr $(total_xs) $(big) $(popped) $(xs.size())");
+        Commands.run("say arr $(total_xs) $(big) $(popped) $(xs.size())");
         var first = xs.get(10).orElse(-1);
         var second = xs.get(1).orElse(-1);
-        mcf("say opt $(first) $(second)");
+        Commands.run("say opt $(first) $(second)");
         var d = Map.of("red", 1);
         d["blue"] = 4;
         var missing = d.get("green").orElse(0);
         var red = d["red"];
         var blue = d["blue"];
-        mcf("say dict $(red) $(blue) $(missing) $(d.size())");
+        Commands.run("say dict $(red) $(blue) $(missing) $(d.size())");
         var c = Math.clamp(50, 0, 20);
         var g = Math.gcd(12, -18);
         var p = (int) Math.pow(3, 4);
-        mcf("say math $(c) $(g) $(p)");
+        Commands.run("say math $(c) $(g) $(p)");
         var s = "hello world";
         var has = Strings.contains(s, "wor");
         var at = Strings.find(s, "o");
         if (has) {
-            mcf("say str $(at) $(s.length())");
+            Commands.run("say str $(at) $(s.length())");
         }
         switch ("jump") {
-            case "jump" -> mc("say leap");
-            case "run" -> mc("say go");
-            default -> mc("say idle");
+            case "jump" -> Commands.run("say leap");
+            case "run" -> Commands.run("say go");
+            default -> Commands.run("say idle");
         }
         var total = 0;
         for (int i = 0; i <= 5; i++) {
             total = total + i;
         }
-        mcf("say incl $(total)");
+        Commands.run("say incl $(total)");
     }
 }

@@ -35,25 +35,25 @@ class Main {
         held.add(new Node(5));
         Node dog = new Node(6);
         int dogId = __mcfc_id(dog);
-        mcf("data modify storage gc:state players.\"1_2_3_4\".pets.dog set value $(dogId)");
+        Commands.run("data modify storage gc:state players.\"1_2_3_4\".pets.dog set value $(dogId)");
         dog = null;
         // Replaces the constructor's leftover `this`, so only the state holds the dog.
         Node spare = new Node(0);
         churn();
         int before = Heap.mcfcHeap.size();
-        sleepTicks(2);
+        Thread.sleepTicks(2);
 
         Node child = kept.children[0];
         Node inList = held[0];
         String values = "values " + kept.value + " " + kept.next.value + " " + child.value + " " + paused.value + " " + inList.value;
-        mcf("say $(values)");
+        Commands.run("say $(values)");
 
         String pet = "pet alive " + (Heap.mcfcHeap[dogId].mcfcClass() != 0);
-        mcf("say $(pet)");
+        Commands.run("say $(pet)");
 
         Node fresh = new Node(9);
         boolean reused = fresh.value == 9 && Heap.mcfcHeap.size() == before;
         String heap = "heap " + before + " live " + Heap.mcfcLive + " free " + Heap.mcfcFree.size() + " reused " + reused;
-        mcf("say $(heap)");
+        Commands.run("say $(heap)");
     }
 }

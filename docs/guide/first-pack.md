@@ -159,20 +159,20 @@ Players run this with `/trigger buy`. Vanilla has no custom commands, so `@Comma
 
 ## 8. Wait without blocking
 
-Minecraft commands can't pause. MCFC compiles `sleep` into a scheduled continuation, so the rest of the game keeps running while a method waits:
+Minecraft commands can't pause. MCFC compiles `Thread.sleep` into a scheduled continuation, so the rest of the game keeps running while a method waits:
 
 ```mcfc
 class Main {
     static void remind(Player player) {
         Thread.start(() -> {
-            sleep(3);
+            Thread.sleep(3);
             player.sendMessage("Spend wisely.");
         });
     }
 }
 ```
 
-Call `remind(player);` at the end of `buy`. `Thread.start(() -> { ... })` starts the lambda and returns immediately. `sleep(3)` waits 3 seconds inside that lambda, and `sleepTicks(n)` waits by ticks. Local variables such as `player` are copied when the lambda starts.
+Call `remind(player);` at the end of `buy`. `Thread.start(() -> { ... })` starts the lambda and returns immediately. `Thread.sleep(3)` waits 3 seconds inside that lambda, and `Thread.sleepTicks(n)` waits by ticks. Local variables such as `player` are copied when the lambda starts.
 
 ## The finished pack
 
@@ -224,7 +224,7 @@ class Main implements Listener {
 
     static void remind(Player player) {
         Thread.start(() -> {
-            sleep(3);
+            Thread.sleep(3);
             player.sendMessage("Spend wisely.");
         });
     }

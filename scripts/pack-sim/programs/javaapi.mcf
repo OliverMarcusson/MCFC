@@ -18,33 +18,33 @@ class Main {
         bar.setMax(10);
         var sword = new ItemStack("minecraft:diamond_sword");
         sword.setName("Probe");
-        debug((String) sword.getName());
+        System.out.println((String) sword.getName());
     }
 
     public static void main() {
         var s = "hello world";
         var checks = (s.contains("lo w") ? 1000 : 0) + (s.startsWith("he") ? 100 : 0)
             + (s.endsWith("ld") ? 10 : 0) + (s.equals("hello world") ? 1 : 0);
-        mcf("say string $(checks) $(s.indexOf(\"o\")) $(s.charAt(4)) $(s.isEmpty())");
+        Commands.run("say string $(checks) $(s.indexOf(\"o\")) $(s.charAt(4)) $(s.isEmpty())");
         var parsed = Integer.parseInt("42") + 1;
         var text = String.valueOf(parsed) + Integer.toString(7);
-        mcf("say parse $(text)");
+        Commands.run("say parse $(text)");
         var m = Math.max(3, 9) * 100 + Math.min(3, 9) * 10 + Math.abs(-2);
-        mcf("say math $(m) $(Math.clamp(15, 0, 10))");
+        Commands.run("say math $(m) $(Math.clamp(15, 0, 10))");
         List<Integer> xs = List.of(4, 5, 6);
         xs.set(1, 50);
         var empty = xs.isEmpty();
-        mcf("say list $(xs[1]) $(empty) $(xs.get(0).get()) $(xs.get(9).isEmpty())");
+        Commands.run("say list $(xs[1]) $(empty) $(xs.get(0).get()) $(xs.get(9).isEmpty())");
         Map<String, Integer> counts = Map.of("a", 1);
         counts.put("b", 2);
-        mcf("say map $(counts[\"b\"]) $(counts.getOrDefault(\"zz\", 7)) $(counts.getOrDefault(\"a\", 7))");
+        Commands.run("say map $(counts[\"b\"]) $(counts.getOrDefault(\"zz\", 7)) $(counts.getOrDefault(\"a\", 7))");
         var total = 0;
         for (var stage : Stage.values()) {
             total += stage.ordinal();
         }
-        mcf("say enum $(total) $(Stage.DONE.name()) $(Stage.values().size())");
+        Commands.run("say enum $(total) $(Stage.DONE.name()) $(Stage.values().size())");
         var quest = new Quest("Mine", 5);
         var better = new Quest(quest.name() + "!", quest.reward() * 2);
-        mcf("say record $(better.name()) $(better.reward())");
+        Commands.run("say record $(better.name()) $(better.reward())");
     }
 }

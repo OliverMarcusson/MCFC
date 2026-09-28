@@ -52,13 +52,13 @@ class Main {
     }
 
     public static void main() {
-        mcf("say fact $(fact(5)) $(fact(10))");
-        mcf("say fib $(fib(10))");
-        mcf("say even $(isEven(10)) $(isOdd(7)) $(isEven(3))");
-        mcf("say gcd $(gcd(84, 36)) $(gcd(17, 5))");
-        mcf("say stars $(stars(4))");
+        Commands.run("say fact $(fact(5)) $(fact(10))");
+        Commands.run("say fib $(fib(10))");
+        Commands.run("say even $(isEven(10)) $(isOdd(7)) $(isEven(3))");
+        Commands.run("say gcd $(gcd(84, 36)) $(gcd(17, 5))");
+        Commands.run("say stars $(stars(4))");
         var xs = List.of(9);
         xs = countdown(xs, 3);
-        mcf("say list $(xs.size()) $(xs.get(1).orElse(-1)) $(xs.get(4).orElse(-1))");
+        Commands.run("say list $(xs.size()) $(xs.get(1).orElse(-1)) $(xs.get(4).orElse(-1))");
     }
 }

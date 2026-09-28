@@ -58,9 +58,9 @@ MCFC uses scoreboard guard slots to model branches, loops, `break`, `continue`, 
 
 ## Commands
 
-`mc("...")` writes the literal command directly into the generated `.mcfunction`.
+`Commands.run("...")` without `$(...)` writes the literal command directly into the generated `.mcfunction`.
 
-`mcf("...")` writes a generated macro function. MCFC evaluates each `$(...)` expression into command storage, then calls the macro with `function namespace:path with storage namespace:runtime <path>`.
+With `$(...)`, it writes a generated macro function. MCFC evaluates each `$(...)` expression into command storage, then calls the macro with `function namespace:path with storage namespace:runtime <path>`.
 
 ## Context
 
@@ -70,11 +70,11 @@ MCFC uses scoreboard guard slots to model branches, loops, `break`, `continue`, 
 
 `Thread.start(() -> { ... })` creates a separate generated function and launches it without waiting. Captured locals are copied into storage/scoreboard slots before launch.
 
-`sleep(...)`, `sleepTicks(...)`, and host bridge calls split the current function at the suspension point. MCFC emits a continuation function and resumes it later with Minecraft `schedule function` or the `mcfd` response pump.
+`Thread.sleep(...)`, `Thread.sleepTicks(...)`, and host bridge calls split the current function at the suspension point. MCFC emits a continuation function and resumes it later with Minecraft `schedule function` or the `mcfd` response pump.
 
 ## Builders And NBT
 
-Builder values are assembled in command storage. Calls such as `summon(EntityData)` and `Block.setBlock(BlockData)` render those stored payloads into Minecraft commands and `data modify` operations.
+Builder values are assembled in command storage. Calls such as `World.summon(EntityData)` and `Block.setBlock(BlockData)` render those stored payloads into Minecraft commands and `data modify` operations.
 
 When a builder is used where `Nbt` is expected, MCFC emits the equivalent of reading the builder's `.asNbt()` payload.
 

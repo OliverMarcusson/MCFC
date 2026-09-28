@@ -12,6 +12,10 @@ thread_local! {
 /// `push`, as written in source. Only user types' methods may use them.
 pub const WRITTEN_METHOD: &str = "@written:";
 
+/// A builtin called through its class, like `Thread.sleep(1)`: never a user
+/// method of the same name.
+pub const BUILTIN: &str = "@builtin:";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub structs: Vec<StructDef>,
@@ -22,6 +26,9 @@ pub struct Program {
     pub world_states: Vec<PlayerStateDef>,
     pub functions: Vec<Function>,
     pub uses: Vec<UseDecl>,
+    /// Builtins called without their class, like `sleep(1)` for
+    /// `Thread.sleep(1)`. Only `std` may; the module resolver checks.
+    pub bare_builtins: Vec<(String, Span)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

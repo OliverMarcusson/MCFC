@@ -28,14 +28,14 @@ class Main {
     public static void main() {
         List<Integer> numbers = List.of(4, 5);
         String sums = "sums " + sum() + " " + sum(1) + " " + sum(1, 2, 3) + " " + sum(numbers);
-        mcf("say $(sums)");
+        Commands.run("say $(sums)");
         String joined = "joined " + join("-", "a", "b", "c") + " [" + join("-") + "] " + count("x", "y") + " " + count(1, 2, 3);
-        mcf("say $(joined)");
+        Commands.run("say $(joined)");
         Logger logger = new Logger();
         String logged = logger.line("hello", "world");
-        mcf("say $(logged)");
+        Commands.run("say $(logged)");
         String line = String.format("%s has %d kills (100%%)", "alex", 7);
-        mcf("say $(line)");
+        Commands.run("say $(line)");
     }
 }
 

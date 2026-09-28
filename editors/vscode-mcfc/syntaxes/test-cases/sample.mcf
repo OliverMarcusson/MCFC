@@ -27,7 +27,7 @@ class Main implements Listener {
 
     @Every(ticks = 20)
     static void heartbeat() {
-        mc("say heartbeat");
+        Commands.run("say heartbeat");
     }
 
     public static <T> T first(List<T> values) {
@@ -48,16 +48,16 @@ class Main implements Listener {
             p.addTag("seen");
         }
         switch (mode) {
-            case Mode.IDLE -> mcf("say $(reward.item())");
+            case Mode.IDLE -> Commands.run("say $(reward.item())");
             default -> {
-                sleepTicks(20);
+                Thread.sleepTicks(20);
             }
         }
         Thread.start(() -> {
-            sleep(1);
+            Thread.sleep(1);
         });
         Execute.as(Selector.of("@p").getFirst(), () -> {
-            mc("say hi");
+            Commands.run("say hi");
         });
         var stack = new ItemStack("minecraft:stick");
         var who = (Player) Selector.of("@p").getFirst();

@@ -11,6 +11,6 @@ class Main {
     public static void main() {
         var x = 7;
         var name = "steve";
-        mcf("say $(twice(x)) $(Math.max(x, 9)) $(Math.clamp(x, 0, 5)) $(name.length()) $(Strings.startsWith(name, \"st\"))");
+        Commands.run("say $(twice(x)) $(Math.max(x, 9)) $(Math.clamp(x, 0, 5)) $(name.length()) $(Strings.startsWith(name, \"st\"))");
     }
 }

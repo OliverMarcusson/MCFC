@@ -666,7 +666,11 @@ out_dir = "dist"
 "#,
         )
         .unwrap();
-        fs::write(src.join("main.mcf"), "class Main {\n    public static void main() {\n        return;\n    }\n}\n").unwrap();
+        fs::write(
+            src.join("main.mcf"),
+            "class Main {\n    public static void main() {\n        return;\n    }\n}\n",
+        )
+        .unwrap();
         fs::write(
             nested.join("helper.mcf"),
             "class Main {\n    static void helper() {\n        return;\n    }\n}\n",

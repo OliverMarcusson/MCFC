@@ -72,26 +72,26 @@ class Main {
         boolean different = moved != new Point(4, 3);
         boolean equal = moved.equals(new Point(4, -3));
         String summary = "$(moved) $(distance) $(same) $(different) $(equal)";
-        mcf("say $(summary)");
+        Commands.run("say $(summary)");
 
         Line line = new Line(start, moved);
         String text = "line " + line;
-        mcf("say $(text)");
+        Commands.run("say $(text)");
 
         String tag = "tag " + new Tagged("x");
-        mcf("say $(tag)");
+        Commands.run("say $(tag)");
 
         for (Planet planet : Planet.values()) {
             int density = planet.density();
             int mass = planet.mass;
             boolean home = planet.isHome();
             String row = "$(planet) $(density) $(mass) $(home) " + planet.name();
-            mcf("say $(row)");
+            Commands.run("say $(row)");
         }
 
         int square = area(3);
         float rect = area(2, 1.5);
         String named = area("x");
-        mcf("say $(square) $(rect) $(named)");
+        Commands.run("say $(square) $(rect) $(named)");
     }
 }

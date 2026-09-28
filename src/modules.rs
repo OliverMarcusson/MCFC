@@ -245,6 +245,33 @@ pub fn resolve(mut program: Program, sources: &[ModuleSource]) -> Result<Program
             .unwrap_or(0)
     };
 
+    // Builtins such as `sleep` belong to a class now; only std calls them bare.
+    // A module's own method of that name is an ordinary call.
+    // ponytail: checks the module's methods by name, not the caller's class.
+    for (name, span) in &program.bare_builtins {
+        let module = module_of(span);
+        if modules[module]
+            .path
+            .first()
+            .is_some_and(|root| root == "std")
+        {
+            continue;
+        }
+        let own_method = program.functions.iter().any(|function| {
+            module_of(&function.span) == module
+                && function
+                    .name
+                    .rsplit_once("__")
+                    .is_some_and(|(_, method)| method == name)
+        });
+        if !own_method && let Some(class) = crate::language_catalog::class_builtin(name) {
+            diagnostics.push(Diagnostic::new(
+                format!("'{name}' is a method of a class now: use '{class}(...)'"),
+                span.clone(),
+            ));
+        }
+    }
+
     // Every module is visible from everywhere, like a Java package.
     for index in 1..modules.len() {
         let name = modules[index].path.last().cloned().unwrap_or_default();
@@ -1274,7 +1301,9 @@ impl Resolver {
                 // `Strings.pad(x)` is a static method: `std::str::Strings__pad(x)`.
                 let static_method = || {
                     let (method, class) = segments.split_last()?;
-                    let class = self.resolve_struct(scope.module, &class.join("::")).ok()??;
+                    let class = self
+                        .resolve_struct(scope.module, &class.join("::"))
+                        .ok()??;
                     self.resolve_method(scope.module, &class, method).ok()?
                 };
                 let resolved = match self.resolve_function(scope.module, &segments.join("::")) {

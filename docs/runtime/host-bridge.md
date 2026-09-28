@@ -2,7 +2,7 @@
 
 The host bridge lets a vanilla datapack reach outside Minecraft through an optional companion helper. The datapack exchanges requests and responses through the `mcfc:rpc` command-storage protocol; the generated datapack itself remains vanilla.
 
-Host calls use `module.fn(...)` syntax and suspend like `sleep`.
+Host calls use `module.fn(...)` syntax and suspend like `Thread.sleep`.
 
 ```mcfc
 class Main {

@@ -58,7 +58,7 @@ class Main {
     public static void main() {
         Wallet wallet = new Wallet();
         String spends = "spends " + attempt(wallet, 4) + " " + attempt(wallet, 9) + " " + attempt(wallet, -1);
-        mcf("say $(spends)");
+        Commands.run("say $(spends)");
 
         int result = 0;
         try {
@@ -68,7 +68,7 @@ class Main {
         } catch (Exception error) {
             result = result + 1000;
         }
-        mcf("say result $(result)");
+        Commands.run("say result $(result)");
 
         int loops = 0;
         try {
@@ -82,7 +82,7 @@ class Main {
         } catch (RuntimeException error) {
             loops = loops + 100;
         }
-        mcf("say loops $(loops)");
+        Commands.run("say loops $(loops)");
 
         String nested = "";
         try {
@@ -96,7 +96,7 @@ class Main {
         } catch (IllegalStateException error) {
             nested = nested + "outer:" + error.getMessage();
         }
-        mcf("say nested $(nested)");
+        Commands.run("say nested $(nested)");
 
         int bad = 0;
         try {
@@ -104,8 +104,8 @@ class Main {
         } catch (Exception error) {
             bad = 7;
         }
-        mcf("say bad $(bad)");
+        Commands.run("say bad $(bad)");
         wallet.spend(100);
-        mcf("say unreachable");
+        Commands.run("say unreachable");
     }
 }

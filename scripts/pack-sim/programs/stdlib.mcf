@@ -6,13 +6,13 @@ import std.random.Random;
 
 class Main {
     public static void main() {
-        mcf("say math $(Math.min(1.5, 2)) $(Math.max(3, 9)) $(Math.abs(-2.5)) $(Math.clamp(15, 0, 10)) $(Math.sign(-4)) $(Math.isqrt(50))");
+        Commands.run("say math $(Math.min(1.5, 2)) $(Math.max(3, 9)) $(Math.abs(-2.5)) $(Math.clamp(15, 0, 10)) $(Math.sign(-4)) $(Math.isqrt(50))");
         List<String> names = List.of("ann", "bob", "cy", "dee", "eve");
         List<Integer> scores = List.of(30, 10, 50, 10, 40);
         var joined = String.join(", ", Lists.sortBy(names, scores));
         var best = String.join(",", Lists.top(names, scores, 3));
-        mcf("say sort $(joined) top $(best)");
-        mcf("say time $(Time.formatTicks(1300)) $(Time.formatTicks(-5)) $(Time.formatTicks(80000)) $(Time.padLeft(7, 3))");
+        Commands.run("say sort $(joined) top $(best)");
+        Commands.run("say time $(Time.formatTicks(1300)) $(Time.formatTicks(-5)) $(Time.formatTicks(80000)) $(Time.padLeft(7, 3))");
         List<Integer> xs = List.of(1, 2, 3, 4, 5);
         var shuffled = Random.shuffle(xs);
         var total = 0;
@@ -21,6 +21,6 @@ class Main {
         }
         var f = Random.nextFloat();
         var inRange = f >= 0.0 && f < 1.0;
-        mcf("say random $(shuffled.size()) $(total) $(Random.chance(1.0)) $(Random.chance(0.0)) $(inRange) $(xs.contains(Random.pick(xs)))");
+        Commands.run("say random $(shuffled.size()) $(total) $(Random.chance(1.0)) $(Random.chance(0.0)) $(inRange) $(xs.contains(Random.pick(xs)))");
     }
 }

@@ -4,7 +4,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 
 ## Language
 
-- **Recursive methods can't pause.** A method that calls itself, directly or indirectly, can't `sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
+- **Recursive methods can't pause.** A method that calls itself, directly or indirectly, can't `Thread.sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
 - **`char`, `short` and `byte` are aliases.** A `char` is a one-character `String` and has no number value; `short` and `byte` are full 32-bit `int`s and don't wrap. There is no `long` or `double`.
 - **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans, enums and records to text. Other conversions need a cast or `toString()`.
 - **Unchecked casts.** `(Dog) animal` doesn't check the object's class while the pack runs, and there is no `ClassCastException`. Test with `instanceof` first.
@@ -18,13 +18,12 @@ What MCFC doesn't do yet, with workarounds where there are any.
 - **Imports:** no re-exports and no renaming.
 - **Hook methods can't be called directly.** A method marked `@Tick`, `@Command`, `@Menu`, `@Every`, `@After`, `@Test` or `@EventHandler` is only run by its trigger. Put shared code in an ordinary method and call that from the hook.
 - **One `main`.** Only one class in the root module can declare `public static void main()`.
-- **A few builtins are still free calls.** `debug`, `random`, `sleep`, `sleepTicks`, `gameTime`, `mc` and `mcf` are called without a class name.
 
 ## Runtime values
 
-- **`$(...)` in `mcf(...)` isn't escaped.** The value is pasted into the command as it is. Joining strings with `+` is safe. See [string limits](./reference/types#string).
+- **`$(...)` in `Commands.run(...)` isn't escaped.** The value is pasted into the command as it is. Joining strings with `+` is safe. See [string limits](./reference/types#string).
 - **Selector methods** such as `findFirst()`, `tag(...)` and `matches(...)` need a selector built in the same expression, not a variable or a runtime `String`.
-- **`hasData`** only works on storage values (lists, maps, records), not on entity NBT.
+- **`Nbt.has`** only works on storage values (lists, maps, records), not on entity NBT.
 - **`heal`** only works on references known to be non-players, for example `@e[type=minecraft:pig]`. For players, use `effect("minecraft:instant_health", 1, 0)`.
 - **`Selector.position`** isn't supported. Loop over the set and use each entity's `position`.
 - **`orElse(x)`** always evaluates `x`, even when the Optional has a value.
@@ -33,7 +32,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 
 ## Statements
 
-- `sleep`, `sleepTicks`, host calls and calls to methods that pause have to be statements of their own. See [Methods that pause](./reference/statements#methods-that-pause).
+- `Thread.sleep`, `Thread.sleepTicks`, host calls and calls to methods that pause have to be statements of their own. See [Methods that pause](./reference/statements#methods-that-pause).
 
 ## Platform
 

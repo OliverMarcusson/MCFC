@@ -9,7 +9,7 @@ class Main {
         int value = bar.getValue();
         int max = bar.getMax();
         boolean visible = bar.isVisible();
-        mcf("say bar $(value)/$(max) visible $(visible)");
+        Commands.run("say bar $(value)/$(max) visible $(visible)");
         bar.setPlayers(Selector.of("@a"));
         bar.remove();
 
@@ -19,12 +19,12 @@ class Main {
         int count = sword.getCount();
         String name = (String) sword.getName();
         String id = sword.getId();
-        mcf("say item $(count) $(name) $(id)");
+        Commands.run("say item $(count) $(name) $(id)");
 
         Entity self = Selector.of("@s").getFirst();
         Entity pig = Selector.of("@e[type=minecraft:pig,limit=1]").getFirst();
         boolean selfIsPlayer = self instanceof Player;
         boolean pigIsPlayer = pig instanceof Player;
-        mcf("say player $(selfIsPlayer) $(pigIsPlayer)");
+        Commands.run("say player $(selfIsPlayer) $(pigIsPlayer)");
     }
 }

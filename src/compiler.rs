@@ -565,7 +565,7 @@ mod tests {
     fn compiles_gameplay_entity_and_inventory_builtins() {
         let source = r#"class Main {
     public static void main() {
-        var pig = summon("minecraft:pig");
+        var pig = World.summon("minecraft:pig");
         pig.addTag("elite");
         var tagged = pig.hasTag("elite");
         pig.removeTag("elite");
@@ -671,7 +671,7 @@ mod tests {
         var pig = new EntityData("minecraft:pig");
         pig.setName("Builder Pig");
         pig.setNoAi(true);
-        var spawned = summon(pig);
+        var spawned = World.summon(pig);
         var chest = new BlockData("minecraft:chest");
         chest.states.facing = "north";
         chest.setName("Loot");
@@ -705,16 +705,16 @@ mod tests {
     fn compiles_random_builtin_forms() {
         let source = r#"class Main {
     static int roll() {
-        return random();
+        return Random.nextInt();
     }
 
     public static void main() {
-        var any = random();
-        var bounded = random(6);
-        var between = random(1, 20);
-        bounded = random(between);
-        var combined = random() + roll();
-        mcf("say $(random(1, 3))");
+        var any = Random.nextInt();
+        var bounded = Random.nextInt(7);
+        var between = Random.nextInt(1, 21);
+        bounded = Random.nextInt(between + 1);
+        var combined = Random.nextInt() + roll();
+        Commands.run("say $(Random.nextInt(1, 4))");
         return;
     }
 }
@@ -739,7 +739,7 @@ mod tests {
     fn compiles_interpolated_string_literals() {
         let source = r#"class Main {
     public static void main() {
-        var demo_title = "MCFC Demo $(random(100))";
+        var demo_title = "MCFC Demo $(Random.nextInt(101))";
         var player = Selector.of("@p").getFirst();
         player.sendMessage(demo_title);
         return;
@@ -756,7 +756,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(files.contains("random value $(min)..$(max)"));
+        assert!(files.contains("random value 0..100"));
         assert!(files.contains("set value \"MCFC Demo $(p1)\""));
         assert!(files.contains("data modify storage mcfc:runtime frames.d0.main.demo_title"));
     }
@@ -819,29 +819,29 @@ mod tests {
         var player = Selector.of("@p").getFirst();
         var flag = true;
 
-        sleep(1);
-        mc("say after straight sleep");
+        Thread.sleep(1);
+        Commands.run("say after straight sleep");
 
         if (flag) {
-            sleep(1);
-            mc("say after if sleep");
+            Thread.sleep(1);
+            Commands.run("say after if sleep");
         }
-        mc("say after if");
+        Commands.run("say after if");
 
         Execute.at(player, () -> {
-            sleep(1);
-            mc("say after context sleep");
+            Thread.sleep(1);
+            Commands.run("say after context sleep");
         });
         var i = 0;
         while (i < 2) {
-            sleep(1);
+            Thread.sleep(1);
             i = i + 1;
         }
         for (int n = 0; n < 2; n++) {
-            sleep(1);
-            mc("say after for sleep");
+            Thread.sleep(1);
+            Commands.run("say after for sleep");
         }
-        mc("say done");
+        Commands.run("say done");
         return;
     }
 }
@@ -877,7 +877,7 @@ mod tests {
         var count = 5;
         player.position.spawnParticle("minecraft:happy_villager", 20, player);
         Thread.start(() -> {
-            sleep(5);
+            Thread.sleep(5);
             player.sendMessage("later");
             player.position.setBlock("minecraft:gold_block");
         });
@@ -960,13 +960,13 @@ mod tests {
     fn rejects_invalid_random_and_sleep_usage() {
         let source = r#"class Main {
     public static void main() {
-        var bad_sleep = sleep(1);
-        random(sleep(1));
-        mcf("say $(sleep(1))");
-        sleep(0);
-        sleep("bad");
-        var bad_random = random("bad");
-        var too_many = random(1, 2, 3);
+        var bad_sleep = Thread.sleep(1);
+        Random.nextInt(Thread.sleep(1) + 1);
+        Commands.run("say $(Thread.sleep(1))");
+        Thread.sleep(0);
+        Thread.sleep("bad");
+        var bad_random = Random.nextInt(1.5, 3);
+        var too_many = Random.nextInt(1, 2, 4);
         return;
     }
 }
@@ -974,16 +974,18 @@ mod tests {
 
         let error = compile_source(source, &lowering()).unwrap_err();
         let rendered = error.to_string();
-        assert!(rendered.contains("sleep(...) may only appear as a standalone statement"));
-        assert!(rendered.contains("sleep(...) seconds must be at least 1"));
-        assert!(rendered.contains("sleep(...) seconds must have type 'int'"));
-        assert!(rendered.contains("argument 1 for 'random' must be 'int'"));
-        assert!(rendered.contains("wrong arity for 'random': expected 0, 1, or 2, found 3"));
+        assert!(rendered.contains("Thread.sleep(...) may only appear as a standalone statement"));
+        assert!(rendered.contains("Thread.sleep(...) seconds must be at least 1"));
+        assert!(rendered.contains("Thread.sleep(...) seconds must have type 'int'"));
+        assert!(rendered.contains("argument 1 for 'Random.nextInt' must be 'int'"));
+        assert!(
+            rendered.contains("wrong arity for 'Random.nextInt': expected 0, 1, or 2, found 3")
+        );
 
         let string_error = compile_source(
             r#"class Main {
     public static void main() {
-        var bad = "value $(sleep(1))";
+        var bad = "value $(Thread.sleep(1))";
         return;
     }
 }
@@ -992,7 +994,9 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(string_error.contains("sleep(...) may only appear as a standalone statement"));
+        assert!(
+            string_error.contains("Thread.sleep(...) may only appear as a standalone statement")
+        );
     }
 
     #[test]
@@ -1001,7 +1005,7 @@ mod tests {
     public static void main() {
         var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
         var pos = Block.of("~ ~1 ~");
-        debug("checkpoint");
+        System.out.println("checkpoint");
         pos.debugMarker("marker");
         pos.debugMarker("block marker", "minecraft:gold_block");
         pig.debugEntity("nearest pig");
@@ -1066,26 +1070,26 @@ mod tests {
     static void buy() {
         var player = Selector.of("@s").getFirst();
         Thread.start(() -> {
-            sleep(3);
+            Thread.sleep(3);
             player.sendMessage("later");
         });
-        sleepTicks(5);
+        Thread.sleepTicks(5);
         player.sendMessage("done");
     }
 
     @EventHandler
     void onPlayerJoin(PlayerJoinEvent event) {
         Thread.start(() -> {
-            sleep(1);
-            debug("joined");
+            Thread.sleep(1);
+            System.out.println("joined");
         });
     }
 
     @Every(ticks = 20)
     static void pulse() {
         Thread.start(() -> {
-            sleep(1);
-            debug("pulse");
+            Thread.sleep(1);
+            System.out.println("pulse");
         });
     }
 }
@@ -1125,22 +1129,22 @@ mod tests {
 
     @EventHandler
     void onPlayerDeath(PlayerDeathEvent event) {
-        debug("dead");
+        System.out.println("dead");
     }
 
     @Command("status")
     static void status() {
-        debug("status");
+        System.out.println("status");
     }
 
     @Every(ticks = 20)
     static void pulse() {
-        debug("pulse");
+        System.out.println("pulse");
     }
 
     @After(ticks = 5)
     static void later() {
-        debug("later");
+        System.out.println("later");
     }
 }
 "#,
@@ -1172,12 +1176,12 @@ mod tests {
             r#"class Main {
     @Command("abcdefghij_one")
     static void abcdefghijOne() {
-        debug("one");
+        System.out.println("one");
     }
 
     @Command("abcdefghij_two")
     static void abcdefghijTwo() {
-        debug("two");
+        System.out.println("two");
     }
 }
 "#,
@@ -1291,7 +1295,7 @@ mod tests {
     #[test]
     fn agent_event_requires_agent_manifest_capability() {
         let error = compile_source(
-            "class Main implements Listener {\n    @EventHandler\n    void onChat(ChatEvent event) {\n        debug(event.message());\n    }\n}\n",
+            "class Main implements Listener {\n    @EventHandler\n    void onChat(ChatEvent event) {\n        System.out.println(event.message());\n    }\n}\n",
             &lowering(),
         )
         .unwrap_err()
@@ -1352,9 +1356,12 @@ mod tests {
             }),
             ..lowering()
         };
-        let error = compile_source("class Main {\n    public static void main() {\n        return;\n    }\n}\n", &options)
-            .unwrap_err()
-            .to_string();
+        let error = compile_source(
+            "class Main {\n    public static void main() {\n        return;\n    }\n}\n",
+            &options,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("observation-only"));
     }
 
@@ -1367,9 +1374,9 @@ mod tests {
         var biome = spot.getBiome();
         var plains = spot.inBiome("plains");
         var sky = spot.getEnvironment("gameplay/sky_light_level");
-        var rule = gamerule("max_entity_cramming");
-        var pick = randomWeighted(List.of(3, 1));
-        var hits = randomBinomial(10, 0.5);
+        var rule = World.getGameRule("max_entity_cramming");
+        var pick = Random.weighted(List.of(3, 1));
+        var hits = Random.binomial(10, 0.5);
         var player = Selector.of("@p").getFirst();
         var dx = player.getLookX();
         var d = Map.of("wood", 2);
@@ -1407,9 +1414,9 @@ mod tests {
         var spot = Block.of("~ ~ ~");
         var a = spot.inBiome("moon");
         var b = spot.getEnvironment("visual/fog_color");
-        var c = gamerule("no_such_rule");
-        var d = randomWeighted(List.of(1, -2));
-        var e = randomBinomial(3, 4);
+        var c = World.getGameRule("no_such_rule");
+        var d = Random.weighted(List.of(1, -2));
+        var e = Random.binomial(3, 4);
         return;
     }
 }
@@ -1421,8 +1428,8 @@ mod tests {
         assert!(error.contains("unknown biome 'moon'"));
         assert!(error.contains("unknown numeric environment attribute 'visual/fog_color'"));
         assert!(error.contains("unknown game rule 'no_such_rule'"));
-        assert!(error.contains("randomWeighted(...) needs a literal list of weights"));
-        assert!(error.contains("randomBinomial(n, p) needs an 'int' and a 'float'"));
+        assert!(error.contains("Random.weighted(...) needs a literal list of weights"));
+        assert!(error.contains("Random.binomial(n, p) needs an 'int' and a 'float'"));
     }
 
     fn compiled_files(source: &str) -> String {

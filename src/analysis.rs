@@ -311,7 +311,12 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("unknown function"))
         );
-        assert!(analysis.functions.iter().any(|function| function.name == "main"));
+        assert!(
+            analysis
+                .functions
+                .iter()
+                .any(|function| function.name == "main")
+        );
     }
 
     #[test]
@@ -370,7 +375,7 @@ mod tests {
 
     #[test]
     fn finds_word_at_utf8_offset() {
-        let source = "mc(\"å\");
+        let source = "Commands.run(\"å\");
 var value = 1;
 ";
         let offset = source.find("value").unwrap() + 2;

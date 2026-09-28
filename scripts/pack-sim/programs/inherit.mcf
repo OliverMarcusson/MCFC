@@ -113,21 +113,21 @@ class Main {
         animals.add(puppy);
 
         String speeds = "speeds " + dog.speed() + " " + cat.speed() + " " + puppy.speed() + " total " + total(animals);
-        mcf("say $(speeds)");
+        Commands.run("say $(speeds)");
 
         String weights = "weights " + dog.weight() + " " + cat.weight() + " " + puppy.weight() + " sound " + puppy.sound;
-        mcf("say $(weights)");
+        Commands.run("say $(weights)");
 
         Named named = cat;
         String greetings = named.greet() + " " + puppy.greet() + " " + dog.greet() + " " + puppy;
-        mcf("say $(greetings)");
+        Commands.run("say $(greetings)");
 
         boolean dogIsAnimal = dog instanceof Animal;
         boolean catIsDog = cat instanceof Dog;
         boolean puppyIsDog = puppy instanceof Dog;
         Animal nothing = null;
         String checks = "checks " + dogIsAnimal + " " + catIsDog + " " + puppyIsDog + " " + (nothing instanceof Animal);
-        mcf("say $(checks)");
+        Commands.run("say $(checks)");
 
         int found = 0;
         for (Animal animal : animals) {
@@ -138,6 +138,6 @@ class Main {
 
         Dog back = (Dog) puppy;
         String patterns = "patterns " + found + " " + back.tricks + " " + describe(puppy) + ", " + describe(dog) + ", " + describe(cat);
-        mcf("say $(patterns)");
+        Commands.run("say $(patterns)");
     }
 }

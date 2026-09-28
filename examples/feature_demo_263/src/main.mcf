@@ -26,16 +26,16 @@ class Main {
     @Tick
     static void tick() {
         if (Selector.of("@a[tag=!mcfc_tested,limit=1]").getFirst().isValid()) {
-            mc("tag @a add mcfc_tested");
+            Commands.run("tag @a add mcfc_tested");
             runTests();
         }
     }
 
     static void check(String name, boolean ok, String got) {
         if (ok) {
-            mcf("say MCFCTEST PASS $(name) got=$(got)");
+            Commands.run("say MCFCTEST PASS $(name) got=$(got)");
         } else {
-            mcf("say MCFCTEST FAIL $(name) got=$(got)");
+            Commands.run("say MCFCTEST FAIL $(name) got=$(got)");
         }
     }
 
@@ -50,30 +50,30 @@ class Main {
 
     // Each group gets its own tick so a failure in one does not hide the others.
     static void runTests() {
-        mc("say MCFCTEST BEGIN");
+        Commands.run("say MCFCTEST BEGIN");
         floats();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         remainders();
         strings();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         arrays();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         stdLibrary();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         reads();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         newFeatures();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         gaps();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         adventure();
-        sleepTicks(1);
+        Thread.sleepTicks(1);
         floatSortTest(3000);
         sortTest(1000, 0);
         sortTest(5000, 3);
         sortTest(10000, 6);
         progress("sorts done", 9);
-        mc("say MCFCTEST END");
+        Commands.run("say MCFCTEST END");
     }
 
     static void floats() {
@@ -166,7 +166,7 @@ class Main {
         bar.setName(label);
         bar.setPlayers(Selector.of("@a"));
         bar.setVisible(true);
-        mcf("say MCFCTEST INFO step $(step) $(label)");
+        Commands.run("say MCFCTEST INFO step $(step) $(label)");
     }
 
     // Fill, sort and check `size` numbers. The loops sleep every few hundred rounds so no
@@ -180,19 +180,19 @@ class Main {
         var total = 0;
         var k = 0;
         while (k < size) {
-            var x = random(1000) - 500;
+            var x = Random.nextInt(1001) - 500;
             xs.add(x);
             total = total + x;
             k = k + 1;
             if (k % 500 == 0) {
-                sleepTicks(1);
+                Thread.sleepTicks(1);
             }
         }
         progress(name + ": sorting", step + 1);
-        var started = gameTime();
+        var started = World.getGameTime();
         xs.sort();
-        var ticks = gameTime() - started;
-        mcf("say MCFCTEST INFO sort $(size) took $(ticks) ticks");
+        var ticks = World.getGameTime() - started;
+        Commands.run("say MCFCTEST INFO sort $(size) took $(ticks) ticks");
         progress(name + ": checking", step + 2);
         var ordered = true;
         var after = xs[0];
@@ -204,7 +204,7 @@ class Main {
             after = after + xs[j];
             j = j + 1;
             if (j % 200 == 0) {
-                sleepTicks(1);
+                Thread.sleepTicks(1);
             }
         }
         check("sort_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
@@ -244,20 +244,20 @@ class Main {
         check("cooldown_cleared", Cooldown.ready(p, "demo"), Cooldown.remaining(p, "demo").toString());
         var pos = p.getX().toString() + "," + p.getY().toString() + "," + p.getZ().toString();
         var rot = p.getYaw().toString() + "," + p.getPitch().toString();
-        mcf("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
+        Commands.run("say MCFCTEST INFO pos=$(pos) rot=$(rot)");
         check("read_health", p.getHealth() > 0.0, p.getHealth().toString());
         check("read_food", p.getFoodLevel() >= 0 && p.getFoodLevel() <= 20, p.getFoodLevel().toString());
         check("read_xp", p.getLevel() >= 0, p.getLevel().toString());
         check("read_game_mode", p.getGameMode() == GameMode.SURVIVAL || p.getGameMode() == GameMode.CREATIVE, "" + p.getGameMode());
         check("read_dimension", Strings.startsWith(p.getDimension(), "minecraft:"), p.getDimension());
         check("read_selected_slot", p.getSelectedSlot() >= 0 && p.getSelectedSlot() <= 8, p.getSelectedSlot().toString());
-        mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
+        Commands.run("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Tags:[\"mcfc_test_pig\"]}");
         var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_test_pig,limit=1]").getFirst();
         check("read_distance_to", near(p.distanceTo(pig), 5.0), p.distanceTo(pig).toString());
-        mc("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
-        check("read_game_time", gameTime() > 0, gameTime().toString());
-        check("read_world_time", worldTime() >= 0, worldTime().toString());
-        check("read_border_size", borderSize() > 0, borderSize().toString());
+        Commands.run("kill @e[type=minecraft:pig,tag=mcfc_test_pig]");
+        check("read_game_time", World.getGameTime() > 0, World.getGameTime().toString());
+        check("read_world_time", World.getTime() >= 0, World.getTime().toString());
+        check("read_border_size", World.getBorderSize() > 0, World.getBorderSize().toString());
     }
 
     // A generic helper: one copy is compiled for each element type it is called with.
@@ -279,18 +279,18 @@ class Main {
         var keys = d.keySet();
         check("dict_len", d.size() == 3, d.size().toString());
         check("dict_keys", keys.size() == 3 && keys.contains("gold") && keys.contains("wood"), keys.size().toString());
-        check("gamerule", gamerule("max_entity_cramming") >= 0, gamerule("max_entity_cramming").toString());
-        check("random_weighted_zero", randomWeighted(List.of(0, 5)) == 1, "1");
-        var w = randomWeighted(List.of(3, 1));
+        check("gamerule", World.getGameRule("max_entity_cramming") >= 0, World.getGameRule("max_entity_cramming").toString());
+        check("random_weighted_zero", Random.weighted(List.of(0, 5)) == 1, "1");
+        var w = Random.weighted(List.of(3, 1));
         check("random_weighted_range", w >= 0 && w <= 1, w.toString());
-        check("random_binomial_all", randomBinomial(10, 1.0) == 10, randomBinomial(10, 1.0).toString());
-        check("random_binomial_none", randomBinomial(10, 0.0) == 0, randomBinomial(10, 0.0).toString());
-        mc("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
+        check("random_binomial_all", Random.binomial(10, 1.0) == 10, Random.binomial(10, 1.0).toString());
+        check("random_binomial_none", Random.binomial(10, 0.0) == 0, Random.binomial(10, 0.0).toString());
+        Commands.run("execute at @a[limit=1] run summon minecraft:pig ~3 ~ ~4 {NoAI:1b,NoGravity:1b,Silent:1b,Rotation:[90f,0f],Tags:[\"mcfc_look_pig\"]}");
         var pig = Selector.of("@e[type=minecraft:pig,tag=mcfc_look_pig,limit=1]").getFirst();
         check("look_west", near(pig.getLookX(), -1.0) && near(pig.getLookZ(), 0.0), pig.getLookX().toString());
-        mc("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
+        Commands.run("data modify entity @e[type=minecraft:pig,tag=mcfc_look_pig,limit=1] Rotation set value [0f,-90f]");
         check("look_up", near(pig.getLookY(), 1.0), pig.getLookY().toString());
-        mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
+        Commands.run("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
         var p = Selector.of("@a[limit=1]").getFirst();
         Execute.at(p, () -> {
             var here = Block.of("~ ~ ~");
@@ -298,9 +298,9 @@ class Main {
             var biome = here.getBiome();
             check("block_light", light >= 0 && light <= 15, light.toString());
             // A light block emits level 15, so the air it fills reads 15.
-            mc("setblock ~ ~3 ~ minecraft:light[level=15]");
+            Commands.run("setblock ~ ~3 ~ minecraft:light[level=15]");
             var lit = Block.of("~ ~3 ~").getLightLevel();
-            mc("setblock ~ ~3 ~ minecraft:air");
+            Commands.run("setblock ~ ~3 ~ minecraft:air");
             check("block_light_15", lit == 15, lit.toString());
             check("block_biome", Strings.startsWith(biome, "minecraft:"), biome);
             check("block_in_biome", here.inBiome(biome), biome);
@@ -316,16 +316,16 @@ class Main {
         xs.clear();
         var k = 0;
         while (k < size) {
-            xs.add((float) (random(1000) - 500) * 0.25);
+            xs.add((float) (Random.nextInt(1001) - 500) * 0.25);
             k = k + 1;
             if (k % 500 == 0) {
-                sleepTicks(1);
+                Thread.sleepTicks(1);
             }
         }
-        var started = gameTime();
+        var started = World.getGameTime();
         xs.sort();
-        var ticks = gameTime() - started;
-        mcf("say MCFCTEST INFO float sort $(size) took $(ticks) ticks");
+        var ticks = World.getGameTime() - started;
+        Commands.run("say MCFCTEST INFO float sort $(size) took $(ticks) ticks");
         var ordered = true;
         var j = 1;
         while (j < xs.size()) {
@@ -334,7 +334,7 @@ class Main {
             }
             j = j + 1;
             if (j % 200 == 0) {
-                sleepTicks(1);
+                Thread.sleepTicks(1);
             }
         }
         check("sort_float_" + size.toString(), ordered && xs.size() == size, xs.size().toString());
@@ -394,9 +394,9 @@ class Main {
         check("inventory_take_too_many", !Inventory.take(p, "minecraft:emerald", 1000), "");
         p.clear("minecraft:emerald", 2);
 
-        var keep = gamerule("keep_inventory");
+        var keep = World.getGameRule("keep_inventory");
         World.setGameRule("keep_inventory", keep == 0);
-        check("set_game_rule", gamerule("keep_inventory") != keep, gamerule("keep_inventory").toString());
+        check("set_game_rule", World.getGameRule("keep_inventory") != keep, World.getGameRule("keep_inventory").toString());
         World.setGameRule("keep_inventory", keep == 1);
 
         Team.create("mcfc_demo", "gold");

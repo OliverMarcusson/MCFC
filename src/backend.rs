@@ -6223,6 +6223,23 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     ));
                     return true;
                 }
+                // Literal bounds need no macro.
+                let literal = |arg: &IrExpr| match arg.kind {
+                    IrExprKind::Int(value) => Some(value),
+                    _ => None,
+                };
+                let bounds = match args {
+                    [max] => literal(max).map(|max| (0, max)),
+                    [min, max] => literal(min).zip(literal(max)),
+                    _ => None,
+                };
+                if let Some((min, max)) = bounds {
+                    lines.push(format!(
+                        "execute store result score {} mcfc run random value {min}..{max}",
+                        target.numeric_name()
+                    ));
+                    return true;
+                }
 
                 let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
                 let min_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);

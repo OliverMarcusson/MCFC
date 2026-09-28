@@ -34,9 +34,9 @@ class Main {
     static void health() {
         var r = mcfd.ping();
         if (r.ok()) {
-            debug("mcfd connected");
+            System.out.println("mcfd connected");
         } else {
-            debug("mcfd not responding");
+            System.out.println("mcfd not responding");
         }
     }
 }

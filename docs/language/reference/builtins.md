@@ -1,6 +1,6 @@
 # Builtins
 
-These are always in scope, with no import. Library classes such as `Timer` or `Strings` live in [`std`](./std).
+These classes and their methods are always in scope, with no import. Library classes such as `Timer` or `Strings` live in [`std`](./std).
 
 ## Selecting entities
 
@@ -49,39 +49,43 @@ To run a block of code as or at an entity, pass a block lambda. See [`Execute.as
 | `new BlockData(id)` | `BlockData` | [Block builder](./builders#block-builders) |
 | `new Component()`, `new Component(s)` | `Component` | [Text component builder](./builders#text-builders) |
 | `new BossBar(id, name)` | [`BossBar`](./types#bossbar) | Creates the bossbar, or returns the existing one with that id |
-| `summon(id)`, `summon(id, Nbt)`, `summon(EntityData)` | `Entity` | Summons at the current position |
+| `World.summon(id)`, `World.summon(id, Nbt)`, `World.summon(EntityData)` | `Entity` | Summons at the current position |
 
 ## Waiting
 
-| Function | Notes |
+| Method | Notes |
 | --- | --- |
-| `sleep(seconds: int)` | Pauses the current function. |
-| `sleepTicks(ticks: int)` | Pauses the current function. |
+| `Thread.sleep(seconds: int)` | Pauses the current method. |
+| `Thread.sleepTicks(ticks: int)` | Pauses the current method. |
 
 Both have to be used as statements. A method that sleeps also pauses its callers. See [Methods that pause](./statements#methods-that-pause). To wait without holding up the caller, put the sleep inside [`Thread.start`](./statements#thread-start).
 
-Under the hood, the rest of the function becomes a separate generated function that runs later through `schedule function`.
+Unlike Java's `Thread.sleep`, the argument is whole seconds, not milliseconds. Under the hood, the rest of the method becomes a separate generated function that runs later through `schedule function`.
 
 ## Random
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
-| `random()` | `0` to `2147483647` |
-| `random(max)` | `0` to `max`, including `max` |
-| `random(min, max)` | `min` to `max`, including both |
-| `randomWeighted(weights: List<Integer>)` | An index into `weights`, where each index's chance is proportional to its weight. `weights` must be a literal such as `List.of(3, 1)`. |
-| `randomBinomial(n: int, p: float)` | How many of `n` tries succeed, when each succeeds with chance `p`. |
+| `Random.nextInt()` | `0` to `2147483647` |
+| `Random.nextInt(bound)` | `0` to `bound - 1`. As in Java, the bound itself is never returned. |
+| `Random.nextInt(origin, bound)` | `origin` to `bound - 1` |
+| `Random.weighted(weights: List<Integer>)` | An index into `weights`, where each index's chance is proportional to its weight. `weights` must be a literal such as `List.of(3, 1)`. |
+| `Random.binomial(n: int, p: float)` | How many of `n` tries succeed, when each succeeds with chance `p`. |
+
+These need no import. [`std.random`](./std#std-random) adds `Random.chance`, `nextFloat`, `pick` and `shuffle` after `import std.random.Random;`.
 
 For randomness from the host machine, see [`rand.int`](/runtime/capabilities#calls).
 
 ## World
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
-| `gameTime()` | `int`, the ticks the world has run (`time query gametime`) |
-| `worldTime()` | `int`, the day clock (`time query time`) |
-| `borderSize()` | `int`, the world border width in blocks |
-| `gamerule(name)` | `int`, the game rule's value, with `true` as `1`. The name must be a literal. |
+| `World.getGameTime()` | `int`, the ticks the world has run (`time query gametime`) |
+| `World.getTime()` | `int`, the day clock (`time query time`) |
+| `World.getBorderSize()` | `int`, the world border width in blocks |
+| `World.getGameRule(name)` | `int`, the game rule's value, with `true` as `1`. The name must be a literal. |
+
+These and `World.summon` need no import. [`std.world`](./std#std-world) adds setters such as `World.setWeather` after `import std.world.World;`.
 
 Block-level reads such as light and biome are methods on [`Block`](./types#block).
 
@@ -89,9 +93,9 @@ Block-level reads such as light and biome are methods on [`Block`](./types#block
 
 Conversions are [casts](./types#casts): `(int) x`, `(float) x`, `(boolean) x`, `(String) x` and `(Player) e`.
 
-| Function | Returns |
+| Method | Returns |
 | --- | --- |
-| `hasData(path)` | `boolean`, whether a path inside a storage value (list, map, record) exists. It doesn't work on entity NBT. |
+| `Nbt.has(path)` | `boolean`, whether a path inside a storage value (list, map, record) exists. It doesn't work on entity NBT. |
 
 ```mcfc
 class Main {
@@ -99,8 +103,8 @@ class Main {
         var hp = (int) pig.nbt.Health;
         var glowing = (boolean) pig.nbt.Glowing;
         var counts = Map.of("wood", 2);
-        if (hasData(counts["stone"])) {
-            debug("$(hp) hp");
+        if (Nbt.has(counts["stone"])) {
+            System.out.println("$(hp) hp");
         }
     }
 }
@@ -108,7 +112,7 @@ class Main {
 
 ## Debugging
 
-`debug(message: String)` sends `[MCFC debug] message` to every player with `tellraw @a`.
+`System.out.println(message: String)` sends `[MCFC debug] message` to every player with `tellraw @a`.
 
 ## Logging
 

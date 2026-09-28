@@ -45,7 +45,7 @@ class Main {
 
     @Command("dash")
     static void dash(Player player) {
-        var now = gameTime();
+        var now = World.getGameTime();
         if (now - player.state.last_dash < 100) {
             player.sendActionBar("Dash is on cooldown");
             return;
@@ -56,7 +56,7 @@ class Main {
 }
 ```
 
-`gameTime()` counts ticks and never goes backwards, so it's safe to compare against a stored value.
+`World.getGameTime()` counts ticks and never goes backwards, so it's safe to compare against a stored value.
 
 ## Countdowns and delays
 
@@ -66,7 +66,7 @@ class Main {
         Thread.start(() -> {
             for (int i = 0; i < 5; i++) {
                 Selector.of("@a").sendTitle("$(5 - i)");
-                sleep(1);
+                Thread.sleep(1);
             }
             Selector.of("@a").sendTitle("Go!");
         });
@@ -74,7 +74,7 @@ class Main {
 }
 ```
 
-`sleep` pauses only the code inside `Thread.start`. Without `Thread.start`, the method calling `startRound` would also wait.
+`Thread.sleep` pauses only the code inside `Thread.start`. Without `Thread.start`, the method calling `startRound` would also wait.
 
 ## Give a custom item
 
@@ -122,7 +122,7 @@ class Main {
         bar.setVisible(true);
         Thread.start(() -> {
             for (int i = 0; i < 30; i++) {
-                sleep(1);
+                Thread.sleep(1);
                 bar.setValue(29 - i);
             }
             bar.remove();
@@ -239,9 +239,9 @@ class Main implements Listener {
 class Main {
     public static void main() {
         var player = Selector.of("@p").getFirst();
-        debug("health=$(player.getHealth()) food=$(player.getFoodLevel())");
+        System.out.println("health=$(player.getHealth()) food=$(player.getFoodLevel())");
     }
 }
 ```
 
-`debug` sends the message to every player's chat. To see the generated commands, build with `--no-optimize` and open `dist/data/<namespace>/function/generated/`.
+`System.out.println` sends the message to every player's chat. To see the generated commands, build with `--no-optimize` and open `dist/data/<namespace>/function/generated/`.

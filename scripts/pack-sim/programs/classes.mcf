@@ -75,14 +75,14 @@ class Main {
         Counter same = hits;
         bump(same);
         String counted = "$(hits) " + hits.get() + " " + Counter.zero();
-        mcf("say $(counted)");
+        Commands.run("say $(counted)");
 
         Node head = new Node(1);
         head.next = new Node(2);
         head.next.next = new Node(3);
         head.next.value = 20;
         String list = "sum " + total(head) + " third " + head.next.next.value;
-        mcf("say $(list)");
+        Commands.run("say $(list)");
 
         List<Node> nodes = List.of();
         nodes.add(head);
@@ -90,20 +90,20 @@ class Main {
         Node last = nodes[1];
         boolean identity = nodes[0] == head;
         String stored = "last " + last.value + " " + identity + " " + (last == head);
-        mcf("say $(stored)");
+        Commands.run("say $(stored)");
 
         Node missing = null;
         String empty = "null " + (missing == null) + " " + missing + " " + new Node(0);
-        mcf("say $(empty)");
+        Commands.run("say $(empty)");
 
         Counter.created = Counter.created * 10;
         String statics = "created " + Counter.created + " " + Counter.units(3) + " limit " + Counter.LIMIT + " serial " + hits.serial;
-        mcf("say $(statics)");
+        Commands.run("say $(statics)");
 
         Bag bag = new Bag();
         bag.items.add(new Node(8));
         bag.items()[0].value = 80;
         String bagText = "bag " + bag.items()[0].value + " " + bag.items[0].value;
-        mcf("say $(bagText)");
+        Commands.run("say $(bagText)");
     }
 }

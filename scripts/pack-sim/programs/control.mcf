@@ -53,13 +53,13 @@ class Main {
         var xs = List.of(-5, 0, 7, 23, 42);
         for (var x : xs) {
             var c = classify(x);
-            mcf("say classify $(x) = $(c)");
+            Commands.run("say classify $(x) = $(c)");
         }
         var e = findFirstEven(9);
-        mcf("say even $(e)");
+        Commands.run("say even $(e)");
         var n1 = nested(3, 5);
         var n2 = nested(9, 4);
-        mcf("say nested $(n1) $(n2)");
+        Commands.run("say nested $(n1) $(n2)");
         var s = 0;
         var i = 0;
         while (true) {
@@ -72,6 +72,6 @@ class Main {
             }
             s = s + i;
         }
-        mcf("say sum $(s)");
+        Commands.run("say sum $(s)");
     }
 }

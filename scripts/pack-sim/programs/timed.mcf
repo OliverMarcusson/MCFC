@@ -9,7 +9,7 @@ class Main {
         for (int i = 0; i < n; i++) {
             acc = acc + i;
             if (i % 2 == 0) {
-                sleepTicks(1);
+                Thread.sleepTicks(1);
             }
         }
         return acc;
@@ -17,15 +17,15 @@ class Main {
 
     public static void main() {
         Thread.start(() -> {
-            sleepTicks(3);
-            mc("say async done");
+            Thread.sleepTicks(3);
+            Commands.run("say async done");
         });
-        mc("say before");
+        Commands.run("say before");
         var r = slowSum(5);
-        mcf("say slow $(r)");
+        Commands.run("say slow $(r)");
         var xs = List.of(5, 3, 9, 1, 7, 2);
         xs.sort();
-        mcf("say sorted $(xs[0]) $(xs[1]) $(xs[5])");
+        Commands.run("say sorted $(xs[0]) $(xs[1]) $(xs[5])");
         var flag = false;
         var n = 0;
         while (!flag) {
@@ -34,6 +34,6 @@ class Main {
                 flag = true;
             }
         }
-        mcf("say flag $(n)");
+        Commands.run("say flag $(n)");
     }
 }

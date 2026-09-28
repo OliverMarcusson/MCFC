@@ -12,7 +12,7 @@ class Main {
         Supplier<Integer> seven = () -> 7;
         BinaryOperator<Integer> add = (first, second) -> first + second;
         String basics = "basics " + even.test(4) + " " + odd.test(4) + " " + label.apply(3) + " " + seven.get() + " " + add.apply(2, 3);
-        mcf("say $(basics)");
+        Commands.run("say $(basics)");
 
         Comparator<Fighter> byKills = Comparator.comparing(Fighter::kills);
         Comparator<Fighter> order = byKills.reversed().thenComparing(Comparator.comparing(Fighter::deaths));
@@ -20,19 +20,19 @@ class Main {
         Fighter sam = new Fighter("sam", 5, 2);
         Fighter kim = new Fighter("kim", 3, 0);
         String compared = "compared " + order.compare(alex, sam) + " " + order.compare(alex, kim);
-        mcf("say $(compared)");
+        Commands.run("say $(compared)");
 
         List<Integer> numbers = List.of(5, 2, 8, 1, 4);
         numbers.removeIf(number -> number > 6);
         numbers.replaceAll(number -> number * 10);
         numbers.sort((first, second) -> second - first);
-        numbers.forEach(number -> mcf("say each $(number)"));
+        numbers.forEach(number -> Commands.run("say each $(number)"));
         List<Fighter> fighters = List.of(alex, sam, kim);
         fighters.sort(order);
         String names = "";
         for (Fighter fighter : fighters) {
             names = names + fighter.name() + " ";
         }
-        mcf("say sorted $(numbers) $(names)");
+        Commands.run("say sorted $(numbers) $(names)");
     }
 }

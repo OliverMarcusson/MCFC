@@ -162,11 +162,11 @@ class Main {
 | `int remaining(Player player, String name)` | Ticks left, or `0` when ready. |
 | `void clear(Player player, String name)` | Ends `name` early. |
 
-Each cooldown stores the [`gameTime()`](./builtins) it ends at, in the `std.cooldowns` [`@PlayerState`](./statements#playerstate), so cooldowns keep running while the player is offline and across restarts. Names follow the [map key rules](./types#map).
+Each cooldown stores the [`World.getGameTime()`](./builtins#world) it ends at, in the `std.cooldowns` [`@PlayerState`](./statements#playerstate), so cooldowns keep running while the player is offline and across restarts. Names follow the [map key rules](./types#map).
 
 ## `std.random`
 
-`Random`, built on the [`random(min, max)`](./builtins#random) builtin: `Random.chance(0.25)`.
+`import std.random.Random;` adds these to the [builtin `Random` methods](./builtins#random) such as `Random.nextInt`: `Random.chance(0.25)`.
 
 | Method | Returns |
 | --- | --- |
@@ -183,7 +183,7 @@ import std.time.Time;
 class Main {
     @Every(ticks = 20)
     static void showUptime() {
-        Sidebar.setLine(0, "Uptime " + Time.formatTicks(gameTime()));
+        Sidebar.setLine(0, "Uptime " + Time.formatTicks(World.getGameTime()));
     }
 }
 ```
@@ -222,7 +222,7 @@ class Main {
 | `boolean running(String name)` | `true` while ticks remain. |
 | `void stop(String name)` | Ends `name` now. |
 
-Timers store the [`gameTime()`](./builtins) they end at in the [static field](./statements#static-fields) `Timer.stdTimers`, so they keep counting across reloads.
+Timers store the [`World.getGameTime()`](./builtins#world) they end at in the [static field](./statements#static-fields) `Timer.stdTimers`, so they keep counting across reloads.
 
 ## `std.region`
 
@@ -367,7 +367,7 @@ class Main {
 | `void forceload(int x0, int z0, int x1, int z1)` | Keeps the chunks from column `x0, z0` to `x1, z1` loaded with nobody near. They load a few ticks later; check with [`Block.isLoaded()`](./types#block). |
 | `void setSpawn(Block block)` | Where players spawn and respawn without a bed. |
 
-To read a game rule, use the [`gamerule(name)`](./builtins) builtin.
+To read a game rule, use the builtin [`World.getGameRule(name)`](./builtins#world).
 
 ## `std.noise`
 

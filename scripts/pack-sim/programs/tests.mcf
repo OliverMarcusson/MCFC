@@ -18,7 +18,7 @@ class Main {
     }
 
     public static void main() {
-        mc("function tests:test");
-        mc("execute if score #test_pass mcfc matches 1 if score #test_fail mcfc matches 1 run say one passed one failed");
+        Commands.run("function tests:test");
+        Commands.run("execute if score #test_pass mcfc matches 1 if score #test_fail mcfc matches 1 run say one passed one failed");
     }
 }

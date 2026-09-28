@@ -11,6 +11,6 @@ class Main {
         Vec3 side = look.cross(up);
         Vec3 zero = new Vec3(0.0, 0.0, 0.0).normalize();
         String line = "$(push) $(size) $(dot) $(side) $(zero)";
-        mcf("say $(line)");
+        Commands.run("say $(line)");
     }
 }

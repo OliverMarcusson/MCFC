@@ -16,18 +16,18 @@ class Main {
 
     public static void main() {
         var g = greet("ab", 3);
-        mcf("say $(g)");
+        Commands.run("say $(g)");
         var p = pick(true);
         var q = pick(false);
-        mcf("say $(p) $(q)");
+        Commands.run("say $(p) $(q)");
         var words = List.of("x", "yy", "zzz");
         var total = 0;
         for (var w : words) {
             total = total + w.size();
             if (w == "yy") {
-                mcf("say found yy");
+                Commands.run("say found yy");
             }
         }
-        mcf("say total $(total)");
+        Commands.run("say total $(total)");
     }
 }

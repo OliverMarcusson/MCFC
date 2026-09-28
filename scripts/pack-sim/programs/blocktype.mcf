@@ -3,7 +3,7 @@ class Main {
         var id = b.getType();
         var facing = b.getState("facing");
         var half = b.getState("half");
-        mcf("say $(id) facing=$(facing) half=$(half)");
+        Commands.run("say $(id) facing=$(facing) half=$(half)");
     }
 
     public static void main() {

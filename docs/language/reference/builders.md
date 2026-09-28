@@ -1,6 +1,6 @@
 # Builders
 
-A builder holds an entity, block, item or text component that you configure, then pass to `summon`, `setBlock`, `give` or `sendMessage`.
+A builder holds an entity, block, item or text component that you configure, then pass to `World.summon`, `setBlock`, `give` or `sendMessage`.
 
 ## Entity Builders
 
@@ -30,7 +30,7 @@ class Main {
         chicken.setName("Passenger");
         pig.nbt.Passengers[0] = chicken;
 
-        summon(pig);
+        World.summon(pig);
     }
 }
 ```
@@ -173,7 +173,7 @@ class Main {
         var pig = new EntityData("minecraft:pig");
         var payload = pig.asNbt();
 
-        summon("minecraft:pig", payload);
+        World.summon("minecraft:pig", payload);
     }
 }
 ```
@@ -182,4 +182,4 @@ class Main {
 
 Builders are command-storage objects. Setters such as `pig.setNoAi(true)` and raw-data assignments such as `chest.states.facing = "north"` or `msg.color = "gold"` become `data modify storage ...` writes into generated runtime storage.
 
-When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `summon(pig)` uses the entity id and NBT payload, while `Block.of("~ ~ ~").setBlock(chest)` emits the block id/states and then merges block-entity NBT.
+When a builder is consumed, MCFC renders that stored data into the relevant Minecraft command sequence. For example, `World.summon(pig)` uses the entity id and NBT payload, while `Block.of("~ ~ ~").setBlock(chest)` emits the block id/states and then merges block-entity NBT.

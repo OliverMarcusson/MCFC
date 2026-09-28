@@ -1497,7 +1497,7 @@ fn native_method(
         Type::ItemDef => &["ItemStack"],
         Type::PlayerRef => &["Player", "Entity"],
         Type::EntityRef => &["Entity"],
-        Type::EntitySet => &["Selector", "Entity"],
+        Type::EntitySet | Type::PlayerSet => &["Selector", "Entity"],
         _ => return None,
     };
     let owners: Vec<String> = NATIVE.with(|map| {
@@ -1917,7 +1917,12 @@ pub enum TypedExprKind {
         fields: Vec<(String, TypedExpr)>,
     },
     Variable(String),
-    Selector(String),
+    /// A selector; a runtime value in its arguments is a `$(value)`, filled in
+    /// from `placeholders` in order.
+    Selector {
+        spec: crate::selector::SelectorSpec,
+        placeholders: Vec<MacroPlaceholder>,
+    },
     Block(String),
     Unary {
         op: UnaryOp,
@@ -2777,7 +2782,7 @@ fn type_check_function(
             env.insert(param.name.clone(), param.ty.clone());
             ref_env.insert(
                 param.name.clone(),
-                if param.ty == Type::PlayerRef {
+                if matches!(param.ty, Type::PlayerRef | Type::PlayerSet) {
                     RefKind::Player
                 } else {
                     RefKind::Unknown
@@ -3617,6 +3622,7 @@ fn type_check_block(
                 );
                 let (mut item_ty, mut item_ref_kind) = match &iterable.ty {
                     Type::EntitySet => (Type::EntityRef, iterable.ref_kind),
+                    Type::PlayerSet => (Type::PlayerRef, RefKind::Player),
                     Type::Array(element) => (*element.clone(), RefKind::Unknown),
                     _ => {
                         diagnostics.push(Diagnostic::new(
@@ -3809,7 +3815,7 @@ fn type_check_block(
                 );
                 if !matches!(
                     anchor.ty,
-                    Type::EntitySet | Type::EntityRef | Type::PlayerRef
+                    Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef
                 ) {
                     diagnostics.push(Diagnostic::new(
                         format!(
@@ -4605,7 +4611,7 @@ fn type_check_expr(
                     diagnostics,
                 );
             }
-            let ref_kind = if path.ty == Type::PlayerRef {
+            let ref_kind = if matches!(path.ty, Type::PlayerRef | Type::PlayerSet) {
                 RefKind::Player
             } else {
                 RefKind::Unknown
@@ -6248,6 +6254,7 @@ fn is_storage_data_expr(expr: &TypedExpr) -> bool {
             Type::Int
                 | Type::Bool
                 | Type::EntitySet
+                | Type::PlayerSet
                 | Type::EntityRef
                 | Type::PlayerRef
                 | Type::BlockRef
@@ -6764,7 +6771,7 @@ fn type_check_builtin_call(
             diagnostics,
             GameplayBuiltinKind::Fill,
         )),
-        "selector" => {
+        "selector" | "selector_player" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -6775,20 +6782,76 @@ fn type_check_builtin_call(
                 diagnostics,
             );
             expect_arity(function, &args, 1, expr, diagnostics);
-            if let Some(arg) = args.first()
-                && arg.ty != Type::String
-            {
+            let Some(arg) = args.into_iter().next() else {
+                return Some(TypedExpr {
+                    kind: empty_selector(),
+                    ty: Type::EntitySet,
+                    ref_kind: RefKind::Unknown,
+                });
+            };
+            let factory = if function == "selector" {
+                "Selector.of(...)"
+            } else {
+                "Selector.player(...)"
+            };
+            if arg.ty != Type::String {
                 diagnostics.push(Diagnostic::new(
-                    "Selector.of(...) requires a 'String' argument",
+                    format!("{factory} requires a 'String' argument"),
                     expr.span.clone(),
                 ));
             }
-            let raw = extract_string_literal(args.first(), "selector", expr, diagnostics);
-            Some(TypedExpr {
-                kind: TypedExprKind::Selector(raw.clone()),
-                ty: Type::EntitySet,
-                ref_kind: detect_selector_ref_kind(&raw),
-            })
+            // `Selector.of("@e[tag=$(t)]")` keeps `t` as a runtime argument;
+            // a String variable is the whole selector.
+            let (template, placeholders) = match arg.kind {
+                TypedExprKind::String(text) => (text, Vec::new()),
+                TypedExprKind::InterpolatedString {
+                    template,
+                    placeholders,
+                } => (template, placeholders),
+                _ => (
+                    "$(value)".to_string(),
+                    vec![MacroPlaceholder {
+                        key: String::new(),
+                        ty: arg.ty.clone(),
+                        expr: arg,
+                    }],
+                ),
+            };
+            // Name each `$(...)` after its placeholder, which are in text order.
+            let mut placeholders = placeholders;
+            let mut index = 0;
+            let template = crate::selector::map_markers(&template, |_| {
+                index += 1;
+                format!("p{index}")
+            });
+            for (index, placeholder) in placeholders.iter_mut().enumerate() {
+                placeholder.key = format!("p{}", index + 1);
+            }
+            let spec = match crate::selector::SelectorSpec::parse(&template) {
+                Ok(spec) => spec,
+                Err(error) => {
+                    diagnostics.push(Diagnostic::new(error, expr.span.clone()));
+                    crate::selector::SelectorSpec::new(crate::selector::Base::Entities)
+                }
+            };
+            for error in spec.check() {
+                diagnostics.push(Diagnostic::new(error, expr.span.clone()));
+            }
+            let mut selector = selector_expr(spec, placeholders);
+            if function == "selector_player" {
+                if !matches!(
+                    &selector.kind,
+                    TypedExprKind::Selector { spec, .. }
+                        if matches!(spec.base, crate::selector::Base::Name(_))
+                ) {
+                    diagnostics.push(Diagnostic::new(
+                        "Selector.player(...) takes a player name or a UUID, not a selector",
+                        expr.span.clone(),
+                    ));
+                }
+                selector.ref_kind = RefKind::Player;
+            }
+            Some(selector)
         }
         "block" => {
             let args = type_check_args(
@@ -6907,7 +6970,7 @@ fn type_check_builtin_call(
             );
             expect_arity(function, &args, 1, expr, diagnostics);
             if let Some(arg) = args.first_mut() {
-                if arg.ty != Type::EntitySet {
+                if !is_selector_type(&arg.ty) {
                     diagnostics.push(Diagnostic::new(
                         "Selector.findFirst() requires a Selector receiver",
                         expr.span.clone(),
@@ -6942,11 +7005,11 @@ fn type_check_builtin_call(
             );
             expect_arity(function, &args, 1, expr, diagnostics);
             let mut arg = args.into_iter().next().unwrap_or(TypedExpr {
-                kind: TypedExprKind::Selector(String::new()),
+                kind: empty_selector(),
                 ty: Type::EntitySet,
                 ref_kind: RefKind::Unknown,
             });
-            if arg.ty != Type::EntitySet {
+            if !is_selector_type(&arg.ty) {
                 diagnostics.push(Diagnostic::new(
                     "Selector.getFirst() requires a Selector receiver",
                     expr.span.clone(),
@@ -7070,7 +7133,7 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             });
             let value = iter.next().unwrap_or(TypedExpr {
-                kind: TypedExprKind::Selector(String::new()),
+                kind: empty_selector(),
                 ty: Type::EntitySet,
                 ref_kind: RefKind::Unknown,
             });
@@ -7082,7 +7145,11 @@ fn type_check_builtin_call(
             }
             if !matches!(
                 value.ty,
-                Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+                Type::EntitySet
+                    | Type::PlayerSet
+                    | Type::EntityRef
+                    | Type::PlayerRef
+                    | Type::BlockRef
             ) {
                 diagnostics.push(Diagnostic::new(
                     "Execute.at(...) requires a 'Selector', 'Entity', or 'Block' value",
@@ -7132,13 +7199,13 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             });
             let value = iter.next().unwrap_or(TypedExpr {
-                kind: TypedExprKind::Selector(String::new()),
+                kind: empty_selector(),
                 ty: Type::EntitySet,
                 ref_kind: RefKind::Unknown,
             });
             if !matches!(
                 anchor.ty,
-                Type::EntitySet | Type::EntityRef | Type::PlayerRef
+                Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef
             ) {
                 diagnostics.push(Diagnostic::new(
                     "Execute.as(...) requires a 'Selector' or 'Entity' anchor",
@@ -7147,7 +7214,11 @@ fn type_check_builtin_call(
             }
             if !matches!(
                 value.ty,
-                Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+                Type::EntitySet
+                    | Type::PlayerSet
+                    | Type::EntityRef
+                    | Type::PlayerRef
+                    | Type::BlockRef
             ) {
                 diagnostics.push(Diagnostic::new(
                     "Execute.as(...) requires a 'Selector', 'Entity', or 'Block' value",
@@ -7471,9 +7542,44 @@ fn type_check_method_call(
             ref_kind: RefKind::Unknown,
         });
     }
+    if is_selector_type(&receiver.ty)
+        && (SELECTOR_REFINERS.contains(&method) || SELECTOR_QUERIES.contains(&method))
+    {
+        let args = type_check_args(
+            args,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        );
+        return Some(if SELECTOR_QUERIES.contains(&method) {
+            query_selector(receiver, method, args, expr.span.clone(), diagnostics)
+        } else {
+            refine_selector(receiver, method, args, expr.span.clone(), diagnostics)
+        });
+    }
+    if is_entity_ref_type(&receiver.ty) && method == "matches" {
+        let args = type_check_args(
+            args,
+            struct_defs,
+            signatures,
+            env,
+            ref_env,
+            called_functions,
+            diagnostics,
+        );
+        return Some(entity_matches(
+            receiver,
+            args,
+            expr.span.clone(),
+            diagnostics,
+        ));
+    }
     let on_world = matches!(
         receiver.ty,
-        Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
+        Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
     );
     if on_world
         && let Some((_, new_name)) = OLD_ENTITY_METHOD_NAMES
@@ -7493,7 +7599,7 @@ fn type_check_method_call(
     } else {
         method
     };
-    if receiver.ty == Type::EntitySet && matches!(method, "first" | "findFirst") {
+    if is_selector_type(&receiver.ty) && matches!(method, "first" | "findFirst") {
         if !args.is_empty() {
             diagnostics.push(Diagnostic::new(
                 format!("{} takes no arguments", display_call(method)),
@@ -8746,7 +8852,7 @@ fn type_check_method_call(
         }
         "add_tag" | "remove_tag" | "has_tag" => {
             // Adding and removing apply to every match of a selector; `hasTag` asks one entity.
-            let set_ok = method != "has_tag" && receiver.ty == Type::EntitySet;
+            let set_ok = method != "has_tag" && is_selector_type(&receiver.ty);
             if !is_entity_ref_type(&receiver.ty) && !set_ok {
                 diagnostics.push(Diagnostic::new(
                     format!("{} requires an 'Entity' receiver", display_call(method)),
@@ -8791,7 +8897,7 @@ fn type_check_method_call(
             Some(method_call_expr(receiver, method, args, Type::Int))
         }
         "effect" => {
-            if !is_entity_ref_type(&receiver.ty) && receiver.ty != Type::EntitySet {
+            if !is_entity_ref_type(&receiver.ty) && !is_selector_type(&receiver.ty) {
                 diagnostics.push(Diagnostic::new(
                     "effect(...) requires an 'Entity' receiver",
                     expr.span.clone(),
@@ -9834,7 +9940,7 @@ fn record_component(receiver: TypedExpr, field: &str, ty: Type) -> TypedExpr {
     path.segment_types.push(ty.clone());
     path.ty = ty.clone();
     TypedExpr {
-        ref_kind: if ty == Type::PlayerRef {
+        ref_kind: if matches!(ty, Type::PlayerRef | Type::PlayerSet) {
             RefKind::Player
         } else {
             RefKind::Unknown
@@ -10333,6 +10439,21 @@ fn coerce_expr_to_expected_type(expr: TypedExpr, expected: &Type) -> TypedExpr {
         expr.ref_kind = RefKind::Player;
         return expr;
     }
+    // `Selector<Player>` takes a selector known to match only players.
+    if *expected == Type::PlayerSet
+        && expr.ty == Type::EntitySet
+        && expr.ref_kind == RefKind::Player
+    {
+        let mut expr = expr;
+        expr.ty = Type::PlayerSet;
+        return expr;
+    }
+    if *expected == Type::EntitySet && expr.ty == Type::PlayerSet {
+        let mut expr = expr;
+        expr.ty = Type::EntitySet;
+        expr.ref_kind = RefKind::Player;
+        return expr;
+    }
     if *expected == Type::EntityRef && expr.ty == Type::PlayerRef {
         let mut expr = expr;
         expr.ty = Type::EntityRef;
@@ -10374,7 +10495,7 @@ fn expect_entity_receiver(
 ) {
     if !matches!(
         receiver.ty,
-        Type::EntityRef | Type::PlayerRef | Type::EntitySet
+        Type::EntityRef | Type::PlayerRef | Type::EntitySet | Type::PlayerSet
     ) {
         diagnostics.push(Diagnostic::new(
             format!(
@@ -10448,7 +10569,12 @@ fn expect_entity_target_arg(
         function,
         args,
         index,
-        |ty| matches!(ty, Type::EntityRef | Type::PlayerRef | Type::EntitySet),
+        |ty| {
+            matches!(
+                ty,
+                Type::EntityRef | Type::PlayerRef | Type::EntitySet | Type::PlayerSet
+            )
+        },
         "an 'Entity' or 'Selector'",
         "target",
         expr,
@@ -10500,25 +10626,6 @@ fn expect_arg_matches(
             ),
             expr.span.clone(),
         ));
-    }
-}
-
-fn detect_selector_ref_kind(selector: &str) -> RefKind {
-    if is_plain_player_name_target(selector) {
-        return RefKind::Player;
-    }
-    let trimmed = selector.trim().to_ascii_lowercase();
-    if trimmed.starts_with("@p")
-        || trimmed.starts_with("@a")
-        || trimmed.starts_with("@r")
-        || trimmed.starts_with("@s")
-        || trimmed.contains("type=player")
-    {
-        RefKind::Player
-    } else if trimmed.contains("type=") {
-        RefKind::NonPlayer
-    } else {
-        RefKind::Unknown
     }
 }
 
@@ -10848,7 +10955,7 @@ fn validate_bossbar_path_write(
         "visible" => value.ty == Type::Bool,
         "players" => matches!(
             value.ty,
-            Type::EntityRef | Type::PlayerRef | Type::EntitySet
+            Type::EntityRef | Type::PlayerRef | Type::EntitySet | Type::PlayerSet
         ),
         _ => {
             diagnostics.push(Diagnostic::new(
@@ -11126,7 +11233,7 @@ fn extract_string_literal(
 
 fn can_narrow_single_selector(expr: &TypedExpr) -> bool {
     match &expr.kind {
-        TypedExprKind::Selector(_) => true,
+        TypedExprKind::Selector { spec, .. } => !spec.is_runtime_text(),
         TypedExprKind::At { value, .. } | TypedExprKind::As { value, .. } => {
             can_narrow_single_selector(value)
         }
@@ -11136,8 +11243,10 @@ fn can_narrow_single_selector(expr: &TypedExpr) -> bool {
 
 fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, span: Span) {
     match &mut expr.kind {
-        TypedExprKind::Selector(value) => {
-            *value = add_or_validate_limit(value, diagnostics, span);
+        TypedExprKind::Selector { spec, .. } => {
+            if let Err(error) = spec.limit_one() {
+                diagnostics.push(Diagnostic::new(error, span));
+            }
         }
         TypedExprKind::At { value, .. } => rewrite_single_limit(value, diagnostics, span),
         TypedExprKind::As { value, .. } => rewrite_single_limit(value, diagnostics, span),
@@ -11145,52 +11254,456 @@ fn rewrite_single_limit(expr: &mut TypedExpr, diagnostics: &mut Diagnostics, spa
     }
 }
 
-fn add_or_validate_limit(value: &str, diagnostics: &mut Diagnostics, span: Span) -> String {
-    if is_plain_player_name_target(value) {
-        return value.to_string();
+/// `Selector` methods that add an argument and give a new `Selector`.
+const SELECTOR_REFINERS: &[&str] = &[
+    "type",
+    "notType",
+    "tag",
+    "notTag",
+    "team",
+    "notTeam",
+    "name",
+    "notName",
+    "predicate",
+    "notPredicate",
+    "nbt",
+    "notNbt",
+    "gameMode",
+    "notGameMode",
+    "sort",
+    "limit",
+    "distance",
+    "level",
+    "xRotation",
+    "yRotation",
+    "score",
+    "advancement",
+    "origin",
+    "volume",
+    "players",
+];
+
+/// `Selector` methods that ask the game about the matches.
+const SELECTOR_QUERIES: &[&str] = &["count", "exists", "isEmpty"];
+
+fn is_selector_type(ty: &Type) -> bool {
+    matches!(ty, Type::EntitySet | Type::PlayerSet)
+}
+
+/// A literal's selector text, or a new `$(nK)` runtime value.
+fn selector_value(arg: TypedExpr, placeholders: &mut Vec<MacroPlaceholder>) -> String {
+    match &arg.kind {
+        TypedExprKind::String(text) => return text.clone(),
+        TypedExprKind::Int(value) => return value.to_string(),
+        TypedExprKind::Float(value) => return value.clone(),
+        TypedExprKind::Bool(value) => return value.to_string(),
+        TypedExprKind::Unary {
+            op: UnaryOp::Neg,
+            expr,
+        } => match &expr.kind {
+            TypedExprKind::Int(value) => return format!("-{value}"),
+            TypedExprKind::Float(value) => return format!("-{value}"),
+            _ => {}
+        },
+        _ => {}
     }
-    // `@s` is intrinsically a single target.  Appending `limit=1` to it is
-    // redundant and, on the target Minecraft version, prevents the selector
-    // produced inside generated event/command execution contexts from being
-    // resolved reliably.
-    let trimmed = value.trim();
-    if trimmed == "@s" || trimmed.starts_with("@s[") {
-        return value.to_string();
-    }
-    let lower = value.to_ascii_lowercase();
-    if let Some(index) = lower.find("limit=") {
-        let suffix = &lower[index + 6..];
-        let digits: String = suffix
-            .chars()
-            .take_while(|ch| ch.is_ascii_digit())
-            .collect();
-        if digits == "1" {
-            return value.to_string();
+    let key = format!("n{}", placeholders.len() + 1);
+    let marker = format!("$({key})");
+    placeholders.push(MacroPlaceholder {
+        key,
+        ty: arg.ty.clone(),
+        expr: arg,
+    });
+    marker
+}
+
+/// `sel.tag("boss")`, `sel.distance(0, 16)` and friends: the selector with
+/// one more argument. Only a selector the compiler can see can be refined.
+fn refine_selector(
+    receiver: TypedExpr,
+    method: &str,
+    args: Vec<TypedExpr>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    use crate::selector::{Base, arg, quote_text};
+    let error = |diagnostics: &mut Diagnostics, message: String| {
+        diagnostics.push(Diagnostic::new(message, span.clone()));
+    };
+    let TypedExprKind::Selector {
+        mut spec,
+        mut placeholders,
+    } = receiver.kind
+    else {
+        error(
+            diagnostics,
+            format!(
+                "Selector.{method}(...) needs a selector the compiler can see, such as Selector.entities() or Selector.of(\"@e\"); chain it where the selector is made"
+            ),
+        );
+        return receiver;
+    };
+    let is_number = |ty: &Type| matches!(ty, Type::Int | Type::Float);
+    let arity = args.len();
+    let usage = |expected: &str| format!("use Selector.{method}({expected})");
+    // One side of a range, or both: `distance(5)` is `..5`, `level(5)` is `5`.
+    let range = |args: Vec<TypedExpr>,
+                 int_only: bool,
+                 single_is_max: bool,
+                 placeholders: &mut Vec<MacroPlaceholder>,
+                 diagnostics: &mut Diagnostics|
+     -> Option<String> {
+        let number_ok = |ty: &Type| {
+            if int_only {
+                *ty == Type::Int
+            } else {
+                matches!(ty, Type::Int | Type::Float)
+            }
+        };
+        let what = if int_only { "int" } else { "float" };
+        match args.as_slice() {
+            [one] if one.ty == Type::String => match &one.kind {
+                TypedExprKind::String(text) => Some(text.clone()),
+                _ => {
+                    diagnostics.push(Diagnostic::new(
+                        format!("Selector.{method}(range) needs a literal range such as \"1..5\""),
+                        span.clone(),
+                    ));
+                    None
+                }
+            },
+            [one] if number_ok(&one.ty) => {
+                let value = selector_value(one.clone(), placeholders);
+                Some(if single_is_max {
+                    format!("..{value}")
+                } else {
+                    value
+                })
+            }
+            [min, max] if number_ok(&min.ty) && number_ok(&max.ty) => {
+                let min = selector_value(min.clone(), placeholders);
+                let max = selector_value(max.clone(), placeholders);
+                Some(format!("{min}..{max}"))
+            }
+            _ => {
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "use Selector.{method}({what}), Selector.{method}(min, max) or Selector.{method}(\"min..max\")"
+                    ),
+                    span.clone(),
+                ));
+                None
+            }
         }
+    };
+    let mut new_args = Vec::new();
+    match method {
+        "type" | "notType" | "tag" | "notTag" | "team" | "notTeam" | "name" | "notName"
+        | "predicate" | "notPredicate" | "nbt" | "notNbt" => {
+            let negated = method.starts_with("not");
+            let key = if negated {
+                method[3..].to_ascii_lowercase()
+            } else {
+                method.to_string()
+            };
+            match args.into_iter().next() {
+                Some(value) if arity == 1 && value.ty == Type::String => {
+                    let literal = matches!(value.kind, TypedExprKind::String(_));
+                    let mut text = selector_value(value, &mut placeholders);
+                    if matches!(key.as_str(), "name" | "team") {
+                        text = if literal {
+                            quote_text(&text)
+                        } else {
+                            format!("\"{text}\"")
+                        };
+                    }
+                    new_args.push(arg(&key, negated, &text));
+                }
+                _ => error(diagnostics, usage("String")),
+            }
+        }
+        "gameMode" | "notGameMode" | "sort" => {
+            let (key, names, enum_name) = if method == "sort" {
+                ("sort", crate::selector::SORTS, "Sort")
+            } else {
+                ("gamemode", crate::selector::GAME_MODES, "GameMode")
+            };
+            let value = match args.as_slice() {
+                [one] if arity == 1 => match (&one.kind, &one.ty) {
+                    (TypedExprKind::Int(index), Type::Enum(name))
+                        if name.rsplit("::").next() == Some(enum_name) =>
+                    {
+                        names.get(*index as usize).map(|name| name.to_string())
+                    }
+                    (TypedExprKind::String(text), _) => Some(text.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            match value {
+                Some(value) => new_args.push(arg(key, method.starts_with("not"), &value)),
+                None => error(
+                    diagnostics,
+                    format!(
+                        "Selector.{method}(...) needs a {enum_name} constant, such as {enum_name}.{}",
+                        names[0].to_ascii_uppercase()
+                    ),
+                ),
+            }
+        }
+        "limit" => match args.into_iter().next() {
+            Some(value) if arity == 1 && value.ty == Type::Int => {
+                let text = selector_value(value, &mut placeholders);
+                new_args.push(arg("limit", false, &text));
+            }
+            _ => error(diagnostics, usage("int")),
+        },
+        "distance" | "level" | "xRotation" | "yRotation" => {
+            let key = match method {
+                "xRotation" => "x_rotation",
+                "yRotation" => "y_rotation",
+                other => other,
+            };
+            if let Some(text) = range(
+                args,
+                method == "level",
+                method == "distance",
+                &mut placeholders,
+                diagnostics,
+            ) {
+                new_args.push(arg(key, false, &text));
+            }
+        }
+        "score" => {
+            let mut args = args.into_iter();
+            match args.next() {
+                Some(objective) if arity >= 2 && objective.ty == Type::String => {
+                    let objective = selector_value(objective, &mut placeholders);
+                    if let Some(text) =
+                        range(args.collect(), true, false, &mut placeholders, diagnostics)
+                    {
+                        new_args.push(merged_entry(&mut spec, "scores", &objective, &text));
+                    }
+                }
+                _ => error(
+                    diagnostics,
+                    usage("objective, value), Selector.score(objective, min, max"),
+                ),
+            }
+        }
+        "advancement" => match args.as_slice() {
+            [id, done] if id.ty == Type::String && done.ty == Type::Bool => {
+                let id = selector_value(id.clone(), &mut placeholders);
+                let done = selector_value(done.clone(), &mut placeholders);
+                new_args.push(merged_entry(&mut spec, "advancements", &id, &done));
+            }
+            _ => error(diagnostics, usage("String id, boolean done")),
+        },
+        "origin" | "volume" => {
+            let keys = if method == "origin" {
+                ["x", "y", "z"]
+            } else {
+                ["dx", "dy", "dz"]
+            };
+            if arity == 3 && args.iter().all(|value| is_number(&value.ty)) {
+                for (key, value) in keys.iter().zip(args) {
+                    let text = selector_value(value, &mut placeholders);
+                    new_args.push(arg(key, false, &text));
+                }
+            } else {
+                error(diagnostics, usage("x, y, z"));
+            }
+        }
+        "players" => {
+            if arity != 0 {
+                error(
+                    diagnostics,
+                    "Selector.players() takes no arguments".to_string(),
+                );
+            }
+            if spec.ref_kind() == RefKind::NonPlayer {
+                error(
+                    diagnostics,
+                    "this selector never matches players".to_string(),
+                );
+            } else if !matches!(
+                spec.base,
+                Base::AllPlayers | Base::NearestPlayer | Base::RandomPlayer | Base::Name(_)
+            ) && !spec
+                .args
+                .iter()
+                .any(|a| a.key == "type" && !a.negated && crate::selector::is_player_type(&a.value))
+            {
+                new_args.push(arg("type", false, "minecraft:player"));
+            }
+        }
+        _ => unreachable!("not a selector refiner: {method}"),
+    }
+    for new_arg in new_args {
+        if let Err(message) = spec.push(new_arg) {
+            error(diagnostics, message);
+        }
+    }
+    let mut refined = selector_expr(spec, placeholders);
+    if method == "players" {
+        refined.ref_kind = RefKind::Player;
+    }
+    refined
+}
+
+/// Adds `name=value` to the `scores={...}` or `advancements={...}` argument,
+/// which Minecraft allows only once. Returns the argument to push.
+fn merged_entry(
+    spec: &mut crate::selector::SelectorSpec,
+    key: &str,
+    name: &str,
+    value: &str,
+) -> crate::selector::Arg {
+    let entry = format!("{name}={value}");
+    let merged = match spec.args.iter().position(|a| a.key == key) {
+        Some(index) => {
+            let old = spec.args.remove(index);
+            let inner = old
+                .value
+                .strip_prefix('{')
+                .and_then(|v| v.strip_suffix('}'))
+                .unwrap_or("");
+            if inner.trim().is_empty() {
+                format!("{{{entry}}}")
+            } else {
+                format!("{{{inner},{entry}}}")
+            }
+        }
+        None => format!("{{{entry}}}"),
+    };
+    crate::selector::arg(key, false, &merged)
+}
+
+/// `sel.count()`, `sel.exists()` and `sel.isEmpty()`.
+fn query_selector(
+    receiver: TypedExpr,
+    method: &str,
+    args: Vec<TypedExpr>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    if !args.is_empty() {
         diagnostics.push(Diagnostic::new(
-            "the selector must have no limit or 'limit=1'",
+            format!("Selector.{method}() takes no arguments"),
             span,
         ));
-        return value.to_string();
     }
-
-    if let Some(close) = value.rfind(']') {
-        let mut rewritten = value.to_string();
-        rewritten.insert_str(close, ",limit=1");
-        rewritten
-    } else {
-        format!("{}[limit=1]", value)
+    match method {
+        "count" => TypedExpr {
+            kind: TypedExprKind::Call {
+                function: "selector_count".to_string(),
+                args: vec![receiver],
+            },
+            ty: Type::Int,
+            ref_kind: RefKind::Unknown,
+        },
+        _ => {
+            let exists = TypedExpr {
+                kind: TypedExprKind::Exists(Box::new(receiver)),
+                ty: Type::Bool,
+                ref_kind: RefKind::Unknown,
+            };
+            if method == "exists" {
+                exists
+            } else {
+                TypedExpr {
+                    kind: TypedExprKind::Unary {
+                        op: UnaryOp::Not,
+                        expr: Box::new(exists),
+                    },
+                    ty: Type::Bool,
+                    ref_kind: RefKind::Unknown,
+                }
+            }
+        }
     }
 }
 
-fn is_plain_player_name_target(value: &str) -> bool {
-    let trimmed = value.trim();
-    !trimmed.is_empty()
-        && !trimmed.starts_with('@')
-        && trimmed.len() <= 16
-        && trimmed
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+/// `entity.matches(sel)`: runs as the entity and checks `@s[...]` with the
+/// selector's filters.
+fn entity_matches(
+    entity: TypedExpr,
+    args: Vec<TypedExpr>,
+    span: Span,
+    diagnostics: &mut Diagnostics,
+) -> TypedExpr {
+    let bool_expr = |kind| TypedExpr {
+        kind,
+        ty: Type::Bool,
+        ref_kind: RefKind::Unknown,
+    };
+    let Some(selector) = args.into_iter().next() else {
+        diagnostics.push(Diagnostic::new("use entity.matches(Selector)", span));
+        return bool_expr(TypedExprKind::Bool(false));
+    };
+    let TypedExprKind::Selector { spec, placeholders } = selector.kind else {
+        diagnostics.push(Diagnostic::new(
+            if is_selector_type(&selector.ty) {
+                "matches(...) needs a selector the compiler can see, such as Selector.entities().tag(\"boss\")"
+            } else {
+                "use entity.matches(Selector)"
+            },
+            span,
+        ));
+        return bool_expr(TypedExprKind::Bool(false));
+    };
+    let filter = match spec.as_executor_filter() {
+        Ok(filter) => filter,
+        Err(message) => {
+            diagnostics.push(Diagnostic::new(message, span));
+            return bool_expr(TypedExprKind::Bool(false));
+        }
+    };
+    let filter = selector_expr(filter, placeholders);
+    let ty = filter.ty.clone();
+    bool_expr(TypedExprKind::Exists(Box::new(TypedExpr {
+        kind: TypedExprKind::As {
+            anchor: Box::new(entity),
+            value: Box::new(filter),
+        },
+        ty,
+        ref_kind: RefKind::Unknown,
+    })))
+}
+
+/// A selector expression. Each placeholder's key is the name in its `$(...)`;
+/// both are renumbered `p1`, `p2`, ... in the order they appear in the text,
+/// which is the order the backend fills them in.
+fn selector_expr(
+    mut spec: crate::selector::SelectorSpec,
+    placeholders: Vec<MacroPlaceholder>,
+) -> TypedExpr {
+    let mut by_key: HashMap<String, MacroPlaceholder> = placeholders
+        .into_iter()
+        .map(|placeholder| (placeholder.key.clone(), placeholder))
+        .collect();
+    let mut ordered = Vec::new();
+    spec.map_markers(|name| {
+        let key = format!("p{}", ordered.len() + 1);
+        if let Some(mut placeholder) = by_key.remove(name) {
+            placeholder.key = key.clone();
+            ordered.push(placeholder);
+        }
+        key
+    });
+    let placeholders = ordered;
+    TypedExpr {
+        ref_kind: spec.ref_kind(),
+        kind: TypedExprKind::Selector { spec, placeholders },
+        ty: Type::EntitySet,
+    }
+}
+
+fn empty_selector() -> TypedExprKind {
+    TypedExprKind::Selector {
+        spec: crate::selector::SelectorSpec::new(crate::selector::Base::Entities),
+        placeholders: Vec::new(),
+    }
 }
 
 /// Recursion groups. A group is a cycle in the call graph (a strongly
@@ -11320,6 +11833,7 @@ fn collect_macro_placeholders(
                 | Type::Class(_)
                 | Type::String
                 | Type::EntitySet
+                | Type::PlayerSet
                 | Type::EntityRef
                 | Type::PlayerRef
                 | Type::BlockRef

@@ -1420,4 +1420,92 @@ void main() {
         assert!(error.contains("randomWeighted(...) needs a literal list of weights"));
         assert!(error.contains("randomBinomial(n, p) needs an 'int' and a 'float'"));
     }
+
+    fn compiled_files(source: &str) -> String {
+        compile_source(source, &lowering())
+            .expect("source should compile")
+            .artifacts
+            .files
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn builds_selectors_from_methods() {
+        let files = compiled_files(
+            r#"
+void greet(Selector<Player> players) {
+    for (var p : players) {
+        p.sendActionBar("hi");
+    }
+}
+
+void main() {
+    String role = "boss";
+    int most = 3;
+    var bosses = Selector.entities()
+        .type("minecraft:zombie").tag("elite").notTag(role)
+        .distance(0.5, 16).score("hp", 1, 20).score("kills", "5..")
+        .sort("nearest").limit(most);
+    bosses.addTag("seen");
+    int n = bosses.count();
+    boolean none = Selector.allPlayers().gameMode("creative").isEmpty();
+    greet(Selector.allPlayers().team("red"));
+    greet(Selector.entities().tag("x").players());
+    var pig = Selector.of("@e[type=pig,limit=1]").getFirst();
+    boolean elite = pig.matches(Selector.entities().tag("elite"));
+    var named = Selector.of("@e[tag=$(role)]");
+    named.addTag("marked");
+    var nearest = Selector.nearestPlayer().getFirst();
+    return;
+}
+"#,
+        );
+        assert!(files.contains(
+            "@e[type=minecraft:zombie,tag=elite,tag=!$(p1),distance=0.5..16,scores={hp=1..20,kills=5..},sort=nearest,limit=$(p2)]"
+        ));
+        assert!(files.contains("execute store result score"));
+        assert!(files.contains("if entity $(selector)"));
+        assert!(files.contains("@a[gamemode=creative]"));
+        assert!(files.contains("@a[team=red]"));
+        assert!(files.contains("@e[tag=x,type=minecraft:player]"));
+        assert!(files.contains("@s[tag=elite]"));
+        assert!(files.contains("@e[tag=$(p1)]"));
+        assert!(!files.contains("@p[limit=1]"));
+    }
+
+    #[test]
+    fn rejects_bad_selectors() {
+        let error = compile_source(
+            r#"
+void takesPlayers(Selector<Player> players) {}
+
+void main() {
+    var a = Selector.of("@e[colour=red]");
+    var b = Selector.of("@a[type=minecraft:pig]");
+    var c = Selector.of("@e[type=minecraft:chicke]");
+    var d = Selector.entities().limit(1).limit(2);
+    var e = Selector.self().sort("nearest");
+    takesPlayers(Selector.entities());
+    var f = Selector.entities();
+    var g = f.tag("x");
+    var h = Selector.of("@e[type=pig]").players();
+    return;
+}
+"#,
+            &lowering(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unknown selector argument 'colour'"));
+        assert!(error.contains("'@a' only selects players"));
+        assert!(error.contains("unknown entity type"));
+        assert!(error.contains("'limit' can only be given once"));
+        assert!(error.contains("'@s' is one entity, so it can't take 'sort'"));
+        assert!(error.contains("Selector<Player>"));
+        assert!(error.contains("needs a selector the compiler can see"));
+        assert!(error.contains("never matches players"));
+    }
 }

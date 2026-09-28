@@ -144,7 +144,11 @@ pub enum IrExprKind {
         fields: Vec<(String, IrExpr)>,
     },
     Variable(String),
-    Selector(String),
+    /// Selector text; each `$(...)` is filled from `placeholders` in order.
+    Selector {
+        template: String,
+        placeholders: Vec<IrMacroPlaceholder>,
+    },
     Block(String),
     Unary {
         op: crate::ast::UnaryOp,
@@ -412,7 +416,10 @@ fn lower_expr(expr: &TypedExpr) -> IrExpr {
                     .collect(),
             },
             TypedExprKind::Variable(name) => IrExprKind::Variable(name.clone()),
-            TypedExprKind::Selector(value) => IrExprKind::Selector(value.clone()),
+            TypedExprKind::Selector { spec, placeholders } => IrExprKind::Selector {
+                template: spec.render(),
+                placeholders: placeholders.iter().map(lower_macro_placeholder).collect(),
+            },
             TypedExprKind::Block(value) => IrExprKind::Block(value.clone()),
             TypedExprKind::Unary { op, expr } => IrExprKind::Unary {
                 op: *op,

@@ -2138,7 +2138,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     iterable,
                     body,
                 } => match &iterable.ty {
-                    Type::EntitySet => {
+                    Type::EntitySet | Type::PlayerSet => {
                         let query_name = self.new_temp();
                         let mut init_lines = Vec::new();
                         self.compile_expr_into_named_slot(
@@ -2988,7 +2988,27 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             IrExprKind::StructLiteral { fields, .. } => {
                 self.compile_struct_literal(function, depth, fields, target, lines);
             }
-            IrExprKind::Selector(value) => self.write_query_slot(target, "", value, lines),
+            IrExprKind::Selector {
+                template,
+                placeholders,
+            } => {
+                if placeholders.is_empty() {
+                    self.write_query_slot(target, "", template, lines);
+                } else {
+                    self.write_query_slot(target, "", "", lines);
+                    let selector = SlotRef {
+                        name: format!("{}.selector", target.storage_path()),
+                    };
+                    self.compile_interpolated_string(
+                        function,
+                        depth,
+                        template,
+                        placeholders,
+                        &selector,
+                        lines,
+                    );
+                }
+            }
             IrExprKind::Block(value) => self.write_block_slot(target, "", value, lines),
             IrExprKind::Variable(name) => match expr.ty {
                 Type::Int | Type::Bool | Type::Enum(_) | Type::Class(_) | Type::Generic(..) => {
@@ -3017,6 +3037,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     string_slot(depth, &function.name, name)
                 )),
                 Type::EntitySet
+                | Type::PlayerSet
                 | Type::EntityRef
                 | Type::PlayerRef
                 | Type::BlockRef
@@ -4471,7 +4492,10 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             } else {
                 let source = if arg.ty == Type::BlockRef {
                     format!("{}.pos", slot.storage_path())
-                } else if matches!(arg.ty, Type::EntityRef | Type::PlayerRef | Type::EntitySet) {
+                } else if matches!(
+                    arg.ty,
+                    Type::EntityRef | Type::PlayerRef | Type::EntitySet | Type::PlayerSet
+                ) {
                     format!("{}.selector", slot.storage_path())
                 } else {
                     slot.storage_path().to_string()
@@ -6085,6 +6109,25 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 ));
                 true
             }
+            "selector_count" if !self.functions.contains_key(callee) => {
+                let Some(query) = args.first() else {
+                    return true;
+                };
+                let source = self.compile_storage_receiver(function, depth, query, lines);
+                lines.push(format!(
+                    "scoreboard players set {} mcfc 0",
+                    target.numeric_name()
+                ));
+                lines.push(self.query_command(
+                    &source,
+                    format!(
+                        "execute store result score {} mcfc if entity $(selector)",
+                        target.numeric_name()
+                    ),
+                    true,
+                ));
+                true
+            }
             "find_first" if !self.functions.contains_key(callee) => {
                 let Some(query) = args.first() else {
                     return true;
@@ -6526,7 +6569,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     local_slot(depth, &function.name, &self.new_temp(), &args[1].ty);
                 self.compile_expr_into_slot(function, depth, &args[1], &destination_slot, lines);
                 match args[1].ty {
-                    Type::EntityRef | Type::PlayerRef | Type::EntitySet => {
+                    Type::EntityRef | Type::PlayerRef | Type::EntitySet | Type::PlayerSet => {
                         lines.push(format!(
                             "data modify storage {}:runtime {}.dest set from storage {}:runtime {}.selector",
                             self.namespace,
@@ -8842,6 +8885,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
             | Type::ItemSlot
             | Type::Bossbar
             | Type::EntitySet
+            | Type::PlayerSet
             | Type::EntityRef
             | Type::PlayerRef
             | Type::BlockRef => {
@@ -8927,7 +8971,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
             ),
         ));
         match ty {
-            Type::EntitySet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
+            Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
                 "data modify storage {}:runtime {}.selector set from storage {}:runtime {}.selector",
                 self.namespace,
                 target.storage_path(),
@@ -9803,7 +9847,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                     self.namespace,
                     source_slot.storage_path()
                 )),
-                Type::EntitySet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
+                Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}.selector",
                     self.namespace,
                     target_path,
@@ -10690,7 +10734,7 @@ scoreboard objectives add smithed.actionbar.freeze dummy
                     self.namespace,
                     source_slot.storage_path()
                 )),
-                Type::EntitySet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
+                Type::EntitySet | Type::PlayerSet | Type::EntityRef | Type::PlayerRef => lines.push(format!(
                     "data modify storage {}:runtime {} set from storage {}:runtime {}.selector",
                     self.namespace,
                     target_path,
@@ -10857,6 +10901,7 @@ fn local_slot(depth: usize, function: &str, name: &str, ty: &Type) -> SlotRef {
         | Type::ItemSlot
         | Type::Bossbar
         | Type::EntitySet
+        | Type::PlayerSet
         | Type::EntityRef
         | Type::PlayerRef
         | Type::BlockRef
@@ -10887,6 +10932,7 @@ fn return_slot(depth: usize, function: &str, ty: &Type) -> SlotRef {
         | Type::ItemSlot
         | Type::Bossbar
         | Type::EntitySet
+        | Type::PlayerSet
         | Type::EntityRef
         | Type::PlayerRef
         | Type::BlockRef
@@ -10989,7 +11035,8 @@ fn calls_in_expr<'a>(expr: &'a IrExpr, set: &BTreeSet<String>, out: &mut Vec<&'a
         IrExprKind::DictLiteral(values) | IrExprKind::StructLiteral { fields: values, .. } => {
             values.iter().for_each(|(_, v)| calls_in_expr(v, set, out))
         }
-        IrExprKind::InterpolatedString { placeholders, .. } => placeholders
+        IrExprKind::InterpolatedString { placeholders, .. }
+        | IrExprKind::Selector { placeholders, .. } => placeholders
             .iter()
             .for_each(|p| calls_in_expr(&p.expr, set, out)),
         IrExprKind::Binary { left, right, .. }
@@ -11879,7 +11926,8 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, Opti
                 collect_objectives_from_expr(arg, names);
             }
         }
-        IrExprKind::InterpolatedString { placeholders, .. } => {
+        IrExprKind::InterpolatedString { placeholders, .. }
+        | IrExprKind::Selector { placeholders, .. } => {
             for placeholder in placeholders {
                 collect_objectives_from_expr(&placeholder.expr, names);
             }
@@ -11893,7 +11941,6 @@ fn collect_objectives_from_expr(expr: &IrExpr, names: &mut BTreeMap<String, Opti
         | IrExprKind::Bool(_)
         | IrExprKind::String(_)
         | IrExprKind::Variable(_)
-        | IrExprKind::Selector(_)
         | IrExprKind::Block(_) => {}
     }
 }

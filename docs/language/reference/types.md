@@ -201,16 +201,77 @@ void main() {
 ## Entities
 
 - `Selector` can match any number of entities. Loop over it with `for`.
+- `Selector<Player>` is a `Selector` known to match only players. Looping over it gives `Player`s.
 - `Entity` is one entity. Get one with `Selector.of(...).getFirst()`, or from a `for` loop over a `Selector`.
 - `Player` is an `Entity` that's known to be a player.
+
+### Building selectors
+
+Write a selector as text with `Selector.of("@e[type=minecraft:pig,limit=1]")`, or build one with methods:
+
+```mcfc
+import std.selector.Sort;
+
+void main() {
+    String hunted = "prey";
+    var bosses = Selector.entities()
+        .type("minecraft:zombie").tag("boss").notTag(hunted)
+        .distance(0, 16).score("hp", 1, 20)
+        .sort(Sort.NEAREST).limit(3);
+    bosses.addTag("seen");
+}
+```
+
+The compiler checks every selector, from text or from methods, the way Minecraft would. It rejects unknown arguments, unknown entity types, bad ranges, arguments given twice, `type` on `@a`/`@p`/`@r`, and `limit` or `sort` on `@s`.
+
+| Start | Selects |
+| --- | --- |
+| `Selector.allPlayers()` | `@a` |
+| `Selector.entities()` | `@e` |
+| `Selector.nearestPlayer()` | `@p` |
+| `Selector.randomPlayer()` | `@r` |
+| `Selector.self()` | `@s` |
+| `Selector.nearestEntity()` | `@n` |
+| `Selector.player(name)` | a player by name or UUID |
+| `Selector.of(text)` | selector text; `$(x)` in it is a runtime value |
+
+Each method below gives a new selector with one more argument. An argument can be a runtime value, such as `tag(name)` with a `String` variable. The compiler fills it in when the pack runs.
+
+| Method | Adds |
+| --- | --- |
+| `type(id)` / `notType(id)` | `type=id` / `type=!id` |
+| `tag(t)` / `notTag(t)` | `tag=t` / `tag=!t` |
+| `team(t)` / `notTeam(t)` | `team=t` / `team=!t` |
+| `name(n)` / `notName(n)` | `name=n` / `name=!n`, quoted when needed |
+| `predicate(id)` / `notPredicate(id)` | `predicate=id` / `predicate=!id` |
+| `nbt(snbt)` / `notNbt(snbt)` | `nbt={...}` / `nbt=!{...}` |
+| `gameMode(GameMode.X)` / `notGameMode(...)` | `gamemode=x` / `gamemode=!x` |
+| `sort(Sort.X)` | `sort=x` (`import std.selector.Sort;`) |
+| `limit(n)` | `limit=n` |
+| `distance(max)`, `distance(min, max)` | `distance=..max`, `distance=min..max` |
+| `level(n)`, `level(min, max)` | `level=n`, `level=min..max` |
+| `xRotation(min, max)`, `yRotation(min, max)` | `x_rotation=...`, `y_rotation=...` |
+| `score(objective, n)`, `score(objective, min, max)` | an entry in `scores={...}` |
+| `advancement(id, done)` | an entry in `advancements={...}` |
+| `origin(x, y, z)` | `x=..,y=..,z=..` |
+| `volume(dx, dy, dz)` | `dx=..,dy=..,dz=..` |
+| `players()` | `type=minecraft:player`, and gives a `Selector<Player>` |
+
+Methods that take a range also take range text, such as `distance("5..")` or `score("kills", "..3")`.
+
+Only a selector built in the same expression can take more arguments. `var s = Selector.entities(); s.tag("x")` is an error, so chain the methods where the selector is made. Text from a runtime `String`, as in `Selector.of(text)`, can't take more arguments either.
+
+### Players and non-players
 
 Some methods only work on players, and `heal` only works on non-players. The compiler works out which kind a reference is from its selector:
 
 | Selector | Known as |
 | --- | --- |
 | `@p`, `@a`, `@r`, `@s`, a player name, or `type=player` | player |
-| any other `type=...` | non-player |
+| `type=!player`, or any other `type=...` | non-player |
 | anything else | unknown |
+
+A `Selector<Player>` parameter, field or variable takes any selector known to match only players, such as `Selector.allPlayers().team("red")` or `Selector.entities().tag("x").players()`. It won't take a selector that may match other entities.
 
 `(Player) e` asserts that `e` is a player, and `for (Player p : Selector.of(...))` does the same for a loop. To check first, use `instanceof`, which also works as a type pattern:
 

@@ -5243,3 +5243,37 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     }
     files
 }
+
+#[test]
+fn selector_sort_and_game_mode_take_std_enum_constants() {
+    let source = r#"
+import std.selector.Sort;
+import std.gamemode.GameMode;
+
+void main() {
+    var near = Selector.entities().type("minecraft:pig").sort(Sort.FURTHEST).limit(2);
+    near.addTag("far");
+    var spectators = Selector.allPlayers().notGameMode(GameMode.SPECTATOR);
+    spectators.addTag("playing");
+}
+"#;
+    let project = temp_path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    fs::write(project.join("src").join("main.mcf"), source).unwrap();
+    let result = compile_project(
+        &project.join("mcfc.toml"),
+        &project.join("dist"),
+        &lowering(),
+    )
+    .expect("selector enums should compile");
+    let files = result
+        .artifacts
+        .files
+        .values()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(files.contains("@e[type=minecraft:pig,sort=furthest,limit=2]"));
+    assert!(files.contains("@a[gamemode=!spectator]"));
+}

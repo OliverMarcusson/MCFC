@@ -18,4 +18,5 @@ pub mod optimizer;
 pub mod pack_opt;
 pub mod parser;
 pub mod project;
+pub mod selector;
 pub mod types;

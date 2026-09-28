@@ -55,6 +55,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("player.mcf", include_str!("../std/player.mcf")),
     ("random.mcf", include_str!("../std/random.mcf")),
     ("region.mcf", include_str!("../std/region.mcf")),
+    ("selector.mcf", include_str!("../std/selector.mcf")),
     ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
     ("stream.mcf", include_str!("../std/stream.mcf")),

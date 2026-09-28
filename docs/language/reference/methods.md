@@ -7,8 +7,13 @@ Methods and fields on `Entity` and `Player`. `teleport`, `remove`, `damage`, `gi
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `Selector.getFirst()` | `Entity` | Narrows a selector that matches one entity, such as `@p`, `@s`, or `limit=1`. |
-| `Selector.findFirst()` | `Optional<Entity>` | Needs a literal `Selector.of(...)`; the compiler adds `limit=1`. |
+| `Selector.findFirst()` | `Optional<Entity>` | Needs a selector built in the same expression; the compiler adds `limit=1`. |
+| `Selector.count()` | `int` | How many entities match. |
+| `Selector.exists()` / `Selector.isEmpty()` | `boolean` | Whether anything matches. |
+| `Entity.matches(selector)` | `boolean` | Whether the entity passes the selector's filters. The selector must be `@a`, `@e` or `@s`, without `limit` or `sort`. |
 | `Entity.isValid()` | `boolean` | Whether the entity still exists. |
+
+To build selectors with methods, such as `Selector.entities().tag("boss").limit(1)`, see [Types: Building selectors](./types#building-selectors).
 
 ## Actions
 

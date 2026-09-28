@@ -87,6 +87,17 @@ const TEXT_DECORATIONS: &[&str] = &[
 
 const STATIC_FACTORIES: &[(&str, &str)] = &[("Selector", "selector"), ("Block", "block")];
 
+/// `Selector.entities()` and friends start a selector from its `@` base.
+/// `Selector.player(name)` is the `selector_player` builtin.
+pub(crate) const SELECTOR_FACTORIES: &[(&str, &str)] = &[
+    ("allPlayers", "@a"),
+    ("entities", "@e"),
+    ("nearestPlayer", "@p"),
+    ("randomPlayer", "@r"),
+    ("self", "@s"),
+    ("nearestEntity", "@n"),
+];
+
 /// Static classes whose methods are builtins: `Sidebar.setLine(1, "Kills")`
 /// is the `sidebar_line` builtin.
 pub(crate) const STATIC_METHODS: &[(&str, &[(&str, &str)])] = &[
@@ -2393,6 +2404,39 @@ impl Parser {
                 }
             }
             TokenKind::Identifier(name)
+                if name == "Selector"
+                    && matches!(self.peek().kind, TokenKind::Dot)
+                    && matches!(self.peek_at(1), TokenKind::Identifier(method)
+                        if SELECTOR_FACTORIES.iter().any(|(java, _)| java == method)
+                            || method == "player") =>
+            {
+                self.bump();
+                let TokenKind::Identifier(method) = self.bump().kind else {
+                    unreachable!()
+                };
+                self.expect(
+                    TokenKind::LeftParen,
+                    &format!("expected '(' after Selector.{method}"),
+                );
+                let args = self.parse_call_args();
+                if let Some((_, base)) = SELECTOR_FACTORIES.iter().find(|(java, _)| *java == method)
+                {
+                    if !args.is_empty() {
+                        self.error_at(
+                            &format!("Selector.{method}() takes no arguments"),
+                            span.clone(),
+                        );
+                    }
+                    let text = Expr {
+                        kind: ExprKind::String(base.to_string()),
+                        span: span.clone(),
+                    };
+                    call("selector", vec![text], &span)
+                } else {
+                    call("selector_player", args, &span)
+                }
+            }
+            TokenKind::Identifier(name)
                 if (name == "List"
                     || name == "Map"
                     || STATIC_FACTORIES.iter().any(|(ty, _)| *ty == name))
@@ -3118,6 +3162,21 @@ impl Parser {
                 self.error_at("MCFC has no 'double'; use 'float'", span);
                 Type::Float
             }
+            // `Selector<Player>` matches only players; `Selector<Entity>` is `Selector`.
+            "Selector" if self.at(&TokenKind::Lt) => match generic(self, 1).remove(0) {
+                Type::PlayerRef => Type::PlayerSet,
+                Type::EntityRef => Type::EntitySet,
+                other => {
+                    self.error_at(
+                        &format!(
+                            "a Selector holds entities: write Selector<Player> or Selector<Entity>, not Selector<{}>",
+                            other.as_type_arg()
+                        ),
+                        span,
+                    );
+                    Type::EntitySet
+                }
+            },
             "Selector" => Type::EntitySet,
             "Entity" => Type::EntityRef,
             "Player" => Type::PlayerRef,

@@ -231,7 +231,7 @@ void round() {
 | `Region of(Block a, Block b)` | The region between two corners, in any order. `Region` is a record of `minX`, `minY`, `minZ`, `maxX`, `maxY` and `maxZ`, so `new Region(...)` works too after `import std.region.Region;`. |
 | `boolean contains(Region r, Entity entity)` | `true` when the entity's feet are in one of the region's blocks. |
 | `int countPlayers(Region r)` | How many players are inside. |
-| `void tagPlayers(Region r, String tag)` | Gives `tag` to the players inside and removes it from everyone else. `Selector.of` needs a literal, so select them afterwards with `@a[tag=...]`. |
+| `void tagPlayers(Region r, String tag)` | Gives `tag` to the players inside and removes it from everyone else. Select them afterwards with `Selector.allPlayers().tag(tag)`. |
 | `Block randomBlock(Region r)` | A random block inside. |
 | `Block center(Region r)` | The middle block, rounded down. |
 | `void fill(Region r, String block)` | Fills the region, within `fill`'s 32768-block limit. |
@@ -275,6 +275,19 @@ void watch(Player player) {
 ```
 
 `GameMode` is `SURVIVAL`, `CREATIVE`, `ADVENTURE` or `SPECTATOR`, the type of [`setGameMode` and `getGameMode`](./methods).
+
+## `std.selector`
+
+```mcfc
+import std.selector.Sort;
+
+void main() {
+    var nearest = Selector.entities().type("minecraft:pig").sort(Sort.NEAREST).limit(1);
+    nearest.addTag("picked");
+}
+```
+
+`Sort` is `NEAREST`, `FURTHEST`, `RANDOM` or `ARBITRARY`, the order [`Selector.sort`](./types#building-selectors) picks entities in.
 
 ## `std.inventory`
 

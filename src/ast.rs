@@ -173,6 +173,8 @@ pub enum Type {
     Generic(String, Vec<Type>),
     Bossbar,
     EntitySet,
+    /// `Selector<Player>`: a selector known to match only players.
+    PlayerSet,
     EntityRef,
     PlayerRef,
     BlockRef,
@@ -208,6 +210,7 @@ impl Type {
             }
             Type::Bossbar => "BossBar".to_string(),
             Type::EntitySet => "Selector".to_string(),
+            Type::PlayerSet => "Selector<Player>".to_string(),
             Type::EntityRef => "Entity".to_string(),
             Type::PlayerRef => "Player".to_string(),
             Type::BlockRef => "Block".to_string(),

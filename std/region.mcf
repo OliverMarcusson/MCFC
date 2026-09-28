@@ -36,7 +36,7 @@ public int countPlayers(Region r) {
 }
 
 // Gives `tag` to the players inside and takes it from everyone else, so
-// `Selector.of("@a[tag=...]")` selects them.
+// `Selector.allPlayers().tag(tag)` selects them.
 public void tagPlayers(Region r, String tag) {
     for (var player : Selector.of("@a")) {
         if (contains(r, player)) {

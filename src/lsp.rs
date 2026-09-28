@@ -1126,6 +1126,7 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
         "of" | "selector" => Some("Selector.of(value: String) -> Selector".to_string()),
         "getFirst" => Some("Selector.getFirst() -> Entity | List<T>.getFirst() -> T".to_string()),
         "findFirst" => Some("Selector.findFirst() -> Optional<Entity>".to_string()),
+        "matches" => Some("Entity.matches(selector: Selector) -> boolean".to_string()),
         "isValid" => Some("Entity.isValid() -> boolean".to_string()),
         "parseInt" => Some("Integer.parseInt(s: String) -> int".to_string()),
         "valueOf" => Some("String.valueOf(x) -> String".to_string()),
@@ -1146,6 +1147,15 @@ fn signature_for_call(analysis: &AnalysisResult, name: &str) -> Option<String> {
                 .to_string(),
         ),
         "BossBar" => Some("new BossBar(id: String, name: String|Component)".to_string()),
+        name if SELECTOR_METHOD_DOCS
+            .iter()
+            .any(|(label, ..)| *label == name) =>
+        {
+            SELECTOR_METHOD_DOCS
+                .iter()
+                .find(|(label, ..)| *label == name)
+                .map(|(_, detail, _)| detail.to_string())
+        }
         _ => None,
     }
 }
@@ -1759,7 +1769,9 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "random" => Some(
             "```mcfc\nrandom() -> int\nrandom(max: int) -> int\nrandom(min: int, max: int) -> int\n```",
         ),
-        "Selector" => Some("```mcfc\nSelector.of(value: String) -> Selector\n```"),
+        "Selector" => Some(
+            "```mcfc\nSelector.of(value: String) -> Selector\nSelector.entities().type(id).tag(tag).limit(n) -> Selector\nSelector<Player>\n```",
+        ),
         "Log" => Some(
             "```mcfc
 Log.debug(msg: String)
@@ -2839,6 +2851,44 @@ fn java_static_member_items(name: &str) -> Option<Vec<CompletionItem>> {
             ("round", "Math.round(x) -> int", "round(${1:x})"),
             ("trunc", "Math.trunc(x) -> float", "trunc(${1:x})"),
         ],
+        "Selector" => &[
+            (
+                "of",
+                "Selector.of(text: String) -> Selector",
+                "of(${1:\"@e\"})",
+            ),
+            (
+                "allPlayers",
+                "Selector.allPlayers() -> Selector  // @a",
+                "allPlayers()",
+            ),
+            (
+                "entities",
+                "Selector.entities() -> Selector  // @e",
+                "entities()",
+            ),
+            (
+                "nearestPlayer",
+                "Selector.nearestPlayer() -> Selector  // @p",
+                "nearestPlayer()",
+            ),
+            (
+                "randomPlayer",
+                "Selector.randomPlayer() -> Selector  // @r",
+                "randomPlayer()",
+            ),
+            ("self", "Selector.self() -> Selector  // @s", "self()"),
+            (
+                "nearestEntity",
+                "Selector.nearestEntity() -> Selector  // @n",
+                "nearestEntity()",
+            ),
+            (
+                "player",
+                "Selector.player(name: String) -> Selector",
+                "player(${1:name})",
+            ),
+        ],
         "Integer" => &[
             (
                 "parseInt",
@@ -3299,6 +3349,138 @@ fn array_method_items() -> Vec<CompletionItem> {
     .collect()
 }
 
+/// `Selector` methods that refine or query it: label, signature, snippet.
+const SELECTOR_METHOD_DOCS: &[(&str, &str, &str)] = &[
+    (
+        "type",
+        "Selector.type(id: String) -> Selector",
+        "type(${1:\"minecraft:pig\"})",
+    ),
+    (
+        "notType",
+        "Selector.notType(id: String) -> Selector",
+        "notType(${1:\"minecraft:player\"})",
+    ),
+    (
+        "tag",
+        "Selector.tag(tag: String) -> Selector",
+        "tag(${1:tag})",
+    ),
+    (
+        "notTag",
+        "Selector.notTag(tag: String) -> Selector",
+        "notTag(${1:tag})",
+    ),
+    (
+        "team",
+        "Selector.team(team: String) -> Selector",
+        "team(${1:team})",
+    ),
+    (
+        "notTeam",
+        "Selector.notTeam(team: String) -> Selector",
+        "notTeam(${1:team})",
+    ),
+    (
+        "name",
+        "Selector.name(name: String) -> Selector",
+        "name(${1:name})",
+    ),
+    (
+        "notName",
+        "Selector.notName(name: String) -> Selector",
+        "notName(${1:name})",
+    ),
+    (
+        "predicate",
+        "Selector.predicate(id: String) -> Selector",
+        "predicate(${1:id})",
+    ),
+    (
+        "notPredicate",
+        "Selector.notPredicate(id: String) -> Selector",
+        "notPredicate(${1:id})",
+    ),
+    (
+        "nbt",
+        "Selector.nbt(snbt: String) -> Selector",
+        "nbt(${1:\"{OnGround:1b}\"})",
+    ),
+    (
+        "notNbt",
+        "Selector.notNbt(snbt: String) -> Selector",
+        "notNbt(${1:\"{OnGround:1b}\"})",
+    ),
+    (
+        "gameMode",
+        "Selector.gameMode(mode: GameMode) -> Selector",
+        "gameMode(${1:GameMode.SURVIVAL})",
+    ),
+    (
+        "notGameMode",
+        "Selector.notGameMode(mode: GameMode) -> Selector",
+        "notGameMode(${1:GameMode.SPECTATOR})",
+    ),
+    (
+        "sort",
+        "Selector.sort(order: Sort) -> Selector",
+        "sort(${1:Sort.NEAREST})",
+    ),
+    (
+        "limit",
+        "Selector.limit(n: int) -> Selector",
+        "limit(${1:1})",
+    ),
+    (
+        "distance",
+        "Selector.distance(max | min, max | \"range\") -> Selector",
+        "distance(${1:10})",
+    ),
+    (
+        "level",
+        "Selector.level(level | min, max | \"range\") -> Selector",
+        "level(${1:min}, ${2:max})",
+    ),
+    (
+        "xRotation",
+        "Selector.xRotation(min, max) -> Selector",
+        "xRotation(${1:min}, ${2:max})",
+    ),
+    (
+        "yRotation",
+        "Selector.yRotation(min, max) -> Selector",
+        "yRotation(${1:min}, ${2:max})",
+    ),
+    (
+        "score",
+        "Selector.score(objective, value | min, max | \"range\") -> Selector",
+        "score(${1:objective}, ${2:min}, ${3:max})",
+    ),
+    (
+        "advancement",
+        "Selector.advancement(id: String, done: boolean) -> Selector",
+        "advancement(${1:id}, ${2:true})",
+    ),
+    (
+        "origin",
+        "Selector.origin(x, y, z) -> Selector",
+        "origin(${1:x}, ${2:y}, ${3:z})",
+    ),
+    (
+        "volume",
+        "Selector.volume(dx, dy, dz) -> Selector",
+        "volume(${1:dx}, ${2:dy}, ${3:dz})",
+    ),
+    (
+        "players",
+        "Selector.players() -> Selector<Player>",
+        "players()",
+    ),
+    ("count", "Selector.count() -> int", "count()"),
+    ("exists", "Selector.exists() -> boolean", "exists()"),
+    ("isEmpty", "Selector.isEmpty() -> boolean", "isEmpty()"),
+];
+
 fn selector_method_items() -> Vec<CompletionItem> {
     let mut items = vec![
         snippet_item(
@@ -3314,6 +3496,14 @@ fn selector_method_items() -> Vec<CompletionItem> {
             "findFirst()",
         ),
     ];
+    for (label, detail, insert) in SELECTOR_METHOD_DOCS {
+        items.push(snippet_item(
+            label,
+            CompletionItemKind::METHOD,
+            detail,
+            insert,
+        ));
+    }
     items.extend(generic_entity_root_items().into_iter().filter(|item| {
         matches!(
             item.label.as_str(),
@@ -4839,7 +5029,7 @@ fn receiver_for_terminal_type(ty: &Type, ref_kind: RefKind) -> Option<Completion
         Type::String => Some(CompletionReceiver::String),
         Type::Dict(_) => Some(CompletionReceiver::Dict),
         Type::Optional(_) => Some(CompletionReceiver::Optional),
-        Type::EntitySet => Some(CompletionReceiver::Selector),
+        Type::EntitySet | Type::PlayerSet => Some(CompletionReceiver::Selector),
         Type::Struct(name) => Some(CompletionReceiver::Struct(name.clone())),
         Type::Enum(name) => Some(CompletionReceiver::Enum(name.clone())),
         Type::Class(name) => Some(CompletionReceiver::Class(name.clone())),
@@ -5306,6 +5496,9 @@ fn parse_type_name(name: &str) -> Option<Type> {
             parse_type_name(value).unwrap_or(Type::Nbt),
         )));
     }
+    if generic("Selector<").is_some_and(|inner| inner.trim() == "Player") {
+        return Some(Type::PlayerSet);
+    }
     match name {
         "int" => Some(Type::Int),
         "float" => Some(Type::Float),
@@ -5342,7 +5535,7 @@ fn infer_expr_type(value: &str) -> Option<Type> {
         Some(Type::EntityRef)
     } else if value.ends_with(".findFirst()") {
         Some(Type::Optional(Box::new(Type::EntityRef)))
-    } else if starts("Selector.of(") {
+    } else if starts("Selector.") {
         Some(Type::EntitySet)
     } else if starts("new EntityData(") {
         Some(Type::EntityDef)
@@ -6970,6 +7163,10 @@ void main() {
         let analysis = analyze_source(source);
         let selector = completion_items(source, &analysis, source.find("sel.").unwrap() + 4);
         assert!(selector.iter().any(|item| item.label == "getFirst"));
+        assert!(selector.iter().any(|item| item.label == "tag"));
+        assert!(selector.iter().any(|item| item.label == "count"));
+        let factories = completion_items("Selector.", &analyze_source("Selector."), 9);
+        assert!(factories.iter().any(|item| item.label == "entities"));
         assert!(selector.iter().any(|item| item.label == "findFirst"));
         assert!(!selector.iter().any(|item| item.label == "single"));
 

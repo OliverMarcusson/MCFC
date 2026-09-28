@@ -1,0 +1,4 @@
+// The order a selector picks entities in: `Selector.entities().sort(Sort.NEAREST)`.
+public enum Sort {
+    NEAREST, FURTHEST, RANDOM, ARBITRARY
+}

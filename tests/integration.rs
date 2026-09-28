@@ -108,6 +108,30 @@ void main() {
 }
 
 #[test]
+fn char_short_and_byte_are_string_and_int_aliases() {
+    let source = r#"
+void main() {
+    char c = 'a';
+    char quote = '\'';
+    short s = (short) 3.7;
+    byte b = 100;
+    List<Character> cs = List.of('x');
+    if ("hi".charAt(0) == 'h') {
+        mcf("say $(c)$(quote)$(s + b)$(cs[0])");
+    }
+}
+"#;
+
+    compile_source(source, &lowering()).expect("aliases should compile");
+    let error = compile_source("void main() { char c = 'ab'; }", &lowering()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("a char literal holds one character")
+    );
+}
+
+#[test]
 fn compiles_macro_command_with_storage_call() {
     let source = r#"
 void main() {
@@ -173,7 +197,7 @@ fn compiles_single_exists_and_context_composition() {
 void main() {
     var player = Selector.of("@a[tag=hunter]").getFirst();
     if (player.isValid()) {
-        var nearest = at(player, Selector.of("@e[type=pig,sort=nearest]")).getFirst();
+        var nearest = Execute.at(player, () -> Selector.of("@e[type=pig,sort=nearest]")).getFirst();
         if (nearest.isValid()) {
             nearest.CustomName = "Target";
         }
@@ -258,7 +282,7 @@ fn compiles_as_value_context_composition() {
 void main() {
     var player = Selector.of("@p").getFirst();
     if (player.isValid()) {
-        var self_ref = as(player, Selector.of("@s")).getFirst();
+        var self_ref = Execute.as(player, () -> Selector.of("@s")).getFirst();
         self_ref.tags.welcomed = true;
     }
     return;
@@ -287,14 +311,14 @@ fn compiles_as_and_at_context_blocks() {
     let source = r#"
 void main() {
     var player = Selector.of("@p").getFirst();
-    as (player) {
+    Execute.as(player, () -> {
         mcf("tellraw @s \"welcome @s\"");
         mc("title @s actionbar \"title @s\"");
         mc("say hello @s");
-    }
-    at (player) {
+    });
+    Execute.at(player, () -> {
         mc("say here");
-    }
+    });
     return;
 }
 "#;
@@ -355,11 +379,11 @@ fn compiles_nested_context_blocks() {
     let source = r#"
 void main() {
     var player = Selector.of("@p").getFirst();
-    at (player) {
-        as (Selector.of("@e[type=pig,limit=1]")) {
+    Execute.at(player, () -> {
+        Execute.as(Selector.of("@e[type=pig,limit=1]"), () -> {
             mc("say @s");
-        }
-    }
+        });
+    });
     return;
 }
 "#;
@@ -1001,9 +1025,9 @@ void main() {
     var inline = new EntityData("minecraft:pig");
     inline.setName("Inline");
     var pig_with_data = Block.of("~ ~ ~").summon("minecraft:pig", inline.asNbt());
-    var rel = at(player, Block.of("~1 ~ ~"));
+    var rel = Execute.at(player, () -> Block.of("~1 ~ ~"));
     var pig_relative = rel.summon("minecraft:pig");
-    var pig_above = at(player, Block.of("~ ~10 ~")).summon("minecraft:pig");
+    var pig_above = Execute.at(player, () -> Block.of("~ ~10 ~")).summon("minecraft:pig");
     var drop = Block.of("~ ~ ~").spawnItem(new ItemStack("minecraft:apple"));
     return;
 }
@@ -1192,11 +1216,11 @@ void main() {
     var player = Selector.of("@p").getFirst();
     var bb = new BossBar("mcfc:test", "Boss");
 
-    async {
+    Thread.start(() -> {
         sleep(5);
         player.sendMessage("later");
         player.position.setBlock("minecraft:gold_block");
-    }
+    });
 }
 "#;
 
@@ -2415,22 +2439,22 @@ fn rejects_invalid_as_and_at_contexts() {
     let source = r#"
 void main() {
     var player = Selector.of("@p").getFirst();
-    as (Block.of("~ ~ ~")) {
+    Execute.as(Block.of("~ ~ ~"), () -> {
         mc("say bad");
-    }
-    at (Block.of("~ ~ ~")) {
+    });
+    Execute.at(Block.of("~ ~ ~"), () -> {
         mc("say bad");
-    }
-    var bad = as(player, 1);
+    });
+    var bad = Execute.as(player, () -> 1);
     return;
 }
 "#;
 
     let error = compile_source(source, &lowering()).unwrap_err();
     let rendered = error.to_string();
-    assert!(rendered.contains("as context block requires a 'Selector' or 'Entity' anchor"));
-    assert!(rendered.contains("at context block requires a 'Selector' or 'Entity' anchor"));
-    assert!(rendered.contains("as(...) requires a 'Selector', 'Entity', or 'Block' value"));
+    assert!(rendered.contains("Execute.as(...) requires a 'Selector' or 'Entity' anchor"));
+    assert!(rendered.contains("Execute.at(...) requires a 'Selector' or 'Entity' anchor"));
+    assert!(rendered.contains("Execute.as(...) requires a 'Selector', 'Entity', or 'Block' value"));
 }
 
 #[test]

@@ -55,17 +55,17 @@ void dash(Player player) {
 
 ```mcfc
 void startRound() {
-    async {
+    Thread.start(() -> {
         for (int i = 0; i < 5; i++) {
             Selector.of("@a").sendTitle("$(5 - i)");
             sleep(1);
         }
         Selector.of("@a").sendTitle("Go!");
-    }
+    });
 }
 ```
 
-`sleep` pauses only the code inside `async`. Without `async`, the function calling `startRound` would also wait.
+`sleep` pauses only the code inside `Thread.start`. Without `Thread.start`, the function calling `startRound` would also wait.
 
 ## Give a custom item
 
@@ -106,13 +106,13 @@ void runTimer() {
     bar.setValue(30);
     bar.setPlayers(Selector.of("@a"));
     bar.setVisible(true);
-    async {
+    Thread.start(() -> {
         for (int i = 0; i < 30; i++) {
             sleep(1);
             bar.setValue(29 - i);
         }
         bar.remove();
-    }
+    });
 }
 ```
 

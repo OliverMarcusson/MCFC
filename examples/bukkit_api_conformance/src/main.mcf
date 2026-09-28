@@ -139,9 +139,9 @@ void runAll() {
         bar.setVisible(true);
         player.state.tests_passed = player.state.tests_passed + 1;
 
-        at (player) {
+        Execute.at(player, () -> {
             Block.of("~ ~-1 ~").spawnParticle("minecraft:happy_villager", 8, player);
-        }
+        });
         player.state.tests_passed = player.state.tests_passed + 1;
 
         var now = time.now();

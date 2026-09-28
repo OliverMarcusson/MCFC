@@ -193,17 +193,17 @@ Handlers are ordinary functions with an annotation. A `@Command` is run with `/t
 
 ```mcfc
 void countdown(Player player) {
-    async {
+    Thread.start(() -> {
         for (int i = 0; i < 3; i++) {
             player.sendTitle("$(3 - i)");
             sleep(1);
         }
         player.sendTitle("Go");
-    }
+    });
 }
 ```
 
-`sleep` and `sleepTicks` pause the function. `async { ... }` runs its body without the caller waiting for it. → [`async`](./reference/statements#async), [Functions that pause](./reference/statements#functions-that-pause)
+`sleep` and `sleepTicks` pause the function. `Thread.start(() -> { ... })` runs the lambda without the caller waiting for it. → [`Thread.start`](./reference/statements#thread-start), [Functions that pause](./reference/statements#functions-that-pause)
 
 ## Raw commands
 

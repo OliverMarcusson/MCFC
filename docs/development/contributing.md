@@ -32,7 +32,7 @@ When the optimizer gets faster, lower the budgets. `PROFILE=raw python scripts/p
 Manual compiler smoke test:
 
 ```powershell
-cargo run --bin mcfc -- build npc.mcf --out build/pack --clean
+cargo run --bin mcfc -- build examples/oracle --out build/pack --clean
 ```
 
 ## VS Code Extension Checks

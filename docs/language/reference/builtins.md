@@ -19,19 +19,19 @@ void tick() {
 }
 ```
 
-### `as` and `at`
+### `Execute.as` and `Execute.at`
 
-`as(executor, target)` and `at(origin, target)` build a selector relative to another entity:
+`Execute.as(executor, () -> target)` and `Execute.at(origin, () -> target)` build a selector, entity or block position relative to another entity:
 
 ```mcfc
 void tick() {
     var player = Selector.of("@p").getFirst();
-    var nearest_pig = at(player, Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")).getFirst();
+    var nearest_pig = Execute.at(player, () -> Selector.of("@e[type=minecraft:pig,sort=nearest,limit=1]")).getFirst();
     nearest_pig.addTag("nearest");
 }
 ```
 
-To run a whole block as or at an entity, use the [`as` and `at` blocks](./statements#as-and-at).
+To run a block of code as or at an entity, pass a block lambda. See [`Execute.as` and `Execute.at`](./statements#execute-as-and-execute-at).
 
 ## Creating things
 
@@ -52,7 +52,7 @@ To run a whole block as or at an entity, use the [`as` and `at` blocks](./statem
 | `sleep(seconds: int)` | Pauses the current function. |
 | `sleepTicks(ticks: int)` | Pauses the current function. |
 
-Both have to be used as statements. A function that sleeps also pauses its callers. See [Functions that pause](./statements#functions-that-pause). To wait without holding up the caller, put the sleep inside [`async`](./statements#async).
+Both have to be used as statements. A function that sleeps also pauses its callers. See [Functions that pause](./statements#functions-that-pause). To wait without holding up the caller, put the sleep inside [`Thread.start`](./statements#thread-start).
 
 Under the hood, the rest of the function becomes a separate generated function that runs later through `schedule function`.
 

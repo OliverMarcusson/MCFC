@@ -841,10 +841,10 @@ void main() {
     }
     mc("say after if");
 
-    at (player) {
+    Execute.at(player, () -> {
         sleep(1);
         mc("say after context sleep");
-    }
+    });
     var i = 0;
     while (i < 2) {
         sleep(1);
@@ -888,11 +888,11 @@ void main() {
     var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
     var count = 5;
     player.position.spawnParticle("minecraft:happy_villager", 20, player);
-    async {
+    Thread.start(() -> {
         sleep(5);
         player.sendMessage("later");
         player.position.setBlock("minecraft:gold_block");
-    }
+    });
     count = 7;
     player.sendMessage("caller continues");
     return;
@@ -923,16 +923,19 @@ void main() {
         let async_error = compile_source(
             r#"
 void main() {
-    async {
+    Thread.start(() -> {
         return;
-    }
+    });
 }
 "#,
             &lowering(),
         )
         .unwrap_err()
         .to_string();
-        assert!(async_error.contains("return may not appear inside an async block"));
+        assert!(
+            async_error
+                .contains("return may not appear inside the lambda passed to Thread.start(...)")
+        );
 
         let legacy_error = compile_source(
             r#"
@@ -1065,28 +1068,28 @@ void main() {
 @Command("buy")
 void buy() {
     var player = Selector.of("@s").getFirst();
-    async {
+    Thread.start(() -> {
         sleep(3);
         player.sendMessage("later");
-    }
+    });
     sleepTicks(5);
     player.sendMessage("done");
 }
 
 @EventHandler
 void onPlayerJoin(PlayerJoinEvent event) {
-    async {
+    Thread.start(() -> {
         sleep(1);
         debug("joined");
-    }
+    });
 }
 
 @Every(ticks = 20)
 void pulse() {
-    async {
+    Thread.start(() -> {
         sleep(1);
         debug("pulse");
-    }
+    });
 }
 "#,
             &lowering(),

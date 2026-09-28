@@ -1188,6 +1188,9 @@ fn semantic_token_legend() -> Vec<SemanticTokenType> {
 /// Words the TextMate grammar colours as keywords; they get no semantic token.
 const KEYWORD_IDENTIFIERS: &[&str] = &[
     "int",
+    "short",
+    "byte",
+    "char",
     "float",
     "boolean",
     "void",
@@ -1205,8 +1208,6 @@ const KEYWORD_IDENTIFIERS: &[&str] = &[
     "default",
     "yield",
     "assert",
-    "as",
-    "at",
     "this",
     "null",
     "instanceof",
@@ -1752,7 +1753,7 @@ fn builtin_hover(word: &str) -> Option<&'static str> {
         "case" => Some("A `switch` arm: `case A, B -> ...`. Cases don't fall through."),
         "default" => Some("The fallback arm of a `switch` statement."),
         "mcf" => Some("```mcfc\nmcf(\"say $(expr)\");\n```"),
-        "async" => Some("```mcfc\nasync {\n    ...\n}\n```"),
+        "Thread" => Some("```mcfc\nThread.start(() -> { ... });\n```"),
         "sleep" => Some("```mcfc\nsleep(seconds: int) -> void\n```"),
         "sleepTicks" => Some("```mcfc\nsleepTicks(ticks: int) -> void\n```"),
         "random" => Some(
@@ -1799,11 +1800,8 @@ Shown to players tagged `mcfc.log`.",
         "Block" => Some(
             "```mcfc\nBlock.of(position: String) -> Block\nBlock.of(x: int, y: int, z: int) -> Block\n```",
         ),
-        "at" => Some(
-            "```mcfc\nat(anchor: Entity, value: Selector|Entity|Block) -> Selector|Entity|Block\n\nat(anchor) {\n    ...\n}\n```",
-        ),
-        "as" => Some(
-            "```mcfc\nas(anchor: Selector|Entity, value: Selector|Entity|Block) -> Selector|Entity|Block\n\nas(anchor) {\n    ...\n}\n```",
+        "Execute" => Some(
+            "```mcfc\nExecute.as(anchor: Selector|Entity, () -> { ... });\nExecute.at(anchor: Selector|Entity, () -> { ... });\nExecute.as(anchor: Selector|Entity, () -> value) -> Selector|Entity|Block\nExecute.at(anchor: Entity, () -> value) -> Selector|Entity|Block\n```",
         ),
         "asNbt" => Some(
             "```mcfc\nEntityData.asNbt() -> Nbt\nBlockData.asNbt() -> Nbt\nItemStack.asNbt() -> Nbt\n```",
@@ -2520,8 +2518,8 @@ fn static_completion_items() -> Vec<CompletionItem> {
     let mut items = Vec::new();
     for keyword in [
         "var", "return", "if", "else", "switch", "case", "default", "while", "for", "break",
-        "continue", "async", "assert", "new", "mc", "mcf", "true", "false", "record", "enum",
-        "import", "public", "final", "static", "do", "yield",
+        "continue", "assert", "new", "mc", "mcf", "true", "false", "record", "enum", "import",
+        "public", "final", "static", "do", "yield",
     ] {
         items.push(CompletionItem {
             label: keyword.to_string(),
@@ -2534,6 +2532,9 @@ fn static_completion_items() -> Vec<CompletionItem> {
         ("int", "int"),
         ("float", "float"),
         ("boolean", "boolean"),
+        ("char", "char"),
+        ("short", "short"),
+        ("byte", "byte"),
         ("Integer", "Integer"),
         ("Float", "Float"),
         ("Boolean", "Boolean"),
@@ -2659,24 +2660,14 @@ void ${1:test}() {
             "Block.of(${1:\"~ ~ ~\"})",
         ),
         (
-            "at",
-            "at(anchor: Entity, value: Selector|Entity|Block)",
-            "at(${1:anchor}, ${2:value})",
+            "Execute.at(...)",
+            "Run a lambda at an entity, or rebase a Selector/Entity/Block to it",
+            "Execute.at(${1:anchor}, () -> {\n\t$0\n});",
         ),
         (
-            "at(...) {}",
-            "Run commands at an entity/block",
-            "at(${1:anchor}) {\n\t$0\n}",
-        ),
-        (
-            "as",
-            "as(anchor: Selector|Entity, value: Selector|Entity|Block)",
-            "as(${1:anchor}, ${2:value})",
-        ),
-        (
-            "as(...) {}",
-            "Run commands as an entity",
-            "as(${1:anchor}) {\n\t$0\n}",
+            "Execute.as(...)",
+            "Run a lambda as an entity, or rebase a Selector/Entity/Block to it",
+            "Execute.as(${1:anchor}, () -> {\n\t$0\n});",
         ),
         (
             "summon",
@@ -2684,9 +2675,9 @@ void ${1:test}() {
             "summon(${1:\"minecraft:pig\"})",
         ),
         (
-            "async {}",
-            "Spawn a non-blocking async block",
-            "async {\n\t$0\n}",
+            "Thread.start(...)",
+            "Run a lambda without the caller waiting for it",
+            "Thread.start(() -> {\n\t$0\n});",
         ),
         (
             "debug",
@@ -5976,7 +5967,11 @@ void main() {
                 .any(|item| item.label == "random(min, max)")
         );
         assert!(top_level_items.iter().any(|item| item.label == "summon"));
-        assert!(top_level_items.iter().any(|item| item.label == "async {}"));
+        assert!(
+            top_level_items
+                .iter()
+                .any(|item| item.label == "Thread.start(...)")
+        );
         assert!(
             top_level_items
                 .iter()

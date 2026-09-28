@@ -295,7 +295,7 @@ void newFeatures() {
     check("look_up", near(pig.getLookY(), 1.0), pig.getLookY().toString());
     mc("kill @e[type=minecraft:pig,tag=mcfc_look_pig]");
     var p = Selector.of("@a[limit=1]").getFirst();
-    at (p) {
+    Execute.at(p, () -> {
         var here = Block.of("~ ~ ~");
         var light = here.getLightLevel();
         var biome = here.getBiome();
@@ -310,7 +310,7 @@ void newFeatures() {
         check("block_not_in_void", !here.inBiome("minecraft:the_void"), biome);
         var sky = here.getEnvironment("gameplay/sky_light_level");
         check("block_environment", sky >= 0.0 && sky <= 15.0, sky.toString());
-    }
+    });
 }
 
 // Fill, sort and check `size` floats, like sort_test.

@@ -16,6 +16,8 @@
   "Event handler": { "prefix": "event", "body": ["@EventHandler", "void ${1:onPlayerJoin}(${2:PlayerJoinEvent} event) {", "    ${0}", "}"], "description": "Handler for the event named by the parameter type" },
   "Command": { "prefix": "command", "body": ["@Command(\"${1:status}\")", "void ${1:status}() {", "    ${0}", "}"], "description": "MCFC command" },
   "Repeating task": { "prefix": "every", "body": ["@Every(ticks = ${1:20})", "void ${2:tick}() {", "    ${0}", "}"], "description": "Repeating task" },
-  "Async": { "prefix": "async", "body": ["async {", "    ${0}", "}"], "description": "Async block" },
+  "Thread start": { "prefix": "thread", "body": ["Thread.start(() -> {", "    ${0}", "});"], "description": "Run a lambda without the caller waiting for it" },
+  "Execute as": { "prefix": "executeas", "body": ["Execute.as(${1:player}, () -> {", "    ${0}", "});"], "description": "Run a lambda as an entity" },
+  "Execute at": { "prefix": "executeat", "body": ["Execute.at(${1:player}, () -> {", "    ${0}", "});"], "description": "Run a lambda at an entity" },
   "Host call": { "prefix": "host", "body": "${1:http}.${2:get}(${0})", "description": "Capability-gated host call" }
 }

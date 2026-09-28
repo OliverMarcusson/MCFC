@@ -38,6 +38,8 @@ fn native_this(name: &str) -> Option<Type> {
 /// `(int) x` and friends lower to these conversion builtins.
 const CASTS: &[(&str, &str)] = &[
     ("int", "int"),
+    ("short", "int"),
+    ("byte", "int"),
     ("float", "float"),
     ("boolean", "bool"),
     ("String", "string"),
@@ -97,6 +99,8 @@ pub(crate) const STATIC_METHODS: &[(&str, &[(&str, &str)])] = &[
             ("clear", "sidebar_clear"),
         ],
     ),
+    ("Thread", &[("start", "@thread.start")]),
+    ("Execute", &[("as", "@execute.as"), ("at", "@execute.at")]),
     (
         "Log",
         &[
@@ -1563,8 +1567,14 @@ impl Parser {
                     },
                 ])
             }
-            TokenKind::Async => {
+            TokenKind::Identifier(word)
+                if word == "async" && matches!(self.peek_at(1), TokenKind::LeftBrace) =>
+            {
                 self.bump();
+                self.error_at(
+                    "`async { ... }` is now `Thread.start(() -> { ... });`",
+                    span.clone(),
+                );
                 StmtKind::Async {
                     body: self.parse_block("async block"),
                 }
@@ -1718,33 +1728,28 @@ impl Parser {
                     kind: ExprKind::Call { function, args, .. },
                     span: call_span,
                 }) = &kind
-                    && (function == "as" || function == "at")
-                    && self.at(&TokenKind::LeftBrace)
                 {
-                    let context = if function == "as" {
-                        ContextKind::As
-                    } else {
-                        ContextKind::At
-                    };
-                    if args.len() != 1 {
+                    if (function == "as" || function == "at") && self.at(&TokenKind::LeftBrace) {
+                        // The old `as (anchor) { ... }` block.
                         self.error_at(
-                            &format!("a {function} block takes exactly one anchor"),
+                            &format!(
+                                "`{function} (anchor) {{ ... }}` is now \
+                                 `Execute.{function}(anchor, () -> {{ ... }});`"
+                            ),
                             call_span.clone(),
                         );
+                        self.parse_block(&format!("{function} block"));
+                        return Stmt { kind, span };
                     }
-                    let anchor = args
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| int_expr(0, call_span));
-                    let body = self.parse_block(&format!("{function} block"));
-                    return Stmt {
-                        kind: StmtKind::Context {
-                            kind: context,
-                            anchor,
-                            body,
-                        },
-                        span,
-                    };
+                    if function == "@thread.start"
+                        || function.starts_with("@execute.")
+                        || function == "@as"
+                        || function == "@at"
+                    {
+                        let kind = self.lambda_block_stmt(function, args, call_span);
+                        self.expect_semicolon("statement");
+                        return Stmt { kind, span };
+                    }
                 }
                 self.expect_semicolon("statement");
                 kind
@@ -2439,7 +2444,16 @@ impl Parser {
                     &format!("expected '(' after {name}.{method}"),
                 );
                 let args = self.parse_call_args();
-                call(builtin.unwrap_or(methods[0].1), args, &span)
+                let builtin = builtin.unwrap_or(methods[0].1);
+                // `Execute.at(anchor, () -> value)` is the value, rebased.
+                if let Some(context) = builtin.strip_prefix("@execute.")
+                    && let [anchor, lambda] = args.as_slice()
+                    && let Some(value) = expression_lambda_value(lambda)
+                {
+                    call(&format!("@{context}"), vec![anchor.clone(), value], &span)
+                } else {
+                    call(builtin, args, &span)
+                }
             }
             TokenKind::Identifier(name)
                 if !self.in_case_label && matches!(self.peek().kind, TokenKind::Arrow) =>
@@ -2580,6 +2594,85 @@ impl Parser {
             index += 1;
         }
         false
+    }
+
+    /// `Thread.start(() -> { ... })` or `Execute.as(anchor, () -> { ... })`
+    /// as a statement: the lambda body runs later, or in the anchor's context.
+    fn lambda_block_stmt(&mut self, function: &str, args: &[Expr], span: &Span) -> StmtKind {
+        let (name, context) = match function {
+            "@thread.start" => ("Thread.start".to_string(), None),
+            "@execute.as" | "@as" => ("Execute.as".to_string(), Some(ContextKind::As)),
+            _ => ("Execute.at".to_string(), Some(ContextKind::At)),
+        };
+        let arity = if context.is_some() { 2 } else { 1 };
+        if args.len() != arity {
+            let params = if context.is_some() {
+                "an anchor and a lambda"
+            } else {
+                "a lambda"
+            };
+            self.error_at(&format!("{name}(...) takes {params}"), span.clone());
+        }
+        let body = match args.last() {
+            // `@as`/`@at`: the parser already took the value out of `() -> value`.
+            Some(value) if function == "@as" || function == "@at" => vec![Stmt {
+                kind: StmtKind::Expr(value.clone()),
+                span: value.span.clone(),
+            }],
+            Some(Expr {
+                kind:
+                    ExprKind::Lambda {
+                        params,
+                        body,
+                        expression,
+                    },
+                span: lambda_span,
+            }) => {
+                if !params.is_empty() {
+                    self.error_at(
+                        &format!("the lambda passed to {name}(...) takes no parameters"),
+                        lambda_span.clone(),
+                    );
+                }
+                match (expression, body.as_slice()) {
+                    (
+                        true,
+                        [
+                            Stmt {
+                                kind: StmtKind::Return(Some(value)),
+                                span,
+                            },
+                        ],
+                    ) => vec![Stmt {
+                        kind: StmtKind::Expr(value.clone()),
+                        span: span.clone(),
+                    }],
+                    _ => body.clone(),
+                }
+            }
+            _ if args.len() != arity => Vec::new(),
+            _ => {
+                self.error_at(
+                    &format!("{name}(...) takes a lambda: () -> {{ ... }}"),
+                    span.clone(),
+                );
+                Vec::new()
+            }
+        };
+        match context {
+            None => StmtKind::Async { body },
+            Some(kind) => {
+                // A lambda's `return` would leave the enclosing function here.
+                if has_return(&body) {
+                    self.error_at(
+                        &format!("return may not appear inside the lambda passed to {name}(...)"),
+                        span.clone(),
+                    );
+                }
+                let anchor = args.first().cloned().unwrap_or_else(|| int_expr(0, span));
+                StmtKind::Context { kind, anchor, body }
+            }
+        }
     }
 
     /// What follows a lambda's `->`: a block, or an expression it returns.
@@ -3006,13 +3099,15 @@ impl Parser {
             args
         };
         match name.as_str() {
-            "int" | "Integer" => Type::Int,
+            // `short` and `byte` are plain ints, and a `char` is a one-character String.
+            "int" | "Integer" | "short" | "Short" | "byte" | "Byte" => Type::Int,
+            "char" | "Character" => Type::String,
             "float" | "Float" => Type::Float,
             "boolean" | "Boolean" => Type::Bool,
             "String" => Type::String,
             "void" => Type::Void,
-            // Scores are 32-bit ints, so Java's other number types have no match.
-            "long" | "short" | "byte" | "char" | "Long" | "Short" | "Byte" | "Character" => {
+            // Scores are 32-bit ints, so a 64-bit long has no match.
+            "long" | "Long" => {
                 self.error_at(
                     &format!("MCFC has no '{name}'; numbers are 'int' (32-bit) or 'float'"),
                     span,
@@ -3102,6 +3197,9 @@ impl Parser {
                 "int" => Some("Integer"),
                 "float" => Some("Float"),
                 "boolean" => Some("Boolean"),
+                "char" => Some("Character"),
+                "short" => Some("Short"),
+                "byte" => Some("Byte"),
                 _ => None,
             }
         {
@@ -3396,6 +3494,26 @@ fn has_return(body: &[Stmt]) -> bool {
         | StmtKind::Async { body } => has_return(body),
         _ => false,
     })
+}
+
+/// The value of `() -> value`, a lambda with no parameters and an expression body.
+fn expression_lambda_value(expr: &Expr) -> Option<Expr> {
+    match &expr.kind {
+        ExprKind::Lambda {
+            params,
+            body,
+            expression: true,
+        } if params.is_empty() => match body.as_slice() {
+            [
+                Stmt {
+                    kind: StmtKind::Return(Some(value)),
+                    ..
+                },
+            ] => Some(value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[cfg(test)]

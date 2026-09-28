@@ -5,6 +5,7 @@ What MCFC doesn't do yet, with workarounds where there are any.
 ## Language
 
 - **Recursive functions can't pause.** A function that calls itself, directly or indirectly, can't `sleep`, sort or wait on a host call. Deep recursion is also bounded by the game's command chain limit (`maxCommandChainLength`), since every call saves and restores its frame.
+- **`char`, `short` and `byte` are aliases.** A `char` is a one-character `String` and has no number value; `short` and `byte` are full 32-bit `int`s and don't wrap. There is no `long` or `double`.
 - **Limited implicit conversions.** `int` widens to `float`, and `String + value` converts numbers, booleans, enums and records to text. Other conversions need a cast or `toString()`.
 - **Unchecked casts.** `(Dog) animal` doesn't check the object's class while the pack runs, and there is no `ClassCastException`. Test with `instanceof` first.
 - **Records don't implement interfaces**, and generic methods aren't virtual.

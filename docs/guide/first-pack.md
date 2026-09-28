@@ -153,14 +153,14 @@ Minecraft commands can't pause. MCFC compiles `sleep` into a scheduled continuat
 
 ```mcfc
 void remind(Player player) {
-    async {
+    Thread.start(() -> {
         sleep(3);
         player.sendMessage("Spend wisely.");
-    }
+    });
 }
 ```
 
-Call `remind(player);` at the end of `buy`. `async { ... }` starts its body and returns immediately. `sleep(3)` waits 3 seconds inside that body, and `sleepTicks(n)` waits by ticks. Local variables such as `player` are copied when the block starts.
+Call `remind(player);` at the end of `buy`. `Thread.start(() -> { ... })` starts the lambda and returns immediately. `sleep(3)` waits 3 seconds inside that lambda, and `sleepTicks(n)` waits by ticks. Local variables such as `player` are copied when the lambda starts.
 
 ## The finished pack
 
@@ -210,10 +210,10 @@ void buy(Player player) {
 }
 
 void remind(Player player) {
-    async {
+    Thread.start(() -> {
         sleep(3);
         player.sendMessage("Spend wisely.");
-    }
+    });
 }
 ```
 

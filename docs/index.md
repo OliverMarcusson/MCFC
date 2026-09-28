@@ -25,7 +25,7 @@ features:
   - title: Checked before you load it
     details: Type errors, unknown methods and wrong arguments are reported with file and line, in the terminal and in VS Code.
   - title: Waiting without blocking
-    details: sleep() and async blocks compile into scheduled functions, so a countdown is a for loop.
+    details: sleep() and Thread.start compile into scheduled functions, so a countdown is a for loop.
   - title: Optional host access
     details: With the mcfd helper, a pack can call HTTP APIs, read files, use SQLite, and get real time, each enabled per project.
 ---

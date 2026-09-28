@@ -4,7 +4,7 @@ MCFC uses Java syntax: blocks are `{ ... }`, statements end with `;`, and `//` a
 
 **Top level:** [functions](#functions) · [overloading](#overloading) · [`record`](#record) · [`enum`](#enum) · [`class`](#class) · [modules and `public`](#modules-and-public) · [`import`](#import) · [`@PlayerState`](#playerstate) · [`@EntityState`](#entitystate) · [`@EventHandler`](./events) · [`@Command`](#command) · [`@Every` / `@After`](#every-and-after)
 
-**In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`async`](#async) · [`as` / `at`](#as-and-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
+**In a function:** [variables](#variables) · [assignment](#assignment) · [`if`](#if) · [conditional expressions](#conditional-expressions) · [`switch`](#switch) · [`while`](#while) · [`do` / `while`](#do-while) · [`for`](#for) · [`break` / `continue` / `return`](#break-continue-return) · [`Thread.start`](#thread-start) · [`Execute.as` / `Execute.at`](#execute-as-and-execute-at) · [`mc`](#mc) · [`mcf`](#mcf) · [calls](#calls)
 
 ## Declarations
 
@@ -846,39 +846,39 @@ void buy() {
 - An exception nothing catches is logged with [`Log.error`](./builtins#logging) where it leaves a function no code calls, such as `main`, `tick` or an event handler. In a `@Test`, it fails the test.
 - After each call that can throw, the caller checks for an exception, so a program without `throw` pays nothing. See [limitations](../limitations) for what differs from Java.
 
-### `async`
+### `Thread.start`
 
 ```mcfc
 void greetLater(Player player) {
-    async {
+    Thread.start(() -> {
         sleepTicks(20);
         player.sendActionBar("later");
-    }
+    });
     player.sendActionBar("now");
 }
 ```
 
-The body starts running right away, and the statement after the block runs without waiting for it. Local variables are copied when the block starts, so later changes in the parent don't reach the copy. `return` isn't allowed inside `async`.
+The lambda starts running right away, and the statement after `Thread.start` runs without waiting for it. Local variables are copied when it starts, so later changes in the parent don't reach the copy. The lambda takes no parameters, and `return` isn't allowed inside it.
 
-### `as` and `at`
+### `Execute.as` and `Execute.at`
 
 ```mcfc
 void sparkle(Player player) {
-    as (player) {
+    Execute.as(player, () -> {
         Selector.of("@s").getFirst().addTag("marked");
-    }
-    at (player) {
+    });
+    Execute.at(player, () -> {
         Block.of("~ ~1 ~").spawnParticle("minecraft:happy_villager", 8);
         Block.of("~ ~-1 ~").setBlock("minecraft:gold_block");
-    }
+    });
 }
 ```
 
-`as` changes who `@s` is, and `at` changes where `~ ~ ~` is. The anchor can be an `Entity` or a `Selector`, in which case the body runs once per entity. These compile to `execute as` and `execute at`. To build a selector relative to an entity, use the function forms [`as(...)` and `at(...)`](./builtins#as-and-at).
+`Execute.as` changes who `@s` is, and `Execute.at` changes where `~ ~ ~` is. The anchor can be an `Entity` or a `Selector`, in which case the lambda runs once per entity. These compile to `execute as` and `execute at`, so the lambda runs in place and `return` isn't allowed inside it. Passing `() -> value` instead of a block gives a [selector or position relative to the entity](./builtins#execute-as-and-execute-at).
 
 ### `mc`
 
-`mc` and `mcf` are for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [`TODO.md`](https://github.com/OliverMarcusson/MCFC/blob/main/TODO.md).
+`mc` and `mcf` are for Minecraft commands MCFC has no feature for yet. Prefer a method or builtin when one exists; missing features are tracked in [issues](https://github.com/OliverMarcusson/MCFC/issues).
 
 ```mcfc
 void setup() {

@@ -13,15 +13,15 @@ public void remove(String name) {
 
 // `target` is a `Player` or a `Selector`.
 public <T> void join(T target, String team) {
-    as (target) {
+    Execute.as(target, () -> {
         mcf("team join $(team) @s");
-    }
+    });
 }
 
 public <T> void leave(T target) {
-    as (target) {
+    Execute.as(target, () -> {
         mc("team leave @s");
-    }
+    });
 }
 
 public void setFriendlyFire(String team, boolean allowed) {

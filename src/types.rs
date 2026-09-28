@@ -3813,7 +3813,7 @@ fn type_check_block(
                 ) {
                     diagnostics.push(Diagnostic::new(
                         format!(
-                            "{} context block requires a 'Selector' or 'Entity' anchor",
+                            "{}(...) requires a 'Selector' or 'Entity' anchor",
                             context_name(*kind)
                         ),
                         statement.span.clone(),
@@ -3905,7 +3905,7 @@ fn type_check_block(
             StmtKind::Return(value) => {
                 if in_async {
                     diagnostics.push(Diagnostic::new(
-                        "return may not appear inside an async block",
+                        "return may not appear inside the lambda passed to Thread.start(...)",
                         statement.span.clone(),
                     ));
                 }
@@ -7052,7 +7052,7 @@ fn type_check_builtin_call(
                 ref_kind: RefKind::Unknown,
             })
         }
-        "at" => {
+        "@at" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -7076,7 +7076,7 @@ fn type_check_builtin_call(
             });
             if !is_entity_ref_type(&anchor.ty) {
                 diagnostics.push(Diagnostic::new(
-                    "at(...) requires an 'Entity' anchor",
+                    "Execute.at(...) requires an 'Entity' anchor",
                     expr.span.clone(),
                 ));
             }
@@ -7085,7 +7085,7 @@ fn type_check_builtin_call(
                 Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
             ) {
                 diagnostics.push(Diagnostic::new(
-                    "at(...) requires a 'Selector', 'Entity', or 'Block' value",
+                    "Execute.at(...) requires a 'Selector', 'Entity', or 'Block' value",
                     expr.span.clone(),
                 ));
             }
@@ -7098,7 +7098,23 @@ fn type_check_builtin_call(
                 ref_kind: value.ref_kind,
             })
         }
-        "as" => {
+        "@execute.as" | "@execute.at" | "@thread.start" => {
+            let name = match function {
+                "@execute.as" => "Execute.as(anchor, () -> { ... })",
+                "@execute.at" => "Execute.at(anchor, () -> { ... })",
+                _ => "Thread.start(() -> { ... })",
+            };
+            diagnostics.push(Diagnostic::new(
+                format!("{name} is a statement; for a value, pass `() -> value`"),
+                expr.span.clone(),
+            ));
+            Some(TypedExpr {
+                kind: TypedExprKind::Variable("_error".to_string()),
+                ty: Type::Void,
+                ref_kind: RefKind::Unknown,
+            })
+        }
+        "@as" => {
             let args = type_check_args(
                 args,
                 struct_defs,
@@ -7125,7 +7141,7 @@ fn type_check_builtin_call(
                 Type::EntitySet | Type::EntityRef | Type::PlayerRef
             ) {
                 diagnostics.push(Diagnostic::new(
-                    "as(...) requires a 'Selector' or 'Entity' anchor",
+                    "Execute.as(...) requires a 'Selector' or 'Entity' anchor",
                     expr.span.clone(),
                 ));
             }
@@ -7134,7 +7150,7 @@ fn type_check_builtin_call(
                 Type::EntitySet | Type::EntityRef | Type::PlayerRef | Type::BlockRef
             ) {
                 diagnostics.push(Diagnostic::new(
-                    "as(...) requires a 'Selector', 'Entity', or 'Block' value",
+                    "Execute.as(...) requires a 'Selector', 'Entity', or 'Block' value",
                     expr.span.clone(),
                 ));
             }
@@ -11013,8 +11029,8 @@ fn expect_arity(
 
 fn context_name(kind: ContextKind) -> &'static str {
     match kind {
-        ContextKind::As => "as",
-        ContextKind::At => "at",
+        ContextKind::As => "Execute.as",
+        ContextKind::At => "Execute.at",
     }
 }
 

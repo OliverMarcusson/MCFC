@@ -16,7 +16,6 @@ pub enum TokenKind {
     For,
     Break,
     Continue,
-    Async,
     New,
     Do,
     True,
@@ -111,6 +110,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                     continue;
                 }
             }
+        } else if ch == '\'' {
+            // `'a'`: a char is a one-character String.
+            match lex_char(&mut cursor) {
+                Some(value) => TokenKind::String(value),
+                None => {
+                    diagnostics.push(Diagnostic::new(
+                        "a char literal holds one character, like 'a' or '\\n'",
+                        Span::from_range(&source_file, TextRange::new(start, cursor.position())),
+                    ));
+                    continue;
+                }
+            }
         } else if ch.is_ascii_digit() {
             match lex_number(&mut cursor) {
                 Some(kind) => kind,
@@ -132,7 +143,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                 "for" => TokenKind::For,
                 "break" => TokenKind::Break,
                 "continue" => TokenKind::Continue,
-                "async" => TokenKind::Async,
                 "new" => TokenKind::New,
                 "do" => TokenKind::Do,
                 "true" => TokenKind::True,
@@ -279,6 +289,29 @@ fn lex_string(cursor: &mut Cursor<'_>) -> Option<String> {
             },
             other => value.push(other),
         }
+    }
+    None
+}
+
+fn lex_char(cursor: &mut Cursor<'_>) -> Option<String> {
+    cursor.bump();
+    let value = match cursor.bump()? {
+        '\'' | '\n' => return None,
+        '\\' => match cursor.bump()? {
+            'n' => '\n',
+            't' => '\t',
+            other => other,
+        },
+        other => other,
+    };
+    if cursor.peek() == Some('\'') {
+        cursor.bump();
+        return Some(value.to_string());
+    }
+    // `'ab'`: skip to the closing quote so it isn't read as a second literal.
+    cursor.consume_while(|next| next != '\'' && next != '\n');
+    if cursor.peek() == Some('\'') {
+        cursor.bump();
     }
     None
 }

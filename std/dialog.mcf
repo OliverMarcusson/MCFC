@@ -14,9 +14,9 @@ record Menu(String type, String title, Message body, List<Action> actions) {}
 
 public void notice(Player player, String title, Component body) {
     var dialog = new Notice("minecraft:notice", title, message(body));
-    as (player) {
+    Execute.as(player, () -> {
         mcf("dialog show @s $(dialog)");
-    }
+    });
 }
 
 public void menu(Player player, String title, Component body, List<Button> buttons) {
@@ -25,9 +25,9 @@ public void menu(Player player, String title, Component body, List<Button> butto
         actions.add(new Action(button.label(), new RunCommand("run_command", "/trigger " + button.command())));
     }
     var dialog = new Menu("minecraft:multi_action", title, message(body), actions);
-    as (player) {
+    Execute.as(player, () -> {
         mcf("dialog show @s $(dialog)");
-    }
+    });
 }
 
 Message message(Component contents) {

@@ -2,7 +2,7 @@
   "information_for_contributors": [
     "VS Code's Java grammar (redhat-developer/vscode-java@f09b712, MIT, Copyright (c) 2014 GitHub Inc.),",
     "so .mcf files get the same scopes, and the same colours, as Java.",
-    "Changes: the file body is a Java class body (with records), strings highlight MCFC $(...) placeholders, and as/at/async are control keywords."
+    "Changes: the file body is a Java class body (with records), strings highlight MCFC $(...) placeholders."
   ],
   "name": "MCFC",
   "scopeName": "source.mcfc",
@@ -866,10 +866,6 @@
     },
     "keywords": {
       "patterns": [
-        {
-          "match": "\\b(?:as|at)\\b(?=\\s*\\()|\\basync\\b",
-          "name": "keyword.control.mcfc"
-        },
         {
           "match": "\\bthrow\\b",
           "name": "keyword.control.throw.java"

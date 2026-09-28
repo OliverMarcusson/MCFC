@@ -63,11 +63,11 @@ MCFC uses scoreboard guard slots to model branches, loops, `break`, `continue`, 
 
 ## Context
 
-`as(entity):` and `at(entity):` lower to `execute as ... run function ...` or `execute at ... run function ...`. Nested context is carried through generated function calls so references such as `@s` and relative positions keep the intended meaning.
+`Execute.as(entity, () -> { ... })` and `Execute.at(entity, () -> { ... })` lower to `execute as ... run function ...` or `execute at ... run function ...`. Nested context is carried through generated function calls so references such as `@s` and relative positions keep the intended meaning.
 
 ## Async, Sleep, And Host Calls
 
-`async:` creates a separate generated function and launches it without waiting. Captured locals are copied into storage/scoreboard slots before launch.
+`Thread.start(() -> { ... })` creates a separate generated function and launches it without waiting. Captured locals are copied into storage/scoreboard slots before launch.
 
 `sleep(...)`, `sleepTicks(...)`, and host bridge calls split the current function at the suspension point. MCFC emits a continuation function and resumes it later with Minecraft `schedule function` or the `mcfd` response pump.
 

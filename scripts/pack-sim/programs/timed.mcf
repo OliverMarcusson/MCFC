@@ -14,10 +14,10 @@ int slowSum(int n) {
 }
 
 void main() {
-    async {
+    Thread.start(() -> {
         sleepTicks(3);
         mc("say async done");
-    }
+    });
     mc("say before");
     var r = slowSum(5);
     mcf("say slow $(r)");

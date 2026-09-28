@@ -56,12 +56,12 @@ int score(Mode mode, float speed) {
             sleepTicks(20);
         }
     }
-    async {
+    Thread.start(() -> {
         sleep(1);
-    }
-    as (Selector.of("@p").getFirst()) {
+    });
+    Execute.as(Selector.of("@p").getFirst(), () -> {
         mc("say hi");
-    }
+    });
     var stack = new ItemStack("minecraft:stick");
     var who = (Player) Selector.of("@p").getFirst();
     who.state.coins += 1;

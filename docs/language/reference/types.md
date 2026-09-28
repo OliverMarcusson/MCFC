@@ -6,6 +6,8 @@
 | [`float`](#float) | 32-bit decimal | storage |
 | [`boolean`](#boolean) | `true` / `false` | scoreboard |
 | [`String`](#string) | text | storage |
+| `short`, `byte` | another name for `int`, with no narrower range | scoreboard |
+| `char` | another name for a one-character `String`, written `'a'` | storage |
 | [`List<T>`](#list) | ordered list | storage |
 | [`Map<String, T>`](#map) | string-keyed map | storage |
 | [`Optional<T>`](#optional) | a `T` or nothing | storage |
@@ -23,6 +25,7 @@
 
 - `var` takes its type from the initializer; `T x = ...;` checks it. Parameters and return types are written out.
 - An assignment has to keep the variable's type, and arguments have to match parameter types.
+- `short` and `byte` are `int` under another name: `byte b = 300;` keeps 300, and `(short)` and `(byte)` casts work like `(int)`. `char` is `String` under another name, so `'a' + 1` is `"a1"`, not `98`. `List<Character>`, `List<Short>` and `List<Byte>` work the same way.
 - An `int` widens to `float` when a float is expected, including in arithmetic. `EntityData`, `BlockData` and `ItemStack` can be used where an `Nbt` value is expected, which is short for `.asNbt()`.
 - `+ - * / %` work on numbers; a mixed `int` and `float` expression has type `float`. `+` also joins a `String` with an `int`, `float`, `boolean` or enum.
 - `< <= > >=` work on `int`, `float` and `boolean`. `== !=` work on all of these plus `String`.
@@ -95,7 +98,7 @@ void main() {
 | `equals(other)` | `boolean`, the same comparison as `==` |
 | `contains(part)`, `startsWith(prefix)`, `endsWith(suffix)` | `boolean` |
 | `indexOf(part)` | The first index, or `-1` |
-| `charAt(index)` | One-character `String`; MCFC has no `char` type. |
+| `charAt(index)` | A `char`, which is a one-character `String` |
 | `isEmpty()` | `boolean` |
 | `replace(target, replacement)` | Every `target` replaced. `target` is plain text. |
 | `split(separator)` | `List<String>`. `separator` is plain text, not a regex. Like Java, trailing empty parts are dropped. |
@@ -227,7 +230,7 @@ When the selector already tells, `instanceof Player` is a constant. Otherwise it
 
 ## `Block`
 
-A block position, created with `Block.of("~ ~ ~")` or read from `entity.position`. The string must be a literal. For a position computed at run time, pass world coordinates as ints: `Block.of(x, 64, z)`. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `at(player, Block.of("~1 ~ ~"))` or an [`at` block](./statements#as-and-at).
+A block position, created with `Block.of("~ ~ ~")` or read from `entity.position`. The string must be a literal. For a position computed at run time, pass world coordinates as ints: `Block.of(x, 64, z)`. Relative coordinates are resolved where the code runs. To anchor them to an entity, use `Execute.at(player, () -> Block.of("~1 ~ ~"))` or run code in an [`Execute.at` lambda](./statements#execute-as-and-execute-at).
 
 | Method | Does |
 | --- | --- |

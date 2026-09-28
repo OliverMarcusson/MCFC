@@ -10,7 +10,7 @@ Then copy `examples/<name>/dist` into `<world>/datapacks/` and run `/reload`. Ex
 
 | Example | Shows | Needs |
 | --- | --- | --- |
-| [Oracle](#oracle) | HTTP, time, helper randomness, player state, an endless `async` loop | `mcfd` |
+| [Oracle](#oracle) | HTTP, time, helper randomness, player state, an endless `Thread.start` loop | `mcfd` |
 | [RPC demo](#rpc-demo) | The smallest possible host call | `mcfd` |
 | [Cyber Quotes](#cyber-quotes) | JSON extraction, bearer tokens, formatted text | `mcfd`, API token |
 | [Feature demo](#feature-demo) | A self-checking tour of floats, strings, lists, std, generics, world reads | nothing |

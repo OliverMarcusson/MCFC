@@ -67,7 +67,7 @@ Create an `ItemStack` with `new ItemStack(id)`.
 
 | Member | Type | Notes |
 | --- | --- | --- |
-| `id` | `String` | Read-only item id. |
+| `id`, `getId()` | `String` | Read-only item id. |
 | `getCount()` / `setCount(int)` | `int` | Stack size. |
 | `nbt.*` | `Nbt` | Item NBT. |
 | `getName()` / `setName(String)` | `Nbt` / `String` | Shorthand for `nbt.display.Name`. Cast the getter to `String` if needed. |

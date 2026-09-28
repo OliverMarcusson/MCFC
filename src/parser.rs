@@ -24,6 +24,8 @@ pub fn parse_expression(source: &str) -> Result<Expr, Diagnostics> {
 fn native_this(name: &str) -> Option<Type> {
     match name {
         "Component" => Some(Type::TextDef),
+        "BossBar" => Some(Type::Bossbar),
+        "ItemStack" => Some(Type::ItemDef),
         "Player" => Some(Type::PlayerRef),
         "Selector" => Some(Type::EntitySet),
         "Entity" => Some(Type::Struct("mcfcSelf".to_string())),
@@ -652,6 +654,7 @@ impl Parser {
                 body.push(rest.remove(0));
             } else if parent.is_some() {
                 body.push(stmt(StmtKind::Expr(at(ExprKind::Call {
+                    type_args: Vec::new(),
                     function: "super".to_string(),
                     args: Vec::new(),
                 }))));
@@ -690,6 +693,7 @@ impl Parser {
                     name: "this".to_string(),
                     ty: Some(Type::Struct(name.clone())),
                     value: at(ExprKind::Call {
+                        type_args: Vec::new(),
                         function: "__mcfc_alloc".to_string(),
                         args: Vec::new(),
                     }),
@@ -698,6 +702,7 @@ impl Parser {
                 // a `return` in it would end the factory early.
                 if has_return(&init.body) {
                     factory.body.push(stmt(StmtKind::Expr(at(ExprKind::Call {
+                        type_args: Vec::new(),
                         function: format!("{name}__mcfcInit"),
                         args,
                     }))));
@@ -1710,7 +1715,7 @@ impl Parser {
             _ => {
                 let kind = self.parse_simple_stmt();
                 if let StmtKind::Expr(Expr {
-                    kind: ExprKind::Call { function, args },
+                    kind: ExprKind::Call { function, args, .. },
                     span: call_span,
                 }) = &kind
                     && (function == "as" || function == "at")
@@ -2493,6 +2498,7 @@ impl Parser {
                         span,
                     };
                 }
+                let type_args = self.explicit_type_args();
                 if self.eat(&TokenKind::LeftParen) {
                     if let Some((ty, _)) = CASTS.iter().find(|(_, builtin)| *builtin == name) {
                         self.error_at(&format!("use a cast: '({ty}) value'"), span.clone());
@@ -2523,6 +2529,7 @@ impl Parser {
                     let args = self.parse_call_args();
                     Expr {
                         kind: ExprKind::Call {
+                            type_args,
                             function: internal_function_name(&name).to_string(),
                             args,
                         },
@@ -2682,6 +2689,7 @@ impl Parser {
                 };
                 expr = Expr {
                     kind: ExprKind::MethodCall {
+                        type_args: Vec::new(),
                         receiver: Box::new(receiver),
                         method,
                         args,
@@ -2690,6 +2698,28 @@ impl Parser {
                 };
             } else if self.eat(&TokenKind::Dot) {
                 let span = self.current_span();
+                // `Util.<Integer>f(x)`: a call with its type arguments written out.
+                if self.at(&TokenKind::Lt) {
+                    let type_args = self.parse_type_args();
+                    let method = self.expect_identifier("expected a method name after '>'");
+                    self.expect(TokenKind::LeftParen, "expected '(' after the method name");
+                    let args = self.parse_call_args();
+                    let method = if java_name_for(&method, true).is_some() {
+                        format!("{WRITTEN_METHOD}{method}")
+                    } else {
+                        internal_method_name(&method, args.len()).to_string()
+                    };
+                    expr = Expr {
+                        kind: ExprKind::MethodCall {
+                            receiver: Box::new(expr),
+                            method,
+                            args,
+                            type_args,
+                        },
+                        span,
+                    };
+                    continue;
+                }
                 let field = self.expect_identifier("expected field name after '.'");
                 // `NamedTextColor.RED` is "red", `TextDecoration.BOLD` is "bold".
                 if let ExprKind::Variable(class) = &expr.kind
@@ -2818,6 +2848,7 @@ impl Parser {
         if class == "String" && method == "join" {
             return Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: "std::str::join".to_string(),
                     args,
                 },
@@ -2827,6 +2858,7 @@ impl Parser {
         if class == "Math" && MATH_STD_FUNCTIONS.contains(&method) {
             return Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: format!("std::math::{method}"),
                     args,
                 },
@@ -2859,6 +2891,7 @@ impl Parser {
         }
         Expr {
             kind: ExprKind::MethodCall {
+                type_args: Vec::new(),
                 receiver: Box::new(first),
                 method: format!("{class}.{method}"),
                 args,
@@ -2886,6 +2919,7 @@ impl Parser {
         if class != "MiniMessage" {
             return Some(Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: format!("@native:{class}__{method}"),
                     args: std::mem::take(args),
                 },
@@ -2930,6 +2964,7 @@ impl Parser {
         };
         Some(Expr {
             kind: ExprKind::Call {
+                type_args: Vec::new(),
                 function: format!("std::text::{function}"),
                 args: std::mem::take(args),
             },
@@ -3027,6 +3062,25 @@ impl Parser {
     }
 
     /// `<A, B>` after a class name; `<>` gives no types.
+    /// `<Integer>` in `f<Integer>(x)`: type arguments, when a call follows.
+    /// Anything else, such as `a < b`, is left for the expression parser.
+    fn explicit_type_args(&mut self) -> Vec<Type> {
+        if !self.at(&TokenKind::Lt) {
+            return Vec::new();
+        }
+        let (index, errors) = (self.index, self.diagnostics.0.len());
+        let type_args = self.parse_type_args();
+        if self.diagnostics.0.len() == errors
+            && !type_args.is_empty()
+            && self.at(&TokenKind::LeftParen)
+        {
+            return type_args;
+        }
+        self.index = index;
+        self.diagnostics.0.truncate(errors);
+        Vec::new()
+    }
+
     fn parse_type_args(&mut self) -> Vec<Type> {
         self.expect(TokenKind::Lt, "expected '<'");
         let mut args = Vec::new();
@@ -3302,6 +3356,7 @@ pub fn resource_name(name: &str) -> String {
 fn call(function: &str, args: Vec<Expr>, span: &Span) -> Expr {
     Expr {
         kind: ExprKind::Call {
+            type_args: Vec::new(),
             function: function.to_string(),
             args,
         },

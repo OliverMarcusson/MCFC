@@ -136,6 +136,12 @@ fn pack_varargs(
     packed
 }
 
+/// `this` in a method std declares on a builtin type, which may use the
+/// properties its getters and setters are made of.
+fn is_native_this(base: &Expr) -> bool {
+    matches!(&base.kind, ExprKind::Variable(name) if name == "this")
+}
+
 /// `bb.max` written in source: properties are read and written through get/set methods.
 fn check_property_syntax(
     base_ty: &Type,
@@ -507,6 +513,7 @@ fn host_call_parts<'a>(
         receiver,
         method,
         args,
+        ..
     } = &expr.kind
         && let ExprKind::Variable(name) = &receiver.kind
         && is_known_host_module(name)
@@ -614,6 +621,7 @@ fn this_member(
         }))
     } else if def.fields.contains_key(name) {
         Some(ExprKind::MethodCall {
+            type_args: Vec::new(),
             receiver: this,
             method: name.to_string(),
             args: Vec::new(),
@@ -844,6 +852,7 @@ fn complex_field_read(
     check_field_visible(&access, struct_defs, env, span, diagnostics);
     let getter = Expr {
         kind: ExprKind::Call {
+            type_args: Vec::new(),
             function: field_getter(struct_defs, &access.owner, &access.field),
             args: vec![access.object],
         },
@@ -903,6 +912,7 @@ fn simple_object(
         receiver,
         method,
         args,
+        ..
     } = &object.kind
         && let Type::Class(owner) = type_of(receiver)
         && let Some((function, true)) = find_method(signatures, &owner, method)
@@ -917,6 +927,7 @@ fn simple_object(
         );
         return Expr {
             kind: ExprKind::Call {
+                type_args: Vec::new(),
                 function,
                 args: std::iter::once(receiver)
                     .chain(args.iter().cloned())
@@ -943,6 +954,7 @@ fn simple_object(
             let inner = simple_object(inner, struct_defs, signatures, env, ref_env, span);
             return Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: field_getter(struct_defs, &owner, field),
                     args: vec![inner],
                 },
@@ -1075,8 +1087,10 @@ fn gc_mark_stmts(
     let name = format!("mcfcItem{names}");
     match ty {
         Type::Class(_) => vec![stmt(StmtKind::Expr(at(ExprKind::Call {
+            type_args: Vec::new(),
             function: "std::heap::mark".to_string(),
             args: vec![at(ExprKind::Call {
+                type_args: Vec::new(),
                 function: "__mcfc_id".to_string(),
                 args: vec![value],
             })],
@@ -1108,6 +1122,7 @@ fn gc_mark_stmts(
                 name,
                 ty: Some(Type::String),
                 iterable: at(ExprKind::MethodCall {
+                    type_args: Vec::new(),
                     receiver: Box::new(value),
                     method: "keys".to_string(),
                     args: Vec::new(),
@@ -1121,6 +1136,7 @@ fn gc_mark_stmts(
                 .iter()
                 .flat_map(|field| {
                     let component = at(ExprKind::MethodCall {
+                        type_args: Vec::new(),
                         receiver: Box::new(value.clone()),
                         method: field.clone(),
                         args: Vec::new(),
@@ -1184,6 +1200,7 @@ fn gc_functions(
     };
     let call = |function: &str, args: Vec<Expr>| {
         at(ExprKind::Call {
+            type_args: Vec::new(),
             function: function.to_string(),
             args,
         })
@@ -1455,6 +1472,8 @@ fn find_method(
 }
 
 const NATIVE_NAMES: &[&str] = &[
+    "BossBar",
+    "ItemStack",
     "Component",
     "Player",
     "Selector",
@@ -1474,6 +1493,8 @@ fn native_method(
 ) -> Option<(String, bool)> {
     let names: &[&str] = match ty {
         Type::TextDef => &["Component"],
+        Type::Bossbar => &["BossBar"],
+        Type::ItemDef => &["ItemStack"],
         Type::PlayerRef => &["Player", "Entity"],
         Type::EntityRef => &["Entity"],
         Type::EntitySet => &["Selector", "Entity"],
@@ -3318,7 +3339,7 @@ fn type_check_block(
                             diagnostics,
                             statement.span.clone(),
                         );
-                        if !LOWERING_SETTER.get() {
+                        if !LOWERING_SETTER.get() && !is_native_this(&path.base) {
                             check_property_syntax(
                                 &typed_path.base.ty,
                                 &path.segments,
@@ -3961,11 +3982,13 @@ fn type_check_block(
                         receiver,
                         method,
                         args,
+                        ..
                     },
                 ..
             }) if args.len() == 1
                 && let ExprKind::Variable(name) = &receiver.kind
                 && let Some(ty) = env.get(name)
+                && *ty != Type::Bossbar
                 && let Some(property) = accessor_property(method, "set")
                 && property_names(ty).contains(&property.as_str()) =>
             {
@@ -4006,6 +4029,7 @@ fn type_check_block(
                         receiver,
                         method,
                         args,
+                        ..
                     },
                 ..
             }) if matches!(
@@ -4030,6 +4054,7 @@ fn type_check_block(
                 let helper = if method == "sort" { "sortWith" } else { method };
                 let call = Expr {
                     kind: ExprKind::Call {
+                        type_args: Vec::new(),
                         function: format!("std::list::{helper}"),
                         args: vec![(**receiver).clone(), args[0].clone()],
                     },
@@ -4073,6 +4098,7 @@ fn type_check_block(
                         receiver,
                         method,
                         args,
+                        ..
                     },
                 ..
             }) if matches!(method.as_str(), "set" | "put")
@@ -4131,7 +4157,7 @@ fn type_check_block(
                         diagnostics,
                     );
                     kind
-                } else if let ExprKind::Call { function, args } = &expr.kind {
+                } else if let ExprKind::Call { function, args, .. } = &expr.kind {
                     if matches!(function.as_str(), "sleep" | "sleep_ticks") {
                         let args = type_check_args(
                             args,
@@ -4372,6 +4398,7 @@ fn type_check_expr(
             type_check_expr(
                 &Expr {
                     kind: ExprKind::Call {
+                        type_args: Vec::new(),
                         function: format!("{copy}__new"),
                         args: args.clone(),
                     },
@@ -4558,6 +4585,7 @@ fn type_check_expr(
                 };
             }
             let ast_segments = &path.segments;
+            let native_this = is_native_this(&path.base);
             let path = type_check_path(
                 path,
                 struct_defs,
@@ -4568,13 +4596,15 @@ fn type_check_expr(
                 diagnostics,
                 expr.span.clone(),
             );
-            check_property_syntax(
-                &path.base.ty,
-                ast_segments,
-                false,
-                expr.span.clone(),
-                diagnostics,
-            );
+            if !native_this {
+                check_property_syntax(
+                    &path.base.ty,
+                    ast_segments,
+                    false,
+                    expr.span.clone(),
+                    diagnostics,
+                );
+            }
             let ref_kind = if path.ty == Type::PlayerRef {
                 RefKind::Player
             } else {
@@ -4857,6 +4887,7 @@ fn type_check_expr(
             receiver,
             method,
             args,
+            ..
         } if matches!(&receiver.kind, ExprKind::Variable(name) if name == "super")
             && !env.contains_key("super") =>
         {
@@ -4877,6 +4908,7 @@ fn type_check_expr(
             type_check_expr(
                 &Expr {
                     kind: ExprKind::Call {
+                        type_args: Vec::new(),
                         function: format!("{DIRECT}{function}"),
                         args: std::iter::once(this).chain(args.iter().cloned()).collect(),
                     },
@@ -4912,6 +4944,42 @@ fn type_check_expr(
                 called_functions,
                 diagnostics,
             );
+            // `e instanceof Player`: a `Player` is an `Entity` that is a player.
+            if is_entity_ref_type(&ty) && is_entity_ref_type(&typed.ty) {
+                let known = if ty == Type::EntityRef
+                    || typed.ty == Type::PlayerRef
+                    || typed.ref_kind == RefKind::Player
+                {
+                    Some(true)
+                } else if typed.ref_kind == RefKind::NonPlayer {
+                    Some(false)
+                } else {
+                    None
+                };
+                if let Some(known) = known {
+                    return TypedExpr {
+                        kind: TypedExprKind::Bool(known),
+                        ty: Type::Bool,
+                        ref_kind: RefKind::Unknown,
+                    };
+                }
+                return type_check_expr(
+                    &Expr {
+                        kind: ExprKind::Call {
+                            type_args: Vec::new(),
+                            function: "std::player::isPlayer".to_string(),
+                            args: vec![(**object).clone()],
+                        },
+                        span: expr.span.clone(),
+                    },
+                    struct_defs,
+                    signatures,
+                    env,
+                    ref_env,
+                    called_functions,
+                    diagnostics,
+                );
+            }
             let (Type::Class(target), Type::Class(_)) = (&ty, &typed.ty) else {
                 diagnostics.push(Diagnostic::new(
                     format!(
@@ -4929,6 +4997,7 @@ fn type_check_expr(
             };
             let call = |function: &str, args: Vec<Expr>| Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: function.to_string(),
                     args,
                 },
@@ -4968,6 +5037,19 @@ fn type_check_expr(
                     .is_some_and(|info| info.is_interface)
             };
             match (&typed.ty, &ty) {
+                // `(Player) e` after `e instanceof Player`, like the `(Player)` builtin.
+                (from, to) if is_entity_ref_type(from) && is_entity_ref_type(to) => {
+                    let ref_kind = if *to == Type::PlayerRef {
+                        RefKind::Player
+                    } else {
+                        typed.ref_kind
+                    };
+                    TypedExpr {
+                        ty,
+                        ref_kind,
+                        ..typed
+                    }
+                }
                 (Type::Class(from), Type::Class(to))
                     if from.is_empty()
                         || is_subclass(from, to)
@@ -4990,6 +5072,7 @@ fn type_check_expr(
             receiver,
             method,
             args,
+            ..
         } => {
             // Host calls (`http.get(...)`) are only valid in statement/let position;
             // reaching here means one was nested inside an expression.
@@ -5105,7 +5188,7 @@ fn type_check_expr(
             diagnostics,
         ),
         // The collector's view of an object: its id as a plain `int`.
-        ExprKind::Call { function, args } if function == "__mcfc_id" && args.len() == 1 => {
+        ExprKind::Call { function, args, .. } if function == "__mcfc_id" && args.len() == 1 => {
             let object = type_check_expr(
                 &args[0],
                 struct_defs,
@@ -5121,7 +5204,7 @@ fn type_check_expr(
             }
         }
         // `super(args)` runs the parent's constructor on this object.
-        ExprKind::Call { function, args } if function == "super" => {
+        ExprKind::Call { function, args, .. } if function == "super" => {
             let parent = env_tag(env, OWNER_TAG)
                 .and_then(|owner| struct_defs.get(owner)?.class.as_ref()?.parent.clone());
             let Some(parent) = parent else {
@@ -5138,6 +5221,7 @@ fn type_check_expr(
             type_check_expr(
                 &Expr {
                     kind: ExprKind::Call {
+                        type_args: Vec::new(),
                         function: format!("{parent}__mcfcInit"),
                         args: std::iter::once(this).chain(args.iter().cloned()).collect(),
                     },
@@ -5151,7 +5235,7 @@ fn type_check_expr(
                 diagnostics,
             )
         }
-        ExprKind::Call { function, args } if function == "__mcfc_alloc" => {
+        ExprKind::Call { function, args, .. } if function == "__mcfc_alloc" => {
             // A constructor's first step: take a heap slot tagged with the class.
             let owner = env_tag(env, OWNER_TAG).unwrap_or_default().to_string();
             let id = struct_defs
@@ -5173,7 +5257,11 @@ fn type_check_expr(
                 ref_kind: RefKind::Unknown,
             }
         }
-        ExprKind::Call { function, args } => {
+        ExprKind::Call {
+            function,
+            args,
+            type_args,
+        } => {
             let direct = function.starts_with(DIRECT);
             // `new Component(...)` and friends, which no method may take.
             let constructor = function.strip_prefix("@new:");
@@ -5208,6 +5296,7 @@ fn type_check_expr(
                 return type_check_expr(
                     &Expr {
                         kind: ExprKind::Call {
+                            type_args: type_args.clone(),
                             function: method,
                             args: call_args,
                         },
@@ -5330,6 +5419,22 @@ fn type_check_expr(
                     expr.span.clone(),
                 ));
             }
+            if !type_args.is_empty() && type_args.len() != signature.type_params.len() {
+                let message = if signature.type_params.is_empty() {
+                    format!(
+                        "'{}' is not generic, so it takes no type arguments",
+                        display_call(function)
+                    )
+                } else {
+                    format!(
+                        "'{}' takes {} type arguments, found {}",
+                        display_call(function),
+                        signature.type_params.len(),
+                        type_args.len()
+                    )
+                };
+                diagnostics.push(Diagnostic::new(message, expr.span.clone()));
+            }
             let (function, params, return_type) = if signature.type_params.is_empty() {
                 (
                     function.clone(),
@@ -5337,12 +5442,22 @@ fn type_check_expr(
                     signature.return_type.clone(),
                 )
             } else {
-                let mut bindings = BTreeMap::new();
+                // `f<Integer>(x)`: the written type arguments come first.
+                let mut bindings: BTreeMap<String, Type> = signature
+                    .type_params
+                    .iter()
+                    .cloned()
+                    .zip(type_args.iter().map(|ty| {
+                        let mut ty = ty.clone();
+                        resolve_enum_type(&mut ty, struct_defs);
+                        ty
+                    }))
+                    .collect();
                 let lambda_free = signature
                     .params
                     .iter()
                     .zip(&args)
-                    .filter(|(_, arg)| !lambdas::is_pending(arg));
+                    .filter(|(_, arg)| type_args.is_empty() && !lambdas::is_pending(arg));
                 for (param, arg) in lambda_free {
                     if !bind_type_params(
                         param,
@@ -5362,7 +5477,7 @@ fn type_check_expr(
                 // Then what each lambda's parameters and result tell, in order,
                 // so `map(xs, x -> x + 1)` finds `R` from `T`.
                 for (param, arg) in signature.params.iter().zip(&raw_args) {
-                    if lambdas::is_function_value(arg) {
+                    if type_args.is_empty() && lambdas::is_function_value(arg) {
                         lambdas::infer_type_params(
                             arg,
                             param,
@@ -5862,7 +5977,7 @@ fn type_check_path(
             }
             (Type::Bossbar, PathSegment::Field(field)) => {
                 current_ty = match field.as_str() {
-                    "name" => Type::String,
+                    "id" | "name" => Type::String,
                     "value" | "max" => Type::Int,
                     "visible" => Type::Bool,
                     "players" => Type::EntitySet,
@@ -7105,6 +7220,7 @@ fn type_check_method_call(
         receiver: player,
         method: input,
         args: input_args,
+        ..
     } = &receiver.kind
         && input == "getCurrentInput"
         && let Some(key) = method.strip_prefix("is")
@@ -7160,6 +7276,7 @@ fn type_check_method_call(
         ("getOrDefault", [key, fallback]) => {
             let get = Expr {
                 kind: ExprKind::MethodCall {
+                    type_args: Vec::new(),
                     receiver: Box::new(receiver.clone()),
                     method: "get".to_string(),
                     args: vec![key.clone()],
@@ -7168,6 +7285,7 @@ fn type_check_method_call(
             };
             return Some(recheck(
                 ExprKind::MethodCall {
+                    type_args: Vec::new(),
                     receiver: Box::new(get),
                     method: "orElse".to_string(),
                     args: vec![fallback.clone()],
@@ -7215,6 +7333,11 @@ fn type_check_method_call(
         called_functions,
         diagnostics,
     );
+    // `list.<Integer>m(x)`: type arguments written out.
+    let type_args = match &expr.kind {
+        ExprKind::MethodCall { type_args, .. } => type_args.clone(),
+        _ => Vec::new(),
+    };
     // A record or enum method: `v.add(w)` calls `Vec3__add(v, w)`.
     if let Type::Struct(owner) | Type::Enum(owner) | Type::Class(owner) = &receiver.ty
         && let Some((function, instance)) = find_method(signatures, owner, method)
@@ -7226,6 +7349,7 @@ fn type_check_method_call(
         call_args.extend(args.iter().cloned());
         return Some(recheck(
             ExprKind::Call {
+                type_args,
                 function,
                 args: call_args,
             },
@@ -7278,6 +7402,7 @@ fn type_check_method_call(
         call_args.extend(args.iter().cloned());
         return Some(recheck(
             ExprKind::Call {
+                type_args,
                 function,
                 args: call_args,
             },
@@ -7285,8 +7410,28 @@ fn type_check_method_call(
             diagnostics,
         ));
     }
+    // `xs.stream()` wraps the list in std's `Stream`.
+    if method == "stream" && args.is_empty() && matches!(receiver.ty, Type::Array(_)) {
+        return Some(recheck(
+            ExprKind::Call {
+                type_args: Vec::new(),
+                function: "std::stream::fromList".to_string(),
+                args: vec![receiver_expr.clone()],
+            },
+            called_functions,
+            diagnostics,
+        ));
+    }
+    if !type_args.is_empty() {
+        let java = crate::language_catalog::java_name_for(method, true).unwrap_or(method);
+        diagnostics.push(Diagnostic::new(
+            format!("'{java}' is not a generic method, so it takes no type arguments"),
+            expr.span.clone(),
+        ));
+    }
     // `bb.getMax()` reads the `max` property.
     if args.is_empty()
+        && receiver.ty != Type::Bossbar
         && let Some(property) = accessor_property(method, "get")
         && property_names(&receiver.ty).contains(&property.as_str())
     {
@@ -7863,18 +8008,6 @@ fn type_check_method_call(
             })
         }
         "remove" => {
-            if receiver.ty == Type::Bossbar {
-                expect_arity(method, &args, 0, expr, diagnostics);
-                return Some(TypedExpr {
-                    kind: TypedExprKind::MethodCall {
-                        receiver: Box::new(receiver),
-                        method: method.to_string(),
-                        args,
-                    },
-                    ty: Type::Void,
-                    ref_kind: RefKind::Unknown,
-                });
-            }
             expect_arity(method, &args, 1, expr, diagnostics);
             if !is_storage_lvalue_expr(receiver_expr) {
                 diagnostics.push(Diagnostic::new(
@@ -7919,7 +8052,7 @@ fn type_check_method_call(
                 }
                 _ => {
                     diagnostics.push(Diagnostic::new(
-                        "remove(...) requires a 'List', 'Map', or 'BossBar' receiver",
+                        "remove(...) requires a 'List' or 'Map' receiver",
                         expr.span.clone(),
                     ));
                     Some(TypedExpr {
@@ -9505,6 +9638,7 @@ fn entity_read_expr(
             segments.push(PathSegment::Index(Box::new(node(ExprKind::Int(index)))));
         }
         node(ExprKind::Call {
+            type_args: Vec::new(),
             function: cast.to_string(),
             args: vec![node(ExprKind::Path(PathExpr {
                 base: Box::new(target.clone()),
@@ -9544,6 +9678,7 @@ fn entity_read_expr(
             };
             let hypot = |a: Expr, b: Expr| {
                 node(ExprKind::MethodCall {
+                    type_args: Vec::new(),
                     receiver: Box::new(a),
                     method: "Math.hypot".to_string(),
                     args: vec![b],
@@ -9573,6 +9708,7 @@ fn entity_read_expr(
             };
             let call = |value: Expr, name: &str| {
                 node(ExprKind::MethodCall {
+                    type_args: Vec::new(),
                     receiver: Box::new(value),
                     method: format!("Math.{name}"),
                     args: Vec::new(),
@@ -11578,8 +11714,10 @@ fn class_functions(
                 name: "mcfcClassId".to_string(),
                 ty: Some(Type::Int),
                 value: at(ExprKind::Call {
+                    type_args: Vec::new(),
                     function: "std::heap::classOf".to_string(),
                     args: vec![at(ExprKind::Call {
+                        type_args: Vec::new(),
                         function: "__mcfc_id".to_string(),
                         args: vec![this()],
                     })],
@@ -11600,6 +11738,7 @@ fn class_functions(
                 )
                 .collect();
             let call = at(ExprKind::Call {
+                type_args: Vec::new(),
                 function: format!("{DIRECT}{}", target.name),
                 args,
             });
@@ -11924,15 +12063,20 @@ fn type_switch(
         &mut Diagnostics::new(),
     )
     .ty;
-    let Type::Class(owner) = &value_ty else {
-        diagnostics.push(Diagnostic::new(
-            format!(
-                "a 'case' with a type needs an object to switch on, not '{}'",
-                value_ty.as_str()
-            ),
-            span.clone(),
-        ));
-        return Vec::new();
+    // `switch (entity) { case Player p -> ...; default -> ... }` works too.
+    let owner = match &value_ty {
+        Type::Class(owner) => Some(owner),
+        ty if is_entity_ref_type(ty) => None,
+        _ => {
+            diagnostics.push(Diagnostic::new(
+                format!(
+                    "a 'case' with a type needs an object or an entity to switch on, not '{}'",
+                    value_ty.as_str()
+                ),
+                span.clone(),
+            ));
+            return Vec::new();
+        }
     };
     let mut block = Vec::new();
     let subject = if is_plain_place(value) {
@@ -11963,8 +12107,10 @@ fn type_switch(
         };
         let mut resolved = ty.clone();
         resolve_enum_type(&mut resolved, struct_defs);
-        if let Type::Class(name) = resolved {
-            covered.push(name);
+        match resolved {
+            Type::Class(name) => covered.push(name),
+            Type::EntityRef => covered.push("Entity".to_string()),
+            _ => {}
         }
         let mut then_body = vec![stmt(StmtKind::Let {
             name: binding.clone(),
@@ -11985,7 +12131,15 @@ fn type_switch(
             else_body: chain,
         })];
     }
-    if default_body.is_empty() {
+    if owner.is_none() && default_body.is_empty() && !covered.iter().any(|c| c == "Entity") {
+        diagnostics.push(Diagnostic::new(
+            "the switch doesn't cover every entity; add a 'case Entity' or a 'default'",
+            span.clone(),
+        ));
+    }
+    if let Some(owner) = owner
+        && default_body.is_empty()
+    {
         for (name, def) in struct_defs {
             let Some(info) = &def.class else {
                 continue;

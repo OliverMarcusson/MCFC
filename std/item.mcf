@@ -1,0 +1,18 @@
+// `ItemStack` getters. An item stack is a value, so a method only gets a
+// copy; its setters, such as `stack.setCount(2)`, stay assignments to the
+// variable itself, which the compiler writes.
+
+public final class ItemStack {
+    public int getCount() {
+        return this.count;
+    }
+
+    // `nbt.display.Name`; cast it to `String` if needed.
+    public Nbt getName() {
+        return this.name;
+    }
+
+    public String getId() {
+        return this.id;
+    }
+}

@@ -108,3 +108,14 @@ public final class Player {
         return GameMode.SURVIVAL;
     }
 }
+
+// Whether `entity` is a player; what `entity instanceof Player` calls when
+// the compiler can't tell from the selector.
+public boolean isPlayer(Entity entity) {
+    boolean found = false;
+    as (entity) {
+        found = Selector.of("@s[type=minecraft:player]").findFirst().isPresent();
+    }
+
+    return found;
+}

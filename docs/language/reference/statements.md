@@ -46,7 +46,7 @@ void main() {
 }
 ```
 
-Every type parameter must appear in a parameter's type, because there's no `f<int>(...)` call syntax. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
+When the arguments can't tell, write the type arguments out, as in Java: `none<String>()` for `<T> List<T> none()`, or `Util.<Integer>pick(2)` for a static or instance method. Written type arguments replace inference, so each argument must then fit them. Arguments bound to the same parameter must agree: for `<T> boolean same(T a, T b)`, `same(1, "x")` is an error. A bound limits a parameter to a class and its subtypes: `<T extends Animal> T fastest(List<T> animals)`. Each combination of types compiles to its own copy (`biggest__int`, `biggest__float`), and each copy is type-checked on its own. So `biggest(List.of("a", "b"))` reports that `>` needs numbers, plus "'biggest' does not work with T = String" at the call. Records can't be generic.
 
 #### Varargs
 

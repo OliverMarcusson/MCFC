@@ -465,6 +465,7 @@ fn report_uncaught(test: bool, span: &Span) -> Stmt {
                 )),
                 right: Box::new(expr(
                     ExprKind::MethodCall {
+                        type_args: Vec::new(),
                         receiver: Box::new(variable.clone()),
                         method: "getMessage".to_string(),
                         args: Vec::new(),
@@ -568,6 +569,7 @@ fn if_stmt(condition: Expr, then_body: Vec<Stmt>, span: &Span) -> Stmt {
 fn call(function: &str, args: Vec<Expr>, span: &Span) -> Expr {
     expr(
         ExprKind::Call {
+            type_args: Vec::new(),
             function: function.to_string(),
             args,
         },

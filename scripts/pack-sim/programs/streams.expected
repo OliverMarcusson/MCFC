@@ -1,0 +1,5 @@
+say mapped ["#5","#2","#8","#4"] evens 3
+say matches 1 0 1 total 20
+say sorted [2,4,5] max 8 min 1 first 5
+say best sam
+say empty -1

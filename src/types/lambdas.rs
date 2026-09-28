@@ -426,6 +426,7 @@ pub(super) fn type_check_function_value(
         let mut typed = type_check_expr(
             &Expr {
                 kind: ExprKind::Call {
+                    type_args: Vec::new(),
                     function: format!("{class}__new"),
                     args,
                 },
@@ -481,6 +482,7 @@ fn method_ref_lambda(
     };
     let method_call = |receiver: Expr, args: Vec<Expr>| {
         at(ExprKind::MethodCall {
+            type_args: Vec::new(),
             receiver: Box::new(receiver),
             method: crate::language_catalog::internal_method_name(method, args.len()).to_string(),
             args,
@@ -491,6 +493,7 @@ fn method_ref_lambda(
         method_call(at(ExprKind::Variable(target.to_string())), vars(&names))
     } else if method == "new" {
         at(ExprKind::Call {
+            type_args: Vec::new(),
             function: format!("{target}__new"),
             args: vars(&names),
         })
@@ -508,6 +511,7 @@ fn method_ref_lambda(
         if static_fits(&function) || overloads.iter().any(|name| static_fits(name)) {
             // `Math2::twice` calls a static method with the arguments.
             at(ExprKind::Call {
+                type_args: Vec::new(),
                 function,
                 args: vars(&names),
             })
@@ -586,6 +590,7 @@ fn lambda_class(
         name: "this".to_string(),
         ty: Some(Type::Struct(class.to_string())),
         value: at(ExprKind::Call {
+            type_args: Vec::new(),
             function: "__mcfc_alloc".to_string(),
             args: Vec::new(),
         }),
@@ -840,7 +845,7 @@ impl OuterRewrite<'_> {
                 }
                 return;
             }
-            ExprKind::Call { function, args }
+            ExprKind::Call { function, args, .. }
                 if !function.contains("::") && !self.is_local(function) =>
             {
                 if let Some((resolved, instance)) = (self.method)(function) {
@@ -850,12 +855,14 @@ impl OuterRewrite<'_> {
                     }
                     e.kind = if instance {
                         ExprKind::MethodCall {
+                            type_args: Vec::new(),
                             receiver: Box::new(Self::outer(&e.span)),
                             method: function.clone(),
                             args,
                         }
                     } else {
                         ExprKind::Call {
+                            type_args: Vec::new(),
                             function: resolved,
                             args,
                         }

@@ -1,0 +1,4 @@
+say bar 7/20 visible 1
+bossbar set demo:boss players @a
+say item 3 Quest Blade minecraft:diamond_sword
+say player 1 0

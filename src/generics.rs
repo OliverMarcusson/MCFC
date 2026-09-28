@@ -554,6 +554,7 @@ fn new_calls(body: &mut [Stmt], params: &[String], want: &mut dyn FnMut(&str, &[
         {
             want(name, types, &expr.span);
             expr.kind = ExprKind::Call {
+                type_args: Vec::new(),
                 function: format!("{}__new", mangle(name, types)),
                 args: std::mem::take(args),
             };
@@ -607,14 +608,24 @@ impl Rewriter<'_> {
     fn expr(&mut self, expr: &mut Expr) {
         each_child(expr, &mut |child| self.expr(child));
         match &mut expr.kind {
-            ExprKind::Call { function, .. } => {
+            ExprKind::Call {
+                function,
+                type_args,
+                ..
+            } => {
                 if let Some(renamed) = self.renames.get(function) {
                     *function = renamed.clone();
+                }
+                for ty in type_args {
+                    *ty = substitute_plain(ty, self.bindings);
                 }
             }
             ExprKind::New {
                 type_args: Some(types),
                 ..
+            }
+            | ExprKind::MethodCall {
+                type_args: types, ..
             } => {
                 for ty in types {
                     *ty = substitute_plain(ty, self.bindings);
@@ -822,7 +833,7 @@ pub fn each_child(expr: &mut Expr, visit: &mut dyn FnMut(&mut Expr)) {
 }
 
 /// Calls `visit` for every type written in `body`: declarations, casts,
-/// `instanceof` and `new` type arguments.
+/// `instanceof`, and `new` and call type arguments.
 /// Each comes with the span of the expression or statement that has it.
 fn visit_stmts(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Type, &Span)) {
     fn expr(e: &mut Expr, visit: &mut dyn FnMut(&mut Type, &Span)) {
@@ -832,6 +843,12 @@ fn visit_stmts(body: &mut [Stmt], visit: &mut dyn FnMut(&mut Type, &Span)) {
             ExprKind::New {
                 type_args: Some(types),
                 ..
+            }
+            | ExprKind::Call {
+                type_args: types, ..
+            }
+            | ExprKind::MethodCall {
+                type_args: types, ..
             } => types.iter_mut().for_each(|ty| visit(ty, &e.span)),
             ExprKind::Lambda { params, body, .. } => {
                 for ty in params.iter_mut().filter_map(|(_, ty)| ty.as_mut()) {

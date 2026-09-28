@@ -4302,50 +4302,35 @@ fn item_slot_items() -> Vec<CompletionItem> {
 }
 
 fn bossbar_root_items() -> Vec<CompletionItem> {
-    let mut items: Vec<_> = [
+    // The methods std/bossbar.mcf declares.
+    [
+        ("remove", "BossBar.remove() -> void", "remove()"),
         (
-            "remove",
-            "BossBar.remove() -> void",
-            "remove()",
-            CompletionItemKind::METHOD,
+            "setName",
+            "BossBar.setName(String | Component)",
+            "setName(${1:name})",
+        ),
+        ("getValue", "BossBar.getValue() -> int", "getValue()"),
+        ("setValue", "BossBar.setValue(int)", "setValue(${1:value})"),
+        ("getMax", "BossBar.getMax() -> int", "getMax()"),
+        ("setMax", "BossBar.setMax(int)", "setMax(${1:max})"),
+        ("isVisible", "BossBar.isVisible() -> boolean", "isVisible()"),
+        (
+            "setVisible",
+            "BossBar.setVisible(boolean)",
+            "setVisible(${1:visible})",
         ),
         (
-            "name",
-            "BossBar.name writable String",
-            "name",
-            CompletionItemKind::FIELD,
-        ),
-        (
-            "value",
-            "BossBar.value writable int",
-            "value",
-            CompletionItemKind::FIELD,
-        ),
-        (
-            "max",
-            "BossBar.max writable int",
-            "max",
-            CompletionItemKind::FIELD,
-        ),
-        (
-            "visible",
-            "BossBar.visible writable boolean",
-            "visible",
-            CompletionItemKind::FIELD,
-        ),
-        (
-            "players",
-            "BossBar.players writable entity target",
-            "players",
-            CompletionItemKind::FIELD,
+            "setPlayers",
+            "BossBar.setPlayers(Selector | Entity)",
+            "setPlayers(${1:players})",
         ),
     ]
     .into_iter()
-    .map(|(label, detail, insert_text, kind)| snippet_item(label, kind, detail, insert_text))
-    .collect();
-    items.retain(|item| !property_names(&Type::Bossbar).contains(&item.label.as_str()));
-    items.extend(property_accessor_items(&Type::Bossbar, "BossBar"));
-    items
+    .map(|(label, detail, insert_text)| {
+        snippet_item(label, CompletionItemKind::METHOD, detail, insert_text)
+    })
+    .collect()
 }
 
 fn equipment_slot_items() -> Vec<CompletionItem> {

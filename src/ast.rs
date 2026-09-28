@@ -382,11 +382,15 @@ pub enum ExprKind {
     Call {
         function: String,
         args: Vec<Expr>,
+        /// `f<Integer>(x)`: type arguments written out, empty when inferred.
+        type_args: Vec<Type>,
     },
     MethodCall {
         receiver: Box<Expr>,
         method: String,
         args: Vec<Expr>,
+        /// `Util.<Integer>f(x)`: type arguments written out, empty when inferred.
+        type_args: Vec<Type>,
     },
     Path(PathExpr),
     /// `condition ? then_expr : else_expr`

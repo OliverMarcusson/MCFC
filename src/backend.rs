@@ -3437,50 +3437,6 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                     "bossbar set $(id) name [\"$(name)\"]".to_string(),
                 ));
             }
-            "value" | "max" => {
-                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
-                let value_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Int);
-                self.compile_expr_into_slot(function, depth, value, &value_slot, lines);
-                lines.push(format!(
-                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
-                    self.namespace,
-                    macro_slot.storage_path(),
-                    self.namespace,
-                    base_slot.storage_path()
-                ));
-                lines.push(format!(
-                    "execute store result storage {}:runtime {}.value int 1 run scoreboard players get {} mcfc",
-                    self.namespace,
-                    macro_slot.storage_path(),
-                    value_slot.numeric_name()
-                ));
-                lines.push(self.inline_macro_command(
-                    macro_slot.storage_path(),
-                    format!("bossbar set $(id) {} $(value)", field),
-                ));
-            }
-            "visible" => {
-                let macro_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
-                let visible_slot = local_slot(depth, &function.name, &self.new_temp(), &Type::Bool);
-                self.compile_expr_into_slot(function, depth, value, &visible_slot, lines);
-                lines.push(format!(
-                    "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
-                    self.namespace,
-                    macro_slot.storage_path(),
-                    self.namespace,
-                    base_slot.storage_path()
-                ));
-                lines.push(format!(
-                    "execute store result storage {}:runtime {}.visible int 1 run scoreboard players get {} mcfc",
-                    self.namespace,
-                    macro_slot.storage_path(),
-                    visible_slot.numeric_name()
-                ));
-                lines.push(self.inline_macro_command(
-                    macro_slot.storage_path(),
-                    "bossbar set $(id) visible $(visible)".to_string(),
-                ));
-            }
             "players" => {
                 let target_slot = local_slot(depth, &function.name, &self.new_temp(), &value.ty);
                 self.compile_expr_into_slot(function, depth, value, &target_slot, lines);
@@ -3538,7 +3494,9 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 | Type::Struct(_)
                 | Type::EntityDef
                 | Type::BlockDef
+                | Type::ItemDef
                 | Type::TextDef
+                | Type::Bossbar
                 | Type::Nbt
         ) {
             // Component fields are optional; a missing one reads as missing,
@@ -4256,6 +4214,7 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
             crate::ast::ExprKind::Call {
                 function: callee,
                 args,
+                ..
             } => {
                 let (return_type, params) = self
                     .functions
@@ -5475,25 +5434,6 @@ execute if score #bit_op mcfc matches 1 if score #bit_b mcfc matches 31 if score
                 return;
             }
             "remove" => {
-                if receiver.ty == Type::Bossbar {
-                    let receiver_slot =
-                        local_slot(depth, &function.name, &self.new_temp(), &receiver.ty);
-                    self.compile_expr_into_slot(function, depth, receiver, &receiver_slot, lines);
-                    let macro_slot =
-                        local_slot(depth, &function.name, &self.new_temp(), &Type::Nbt);
-                    lines.push(format!(
-                        "data modify storage {}:runtime {}.id set from storage {}:runtime {}.id",
-                        self.namespace,
-                        macro_slot.storage_path(),
-                        self.namespace,
-                        receiver_slot.storage_path()
-                    ));
-                    lines.push(self.inline_macro_command(
-                        macro_slot.storage_path(),
-                        "bossbar remove $(id)".to_string(),
-                    ));
-                    return;
-                }
                 if matches!(receiver.ty, Type::Array(_)) {
                     if let Some(rendered) =
                         self.render_storage_expr_lvalue_path(function, depth, receiver, lines)

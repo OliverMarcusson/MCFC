@@ -630,11 +630,6 @@ void main() {
     pig.sendTitle("Danger");
     pig.sendActionBar("Run");
     var bb = new BossBar("mcfc:test", "Boss @s");
-    bb.setValue(10);
-    bb.setMax(20);
-    bb.setVisible(true);
-    bb.setPlayers(pig);
-    bb.setName("Still here");
     pig.playSound("minecraft:entity.experience_orb.pickup", "master");
     pig.stopSound("master", "minecraft:entity.experience_orb.pickup");
     pos.spawnParticle("minecraft:flame");
@@ -661,11 +656,6 @@ void main() {
             files.contains("generated/actionbar/show {json:[\"Run\"],priority:\"notification\"}")
         );
         assert!(files.contains("bossbar add $(id) [\"Boss \",{"));
-        assert!(files.contains("bossbar set $(id) value $(value)"));
-        assert!(files.contains("bossbar set $(id) max $(value)"));
-        assert!(files.contains("bossbar set $(id) visible $(visible)"));
-        assert!(files.contains("bossbar set $(id) players $(selector)"));
-        assert!(files.contains("bossbar set $(id) name \"Still here\""));
         assert!(files.contains("playsound $(sound) $(category) $(selector)"));
         assert!(files.contains("stopsound $(selector) $(category) $(sound)"));
         assert!(files.contains("particle $(particle) $(pos) 0 0 0 0 $(count) force"));
@@ -897,14 +887,10 @@ void main() {
     var player = Selector.of("@p").getFirst();
     var bb = new BossBar("mcfc:demo", "MCFC Bossbar");
     var count = 5;
-    bb.setValue(count);
-    bb.setMax(10);
-    bb.setVisible(true);
-    bb.setPlayers(player);
     player.position.spawnParticle("minecraft:happy_villager", 20, player);
     async {
         sleep(5);
-        bb.remove();
+        player.sendMessage("later");
         player.position.setBlock("minecraft:gold_block");
     }
     count = 7;
@@ -921,11 +907,6 @@ void main() {
             .unwrap();
 
         assert!(joined.contains("bossbar add $(id) \"MCFC Bossbar\""));
-        assert!(joined.contains("bossbar set $(id) value $(value)"));
-        assert!(joined.contains("bossbar set $(id) max $(value)"));
-        assert!(joined.contains("bossbar set $(id) visible $(visible)"));
-        assert!(joined.contains("bossbar set $(id) players $(selector)"));
-        assert!(joined.contains("bossbar remove $(id)"));
         assert!(
             joined.contains("schedule function mcfc:generated/main__async_1__d0__sleep_resume_")
         );

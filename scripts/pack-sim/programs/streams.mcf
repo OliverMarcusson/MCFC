@@ -1,0 +1,39 @@
+// std.stream: xs.stream() and its steps, plus explicit type arguments.
+import std.stream.Stream;
+
+record Fighter(String name, int kills) {}
+
+<T> List<T> none() {
+    List<T> empty = List.of();
+    return empty;
+}
+
+void main() {
+    List<Integer> numbers = List.of(5, 2, 8, 1, 4);
+    List<String> labels = numbers.stream().filter(n -> n > 1).map(n -> "#" + n).toList();
+    int evens = numbers.stream().filter(n -> n % 2 == 0).count();
+    mcf("say mapped $(labels) evens $(evens)");
+
+    Stream<Integer> stream = numbers.stream();
+    boolean any = stream.anyMatch(n -> n > 7);
+    boolean all = stream.allMatch(n -> n > 1);
+    boolean none = stream.noneMatch(n -> n > 9);
+    int total = stream.reduce(0, (a, b) -> a + b);
+    mcf("say matches $(any) $(all) $(none) total $(total)");
+
+    List<Integer> sorted = stream.sorted((a, b) -> a - b).skip(1).limit(3).toList();
+    int top = stream.max((a, b) -> a - b).orElse(0);
+    int low = stream.min((a, b) -> a - b).orElse(0);
+    int first = stream.findFirst().orElse(0);
+    mcf("say sorted $(sorted) max $(top) min $(low) first $(first)");
+
+    List<Fighter> fighters = List.of(new Fighter("alex", 3), new Fighter("sam", 5));
+    fighters.stream().filter(f -> f.kills() > 4).forEach(f -> {
+        String name = f.name();
+        mcf("say best $(name)");
+    });
+
+    List<Integer> empty = none<Integer>();
+    int missing = empty.stream().findFirst().orElse(-1);
+    mcf("say empty $(missing)");
+}

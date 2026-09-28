@@ -39,6 +39,7 @@ pub struct LoadedModules {
 const STD_ROOT: &str = "<std>";
 const STD_FILES: &[(&str, &str)] = &[
     ("attribute.mcf", include_str!("../std/attribute.mcf")),
+    ("bossbar.mcf", include_str!("../std/bossbar.mcf")),
     ("color.mcf", include_str!("../std/color.mcf")),
     ("cooldown.mcf", include_str!("../std/cooldown.mcf")),
     ("dialog.mcf", include_str!("../std/dialog.mcf")),
@@ -47,6 +48,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("gamemode.mcf", include_str!("../std/gamemode.mcf")),
     ("heap.mcf", include_str!("../std/heap.mcf")),
     ("inventory.mcf", include_str!("../std/inventory.mcf")),
+    ("item.mcf", include_str!("../std/item.mcf")),
     ("list.mcf", include_str!("../std/list.mcf")),
     ("math.mcf", include_str!("../std/math.mcf")),
     ("noise.mcf", include_str!("../std/noise.mcf")),
@@ -55,6 +57,7 @@ const STD_FILES: &[(&str, &str)] = &[
     ("region.mcf", include_str!("../std/region.mcf")),
     ("shape.mcf", include_str!("../std/shape.mcf")),
     ("str.mcf", include_str!("../std/str.mcf")),
+    ("stream.mcf", include_str!("../std/stream.mcf")),
     ("team.mcf", include_str!("../std/team.mcf")),
     ("text.mcf", include_str!("../std/text.mcf")),
     ("time.mcf", include_str!("../std/time.mcf")),
@@ -957,6 +960,21 @@ impl Resolver {
         }
     }
 
+    /// The arguments and written type arguments of a call whose name is resolved.
+    fn walk_call_parts(&self, scope: &Scope, expr: &mut Expr, diagnostics: &mut Diagnostics) {
+        if let ExprKind::Call {
+            args, type_args, ..
+        } = &mut expr.kind
+        {
+            for arg in args {
+                self.walk_expr(scope, arg, diagnostics);
+            }
+            for ty in type_args {
+                self.resolve_type(scope.module, scope.generics, ty, &expr.span, diagnostics);
+            }
+        }
+    }
+
     fn walk_expr(&self, scope: &Scope, expr: &mut Expr, diagnostics: &mut Diagnostics) {
         let span = expr.span.clone();
         // `Vec3.zero()` calls the static method `zero` of record `Vec3`.
@@ -964,6 +982,7 @@ impl Resolver {
             receiver,
             method,
             args,
+            type_args,
         } = &mut expr.kind
             && let Some(owner) = self.static_owner(scope, receiver)
         {
@@ -974,14 +993,11 @@ impl Resolver {
             match found {
                 Some(Ok(function)) => {
                     expr.kind = ExprKind::Call {
+                        type_args: std::mem::take(type_args),
                         function,
                         args: std::mem::take(args),
                     };
-                    if let ExprKind::Call { args, .. } = &mut expr.kind {
-                        for arg in args {
-                            self.walk_expr(scope, arg, diagnostics);
-                        }
-                    }
+                    self.walk_call_parts(scope, expr, diagnostics);
                     return;
                 }
                 Some(Err(message)) => diagnostics.push(Diagnostic::new(message, span.clone())),
@@ -993,6 +1009,7 @@ impl Resolver {
             receiver,
             method,
             args,
+            type_args,
         } = &mut expr.kind
             && let Some(mut segments) = self.module_path_of(scope, receiver)
         {
@@ -1022,18 +1039,19 @@ impl Resolver {
             };
             reject_tick_call(&function, args, &span, diagnostics);
             expr.kind = ExprKind::Call {
+                type_args: std::mem::take(type_args),
                 function,
                 args: std::mem::take(args),
             };
-            if let ExprKind::Call { args, .. } = &mut expr.kind {
-                for arg in args {
-                    self.walk_expr(scope, arg, diagnostics);
-                }
-            }
+            self.walk_call_parts(scope, expr, diagnostics);
             return;
         }
         match &mut expr.kind {
-            ExprKind::Call { function, args } => {
+            ExprKind::Call {
+                function,
+                args,
+                type_args,
+            } => {
                 match self.resolve_function(scope.module, function) {
                     Ok(Some(resolved)) => *function = resolved,
                     Ok(None) => {}
@@ -1042,6 +1060,9 @@ impl Resolver {
                 reject_tick_call(function, args, &span, diagnostics);
                 for arg in args {
                     self.walk_expr(scope, arg, diagnostics);
+                }
+                for ty in type_args {
+                    self.resolve_type(scope.module, scope.generics, ty, &span, diagnostics);
                 }
             }
             ExprKind::StructLiteral { name, fields } => {
@@ -1099,6 +1120,7 @@ impl Resolver {
                         }
                     };
                     expr.kind = ExprKind::Call {
+                        type_args: Vec::new(),
                         function,
                         args: std::mem::take(args),
                     };
@@ -1138,10 +1160,18 @@ impl Resolver {
                 self.walk_expr(scope, left, diagnostics);
                 self.walk_expr(scope, right, diagnostics);
             }
-            ExprKind::MethodCall { receiver, args, .. } => {
+            ExprKind::MethodCall {
+                receiver,
+                args,
+                type_args,
+                ..
+            } => {
                 self.walk_expr(scope, receiver, diagnostics);
                 for arg in args {
                     self.walk_expr(scope, arg, diagnostics);
+                }
+                for ty in type_args {
+                    self.resolve_type(scope.module, scope.generics, ty, &span, diagnostics);
                 }
             }
             ExprKind::Path(path) => self.walk_path(scope, path, diagnostics),

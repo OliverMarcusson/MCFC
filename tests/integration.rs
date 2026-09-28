@@ -393,7 +393,6 @@ void main() {
     msg.extra = List.of(new Component(" world"));
     player.sendMessage(msg);
     var bb = new BossBar("mcfc:test", msg);
-    bb.setName(msg);
     return;
 }
 "#;
@@ -415,7 +414,6 @@ void main() {
     assert!(joined.contains(".extra set from storage"));
     assert!(joined.contains("tellraw $(selector) $(message)"));
     assert!(joined.contains("bossbar add $(id) $(name)"));
-    assert!(joined.contains("bossbar set $(id) name $(name)"));
 }
 
 #[test]
@@ -1193,12 +1191,10 @@ fn compiles_async_bossbars_without_default_tick_tag() {
 void main() {
     var player = Selector.of("@p").getFirst();
     var bb = new BossBar("mcfc:test", "Boss");
-    bb.setValue(5);
-    bb.setPlayers(player);
 
     async {
         sleep(5);
-        bb.remove();
+        player.sendMessage("later");
         player.position.setBlock("minecraft:gold_block");
     }
 }
@@ -1219,9 +1215,6 @@ void main() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("bossbar add $(id) \"Boss\""));
-    assert!(joined.contains("bossbar set $(id) value $(value)"));
-    assert!(joined.contains("bossbar set $(id) players $(selector)"));
-    assert!(joined.contains("bossbar remove $(id)"));
     assert!(
         joined.contains(
             "prefix set value \"$(__anchor_prefix)execute at $(__anchor_selector) run \""
@@ -4318,11 +4311,8 @@ void main() {
     if (first.isValid() && maybe.isPresent()) {
         first.sendMessage("x=$(first.getX())");
     }
-    var bar = new BossBar("mcfc:javaapi", "API");
-    bar.setMax(10);
     var sword = new ItemStack("minecraft:diamond_sword");
     sword.setName("Probe");
-    debug((String) sword.getName());
 }
 "#;
     let result = compile_source(source, &lowering()).expect("Java world methods compile");
@@ -4337,7 +4327,6 @@ void main() {
     assert!(generated.contains("maybe.present set value 1b"));
     assert!(generated.contains("Pos[0]"));
     assert!(generated.contains("tellraw $(selector)"));
-    assert!(generated.contains("bossbar set $(id) max $(value)"));
     assert!(generated.contains("Probe"));
 }
 
@@ -5117,4 +5106,116 @@ fn native_classes_add_methods_to_builtin_types() {
         "final class Component {\n    Component shout() {\n        return this.color(\"red\").decorate(\"bold\");\n    }\n}\nvoid main() {\n    Component loud = Component.text(\"hi\").shout();\n    Component quiet = Component.empty().appendSpace();\n}\n",
     )
     .expect("a native class method next to std's");
+}
+
+#[test]
+fn explicit_type_arguments_are_checked() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let generic = "<T> T id(T x) { return x; }\n<T> List<T> none() { List<T> xs = List.of(); return xs; }\nint plain(int x) { return x; }\nclass Util { static <T> T pick(T x) { return x; } }\n";
+    let rejected = [
+        (
+            "void main() { String s = id<Integer>(\"x\"); }\n",
+            "must be 'int', found 'String'",
+        ),
+        (
+            "void main() { int n = id<Integer, String>(1); }\n",
+            "'id(...)' takes 1 type arguments, found 2",
+        ),
+        (
+            "void main() { int n = plain<Integer>(1); }\n",
+            "'plain(...)' is not generic, so it takes no type arguments",
+        ),
+        (
+            "void main() { List<Integer> xs = List.of(); int n = xs.<Integer>size(); }\n",
+            "'size' is not a generic method, so it takes no type arguments",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(&format!("{generic}{source}")).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    compile(&format!(
+        "{generic}void main() {{ List<String> empty = none<String>(); float f = id<Float>(3); int n = Util.<Integer>pick(2); boolean less = n < 3 && n > (1); }}\n"
+    ))
+    .expect("explicit type arguments, and comparisons that look like them");
+}
+
+#[test]
+fn std_declares_streams_bossbars_and_entity_patterns() {
+    let project = temp_path();
+    let src_dir = project.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(project.join("mcfc.toml"), "namespace = \"sample\"\n").unwrap();
+    let options = lowering();
+    let compile = |main: &str| {
+        fs::write(src_dir.join("main.mcf"), main).unwrap();
+        compile_project(&project.join("mcfc.toml"), &project.join("dist"), &options)
+    };
+    let rejected = [
+        (
+            "void f(Entity e) { switch (e) { case Player p -> p.sendMessage(\"hi\"); } }\nvoid main() {}\n",
+            "the switch doesn't cover every entity",
+        ),
+        (
+            "void main() { var bar = new BossBar(\"a:b\", \"Hi\"); String n = bar.getName(); }\n",
+            "unknown method 'getName'",
+        ),
+        (
+            "void main() { var bar = new BossBar(\"a:b\", \"Hi\"); bar.max = 3; }\n",
+            "use '.setMax(...)' for the max property",
+        ),
+    ];
+    for (source, message) in rejected {
+        let error = compile(source).expect_err(message);
+        assert!(error.contains(message), "{message}: {error}");
+    }
+    compile(
+        "import std.stream.Stream;\nvoid greet(Entity e) {\n    if (e instanceof Player p) {\n        p.sendMessage(\"hi\");\n    }\n    String kind = switch (e) {\n        case Player p -> \"player\";\n        default -> \"entity\";\n    };\n}\nvoid main() {\n    Stream<Integer> big = List.of(1, 5, 9).stream().filter(n -> n > 2);\n    List<String> names = big.map(n -> \"#\" + n).toList();\n    var bar = new BossBar(\"a:b\", \"Hi\");\n    bar.setVisible(false);\n    bar.setName(Component.text(\"Boss\"));\n    bar.setPlayers(Selector.of(\"@a\").getFirst());\n    int value = bar.getValue();\n    bar.remove();\n    for (Entity e : Selector.of(\"@e[limit=2]\")) {\n        greet(e);\n    }\n}\n",
+    )
+    .expect("streams, std bossbar methods and entity patterns compile");
+    let mut commands = String::new();
+    for entry in walk(&project.join("dist")) {
+        if entry.extension().is_some_and(|ext| ext == "mcfunction") {
+            commands.push_str(&fs::read_to_string(entry).unwrap());
+        }
+    }
+    assert!(
+        commands.contains("bossbar set $(p1) visible false"),
+        "{commands}"
+    );
+    assert!(
+        commands.contains("run bossbar get $(p1) value"),
+        "{commands}"
+    );
+    assert!(commands.contains("bossbar remove $(p1)"), "{commands}");
+    assert!(
+        commands.contains("bossbar set $(id) name $(name)"),
+        "{commands}"
+    );
+    assert!(
+        commands.contains("bossbar set $(id) players $(selector)"),
+        "{commands}"
+    );
+    assert!(commands.contains("@s[type=minecraft:player]"), "{commands}");
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
 }

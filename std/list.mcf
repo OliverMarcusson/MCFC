@@ -110,7 +110,7 @@ public <T> List<T> top(List<T> items, List<Integer> keys, int n) {
 
 // ponytail: insertion sort, O(n²) compare calls; fine for player-sized lists.
 // Equal values keep their order.
-<T> List<T> sortWith(List<T> values, Comparator<T> order) {
+public <T> List<T> sortWith(List<T> values, Comparator<T> order) {
     List<T> sorted = List.of();
     for (T value : values) {
         int index = sorted.size();

@@ -1,0 +1,144 @@
+// A small java.util.stream: `xs.stream().filter(...).map(...).toList()`.
+// Unlike Java, each step runs straight away and makes a new list, so a stream
+// is never lazy and can be used more than once. `xs.stream()` calls
+// `fromList(xs)`.
+
+import std.function.*;
+
+public <T> Stream<T> fromList(List<T> values) {
+    return new Stream<>(values);
+}
+
+public class Stream<T> {
+    private final List<T> values;
+
+    public Stream(List<T> values) {
+        this.values = values;
+    }
+
+    public Stream<T> filter(Predicate<T> test) {
+        List<T> kept = List.of();
+        for (T value : values) {
+            if (test.test(value)) {
+                kept.add(value);
+            }
+        }
+
+        return new Stream<>(kept);
+    }
+
+    public <R> Stream<R> map(Function<T, R> mapper) {
+        List<R> mapped = List.of();
+        for (T value : values) {
+            mapped.add(mapper.apply(value));
+        }
+
+        return new Stream<>(mapped);
+    }
+
+    public void forEach(Consumer<T> action) {
+        for (T value : values) {
+            action.accept(value);
+        }
+    }
+
+    public List<T> toList() {
+        return values;
+    }
+
+    public int count() {
+        return values.size();
+    }
+
+    public boolean anyMatch(Predicate<T> test) {
+        for (T value : values) {
+            if (test.test(value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public boolean allMatch(Predicate<T> test) {
+        for (T value : values) {
+            if (!test.test(value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public boolean noneMatch(Predicate<T> test) {
+        return !anyMatch(test);
+    }
+
+    // Empty when the stream is.
+    public Optional<T> findFirst() {
+        return values.get(0);
+    }
+
+    public T reduce(T identity, BinaryOperator<T> accumulator) {
+        T result = identity;
+        for (T value : values) {
+            result = accumulator.apply(result, value);
+        }
+
+        return result;
+    }
+
+    public Stream<T> limit(int maxSize) {
+        List<T> kept = List.of();
+        for (T value : values) {
+            if (kept.size() >= maxSize) {
+                break;
+            }
+            kept.add(value);
+        }
+
+        return new Stream<>(kept);
+    }
+
+    public Stream<T> skip(int n) {
+        List<T> kept = List.of();
+        int index = 0;
+        for (T value : values) {
+            if (index >= n) {
+                kept.add(value);
+            }
+            index += 1;
+        }
+
+        return new Stream<>(kept);
+    }
+
+    // ponytail: insertion sort through std.list, O(n²) compare calls.
+    public Stream<T> sorted(Comparator<T> order) {
+        return new Stream<>(std.list.sortWith(values, order));
+    }
+
+    // The first smallest element, or empty.
+    public Optional<T> min(Comparator<T> order) {
+        return values.get(extreme(order, -1));
+    }
+
+    // The first largest element, or empty.
+    public Optional<T> max(Comparator<T> order) {
+        return values.get(extreme(order, 1));
+    }
+
+    // The index of the first element that `order` puts furthest in `direction`.
+    private int extreme(Comparator<T> order, int direction) {
+        int best = 0;
+        int index = 0;
+        for (T value : values) {
+            if (order.compare(value, values[best]) * direction > 0) {
+                best = index;
+            }
+            index += 1;
+        }
+
+        return best;
+    }
+}

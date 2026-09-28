@@ -100,6 +100,34 @@ void main() {
 
 Unlike Java, `UnaryOperator` isn't a `Function`, so one can't be passed where the other is wanted.
 
+## `std.stream`
+
+A small `java.util.stream`. `xs.stream()` on any `List` gives a `Stream`; import `std.stream.Stream` to name the type:
+
+```mcfc
+import std.stream.Stream;
+
+void main() {
+    List<Integer> kills = List.of(5, 2, 8, 1);
+    List<String> labels = kills.stream().filter(k -> k > 1).map(k -> "#" + k).toList();
+    Stream<Integer> ranked = kills.stream().sorted((a, b) -> b - a).limit(3);
+    int best = ranked.findFirst().orElse(0);
+    int total = kills.stream().reduce(0, (a, b) -> a + b);
+}
+```
+
+| Method | Returns |
+| --- | --- |
+| `filter(Predicate<T>)`, `map(Function<T, R>)` | A new `Stream` |
+| `sorted(Comparator<T>)`, `limit(int)`, `skip(int)` | A new `Stream` |
+| `forEach(Consumer<T>)` | nothing |
+| `toList()`, `count()` | `List<T>`, `int` |
+| `anyMatch`, `allMatch`, `noneMatch(Predicate<T>)` | `boolean` |
+| `findFirst()`, `min(Comparator<T>)`, `max(Comparator<T>)` | `Optional<T>` |
+| `reduce(T identity, BinaryOperator<T>)` | `T` |
+
+Unlike Java, each step runs straight away and builds a new list, so a stream isn't lazy and can be used more than once. A `Stream` is a class object on the [heap](./statements#class), which the collector frees. `sorted` is the same insertion sort as `list.sort(order)`.
+
 ## `std.cooldown`
 
 Per-player cooldowns, each with a name, so one player can have several.
@@ -363,7 +391,7 @@ The `String` methods `startsWith`, `endsWith`, `indexOf`, `contains`, `replace`,
 
 ## `std.text`
 
-Where the [Adventure API](./builders#adventure-api) is written: `final class Component { ... }` gives the builtin `Component` its methods (`Component.text(...)`, `c.append(...)`), and `ClickEvent`, `HoverEvent` and `TextColor` hold the static ones. A `final class` named after a builtin type (`Component`, `Entity`, `Player` or `Selector`) only adds methods, whose `this` is the builtin value. `text.parseMiniMessage(s)` is the runtime [MiniMessage](./builders#minimessage) parser for text players type. It applies style tags only.
+Where the [Adventure API](./builders#adventure-api) is written: `final class Component { ... }` gives the builtin `Component` its methods (`Component.text(...)`, `c.append(...)`), and `ClickEvent`, `HoverEvent` and `TextColor` hold the static ones. A `final class` named after a builtin type (`Component`, `Entity`, `Player`, `Selector`, `BossBar` or `ItemStack`) only adds methods, whose `this` is the builtin value. `text.parseMiniMessage(s)` is the runtime [MiniMessage](./builders#minimessage) parser for text players type. It applies style tags only.
 
 ## `std.vec`
 
@@ -389,7 +417,17 @@ void main() {
 | `length()` | The length, a `float`. |
 | `normalize()` | This vector scaled to length 1. The zero vector stays zero. |
 
+## `std.bossbar`
+
+Where the [`BossBar`](./types#bossbar) methods are written, as `final class BossBar`. The getters run `bossbar get` and read the result from the `$world_mcfcBossBarRead` score.
+
+## `std.item`
+
+Where the `ItemStack` getters (`getCount()`, `getName()`, `getId()`) are written, as `final class ItemStack`. An item stack is a value, so a method only gets a copy of it: its setters stay assignments the compiler writes, and `stack.setCount(2)` changes `stack` itself.
+
 ## `std.player`
+
+`isPlayer(Entity)` is what [`e instanceof Player`](./types#entities) calls when the selector doesn't tell.
 
 Where [`setGameMode`, `getGameMode`, `setLevel`, `giveExp`, `giveExpLevels`, `remove`, `spectate`, `stopSpectating`, the facing `teleport` and the longer `sendTitle` forms](./methods) are written, as `final class Entity` and `final class Player`. An `Entity` method also runs on a `Player` and on a `Selector`, where it applies to every match. Call the methods; there's nothing to import.
 

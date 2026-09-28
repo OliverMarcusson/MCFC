@@ -209,7 +209,21 @@ Some methods only work on players, and `heal` only works on non-players. The com
 | any other `type=...` | non-player |
 | anything else | unknown |
 
-`(Player) e` asserts that `e` is a player, and `for (Player p : Selector.of(...))` does the same for a loop. All entity methods and fields are listed in [Entities and Players](./methods).
+`(Player) e` asserts that `e` is a player, and `for (Player p : Selector.of(...))` does the same for a loop. To check first, use `instanceof`, which also works as a type pattern:
+
+```mcfc
+void greet(Entity e) {
+    if (e instanceof Player p) {
+        p.sendMessage("hi");
+    }
+    String kind = switch (e) {
+        case Player p -> "player";
+        default -> "entity";
+    };
+}
+```
+
+When the selector already tells, `instanceof Player` is a constant. Otherwise it runs one `execute if entity @s[type=minecraft:player]` check through `std.player.isPlayer`. A `switch` on an entity needs a `default` or a `case Entity`. All entity methods and fields are listed in [Entities and Players](./methods).
 
 ## `Block`
 
@@ -285,7 +299,7 @@ void show() {
 }
 ```
 
-Use `getName()`/`setName(...)`, `getValue()`/`setValue(...)`, `getMax()`/`setMax(...)`, `getVisible()`/`setVisible(...)` and `getPlayers()`/`setPlayers(...)`. `bb.remove()` deletes the bossbar. `new BossBar(id, ...)` with an existing id gives you that bossbar.
+Use `setName(String | Component)`, `getValue()`/`setValue(...)`, `getMax()`/`setMax(...)`, `isVisible()` (or `getVisible()`)/`setVisible(...)` and `setPlayers(Selector | Entity)`. The getters ask the game with `bossbar get`. Minecraft can't give back a bossbar's name or players, so those have no getter. `bb.remove()` deletes the bossbar. `new BossBar(id, ...)` with an existing id gives you that bossbar. The methods are written in [`std.bossbar`](./std#std-bossbar).
 
 ## `Nbt`
 

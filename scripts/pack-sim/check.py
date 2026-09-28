@@ -51,6 +51,8 @@ BUDGET = {
     "generics": 1376,
     "lambdas": 1392,
     "functions": 3008,
+    "streams": 3146,
+    "builtins": 113,
     "labels": 536,
     "varargs": 461,
     "exceptions": 1071,

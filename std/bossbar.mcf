@@ -1,0 +1,72 @@
+// `BossBar` methods. A bossbar is a handle holding its id; Minecraft keeps the
+// rest, so the getters ask it with `bossbar get`. It can't give back a name or
+// the players, so there are no getters for those.
+
+// Where `bossbar get` puts what it reads.
+@WorldState
+int mcfcBossBarRead;
+
+public final class BossBar {
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public void setName(Component name) {
+        this.name = name;
+    }
+
+    public int getValue() {
+        String id = this.id;
+        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) value");
+        return mcfcBossBarRead;
+    }
+
+    public void setValue(int value) {
+        String id = this.id;
+        mcf("bossbar set $(id) value $(value)");
+    }
+
+    public int getMax() {
+        String id = this.id;
+        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) max");
+        return mcfcBossBarRead;
+    }
+
+    public void setMax(int max) {
+        String id = this.id;
+        mcf("bossbar set $(id) max $(max)");
+    }
+
+    public boolean isVisible() {
+        String id = this.id;
+        mcf("execute store result score $world_mcfcBossBarRead mcfc run bossbar get $(id) visible");
+        return mcfcBossBarRead == 1;
+    }
+
+    public boolean getVisible() {
+        return this.isVisible();
+    }
+
+    public void setVisible(boolean visible) {
+        String id = this.id;
+        if (visible) {
+            mcf("bossbar set $(id) visible true");
+        } else {
+            mcf("bossbar set $(id) visible false");
+        }
+    }
+
+    public void setPlayers(Selector players) {
+        this.players = players;
+    }
+
+    public void setPlayers(Entity player) {
+        this.players = player;
+    }
+
+    // Deletes the bossbar.
+    public void remove() {
+        String id = this.id;
+        mcf("bossbar remove $(id)");
+    }
+}

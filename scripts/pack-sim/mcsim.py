@@ -304,6 +304,30 @@ class Sim:
         # `execute positioned`, absolute coordinates only.
         self.markers = []
         self.pos = [0.0, 0.0, 0.0]
+        # Bossbars by id: {"value", "max", "visible"}. Names and players are traced.
+        self.bossbars = {}
+
+    def bossbar(self, t):
+        if t[0] == "add":
+            if t[1] in self.bossbars:
+                return False, 0
+            self.bossbars[t[1]] = {"value": 0, "max": 100, "visible": 1}
+            return True, 1
+        bar = self.bossbars.get(t[1])
+        if bar is None:
+            return False, 0
+        if t[0] == "remove":
+            del self.bossbars[t[1]]
+            return True, 1
+        if t[0] == "get":
+            return True, bar[t[2]]
+        if t[0] == "set" and t[2] in ("value", "max"):
+            bar[t[2]] = int(t[3])
+        elif t[0] == "set" and t[2] == "visible":
+            bar["visible"] = 1 if t[3] == "true" else 0
+        elif t[0] == "set":
+            self.trace.append("bossbar " + " ".join(t))
+        return True, 1
 
     # --- functions ---
     def tag_functions(self, tag):
@@ -415,6 +439,8 @@ class Sim:
         if head == "fill":
             self.trace.append(" ".join(t))
             return True, 1
+        if head == "bossbar":
+            return self.bossbar(t[1:])
         if head in ("forceload", "setworldspawn"):
             self.trace.append(" ".join(t))
             return True, 1
